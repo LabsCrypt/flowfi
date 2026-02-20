@@ -1,0 +1,22 @@
+{
+  "name": "flowfi",
+  "version": "1.0.0",
+  "description": "DeFi Payment Streaming on Stellar",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7"
+  },
+  "lint-staged": {
+    "frontend/**/*.{ts,tsx,js,jsx}": [
+      "cd frontend && npm run lint --"
+    ]
+  }
+}
