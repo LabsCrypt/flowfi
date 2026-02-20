@@ -4,7 +4,7 @@ const stats = [
     { label: 'Total Value Locked', value: '$240M+', gradient: 'text-gradient' },
     { label: 'Active Streams', value: '85k+', gradient: 'text-white' },
     { label: 'Network Savings', value: '$4.2M', gradient: 'text-gradient-secondary' },
-    // { label: 'Average Fee', value: '0.01%', gradient: 'text-white' },
+
 ];
 
 export const Stats = () => {
