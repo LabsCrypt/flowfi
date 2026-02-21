@@ -1,5 +1,15 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, token};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, token};
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    Stream(u64),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Stream(pub u64, pub Address, pub i128);
 
 #[contract]
 pub struct StreamContract;
