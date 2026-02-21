@@ -26,7 +26,10 @@ const IncomingStreams: React.FC = () => {
 
     const handleWithdraw = (id: string) => {
         console.log(`Withdrawing funds for stream: ${id}`);
-        alert(`Withdrawal initiated for stream ${id}. Check console for details.`);
+    };
+
+    const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        setFilter(e.target.value as any);
     };
 
     return (
@@ -38,7 +41,7 @@ const IncomingStreams: React.FC = () => {
                     <select
                         id="statusFilter"
                         value={filter}
-                        onChange={(e) => setFilter(e.target.value as any)}
+                        onChange={handleFilterChange}
                         className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     >
                         <option value="All">All Statuses</option>
@@ -63,7 +66,7 @@ const IncomingStreams: React.FC = () => {
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                         {filteredStreams.map((stream) => (
-                            <tr key={stream.id} className="hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
+                            <tr key={stream.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 font-mono">{stream.sender}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.token}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.rate}</td>
