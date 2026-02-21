@@ -31,8 +31,36 @@ flowfi/
 - Node.js & npm
 - Rust & Cargo
 - Stellar CLI (optional but recommended)
+- Docker & Docker Compose (for containerized setup)
 
-### Backend
+### Docker (Recommended)
+
+The fastest way to run the full stack locally:
+
+```bash
+docker compose up --build
+```
+
+This starts:
+- **Postgres** database on port `5432`
+- **Backend** API on port `3001`
+
+To run in detached mode:
+```bash
+docker compose up -d --build
+```
+
+To stop the services:
+```bash
+docker compose down
+```
+
+To reset the database:
+```bash
+docker compose down -v
+```
+
+### Backend (Manual)
 
 ```bash
 cd backend
