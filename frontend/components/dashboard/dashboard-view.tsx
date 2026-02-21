@@ -1,10 +1,12 @@
 "use client";
+import React from "react";
 
 import {
   getMockDashboardStats,
   type DashboardSnapshot,
 } from "@/lib/dashboard";
 import { shortenPublicKey, type WalletSession } from "@/lib/wallet";
+import IncomingStreams from "../IncomingStreams";
 
 interface DashboardViewProps {
   session: WalletSession;
@@ -12,16 +14,17 @@ interface DashboardViewProps {
 }
 
 interface SidebarItem {
+  id: string;
   label: string;
-  active?: boolean;
 }
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
-  { label: "Overview", active: true },
-  { label: "Streams" },
-  { label: "Subscriptions" },
-  { label: "Activity" },
-  { label: "Settings" },
+  { id: "overview", label: "Overview" },
+  { id: "incoming", label: "Incoming" },
+  { id: "streams", label: "Outgoing" },
+  { id: "subscriptions", label: "Subscriptions" },
+  { id: "activity", label: "Activity" },
+  { id: "settings", label: "Settings" },
 ];
 
 function formatCurrency(value: number): string {
@@ -179,6 +182,7 @@ function renderRecentActivity(snapshot: DashboardSnapshot) {
 }
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
+  const [activeTab, setActiveTab] = React.useState("overview");
   const stats = getMockDashboardStats(session.walletId);
 
   const handleTopUp = (streamId: string) => {
@@ -190,6 +194,45 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
+  const renderContent = () => {
+    if (activeTab === "incoming") {
+      return <div className="mt-8"><IncomingStreams /></div>;
+    }
+
+    if (activeTab === "overview") {
+        if (!stats) {
+            return (
+                <section className="dashboard-empty-state">
+                  <h2>No stream data yet</h2>
+                  <p>
+                    Your account is connected, but there are no active or historical
+                    stream records available yet.
+                  </p>
+                  <ul>
+                    <li>Create your first payment stream</li>
+                    <li>Invite a recipient to start receiving funds</li>
+                    <li>Check back once transactions are confirmed</li>
+                  </ul>
+                </section>
+            );
+        }
+        return (
+            <div className="dashboard-content-stack mt-8">
+              {renderStats(stats)}
+              {renderStreams(stats, handleTopUp)}
+              {renderRecentActivity(stats)}
+            </div>
+        );
+    }
+    
+    return (
+        <div className="dashboard-empty-state mt-8">
+            <h2>Under Construction</h2>
+            <p>This tab is currently under development.</p>
+        </div>
+    );
+  };
+
   return (
     <main className="dashboard-shell">
       <aside className="dashboard-sidebar">
@@ -197,11 +240,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <nav aria-label="Sidebar">
           {SIDEBAR_ITEMS.map((item) => (
             <button
-              key={item.label}
+              key={item.id}
               type="button"
               className="sidebar-item"
-              data-active={item.active ? "true" : undefined}
-              aria-current={item.active ? "page" : undefined}
+              data-active={activeTab === item.id ? "true" : undefined}
+              aria-current={activeTab === item.id ? "page" : undefined}
+              onClick={() => setActiveTab(item.id)}
             >
               {item.label}
             </button>
@@ -213,7 +257,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <header className="dashboard-header">
           <div>
             <p className="kicker">Dashboard</p>
-            <h1>Your Streaming Overview</h1>
+            <h1>{SIDEBAR_ITEMS.find(item => item.id === activeTab)?.label}</h1>
           </div>
 
           <div className="wallet-chip">
@@ -229,26 +273,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           </p>
         ) : null}
 
-        {stats ? (
-          <div className="dashboard-content-stack">
-            {renderStats(stats)}
-            {renderStreams(stats, handleTopUp)}
-            {renderRecentActivity(stats)}
-          </div>
-        ) : (
-          <section className="dashboard-empty-state">
-            <h2>No stream data yet</h2>
-            <p>
-              Your account is connected, but there are no active or historical
-              stream records available yet.
-            </p>
-            <ul>
-              <li>Create your first payment stream</li>
-              <li>Invite a recipient to start receiving funds</li>
-              <li>Check back once transactions are confirmed</li>
-            </ul>
-          </section>
-        )}
+        {renderContent()}
 
         <div className="dashboard-actions">
           <button type="button" className="secondary-button" onClick={onDisconnect}>

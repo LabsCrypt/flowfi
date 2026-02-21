@@ -16,7 +16,7 @@
   },
   "lint-staged": {
     "frontend/**/*.{ts,tsx,js,jsx}": [
-      "cd frontend && npm run lint --"
+      "npm run lint --workspace=frontend --"
     ]
   }
 }
