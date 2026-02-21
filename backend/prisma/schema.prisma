@@ -1,0 +1,73 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// User model - represents Stellar wallet addresses interacting with the protocol
+model User {
+  id              String   @id @default(uuid())
+  publicKey       String   @unique // Stellar public key (G...)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  sentStreams     Stream[] @relation("SentStreams")
+  receivedStreams Stream[] @relation("ReceivedStreams")
+
+  @@index([publicKey])
+}
+
+// Stream model - mirrors on-chain stream state for fast querying
+model Stream {
+  id                String    @id @default(uuid())
+  streamId          Int       @unique // On-chain stream ID
+  sender            String    // Sender's Stellar public key
+  recipient         String    // Recipient's Stellar public key
+  tokenAddress      String    // Token contract address
+  ratePerSecond     String    // Rate as string to preserve precision (i128)
+  depositedAmount   String    // Total deposited amount (i128)
+  withdrawnAmount   String    // Total withdrawn amount (i128)
+  startTime         Int       // Unix timestamp when stream started
+  lastUpdateTime    Int       // Unix timestamp of last update
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  senderUser        User      @relation("SentStreams", fields: [sender], references: [publicKey])
+  recipientUser     User      @relation("ReceivedStreams", fields: [recipient], references: [publicKey])
+  events            StreamEvent[]
+
+  @@index([sender])
+  @@index([recipient])
+  @@index([streamId])
+  @@index([isActive])
+}
+
+// StreamEvent model - indexer events for tracking all on-chain stream activities
+model StreamEvent {
+  id              String   @id @default(uuid())
+  streamId        Int      // Reference to on-chain stream ID
+  eventType       String   // EventType: "CREATED", "TOPPED_UP", "WITHDRAWN", "CANCELLED", "COMPLETED"
+  amount          String?  // Amount involved in the event (for top-ups, withdrawals)
+  transactionHash String   // Stellar transaction hash
+  ledgerSequence  Int      // Ledger sequence number
+  timestamp       Int      // Unix timestamp
+  metadata        String?  // JSON string for additional event data
+  createdAt       DateTime @default(now())
+
+  // Relations
+  stream          Stream   @relation(fields: [streamId], references: [streamId])
+
+  @@index([streamId])
+  @@index([eventType])
+  @@index([timestamp])
+  @@index([transactionHash])
+}
