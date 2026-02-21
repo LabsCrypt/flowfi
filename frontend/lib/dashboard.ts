@@ -9,12 +9,24 @@ export interface ActivityItem {
   timestamp: string;
 }
 
+export interface Stream {
+  id: string;
+  recipient: string;
+  amount: number;
+  token: string;
+  status: "Active" | "Completed" | "Cancelled";
+  deposited: number;
+  withdrawn: number;
+  date: string;
+}
+
 export interface DashboardSnapshot {
   totalSent: number;
   totalReceived: number;
   totalValueLocked: number;
-  activeStreams: number;
+  activeStreamsCount: number;
   recentActivity: ActivityItem[];
+  streams: Stream[];
 }
 
 const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
@@ -22,7 +34,29 @@ const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
     totalSent: 12850,
     totalReceived: 4720,
     totalValueLocked: 32140,
-    activeStreams: 2,
+    activeStreamsCount: 2,
+    streams: [
+      {
+        id: "stream-1",
+        date: "2023-10-25",
+        recipient: "G...ABCD",
+        amount: 500,
+        token: "USDC",
+        status: "Active",
+        deposited: 500,
+        withdrawn: 100,
+      },
+      {
+        id: "stream-2",
+        date: "2023-10-26",
+        recipient: "G...EFGH",
+        amount: 1200,
+        token: "XLM",
+        status: "Active",
+        deposited: 1200,
+        withdrawn: 300,
+      },
+    ],
     recentActivity: [
       {
         id: "act-1",
@@ -55,7 +89,19 @@ const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
     totalSent: 2130,
     totalReceived: 3890,
     totalValueLocked: 5400,
-    activeStreams: 1,
+    activeStreamsCount: 1,
+    streams: [
+      {
+        id: "stream-3",
+        date: "2023-10-27",
+        recipient: "G...IJKL",
+        amount: 300,
+        token: "EURC",
+        status: "Active",
+        deposited: 300,
+        withdrawn: 50,
+      },
+    ],
     recentActivity: [
       {
         id: "act-4",
@@ -81,5 +127,6 @@ export function getMockDashboardStats(
   return {
     ...source,
     recentActivity: source.recentActivity.map((activity) => ({ ...activity })),
+    streams: source.streams.map((stream) => ({ ...stream })),
   };
 }

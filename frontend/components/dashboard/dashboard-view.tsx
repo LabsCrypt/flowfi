@@ -68,7 +68,7 @@ function renderStats(snapshot: DashboardSnapshot) {
     {
       id: "active-streams",
       label: "Active Streams",
-      value: String(snapshot.activeStreams),
+      value: String(snapshot.activeStreamsCount),
       detail: "Streams currently live",
     },
   ] as const;
@@ -82,6 +82,59 @@ function renderStats(snapshot: DashboardSnapshot) {
           <span>{item.detail}</span>
         </article>
       ))}
+    </section>
+  );
+}
+
+function renderStreams(
+  snapshot: DashboardSnapshot,
+  onTopUp: (id: string) => void,
+) {
+  return (
+    <section className="dashboard-panel">
+      <div className="dashboard-panel__header">
+        <h3>My Active Streams</h3>
+        <span>{snapshot.streams.length} total</span>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="dashboard-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Recipient</th>
+              <th>Deposited</th>
+              <th>Withdrawn</th>
+              <th className="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {snapshot.streams.map((stream) => (
+              <tr key={stream.id}>
+                <td>{stream.date}</td>
+                <td>
+                  <code className="text-xs">{stream.recipient}</code>
+                </td>
+                <td className="font-semibold text-accent">
+                  {stream.deposited} {stream.token}
+                </td>
+                <td className="text-slate-400">
+                  {stream.withdrawn} {stream.token}
+                </td>
+                <td className="text-right">
+                  <button
+                    type="button"
+                    className="secondary-button py-1 px-3 text-sm h-auto"
+                    onClick={() => onTopUp(stream.id)}
+                  >
+                    Add Funds
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -128,6 +181,15 @@ function renderRecentActivity(snapshot: DashboardSnapshot) {
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const stats = getMockDashboardStats(session.walletId);
 
+  const handleTopUp = (streamId: string) => {
+    const amount = prompt(`Enter amount to add to stream ${streamId}:`);
+    if (amount && !Number.isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
+      console.log(`Adding ${amount} funds to stream ${streamId}`);
+      // TODO: Integrate with Soroban contract's top_up_stream function
+      alert(`Successfully added ${amount} to stream ${streamId}`);
+    }
+  };
+
   return (
     <main className="dashboard-shell">
       <aside className="dashboard-sidebar">
@@ -168,10 +230,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         ) : null}
 
         {stats ? (
-          <>
+          <div className="dashboard-content-stack">
             {renderStats(stats)}
+            {renderStreams(stats, handleTopUp)}
             {renderRecentActivity(stats)}
-          </>
+          </div>
         ) : (
           <section className="dashboard-empty-state">
             <h2>No stream data yet</h2>
