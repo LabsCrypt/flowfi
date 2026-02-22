@@ -267,3 +267,33 @@ fn test_top_up_stream_inactive() {
     let result = client.try_top_up_stream(&sender, &stream_id, &1_000i128);
     assert_eq!(result, Err(Ok(StreamError::StreamInactive)));
 }
+
+    
+#[test]
+fn test_calculate_claimable() {
+    let env = Env::default();
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let stream = Stream {
+        sender,
+        recipient,
+        token_address: token,
+        rate_per_second: 10,
+        deposited_amount: 1000,
+        withdrawn_amount: 0,
+        start_time: 0,
+        last_update_time: 0,
+        is_active: true,
+    };
+
+    let result = calculate_claimable(&stream, 50).unwrap();
+
+    assert_eq!(result, 500); // 50 * 10
+}
+
+
+
+
