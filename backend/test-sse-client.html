@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlowFi SSE Test Client</title>
+  <style>
+    body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 0 20px; }
+    .status { padding: 10px; border-radius: 4px; margin-bottom: 20px; }
+    .connected { background: #d4edda; color: #155724; }
+    .disconnected { background: #f8d7da; color: #721c24; }
+    .event { padding: 10px; margin: 10px 0; background: #f8f9fa; border-left: 3px solid #007bff; }
+    .event-type { font-weight: bold; color: #007bff; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    input { padding: 8px; margin: 5px; width: 200px; }
+    pre { background: #f8f9fa; padding: 10px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>FlowFi SSE Test Client</h1>
+  
+  <div id="status" class="status disconnected">Disconnected</div>
+  
+  <div>
+    <input type="text" id="streamId" placeholder="Stream ID (e.g., 1)" />
+    <button onclick="connect()">Connect</button>
+    <button onclick="disconnect()">Disconnect</button>
+    <button onclick="clearEvents()">Clear Events</button>
+  </div>
+
+  <div>
+    <button onclick="testCreateStream()">Test: Create Stream</button>
+  </div>
+
+  <h2>Events (<span id="eventCount">0</span>)</h2>
+  <div id="events"></div>
+
+  <script>
+    let eventSource = null;
+    let eventCount = 0;
+
+    function updateStatus(connected) {
+      const statusEl = document.getElementById('status');
+      statusEl.className = `status ${connected ? 'connected' : 'disconnected'}`;
+      statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+    }
+
+    function addEvent(type, data) {
+      eventCount++;
+      document.getElementById('eventCount').textContent = eventCount;
+      
+      const eventsEl = document.getElementById('events');
+      const eventEl = document.createElement('div');
+      eventEl.className = 'event';
+      eventEl.innerHTML = `
+        <div class="event-type">${type}</div>
+        <pre>${JSON.stringify(data, null, 2)}</pre>
+        <small>${new Date().toLocaleTimeString()}</small>
+      `;
+      eventsEl.insertBefore(eventEl, eventsEl.firstChild);
+    }
+
+    function connect() {
+      if (eventSource) {
+        eventSource.close();
+      }
+
+      const streamId = document.getElementById('streamId').value;
+      const url = streamId 
+        ? `http://localhost:3001/events/subscribe?streams=${streamId}`
+        : 'http://localhost:3001/events/subscribe?all=true';
+
+      eventSource = new EventSource(url);
+
+      eventSource.onopen = () => {
+        updateStatus(true);
+        console.log('SSE connection opened');
+      };
+
+      eventSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('message', data);
+      };
+
+      eventSource.addEventListener('stream.created', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('stream.created', data);
+      });
+
+      eventSource.addEventListener('stream.topped_up', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('stream.topped_up', data);
+      });
+
+      eventSource.addEventListener('stream.withdrawn', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('stream.withdrawn', data);
+      });
+
+      eventSource.addEventListener('stream.cancelled', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('stream.cancelled', data);
+      });
+
+      eventSource.addEventListener('stream.completed', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('stream.completed', data);
+      });
+
+      eventSource.onerror = (error) => {
+        console.error('SSE error:', error);
+        updateStatus(false);
+      };
+    }
+
+    function disconnect() {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+        updateStatus(false);
+      }
+    }
+
+    function clearEvents() {
+      document.getElementById('events').innerHTML = '';
+      eventCount = 0;
+      document.getElementById('eventCount').textContent = '0';
+    }
+
+    async function testCreateStream() {
+      try {
+        const response = await fetch('http://localhost:3001/streams', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sender: 'GABC123...',
+            recipient: 'GDEF456...',
+            tokenAddress: 'CUSDC...',
+            ratePerSecond: '1000000',
+            depositedAmount: '86400000000',
+            startTime: Math.floor(Date.now() / 1000),
+          }),
+        });
+        const data = await response.json();
+        console.log('Stream created:', data);
+      } catch (error) {
+        console.error('Error creating stream:', error);
+      }
+    }
+
+    // Auto-connect on load
+    window.onload = () => connect();
+  </script>
+</body>
+</html>

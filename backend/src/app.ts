@@ -3,6 +3,7 @@ import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.js';
 import streamRoutes from './routes/stream.routes.js';
+import eventsRoutes from './routes/events.routes.js';
 import { globalRateLimiter } from './middleware/rate-limiter.middleware.js';
 
 const app = express();
@@ -27,6 +28,7 @@ app.get('/api-docs.json', (req: Request, res: Response) => {
 
 // Routes
 app.use('/streams', streamRoutes);
+app.use('/events', eventsRoutes);
 
 /**
  * @openapi
