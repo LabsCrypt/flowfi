@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useRef, useEffect } from "react";
 
 interface AmountStepProps {
   value: string;
@@ -14,6 +14,13 @@ export const AmountStep: React.FC<AmountStepProps> = ({
   error,
   token,
 }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus on mount
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   return (
     <div className="space-y-4">
       <div>
@@ -32,6 +39,7 @@ export const AmountStep: React.FC<AmountStepProps> = ({
         </label>
         <div className="relative">
           <input
+            ref={inputRef}
             id="amount"
             type="number"
             step="any"

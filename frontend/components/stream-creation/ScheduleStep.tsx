@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 
 interface ScheduleStepProps {
   duration: string;
@@ -29,6 +29,13 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
   amount,
   token,
 }) => {
+  const durationInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus on mount
+  useEffect(() => {
+    durationInputRef.current?.focus();
+  }, []);
+
   const ratePerSecond = useMemo(() => {
     if (!amount || !duration || parseFloat(amount) <= 0 || parseFloat(duration) <= 0) {
       return null;
@@ -91,6 +98,7 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
             Duration
           </label>
           <input
+            ref={durationInputRef}
             id="duration"
             type="number"
             step="any"

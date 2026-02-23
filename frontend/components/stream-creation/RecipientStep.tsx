@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useRef, useEffect } from "react";
 
 interface RecipientStepProps {
   value: string;
@@ -12,6 +12,13 @@ export const RecipientStep: React.FC<RecipientStepProps> = ({
   onChange,
   error,
 }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus on mount
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   return (
     <div className="space-y-4">
       <div>
@@ -30,6 +37,7 @@ export const RecipientStep: React.FC<RecipientStepProps> = ({
           Stellar Public Key
         </label>
         <input
+          ref={inputRef}
           id="recipient"
           type="text"
           value={value}
