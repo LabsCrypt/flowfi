@@ -107,44 +107,172 @@ docker compose down -v
 
 ##  Option 2: Manual Setup
 
-###  Backend
+### Backend Setup
+
+1. **Install Dependencies**
 
 ```bash
 cd backend
 npm install
+```
+
+2. **Set Up Database**
+
+The backend uses PostgreSQL. You can either:
+- Use Docker Compose (recommended): `docker compose up postgres -d`
+- Or set up PostgreSQL locally and configure `DATABASE_URL` in your `.env` file
+
+3. **Run Database Migrations**
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate
+```
+
+4. **Start Development Server**
+
+```bash
 npm run dev
 ```
 
-Backend runs on:
+Backend runs on: `http://localhost:3001`
 
-```
-http://localhost:3001
-```
+**Available Backend Scripts:**
+- `npm run dev` - Start development server with hot reload
+- `npm run build` - Build TypeScript to JavaScript
+- `npm run start` - Start production server
+- `npm run test` - Run test suite
+- `npm run prisma:generate` - Generate Prisma client
+- `npm run prisma:migrate` - Run database migrations
+- `npm run prisma:studio` - Open Prisma Studio (database GUI)
+
+**Backend API Documentation:**
+- Swagger UI: `http://localhost:3001/api-docs`
+- OpenAPI Spec: `http://localhost:3001/api-docs.json`
 
 ---
 
-### 2️ Frontend
+### Frontend Setup
+
+1. **Install Dependencies**
 
 ```bash
 cd frontend
 npm install
+```
+
+2. **Start Development Server**
+
+```bash
 npm run dev
 ```
 
-Frontend runs on:
+Frontend runs on: `http://localhost:3000`
 
-```
-http://localhost:3000
-```
+**Available Frontend Scripts:**
+- `npm run dev` - Start Next.js development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
+
+**Environment Variables:**
+Create a `.env.local` file in the `frontend` directory if needed for API endpoints or other configuration.
 
 ---
 
-### 3️ Smart Contracts
+### Smart Contracts Setup
+
+1. **Install Rust Toolchain**
+
+Make sure you have Rust and Cargo installed. If not:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+2. **Install Soroban CLI** (if not already installed)
+
+```bash
+cargo install --locked soroban-cli
+```
+
+3. **Build Contracts**
 
 ```bash
 cd contracts
 cargo build --target wasm32-unknown-unknown --release
 ```
+
+The compiled WASM files will be in `target/wasm32-unknown-unknown/release/`.
+
+**Contract Development:**
+- Contract source: `contracts/stream_contract/src/lib.rs`
+- Tests: `contracts/stream_contract/src/test.rs`
+- Build target: `wasm32-unknown-unknown`
+
+---
+
+## Development Scripts & Tools
+
+### Root-Level Scripts
+
+From the repository root:
+
+```bash
+# Verify security setup
+npm run verify-security
+```
+
+### Docker Compose Commands
+
+```bash
+# Start all services
+docker compose up --build
+
+# Start in detached mode
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+
+# Reset database (removes volumes)
+docker compose down -v
+```
+
+---
+
+## CI/CD Workflows
+
+This repository uses GitHub Actions for continuous integration. Workflows are located in `.github/workflows/`.
+
+### Available Workflows
+
+- **Security Checks** (`.github/workflows/security.yml`)
+  - Runs on: push to `main`/`develop`, pull requests, and weekly schedule
+  - Performs:
+    - Dependency vulnerability scanning (`npm audit`)
+    - CodeQL analysis for JavaScript/TypeScript
+  - View workflow: [Security Checks](.github/workflows/security.yml)
+
+### Running CI Checks Locally
+
+Before pushing, ensure your changes pass:
+
+```bash
+# Frontend linting
+cd frontend && npm run lint
+
+# Backend tests
+cd backend && npm run test
+
+# Security verification
+npm run verify-security
+```
+
+For more details, see the [Security Workflow](.github/workflows/security.yml).
 
 ---
 

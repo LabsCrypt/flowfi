@@ -22,7 +22,19 @@ flowfi/
 ├── contracts/            # Soroban smart contracts
 │   ├── stream_contract/  # Core streaming logic
 ├── frontend/             # Next.js + Tailwind CSS frontend
+├── docs/                 # Documentation
+│   └── ARCHITECTURE.md   # Architecture overview
 ```
+
+## Architecture
+
+FlowFi consists of three main components that work together:
+
+- **Soroban Smart Contracts**: Handle on-chain payment stream logic
+- **Backend API**: Indexes on-chain events, provides REST API, and streams real-time updates via SSE
+- **Frontend**: User interface for creating and managing payment streams
+
+For a detailed explanation of how these components interact, where event indexing happens, and the overall system architecture, see the [Architecture Documentation](docs/ARCHITECTURE.md).
 
 ## Getting Started
 
@@ -85,7 +97,13 @@ cargo build --target wasm32-unknown-unknown --release
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request.
+Contributions are welcome! Please see our [Contributing Guide](CONTRIBUTING.md) for:
+- Local development setup instructions
+- Code style and commit guidelines
+- Pull request process
+- Development scripts and CI workflows
+
+For architecture details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Security
 
