@@ -4,8 +4,8 @@ extern crate std;
 
 use super::*;
 use soroban_sdk::{
-    testutils::Address as _, testutils::Events, token, xdr, Address, Env, Symbol,
-    TryFromVal,
+    testutils::Address as _, testutils::Events, testutils::Ledger, token, xdr, Address, Env,
+    Symbol, TryFromVal,
 };
 
 fn create_token_contract(env: &Env) -> (Address, Address) {
@@ -107,17 +107,38 @@ fn test_withdraw_authorized_recipient_receives_tokens() {
     let client = StreamContractClient::new(&env, &contract_id);
     let token_client = token::Client::new(&env, &token_address);
 
+    // Create stream: 500 tokens over 100 seconds = 5 tokens/second
     let stream_id = client.create_stream(&sender, &recipient, &token_address, &500, &100);
     let recipient_balance_before = token_client.balance(&recipient);
 
-    let _ = client.withdraw(&recipient, &stream_id);
+    // Advance time by 50 seconds
+    env.ledger().with_mut(|l| {
+        l.timestamp += 50;
+    });
+
+    // Withdraw after 50 seconds: should get 50 * 5 = 250 tokens
+    let withdrawn = client.withdraw(&recipient, &stream_id);
+    assert_eq!(withdrawn, 250);
 
     let recipient_balance_after = token_client.balance(&recipient);
-    assert_eq!(recipient_balance_after - recipient_balance_before, 500);
+    assert_eq!(recipient_balance_after - recipient_balance_before, 250);
+
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 250);
+    assert!(stream.is_active); // Still active, 250 remaining
+
+    // Advance time by another 50 seconds
+    env.ledger().with_mut(|l| {
+        l.timestamp += 50;
+    });
+
+    // Withdraw remaining 250 tokens
+    let withdrawn2 = client.withdraw(&recipient, &stream_id);
+    assert_eq!(withdrawn2, 250);
 
     let stream = client.get_stream(&stream_id).unwrap();
     assert_eq!(stream.withdrawn_amount, 500);
-    assert!(!stream.is_active);
+    assert!(!stream.is_active); // Now inactive, all withdrawn
 }
 
 #[test]
@@ -398,9 +419,45 @@ fn test_top_up_with_fee() {
     client.top_up_stream(&sender, &stream_id, &500);
 
     assert_eq!(token_client.balance(&treasury), 15);
-    
+
     let stream = client.get_stream(&stream_id).unwrap();
     assert_eq!(stream.deposited_amount, 990 + 495);
+}
+
+#[test]
+fn test_top_up_preserves_accrued_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token_address, _admin) = create_token_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let stellar_asset = token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&sender, &2_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token_address);
+
+    // Create stream: 1000 tokens over 1000 seconds = 1 token/second
+    let stream_id = client.create_stream(&sender, &recipient, &token_address, &1_000, &1_000);
+
+    // Advance time by 200 seconds (200 tokens should be claimable)
+    env.ledger().with_mut(|l| {
+        l.timestamp += 200;
+    });
+
+    // Top up with 500 tokens
+    client.top_up_stream(&sender, &stream_id, &500);
+
+    // Recipient should still be able to claim the 200 tokens that accrued before the top-up
+    let withdrawn = client.withdraw(&recipient, &stream_id);
+    assert_eq!(withdrawn, 200);
+
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 200);
+    assert_eq!(stream.deposited_amount, 1500); // 1000 + 500
 }
 
 #[test]
@@ -425,12 +482,184 @@ fn test_fee_collected_event() {
     let stream_id = client.create_stream(&sender, &recipient, &token_address, &1000, &100);
 
     let events = env.events().all();
-    let fee_event = events.iter().find(|e| {
-        Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap() == Symbol::new(&env, "fee_collected")
-    }).unwrap();
+    let fee_event = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "fee_collected")
+        })
+        .unwrap();
 
-    let fee_collected: FeeCollectedEvent = FeeCollectedEvent::try_from_val(&env, &fee_event.2).unwrap();
+    let fee_collected: FeeCollectedEvent =
+        FeeCollectedEvent::try_from_val(&env, &fee_event.2).unwrap();
     assert_eq!(fee_collected.stream_id, stream_id);
     assert_eq!(fee_collected.treasury, treasury);
     assert_eq!(fee_collected.fee_amount, 50);
+}
+
+#[test]
+fn test_withdraw_time_based_calculation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token_address, _admin) = create_token_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let stellar_asset = token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&sender, &1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token_address);
+
+    // Create stream: 1000 tokens over 1000 seconds = 1 token/second
+    let stream_id = client.create_stream(&sender, &recipient, &token_address, &1_000, &1_000);
+
+    // Advance time by 100 seconds
+    env.ledger().with_mut(|l| {
+        l.timestamp += 100;
+    });
+
+    // First withdrawal: should get 100 tokens (100 seconds * 1 token/second)
+    let withdrawn1 = client.withdraw(&recipient, &stream_id);
+    assert_eq!(withdrawn1, 100);
+
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 100);
+    assert_eq!(stream.last_update_time, env.ledger().timestamp());
+
+    // Advance time by another 200 seconds
+    env.ledger().with_mut(|l| {
+        l.timestamp += 200;
+    });
+
+    // Second withdrawal: should get 200 tokens (200 seconds * 1 token/second)
+    let withdrawn2 = client.withdraw(&recipient, &stream_id);
+    assert_eq!(withdrawn2, 200);
+
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 300);
+}
+
+#[test]
+fn test_withdraw_caps_at_remaining_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token_address, _admin) = create_token_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let stellar_asset = token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&sender, &1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token_address);
+
+    // Create stream: 100 tokens over 100 seconds = 1 token/second
+    let stream_id = client.create_stream(&sender, &recipient, &token_address, &100, &100);
+
+    // Advance time by 200 seconds (more than the stream duration)
+    env.ledger().with_mut(|l| {
+        l.timestamp += 200;
+    });
+
+    // Withdrawal should be capped at remaining balance (100 tokens), not 200
+    let withdrawn = client.withdraw(&recipient, &stream_id);
+    assert_eq!(withdrawn, 100);
+
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 100);
+    assert!(!stream.is_active);
+}
+
+#[test]
+fn test_cancel_stream_refunds_sender() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token_address, _admin) = create_token_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let stellar_asset = token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&sender, &1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token_address);
+
+    // Create stream: 1000 tokens over 1000 seconds = 1 token/second
+    let stream_id = client.create_stream(&sender, &recipient, &token_address, &1_000, &1_000);
+
+    let sender_balance_before = token_client.balance(&sender);
+
+    // Advance time by 300 seconds (300 tokens should be claimable by recipient)
+    env.ledger().with_mut(|l| {
+        l.timestamp += 300;
+    });
+
+    // Cancel stream: should refund 700 tokens to sender (1000 - 300 accrued)
+    client.cancel_stream(&sender, &stream_id);
+
+    let sender_balance_after = token_client.balance(&sender);
+    let contract_balance_after = token_client.balance(&contract_id);
+
+    // Sender should receive 700 tokens back
+    assert_eq!(sender_balance_after - sender_balance_before, 700);
+    // Contract should have 300 tokens remaining (for recipient to withdraw)
+    assert_eq!(contract_balance_after, 300);
+
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert!(!stream.is_active);
+    assert_eq!(stream.withdrawn_amount, 0); // Recipient hasn't withdrawn yet
+}
+
+#[test]
+fn test_cancel_stream_after_partial_withdrawal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token_address, _admin) = create_token_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let stellar_asset = token::StellarAssetClient::new(&env, &token_address);
+    stellar_asset.mint(&sender, &1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token_address);
+
+    // Create stream: 1000 tokens over 1000 seconds = 1 token/second
+    let stream_id = client.create_stream(&sender, &recipient, &token_address, &1_000, &1_000);
+
+    // Advance time by 200 seconds
+    env.ledger().with_mut(|l| {
+        l.timestamp += 200;
+    });
+
+    // Recipient withdraws 200 tokens
+    client.withdraw(&recipient, &stream_id);
+
+    let sender_balance_before = token_client.balance(&sender);
+    let contract_balance_before = token_client.balance(&contract_id);
+
+    // Advance time by another 100 seconds (100 more tokens accrued)
+    env.ledger().with_mut(|l| {
+        l.timestamp += 100;
+    });
+
+    // Cancel stream: should refund 700 tokens to sender (1000 - 200 withdrawn - 100 accrued)
+    client.cancel_stream(&sender, &stream_id);
+
+    let sender_balance_after = token_client.balance(&sender);
+    let contract_balance_after = token_client.balance(&contract_id);
+
+    // Sender should receive 700 tokens back
+    assert_eq!(sender_balance_after - sender_balance_before, 700);
+    // Contract should have 100 tokens remaining (for recipient to withdraw)
+    assert_eq!(contract_balance_after, 100);
 }

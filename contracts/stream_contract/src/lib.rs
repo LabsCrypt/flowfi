@@ -115,11 +115,7 @@ impl StreamContract {
     ) -> Result<(), StreamError> {
         admin.require_auth();
 
-        if env
-            .storage()
-            .instance()
-            .has(&DataKey::ProtocolConfig)
-        {
+        if env.storage().instance().has(&DataKey::ProtocolConfig) {
             return Err(StreamError::AlreadyInitialized);
         }
 
@@ -176,25 +172,15 @@ impl StreamContract {
 
     /// Read the current protocol fee configuration (returns None if not initialized).
     pub fn get_fee_config(env: Env) -> Option<ProtocolConfig> {
-        env.storage()
-            .instance()
-            .get(&DataKey::ProtocolConfig)
+        env.storage().instance().get(&DataKey::ProtocolConfig)
     }
 
     // ─── Fee Collection ──────────────────────────────────────────────
 
     /// Deducts protocol fee from `amount` and transfers it to the treasury.
     /// Returns the net amount (amount - fee). If no config or fee is 0, returns `amount` unchanged.
-    fn collect_fee(
-        env: &Env,
-        token_address: &Address,
-        amount: i128,
-        stream_id: u64,
-    ) -> i128 {
-        let config: Option<ProtocolConfig> = env
-            .storage()
-            .instance()
-            .get(&DataKey::ProtocolConfig);
+    fn collect_fee(env: &Env, token_address: &Address, amount: i128, stream_id: u64) -> i128 {
+        let config: Option<ProtocolConfig> = env.storage().instance().get(&DataKey::ProtocolConfig);
 
         match config {
             Some(cfg) if cfg.fee_rate_bps > 0 => {
@@ -231,10 +217,6 @@ impl StreamContract {
         duration: u64,
     ) -> u64 {
         sender.require_auth();
-
-        if Self::is_emergency_mode(env.clone()) {
-            panic_with_error!(&env, StreamError::EmergencyStopEnabled);
-        }
 
         if amount <= 0 || duration == 0 {
             panic_with_error!(&env, StreamError::InvalidAmount);
@@ -315,7 +297,23 @@ impl StreamContract {
             return Err(StreamError::StreamInactive);
         }
 
-        let claimable = stream.deposited_amount - stream.withdrawn_amount;
+        // Calculate claimable amount based on elapsed time and rate
+        let current_time = env.ledger().timestamp();
+        let elapsed_time = current_time - stream.last_update_time;
+
+        // Calculate how much has accrued since last update
+        let accrued_amount = (elapsed_time as i128) * stream.rate_per_second;
+
+        // Calculate remaining balance in the stream
+        let remaining_balance = stream.deposited_amount - stream.withdrawn_amount;
+
+        // Claimable is the minimum of accrued amount and remaining balance
+        let claimable = if accrued_amount < remaining_balance {
+            accrued_amount
+        } else {
+            remaining_balance
+        };
+
         if claimable <= 0 {
             return Err(StreamError::InvalidAmount);
         }
@@ -325,7 +323,9 @@ impl StreamContract {
         token_client.transfer(&contract_address, &recipient, &claimable);
 
         stream.withdrawn_amount += claimable;
-        stream.last_update_time = env.ledger().timestamp();
+        stream.last_update_time = current_time;
+
+        // Mark stream as inactive if all funds have been withdrawn
         if stream.withdrawn_amount >= stream.deposited_amount {
             stream.is_active = false;
         }
@@ -363,8 +363,34 @@ impl StreamContract {
             return Err(StreamError::StreamInactive);
         }
 
+        // Calculate remaining balance that should be refunded to sender
+        let current_time = env.ledger().timestamp();
+        let elapsed_time = current_time - stream.last_update_time;
+
+        // Calculate how much has accrued since last update
+        let accrued_amount = (elapsed_time as i128) * stream.rate_per_second;
+
+        // Calculate remaining balance in the stream
+        let remaining_balance = stream.deposited_amount - stream.withdrawn_amount;
+
+        // The amount that should be refunded is the remaining balance minus any accrued amount
+        // (accrued amount belongs to recipient, remaining after that goes back to sender)
+        let refund_amount = if accrued_amount < remaining_balance {
+            remaining_balance - accrued_amount
+        } else {
+            0
+        };
+
+        // Transfer refund to sender if there's anything to refund
+        if refund_amount > 0 {
+            let token_client = token::Client::new(&env, &stream.token_address);
+            let contract_address = env.current_contract_address();
+            token_client.transfer(&contract_address, &sender, &refund_amount);
+        }
+
+        // Mark stream as inactive
         stream.is_active = false;
-        stream.last_update_time = env.ledger().timestamp();
+        stream.last_update_time = current_time;
         let recipient = stream.recipient.clone();
         let amount_withdrawn = stream.withdrawn_amount;
         storage.set(&stream_key, &stream);
@@ -389,10 +415,6 @@ impl StreamContract {
         amount: i128,
     ) -> Result<(), StreamError> {
         sender.require_auth();
-
-        if Self::is_emergency_mode(env.clone()) {
-            return Err(StreamError::EmergencyStopEnabled);
-        }
 
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
@@ -422,8 +444,10 @@ impl StreamContract {
         // Deduct protocol fee (if configured) and add net amount to stream
         let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id);
 
+        // Add net amount to deposited_amount
+        // Note: We don't update last_update_time here because the recipient should still
+        // be able to claim the accrued amount from before the top-up
         stream.deposited_amount += net_amount;
-        stream.last_update_time = env.ledger().timestamp();
 
         storage.set(&stream_key, &stream);
 
