@@ -102,7 +102,8 @@ The FlowFi backend API uses URL-based versioning. All endpoints are prefixed wit
 - **API Versioning Guide**: [backend/docs/API_VERSIONING.md](backend/docs/API_VERSIONING.md)
 - **Deprecation Policy**: [backend/docs/DEPRECATION_POLICY.md](backend/docs/DEPRECATION_POLICY.md)
 - **Sandbox Mode**: [backend/docs/SANDBOX_MODE.md](backend/docs/SANDBOX_MODE.md) - Test without affecting production data
-- **API Docs**: Available at `http://localhost:3001/api-docs` when backend is running
+- **Interactive API Docs**: Available at `http://localhost:3001/api-docs` when backend is running
+- **Raw OpenAPI JSON**: Available at `http://localhost:3001/api-docs.json` when backend is running
 
 ### Sandbox Mode
 
@@ -112,6 +113,46 @@ FlowFi supports sandbox mode for safe testing. Enable it by:
 2. Adding `X-Sandbox-Mode: true` header or `?sandbox=true` query parameter to requests
 
 Sandbox mode uses a separate database and clearly labels all responses. See [Sandbox Mode Documentation](backend/docs/SANDBOX_MODE.md) for details.
+
+## API Collections
+
+Pre-built collections for exploring all endpoints without any manual setup.
+
+| File | Client |
+|---|---|
+| [`docs/api/flowfi.postman_collection.json`](docs/api/flowfi.postman_collection.json) | Postman |
+| [`docs/api/flowfi.hoppscotch_collection.json`](docs/api/flowfi.hoppscotch_collection.json) | Hoppscotch |
+
+Environment files (import alongside the collection):
+
+| File | Target |
+|---|---|
+| [`docs/api/local.postman_environment.json`](docs/api/local.postman_environment.json) | Postman — local |
+| [`docs/api/test.postman_environment.json`](docs/api/test.postman_environment.json) | Postman — test |
+| [`docs/api/local.hoppscotch_environment.json`](docs/api/local.hoppscotch_environment.json) | Hoppscotch — local |
+| [`docs/api/test.hoppscotch_environment.json`](docs/api/test.hoppscotch_environment.json) | Hoppscotch — test |
+
+### Quick start
+
+**Postman**
+1. *Import* → select `flowfi.postman_collection.json`.
+2. *Import* → select the matching `*.postman_environment.json`.
+3. Pick the environment from the top-right dropdown and send requests.
+
+**Hoppscotch**
+1. *Collections* → *Import / Export* → *Import from JSON* → select `flowfi.hoppscotch_collection.json`.
+2. *Environments* → *Import* → select the matching `*.hoppscotch_environment.json`.
+3. Activate the environment and send requests.
+
+### SSE note
+
+`GET /events/subscribe` streams `text/event-stream` data and keeps the connection open. Postman buffers the response — use *Send and Download* to capture it, or test interactively with:
+
+```bash
+curl -N --no-buffer 'http://localhost:3001/events/subscribe?all=true'
+```
+
+Or open `backend/test-sse-client.html` directly in a browser.
 
 ## Contributing
 

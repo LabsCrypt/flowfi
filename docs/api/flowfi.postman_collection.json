@@ -1,0 +1,293 @@
+{
+  "info": {
+    "_postman_id": "7f3e2a1b-4c5d-6e7f-8a9b-0c1d2e3f4a5b",
+    "name": "FlowFi API",
+    "description": "Complete API collection for FlowFi — real-time payment streaming on Stellar.\n\n**Before you start:**\n1. Import one of the environment files from the same folder:\n   - `local.postman_environment.json` — Docker / manual local setup (port 3001)\n   - `test.postman_environment.json` — shared test deployment\n2. Select the imported environment from the top-right dropdown.\n3. Send requests. Variables like `{{baseUrl}}`, `{{senderPublicKey}}`, etc. are resolved automatically.\n\n**Swagger UI** (local): http://localhost:3001/api-docs\n**OpenAPI JSON** (local): http://localhost:3001/api-docs.json",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "type": "string",
+      "description": "Overridden by the active environment file."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness and readiness probes.",
+      "item": [
+        {
+          "name": "Root ping",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": ["{{baseUrl}}"],
+              "path": [""]
+            },
+            "description": "Simple liveness probe. Returns the plain-text string `FlowFi Backend is running` when the server is up."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/",
+                  "host": ["{{baseUrl}}"],
+                  "path": [""]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "plain",
+              "header": [
+                { "key": "Content-Type", "value": "text/plain; charset=utf-8" }
+              ],
+              "body": "FlowFi Backend is running"
+            }
+          ]
+        },
+        {
+          "name": "Detailed health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Returns a JSON object with `status`, `timestamp`, `uptime` (seconds), and `version`. Use this before running integration tests to confirm the API is healthy."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/health",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["health"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+              ],
+              "body": "{\n  \"status\": \"healthy\",\n  \"timestamp\": \"2024-02-21T14:30:00.000Z\",\n  \"uptime\": 3600,\n  \"version\": \"1.0.0\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Streams",
+      "description": "Payment stream lifecycle management.",
+      "item": [
+        {
+          "name": "Create stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sender\": \"{{senderPublicKey}}\",\n  \"recipient\": \"{{recipientPublicKey}}\",\n  \"amount\": 10000,\n  \"token\": \"{{tokenAddress}}\",\n  \"startTime\": 1708531200,\n  \"endTime\": 1711209600\n}",
+              "options": {
+                "raw": { "language": "json" }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/streams",
+              "host": ["{{baseUrl}}"],
+              "path": ["streams"]
+            },
+            "description": "Creates a new payment stream.\n\n**Required fields:** `sender`, `recipient`, `amount` (positive number), `token`.\n**Optional fields:** `startTime`, `endTime` (Unix timestamps).\n\nOn success the server responds with **201 Created** and the new stream object, then broadcasts a `stream.created` SSE event to all subscribers watching the sender, recipient, or stream ID.\n\nValidation is enforced by Zod; invalid payloads return **400** with a structured `errors` array."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sender\": \"GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA\",\n  \"recipient\": \"GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD\",\n  \"amount\": 10000,\n  \"token\": \"CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE\",\n  \"startTime\": 1708531200,\n  \"endTime\": 1711209600\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/streams",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["streams"]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+              ],
+              "body": "{\n  \"id\": \"123\",\n  \"status\": \"pending\",\n  \"sender\": \"GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA\",\n  \"recipient\": \"GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD\",\n  \"amount\": 10000,\n  \"token\": \"CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE\",\n  \"startTime\": 1708531200,\n  \"endTime\": 1711209600\n}"
+            },
+            {
+              "name": "400 Validation error",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"sender\": \"\",\n  \"recipient\": \"GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD\",\n  \"amount\": -5,\n  \"token\": \"CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/streams",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["streams"]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+              ],
+              "body": "{\n  \"message\": \"Validation failed\",\n  \"errors\": [\n    {\n      \"code\": \"too_small\",\n      \"path\": [\"sender\"],\n      \"message\": \"Sender address is required\"\n    },\n    {\n      \"code\": \"too_small\",\n      \"path\": [\"amount\"],\n      \"message\": \"Amount must be positive\"\n    }\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "description": "Server-Sent Events (SSE) for real-time stream updates and connection monitoring.",
+      "item": [
+        {
+          "name": "Subscribe to stream events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" },
+              { "key": "Cache-Control", "value": "no-cache" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/subscribe?streams=123&users={{senderPublicKey}}&all=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["events", "subscribe"],
+              "query": [
+                {
+                  "key": "streams",
+                  "value": "123",
+                  "description": "Stream ID to watch. Repeat the key for multiple IDs: streams=1&streams=2"
+                },
+                {
+                  "key": "users",
+                  "value": "{{senderPublicKey}}",
+                  "description": "Stellar public key to watch. Repeat the key for multiple keys."
+                },
+                {
+                  "key": "all",
+                  "value": "false",
+                  "description": "Set to true to receive every event regardless of stream or user filter."
+                }
+              ]
+            },
+            "description": "Establishes a persistent Server-Sent Events connection. The server pushes newline-delimited `text/event-stream` data for the following event types:\n\n| Event | Description |\n|---|---|\n| `stream.created` | New stream created |\n| `stream.topped_up` | Additional funds deposited |\n| `stream.withdrawn` | Funds withdrawn |\n| `stream.cancelled` | Stream cancelled |\n| `stream.completed` | Stream finished |\n\nUse **at least one** filter: `streams`, `users`, or `all=true`. The server immediately sends a `connected` event with a `clientId` on handshake.\n\n**Postman note:** Postman buffers SSE. Use *Send and Download* or watch the raw response body. For interactive testing, open `backend/test-sse-client.html` in a browser or run:\n```\ncurl -N --no-buffer 'http://localhost:3001/events/subscribe?all=true'\n```"
+          },
+          "response": [
+            {
+              "name": "200 SSE stream (handshake + event example)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  { "key": "Accept", "value": "text/event-stream" },
+                  { "key": "Cache-Control", "value": "no-cache" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/events/subscribe?all=true",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["events", "subscribe"],
+                  "query": [{ "key": "all", "value": "true" }]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                { "key": "Content-Type", "value": "text/event-stream" },
+                { "key": "Cache-Control", "value": "no-cache" },
+                { "key": "Connection", "value": "keep-alive" }
+              ],
+              "body": "data: {\"type\":\"connected\",\"clientId\":\"1708531200-abc123xyz\"}\n\nevent: stream.created\ndata: {\"id\":\"123\",\"status\":\"pending\",\"sender\":\"GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA\",\"recipient\":\"GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD\",\"amount\":10000,\"token\":\"CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE\"}\n\n"
+            },
+            {
+              "name": "400 Invalid subscription parameters",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  { "key": "Accept", "value": "text/event-stream" },
+                  { "key": "Cache-Control", "value": "no-cache" }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/events/subscribe",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["events", "subscribe"]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+              ],
+              "body": "{\n  \"message\": \"Invalid subscription parameters\",\n  \"errors\": [\n    {\n      \"code\": \"invalid_type\",\n      \"path\": [\"all\"],\n      \"message\": \"Expected boolean, received string\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get SSE connection stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["events", "stats"]
+            },
+            "description": "Returns the current count of active SSE connections and a server timestamp. Useful for connection health monitoring and load assessment."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/events/stats",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["events", "stats"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+              ],
+              "body": "{\n  \"activeConnections\": 3,\n  \"timestamp\": \"2024-02-21T14:30:00.000Z\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
