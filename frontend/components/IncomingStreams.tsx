@@ -33,28 +33,31 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({ streams }) => {
     };
 
     return (
-        <div className="p-8">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Incoming Streams</h1>
-                <div className="flex gap-4 items-center">
-                    <label htmlFor="statusFilter" className="text-sm font-medium text-gray-500 dark:text-gray-400">Filter Status:</label>
+        <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/20 dark:border-white/10 shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-white/20 dark:border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">Incoming Payment Streams</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage and withdraw from your active incoming streams</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <label htmlFor="filter" className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter:</label>
                     <select
-                        id="statusFilter"
+                        id="filter"
                         value={filter}
                         onChange={handleFilterChange}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1 text-sm focus:ring-2 focus:ring-accent outline-none"
                     >
-                        <option value="All">All Statuses</option>
+                        <option value="All">All Streams</option>
                         <option value="Active">Active</option>
-                        <option value="Completed">Completed</option>
                         <option value="Paused">Paused</option>
+                        <option value="Completed">Completed</option>
                     </select>
                 </div>
             </div>
 
-            <div className="overflow-x-auto bg-white dark:bg-gray-800 shadow rounded-lg">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-50 dark:bg-gray-900">
+            <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                    <thead className="bg-gray-50/50 dark:bg-gray-800/50">
                         <tr>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Sender</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Token</th>
@@ -81,8 +84,12 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({ streams }) => {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
+                                        disabled={stream.status !== 'Active'}
                                         onClick={handleWithdraw}
-                                        className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 rounded-md transition-colors"
+                                        className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
+                                                ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
+                                                : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                            }`}
                                     >
                                         Withdraw
                                     </button>
@@ -91,12 +98,13 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({ streams }) => {
                         ))}
                     </tbody>
                 </table>
-                {filteredStreams.length === 0 && (
-                    <div className="p-8 text-center text-gray-500 dark:text-gray-400">
-                        No {filter !== 'All' ? filter.toLowerCase() : ''} streams found.
-                    </div>
-                )}
             </div>
+
+            {filteredStreams.length === 0 && (
+                <div className="p-12 text-center">
+                    <p className="text-gray-500 dark:text-gray-400">No incoming streams found matching the filter.</p>
+                </div>
+            )}
         </div>
     );
 };

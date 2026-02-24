@@ -14,7 +14,7 @@ export interface Stream {
   recipient: string;
   amount: number;
   token: string;
-  status: "Active" | "Completed" | "Cancelled";
+  status: "Active" | "Completed" | "Paused";
   deposited: number;
   withdrawn: number;
   date: string;
@@ -146,34 +146,34 @@ export function getDashboardAnalytics(
       {
         id: "total-volume-30d",
         label: "Total Volume (30D)",
-        detail: "All incoming and outgoing activity in the last 30 days",
+        detail: "Total throughput in the last 30 days",
         format: "currency",
         value: null,
-        unavailableText: "No recent activity data",
+        unavailableText: "Insufficient historical data",
       },
       {
         id: "net-flow-30d",
         label: "Net Flow (30D)",
-        detail: "Incoming minus outgoing activity over the same period",
+        detail: "Net capital flow over the last 30 days",
         format: "currency",
         value: null,
-        unavailableText: "No recent activity data",
+        unavailableText: "Insufficient historical data",
       },
       {
         id: "avg-value-per-stream",
-        label: "Avg Locked Value / Active Stream",
-        detail: "Current TVL divided by active stream count",
+        label: "Avg Value / Stream",
+        detail: "Mean capital locked across active streams",
         format: "currency",
         value: null,
-        unavailableText: "No active stream data",
+        unavailableText: "No active streams",
       },
       {
         id: "stream-utilization",
         label: "Stream Utilization",
-        detail: "Total withdrawn as a share of total deposited funds",
+        detail: "Share of total capital already withdrawn",
         format: "percent",
         value: null,
-        unavailableText: "No stream funding data",
+        unavailableText: "No withdrawal data",
       },
     ];
   }
@@ -215,23 +215,23 @@ export function getDashboardAnalytics(
     {
       id: "total-volume-30d",
       label: "Total Volume (30D)",
-      detail: "All incoming and outgoing activity in the last 30 days",
+      detail: "Total throughput in the last 30 days",
       format: "currency",
-      value: recentActivity.length > 0 ? totalVolume30d : null,
-      unavailableText: "No activity in the last 30 days",
+      value: totalVolume30d,
+      unavailableText: "Insufficient historical data",
     },
     {
       id: "net-flow-30d",
       label: "Net Flow (30D)",
-      detail: "Incoming minus outgoing activity over the same period",
+      detail: "Net capital flow over the last 30 days",
       format: "currency",
-      value: recentActivity.length > 0 ? netFlow30d : null,
-      unavailableText: "No activity in the last 30 days",
+      value: netFlow30d,
+      unavailableText: "Insufficient historical data",
     },
     {
       id: "avg-value-per-stream",
-      label: "Avg Locked Value / Active Stream",
-      detail: "Current TVL divided by active stream count",
+      label: "Avg Value / Stream",
+      detail: "Mean capital locked across active streams",
       format: "currency",
       value: avgValuePerStream,
       unavailableText: "No active streams",
@@ -239,10 +239,10 @@ export function getDashboardAnalytics(
     {
       id: "stream-utilization",
       label: "Stream Utilization",
-      detail: "Total withdrawn as a share of total deposited funds",
+      detail: "Share of total capital already withdrawn",
       format: "percent",
       value: utilization,
-      unavailableText: "No deposited funds yet",
+      unavailableText: "No withdrawal data",
     },
   ];
 }
