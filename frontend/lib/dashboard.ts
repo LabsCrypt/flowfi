@@ -29,6 +29,15 @@ export interface DashboardSnapshot {
   streams: Stream[];
 }
 
+export interface DashboardAnalyticsMetric {
+  id: string;
+  label: string;
+  detail: string;
+  format: "currency" | "percent";
+  value: number | null;
+  unavailableText: string;
+}
+
 const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
   freighter: {
     totalSent: 12850,
@@ -129,4 +138,113 @@ export function getMockDashboardStats(
     recentActivity: source.recentActivity.map((activity) => ({ ...activity })),
     streams: source.streams.map((stream) => ({ ...stream })),
   };
+}
+
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function getDashboardAnalytics(
+  snapshot: DashboardSnapshot | null,
+): DashboardAnalyticsMetric[] {
+  if (!snapshot) {
+    return [
+      {
+        id: "total-volume-30d",
+        label: "Total Volume (30D)",
+        detail: "All incoming and outgoing activity in the last 30 days",
+        format: "currency",
+        value: null,
+        unavailableText: "No recent activity data",
+      },
+      {
+        id: "net-flow-30d",
+        label: "Net Flow (30D)",
+        detail: "Incoming minus outgoing activity over the same period",
+        format: "currency",
+        value: null,
+        unavailableText: "No recent activity data",
+      },
+      {
+        id: "avg-value-per-stream",
+        label: "Avg Locked Value / Active Stream",
+        detail: "Current TVL divided by active stream count",
+        format: "currency",
+        value: null,
+        unavailableText: "No active stream data",
+      },
+      {
+        id: "stream-utilization",
+        label: "Stream Utilization",
+        detail: "Total withdrawn as a share of total deposited funds",
+        format: "percent",
+        value: null,
+        unavailableText: "No stream funding data",
+      },
+    ];
+  }
+
+  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  const recentActivity = snapshot.recentActivity.filter((item) => {
+    const parsed = Date.parse(item.timestamp);
+    return Number.isFinite(parsed) && parsed >= cutoff;
+  });
+
+  const incoming30d = recentActivity
+    .filter((item) => item.direction === "received")
+    .reduce((sum, item) => sum + item.amount, 0);
+
+  const outgoing30d = recentActivity
+    .filter((item) => item.direction === "sent")
+    .reduce((sum, item) => sum + item.amount, 0);
+
+  const totalVolume30d = incoming30d + outgoing30d;
+  const netFlow30d = incoming30d - outgoing30d;
+  const avgValuePerStream =
+    snapshot.activeStreamsCount > 0
+      ? snapshot.totalValueLocked / snapshot.activeStreamsCount
+      : null;
+
+  const totalDeposited = snapshot.streams.reduce(
+    (sum, stream) => sum + stream.deposited,
+    0,
+  );
+  const totalWithdrawn = snapshot.streams.reduce(
+    (sum, stream) => sum + stream.withdrawn,
+    0,
+  );
+  const utilization = totalDeposited > 0 ? totalWithdrawn / totalDeposited : null;
+
+  return [
+    {
+      id: "total-volume-30d",
+      label: "Total Volume (30D)",
+      detail: "All incoming and outgoing activity in the last 30 days",
+      format: "currency",
+      value: recentActivity.length > 0 ? totalVolume30d : null,
+      unavailableText: "No activity in the last 30 days",
+    },
+    {
+      id: "net-flow-30d",
+      label: "Net Flow (30D)",
+      detail: "Incoming minus outgoing activity over the same period",
+      format: "currency",
+      value: recentActivity.length > 0 ? netFlow30d : null,
+      unavailableText: "No activity in the last 30 days",
+    },
+    {
+      id: "avg-value-per-stream",
+      label: "Avg Locked Value / Active Stream",
+      detail: "Current TVL divided by active stream count",
+      format: "currency",
+      value: avgValuePerStream,
+      unavailableText: "No active streams",
+    },
+    {
+      id: "stream-utilization",
+      label: "Stream Utilization",
+      detail: "Total withdrawn as a share of total deposited funds",
+      format: "percent",
+      value: utilization,
+      unavailableText: "No deposited funds yet",
+    },
+  ];
 }

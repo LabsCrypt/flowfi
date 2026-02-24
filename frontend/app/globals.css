@@ -49,6 +49,7 @@
 
   --animate-fade-in: fade-in 0.5s ease-out;
   --animate-slide-up: slide-up 0.6s ease-out;
+  --animate-slide-down: slide-down 0.3s ease-out;
   --animate-pulse-slow: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-float: float 6s ease-in-out infinite;
 
@@ -71,6 +72,17 @@
   from {
     opacity: 0;
     transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
   }
   to {
     opacity: 1;
@@ -507,6 +519,65 @@ body {
   line-height: 1.45;
 }
 
+.dashboard-analytics-section {
+  border: 1px solid rgba(19, 38, 61, 0.12);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.66);
+  padding: 0.94rem;
+}
+
+.dashboard-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+  gap: 0.8rem;
+}
+
+.dashboard-analytics-card {
+  border-radius: 0.9rem;
+  border: 1px solid rgba(19, 38, 61, 0.11);
+  background: linear-gradient(
+    165deg,
+    rgba(250, 255, 255, 0.92),
+    rgba(236, 247, 252, 0.74)
+  );
+  padding: 0.85rem;
+}
+
+.dashboard-analytics-card[data-unavailable="true"] {
+  background: linear-gradient(
+    165deg,
+    rgba(247, 250, 253, 0.88),
+    rgba(236, 242, 249, 0.75)
+  );
+}
+
+.dashboard-analytics-card p {
+  margin: 0;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4f6f8e;
+}
+
+.dashboard-analytics-card h2 {
+  margin: 0.55rem 0 0;
+  font-size: 1.34rem;
+  line-height: 1.15;
+}
+
+.dashboard-analytics-card span {
+  display: block;
+  margin-top: 0.46rem;
+  color: #4d6985;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.dashboard-analytics-card[data-unavailable="true"] h2,
+.dashboard-analytics-card[data-unavailable="true"] span {
+  color: #5a748f;
+}
+
 .dashboard-panel {
   border: 1px solid rgba(19, 38, 61, 0.12);
   border-radius: 1rem;
@@ -773,4 +844,128 @@ body {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+
+/* Stepper Component Styles */
+.stepper {
+  width: 100%;
+  margin-bottom: 2rem;
+}
+
+.stepper__container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  width: 100%;
+}
+
+.stepper__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  position: relative;
+  z-index: 1;
+}
+
+.stepper__circle {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.875rem;
+  transition: all 0.3s ease;
+  border: 2px solid var(--glass-border);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.stepper__circle--active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--background);
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+}
+
+.stepper__circle--completed {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--background);
+}
+
+.stepper__circle--upcoming {
+  border-color: var(--glass-border);
+  background: var(--background);
+  color: var(--foreground);
+  opacity: 0.5;
+}
+
+.stepper__number {
+  font-weight: 600;
+}
+
+.stepper__check {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.stepper__label {
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: center;
+  transition: color 0.3s ease;
+  color: var(--foreground);
+  opacity: 0.6;
+}
+
+.stepper__label--active {
+  color: var(--accent);
+  opacity: 1;
+  font-weight: 600;
+}
+
+.stepper__label--completed {
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+.stepper__label--upcoming {
+  color: var(--foreground);
+  opacity: 0.5;
+}
+
+.stepper__line {
+  position: absolute;
+  top: 1.25rem;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--glass-border);
+  z-index: 0;
+  margin: 0 1.25rem;
+}
+
+.stepper__line--completed {
+  background: var(--accent);
+}
+
+@media (max-width: 640px) {
+  .stepper__label {
+    font-size: 0.625rem;
+  }
+  
+  .stepper__circle {
+    width: 2rem;
+    height: 2rem;
+    font-size: 0.75rem;
+  }
+  
+  .stepper__line {
+    top: 1rem;
+  }
 }

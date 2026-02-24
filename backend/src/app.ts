@@ -1,10 +1,11 @@
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.js';
-import streamRoutes from './routes/stream.routes.js';
-import eventsRoutes from './routes/events.routes.js';
+import { apiVersionMiddleware, type VersionedRequest } from './middleware/api-version.middleware.js';
+import { sandboxMiddleware } from './middleware/sandbox.middleware.js';
 import { globalRateLimiter } from './middleware/rate-limiter.middleware.js';
+import v1Routes from './routes/v1/index.js';
 
 const app = express();
 
@@ -13,6 +14,9 @@ app.use(globalRateLimiter);
 
 app.use(cors());
 app.use(express.json());
+
+// Sandbox mode detection (before versioning)
+app.use(sandboxMiddleware);
 
 // Swagger UI setup
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
@@ -26,9 +30,50 @@ app.get('/api-docs.json', (req: Request, res: Response) => {
     res.send(swaggerSpec);
 });
 
-// Routes
-app.use('/streams', streamRoutes);
-app.use('/events', eventsRoutes);
+// API Versioning
+// All versioned routes must include version prefix (e.g., /v1/streams)
+app.use(apiVersionMiddleware);
+
+// Versioned API routes
+// After versioning middleware, /v1/streams becomes /streams, so we mount v1Routes at root
+// But only handle requests that had a version prefix (apiVersion is set)
+app.use((req: Request, res: Response, next: NextFunction) => {
+    const versionedReq = req as VersionedRequest;
+    if (versionedReq.apiVersion) {
+        // This was a versioned request, route to v1 handlers
+        return v1Routes(req, res, next);
+    }
+    next(); // Not versioned, continue to deprecated handlers
+});
+
+// Legacy routes (deprecated - redirect to v1)
+// These will be removed in a future version
+// Only match unversioned requests
+app.use('/streams', (req: Request, res: Response, next) => {
+    res.status(410).json({
+        error: 'Deprecated endpoint',
+        message: 'This endpoint has been deprecated. Please use /v1/streams instead.',
+        deprecated: true,
+        migration: {
+            old: '/streams',
+            new: '/v1/streams',
+        },
+        sunsetDate: '2024-12-31',
+    });
+});
+
+app.use('/events', (req: Request, res: Response, next) => {
+    res.status(410).json({
+        error: 'Deprecated endpoint',
+        message: 'This endpoint has been deprecated. Please use /v1/events instead.',
+        deprecated: true,
+        migration: {
+            old: '/events',
+            new: '/v1/events',
+        },
+        sunsetDate: '2024-12-31',
+    });
+});
 
 /**
  * @openapi
@@ -81,13 +126,35 @@ app.get('/', (req: Request, res: Response) => {
  *                 version:
  *                   type: string
  *                   example: 1.0.0
+ *                 apiVersions:
+ *                   type: object
+ *                   properties:
+ *                     supported:
+ *                       type: array
+ *                       items:
+ *                         type: string
+ *                       example: ["v1"]
+ *                     default:
+ *                       type: string
+ *                       example: "v1"
  */
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', async (req: Request, res: Response) => {
+    const { getSandboxConfig } = await import('./config/sandbox.js');
+    const sandboxConfig = getSandboxConfig();
+    
     res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         version: '1.0.0',
+        apiVersions: {
+            supported: ['v1'],
+            default: 'v1',
+        },
+        sandbox: {
+            enabled: sandboxConfig.enabled,
+            available: sandboxConfig.enabled,
+        },
     });
 });
 

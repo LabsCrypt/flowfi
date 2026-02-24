@@ -22,7 +22,19 @@ flowfi/
 ├── contracts/            # Soroban smart contracts
 │   ├── stream_contract/  # Core streaming logic
 ├── frontend/             # Next.js + Tailwind CSS frontend
+├── docs/                 # Documentation
+│   └── ARCHITECTURE.md   # Architecture overview
 ```
+
+## Architecture
+
+FlowFi consists of three main components that work together:
+
+- **Soroban Smart Contracts**: Handle on-chain payment stream logic
+- **Backend API**: Indexes on-chain events, provides REST API, and streams real-time updates via SSE
+- **Frontend**: User interface for creating and managing payment streams
+
+For a detailed explanation of how these components interact, where event indexing happens, and the overall system architecture, see the [Architecture Documentation](docs/ARCHITECTURE.md).
 
 ## Getting Started
 
@@ -83,9 +95,33 @@ cd contracts
 cargo build --target wasm32-unknown-unknown --release
 ```
 
+## API Documentation
+
+The FlowFi backend API uses URL-based versioning. All endpoints are prefixed with a version (e.g., `/v1/streams`).
+
+- **API Versioning Guide**: [backend/docs/API_VERSIONING.md](backend/docs/API_VERSIONING.md)
+- **Deprecation Policy**: [backend/docs/DEPRECATION_POLICY.md](backend/docs/DEPRECATION_POLICY.md)
+- **Sandbox Mode**: [backend/docs/SANDBOX_MODE.md](backend/docs/SANDBOX_MODE.md) - Test without affecting production data
+- **API Docs**: Available at `http://localhost:3001/api-docs` when backend is running
+
+### Sandbox Mode
+
+FlowFi supports sandbox mode for safe testing. Enable it by:
+
+1. Setting `SANDBOX_MODE_ENABLED=true` in your `.env` file
+2. Adding `X-Sandbox-Mode: true` header or `?sandbox=true` query parameter to requests
+
+Sandbox mode uses a separate database and clearly labels all responses. See [Sandbox Mode Documentation](backend/docs/SANDBOX_MODE.md) for details.
+
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request.
+Contributions are welcome! Please see our [Contributing Guide](CONTRIBUTING.md) for:
+- Local development setup instructions
+- Code style and commit guidelines
+- Pull request process
+- Development scripts and CI workflows
+
+For architecture details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Security
 

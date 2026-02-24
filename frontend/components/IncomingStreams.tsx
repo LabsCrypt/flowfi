@@ -27,7 +27,7 @@ const IncomingStreams: React.FC = () => {
         ? mockIncomingStreams
         : mockIncomingStreams.filter(s => s.status === filter);
 
-    const handleWithdraw = async (id: string) => {
+    const handleWithdraw = async () => {
     const toastId = toast.loading("Transaction pending...");
 
     try {
@@ -35,7 +35,7 @@ const IncomingStreams: React.FC = () => {
         await new Promise((resolve) => setTimeout(resolve, 2000));
 
         toast.success("Withdrawal successful!", { id: toastId });
-    } catch (error) {
+    } catch {
         toast.error("Transaction failed.", { id: toastId });
     }
 };
@@ -93,7 +93,7 @@ const IncomingStreams: React.FC = () => {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
-                                        onClick={() => handleWithdraw(stream.id)}
+                                        onClick={handleWithdraw}
                                         className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 rounded-md transition-colors"
                                     >
                                         Withdraw
