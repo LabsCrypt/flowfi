@@ -364,7 +364,34 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   >(null);
   const [streamFormMessage, setStreamFormMessage] =
     React.useState<StreamFormMessageState | null>(null);
-  const stats = getMockDashboardStats(session.walletId);
+  const [stats, setStats] = React.useState<DashboardSnapshot | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [showWizard, setShowWizard] = React.useState(false);
+
+  React.useEffect(() => {
+    setLoading(true);
+    setError(null);
+    fetchDashboardData(session.publicKey)
+      .then((data) => {
+        setStats(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+        // Fallback to empty stats on error
+        setStats({
+          totalSent: 0,
+          totalReceived: 0,
+          totalValueLocked: 0,
+          activeStreamsCount: 0,
+          recentActivity: [],
+          outgoingStreams: [],
+          incomingStreams: [],
+        });
+        setLoading(false);
+      });
+  }, [session.publicKey]);
 
   React.useEffect(() => {
     const loadedTemplates = safeLoadTemplates();
@@ -526,7 +553,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setStreamFormMessage(null);
   };
 
-  const handleCreateStream = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleCreateStream = async (data: StreamFormData) => {
+    alert(
+      `Stream prepared for ${data.recipient} with ${data.amount} ${data.token}. You can still edit any field before final submission integration.`,
+    );
+    setShowWizard(false);
+  };
+
+  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const hasRequiredFields =
@@ -673,7 +707,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                 )}
               </div>
 
-              <form className="stream-form" onSubmit={handleCreateStream}>
+              <form className="stream-form" onSubmit={handleFormSubmit}>
                 <div className="stream-form__meta">
                   <div>
                     <h4>Stream Configuration</h4>

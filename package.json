@@ -9,7 +9,7 @@
     "backend"
   ],
   "scripts": {
-    "prepare": "husky",
+    "prepare": "node -e \"try { require.resolve('husky'); require('child_process').execSync('npx husky', {stdio: 'inherit'}); } catch(e) {}\"",
     "verify-security": "node scripts/verify-security-setup.js"
   },
   "devDependencies": {
