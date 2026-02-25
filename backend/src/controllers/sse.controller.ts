@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { sseService } from '../services/sse.service.js';
 import { z } from 'zod';
 

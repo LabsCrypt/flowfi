@@ -1,6 +1,4 @@
-
 ---
-
 # Contributing to FlowFi
 
 Thank you for your interest in contributing to **FlowFi**
@@ -8,22 +6,49 @@ Thank you for your interest in contributing to **FlowFi**
 FlowFi is a DeFi payment streaming protocol built on Stellar using Soroban smart contracts. This guide explains how to set up your local development environment and contribute effectively.
 
 Please read this document carefully before opening a Pull Request.
+---
+
+## Getting Help & Asking Questions
+
+Have questions before contributing? We've got you covered!
+
+- **Questions about using FlowFi?** → Start a discussion in [GitHub Discussions - Q&A](https://github.com/flowfi/flowfi/discussions/categories/q-a)
+- **Found a bug?** → [Open an Issue](https://github.com/flowfi/flowfi/issues)
+- **Want to suggest a feature?** → [Start a Discussion - Ideas](https://github.com/flowfi/flowfi/discussions/categories/ideas)
+- **Need help setting up?** → Check [Local Development Setup](#local-development-setup) or ask in Discussions
+
+### Issues vs Discussions
+
+**Open an Issue if:**
+
+- You found a bug 🐛
+- You want to work on a concrete feature or task ✨
+- There's a documentation problem 📝
+
+**Start a Discussion if:**
+
+- You have a question ❓
+- You want to propose and discuss a feature 💡
+- You're sharing a project or use case 🎪
+
+See our [Discussions Guide](DISCUSSIONS.md) for more details.
 
 ---
 
-##  Table of Contents
+## Table of Contents
 
-* [Project Overview](#project-overview)
-* [Local Development Setup](#local-development-setup)
-* [Branching Strategy](#branching-strategy)
-* [Commit Guidelines & Hooks](#commit-guidelines--hooks)
-* [Pull Request Process](#pull-request-process)
-* [Security](#security)
-* [Code of Conduct](#code-of-conduct)
+- [Getting Help & Asking Questions](#getting-help--asking-questions)
+- [Project Overview](#project-overview)
+- [Local Development Setup](#local-development-setup)
+- [Branching Strategy](#branching-strategy)
+- [Commit Guidelines & Hooks](#commit-guidelines--hooks)
+- [Pull Request Process](#pull-request-process)
+- [Security](#security)
+- [Code of Conduct](#code-of-conduct)
 
 ---
 
-##  Project Overview
+## Project Overview
 
 FlowFi is structured as a monorepo:
 
@@ -36,18 +61,17 @@ flowfi/
 
 Technologies used:
 
-* **Frontend**: Next.js + TypeScript + Tailwind CSS
-* **Backend**: Express.js + TypeScript
-* **Smart Contracts**: Rust + Soroban
-* **Database**: PostgreSQL
-* **Containerization**: Docker & Docker Compose
+- **Frontend**: Next.js + TypeScript + Tailwind CSS
+- **Backend**: Express.js + TypeScript
+- **Smart Contracts**: Rust + Soroban
+- **Database**: PostgreSQL
+- **Containerization**: Docker & Docker Compose
 
 ---
 
-#  Local Development Setup
+# Local Development Setup
 
-
-##  Fork & Clone the Repository
+## Fork & Clone the Repository
 
 Fork & Clone the Repository
 
@@ -60,19 +84,19 @@ git clone https://github.com/YOUR-USERNAME/flowfi.git
 cd flowfi
 ```
 
-##  Prerequisites
+## Prerequisites
 
 Make sure you have the following installed:
 
-* Node.js (LTS recommended)
-* npm
-* Rust & Cargo
-* Docker & Docker Compose
-* (Optional) Stellar CLI
+- Node.js (LTS recommended)
+- npm
+- Rust & Cargo
+- Docker & Docker Compose
+- (Optional) Stellar CLI
 
 ---
 
-##  Option 1: Docker (Recommended)
+## Option 1: Docker (Recommended)
 
 The fastest way to run the full stack locally:
 
@@ -82,8 +106,8 @@ docker compose up --build
 
 This starts:
 
-* PostgreSQL (port 5432)
-* Backend API (port 3001)
+- PostgreSQL (port 5432)
+- Backend API (port 3001)
 
 To run in detached mode:
 
@@ -105,50 +129,208 @@ docker compose down -v
 
 ---
 
-##  Option 2: Manual Setup
+## Option 2: Manual Setup
 
-###  Backend
+### Backend Setup
+
+1. **Install Dependencies**
 
 ```bash
 cd backend
 npm install
+```
+
+2. **Set Up Database**
+
+The backend uses PostgreSQL. You can either:
+
+- Use Docker Compose (recommended): `docker compose up postgres -d`
+- Or set up PostgreSQL locally and configure `DATABASE_URL` in your `.env` file
+
+3. **Run Database Migrations**
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate
+```
+
+4. **Start Development Server**
+
+```bash
 npm run dev
 ```
 
-Backend runs on:
+Backend runs on: `http://localhost:3001`
 
-```
-http://localhost:3001
-```
+**Available Backend Scripts:**
+
+- `npm run dev` - Start development server with hot reload
+- `npm run build` - Build TypeScript to JavaScript
+- `npm run start` - Start production server
+- `npm run test` - Run test suite
+- `npm run prisma:generate` - Generate Prisma client
+- `npm run prisma:migrate` - Run database migrations
+- `npm run prisma:studio` - Open Prisma Studio (database GUI)
+
+**Backend API Documentation:**
+
+- Swagger UI: `http://localhost:3001/api-docs`
+- OpenAPI Spec: `http://localhost:3001/api-docs.json`
 
 ---
 
-### 2️ Frontend
+### Frontend Setup
+
+1. **Install Dependencies**
 
 ```bash
 cd frontend
 npm install
+```
+
+2. **Start Development Server**
+
+```bash
 npm run dev
 ```
 
-Frontend runs on:
+Frontend runs on: `http://localhost:3000`
 
-```
-http://localhost:3000
-```
+**Available Frontend Scripts:**
+
+- `npm run dev` - Start Next.js development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
+
+**Environment Variables:**
+Create a `.env.local` file in the `frontend` directory if needed for API endpoints or other configuration.
 
 ---
 
-### 3️ Smart Contracts
+### Smart Contracts Setup
+
+1. **Install Rust Toolchain**
+
+Make sure you have Rust and Cargo installed. If not:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+2. **Install Soroban CLI** (if not already installed)
+
+```bash
+cargo install --locked soroban-cli
+```
+
+3. **Build Contracts**
 
 ```bash
 cd contracts
 cargo build --target wasm32-unknown-unknown --release
 ```
 
+The compiled WASM files will be in `target/wasm32-unknown-unknown/release/`.
+
+**Contract Development:**
+
+- Contract source: `contracts/stream_contract/src/lib.rs`
+- Tests: `contracts/stream_contract/src/test.rs`
+- Build target: `wasm32-unknown-unknown`
+
 ---
 
-#  Branching Strategy
+## Development Scripts & Tools
+
+### Root-Level Scripts
+
+From the repository root:
+
+```bash
+# Verify security setup
+npm run verify-security
+```
+
+### Docker Compose Commands
+
+```bash
+# Start all services
+docker compose up --build
+
+# Start in detached mode
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+
+# Reset database (removes volumes)
+docker compose down -v
+```
+
+---
+
+## CI/CD Workflows
+
+This repository uses GitHub Actions for continuous integration. Workflows are located in `.github/workflows/`.
+
+### Available Workflows
+
+- **Security Checks** (`.github/workflows/security.yml`)
+  - Runs on: push to `main`/`develop`, pull requests, and weekly schedule
+  - Performs:
+    - Dependency vulnerability scanning (`npm audit`)
+    - CodeQL analysis for JavaScript/TypeScript
+  - View workflow: [Security Checks](.github/workflows/security.yml)
+
+- **CI** (`.github/workflows/ci.yml`)
+  - Runs on: push to `main`/`develop` and pull requests
+  - Performs:
+    - Frontend: lint and build
+    - Backend: prisma generation, build, and tests
+    - Soroban Contracts: build (wasm) and tests
+  - View workflow: [CI](.github/workflows/ci.yml)
+
+### Running CI Checks Locally
+
+Before pushing, ensure your changes pass all the same checks that run in GitHub Actions.
+
+#### 1. Frontend Checks
+```bash
+cd frontend
+npm run lint    # Runs ESLint
+npm run build   # Verifies the build
+```
+
+#### 2. Backend Checks
+```bash
+cd backend
+npm run prisma:generate  # Ensure Prisma client is up to date
+npm run build           # Verifies TypeScript compilation
+npm run test            # Runs backend vitest suite
+```
+*Note: Backend tests require a running PostgreSQL instance and `DATABASE_URL` environment variable.*
+
+#### 3. Smart Contract Checks
+```bash
+cd contracts
+cargo build --target wasm32-unknown-unknown --release  # Verifies contract build
+cargo test                                            # Runs contract tests
+```
+
+#### 4. Security Verification
+```bash
+# From the repository root
+npm run verify-security
+```
+
+
+---
+
+# Branching Strategy
 
 ❌ Do NOT commit directly to `main`
 ✅ Always create a feature branch
@@ -173,15 +355,15 @@ Keep branch names short and descriptive.
 
 ---
 
-#  Commit Guidelines & Hooks
+# Commit Guidelines & Hooks
 
 This repository uses **Husky** for commit hooks.
 
 Before committing, ensure:
 
-* Code compiles
-* Lint passes
-* No broken builds
+- Code compiles
+- Lint passes
+- No broken builds
 
 ## Commit Message Format
 
@@ -202,16 +384,16 @@ docs: update setup instructions
 
 ## Commit Rules
 
-* Use present tense ("add", not "added")
-* Keep subject under ~72 characters
-* Make atomic commits (one logical change per commit)
-* Avoid vague messages like "update stuff"
+- Use present tense ("add", not "added")
+- Keep subject under ~72 characters
+- Make atomic commits (one logical change per commit)
+- Avoid vague messages like "update stuff"
 
 ---
 
-#  Pull Request Process
+# Pull Request Process
 
-##  Sync with Main
+## Sync with Main
 
 Before opening a PR:
 
@@ -226,7 +408,7 @@ Resolve conflicts locally if any.
 
 ---
 
-##  Push Your Branch
+## Push Your Branch
 
 ```bash
 git push origin your-branch-name
@@ -238,33 +420,33 @@ git push origin your-branch-name
 
 When opening your PR:
 
-* Provide a clear title
-* Add a detailed description
-* Link related issues (e.g., `Closes #45`)
-* Add screenshots for UI changes
-* Explain why the change is needed
+- Provide a clear title
+- Add a detailed description
+- Link related issues (e.g., `Closes #45`)
+- Add screenshots for UI changes
+- Explain why the change is needed
 
 ---
 
-##  PR Requirements
+## PR Requirements
 
 Your PR must:
 
-* Build successfully
-* Pass lint checks
-* Follow commit conventions
-* Be properly described
-* Stay focused (avoid large unrelated changes)
+- Build successfully
+- Pass lint checks
+- Follow commit conventions
+- Be properly described
+- Stay focused (avoid large unrelated changes)
 
 ---
 
-##  Code Review
+## Code Review
 
 Maintainers may:
 
-* Request changes
-* Ask clarifying questions
-* Suggest improvements
+- Request changes
+- Ask clarifying questions
+- Suggest improvements
 
 Please respond respectfully and update your branch as requested.
 
@@ -284,7 +466,7 @@ This project follows a Code of Conduct to ensure a welcoming and inclusive commu
 
 Please read and follow our Code of Conduct before contributing:
 
- **[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**
+**[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)**
 
 Be respectful.
 Be collaborative.
@@ -292,11 +474,11 @@ Be constructive.
 
 ---
 
-#  Final Notes
+# Final Notes
 
-* Contributions of all sizes are welcome
-* Documentation improvements are valuable
-* Ask questions in Issues if unsure
-* Keep PRs small and manageable
+- Contributions of all sizes are welcome
+- Documentation improvements are valuable
+- Ask questions in Issues if unsure
+- Keep PRs small and manageable
 
 Thank you for helping improve FlowFi 💙

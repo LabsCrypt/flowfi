@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "f2a3b4c5-d6e7-8901-fabc-901234567891",
+  "name": "FlowFi — Local",
+  "variables": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "secret": false
+    },
+    {
+      "key": "senderPublicKey",
+      "value": "GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA",
+      "secret": false
+    },
+    {
+      "key": "recipientPublicKey",
+      "value": "GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD",
+      "secret": false
+    },
+    {
+      "key": "tokenAddress",
+      "value": "CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE",
+      "secret": false
+    }
+  ]
+}

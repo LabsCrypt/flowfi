@@ -6,7 +6,23 @@ const options: swaggerJsdoc.Options = {
     info: {
       title: 'FlowFi API',
       version: '1.0.0',
-      description: 'API documentation for FlowFi - Real-time payment streaming on Stellar',
+      description: `API documentation for FlowFi - Real-time payment streaming on Stellar
+
+## Sandbox Mode
+
+FlowFi API supports sandbox mode for testing without affecting production data.
+
+**Enable Sandbox Mode:**
+- Header: \`X-Sandbox-Mode: true\`
+- Query Parameter: \`?sandbox=true\`
+
+**Sandbox Features:**
+- Isolated database (separate from production)
+- All responses include \`_sandbox\` metadata
+- Response headers include \`X-Sandbox-Mode: true\`
+- Safe for testing and development
+
+See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       contact: {
         name: 'FlowFi Team',
         url: 'https://github.com/LabsCrypt/flowfi',
@@ -18,12 +34,12 @@ const options: swaggerJsdoc.Options = {
     },
     servers: [
       {
-        url: 'http://localhost:3001',
-        description: 'Development server',
+        url: 'http://localhost:3001/v1',
+        description: 'Development server (v1)',
       },
       {
-        url: 'https://api.flowfi.io',
-        description: 'Production server',
+        url: 'https://api.flowfi.io/v1',
+        description: 'Production server (v1)',
       },
     ],
     tags: [

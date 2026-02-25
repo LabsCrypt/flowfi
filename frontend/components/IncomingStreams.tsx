@@ -2,76 +2,67 @@
 
 import React, { useState } from 'react';
 import toast from "react-hot-toast";
+import type { Stream } from '@/lib/dashboard';
 
-interface IncomingStreamData {
-    id: string;
-    sender: string;
-    token: string;
-    rate: string;
-    accrued: number;
-    status: 'Active' | 'Completed' | 'Paused';
+interface IncomingStreamsProps {
+    streams: Stream[];
 }
 
-const mockIncomingStreams: IncomingStreamData[] = [
-    { id: '101', sender: 'G...56yA', token: 'USDC', rate: '500/mo', accrued: 125.50, status: 'Active' },
-    { id: '102', sender: 'G...Klm9', token: 'XLM', rate: '1000/mo', accrued: 450.00, status: 'Active' },
-    { id: '103', sender: 'G...22Pq', token: 'EURC', rate: '200/mo', accrued: 200.00, status: 'Completed' },
-    { id: '104', sender: 'G...99Zx', token: 'USDC', rate: '1200/mo', accrued: 0.00, status: 'Paused' },
-    { id: '105', sender: 'G...44Tb', token: 'XLM', rate: '300/mo', accrued: 300.00, status: 'Completed' },
-];
-
-const IncomingStreams: React.FC = () => {
+const IncomingStreams: React.FC<IncomingStreamsProps> = ({ streams }) => {
     const [filter, setFilter] = useState<'All' | 'Active' | 'Completed' | 'Paused'>('All');
 
     const filteredStreams = filter === 'All'
-        ? mockIncomingStreams
-        : mockIncomingStreams.filter(s => s.status === filter);
+        ? streams
+        : streams.filter(s => s.status === filter);
 
-    const handleWithdraw = async (id: string) => {
-    const toastId = toast.loading("Transaction pending...");
+    const handleWithdraw = async () => {
+        const toastId = toast.loading("Transaction pending...");
 
-    try {
-        // Simulate async transaction (replace with real blockchain call later)
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+            // Simulate async transaction (replace with real blockchain call later)
+            await new Promise((resolve) => setTimeout(resolve, 2000));
 
-        toast.success("Withdrawal successful!", { id: toastId });
-    } catch (error) {
-        toast.error("Transaction failed.", { id: toastId });
-    }
-};
+            toast.success("Withdrawal successful!", { id: toastId });
+        } catch {
+            toast.error("Transaction failed.", { id: toastId });
+        }
+    };
 
     const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setFilter(e.target.value as 'All' | 'Active' | 'Completed' | 'Paused');
     };
 
     return (
-        <div className="p-8">
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-white">Incoming Streams</h1>
-                <div className="flex gap-4 items-center">
-                    <label htmlFor="statusFilter" className="text-sm font-medium text-gray-500 dark:text-gray-400">Filter Status:</label>
+        <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-md rounded-2xl border border-white/20 dark:border-white/10 shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-white/20 dark:border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">Incoming Payment Streams</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Manage and withdraw from your active incoming streams</p>
+                </div>
+                <div className="flex items-center gap-2">
+                    <label htmlFor="filter" className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter:</label>
                     <select
-                        id="statusFilter"
+                        id="filter"
                         value={filter}
                         onChange={handleFilterChange}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md shadow-sm py-1.5 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-1 text-sm focus:ring-2 focus:ring-accent outline-none"
                     >
-                        <option value="All">All Statuses</option>
+                        <option value="All">All Streams</option>
                         <option value="Active">Active</option>
-                        <option value="Completed">Completed</option>
                         <option value="Paused">Paused</option>
+                        <option value="Completed">Completed</option>
                     </select>
                 </div>
             </div>
 
-            <div className="overflow-x-auto bg-white dark:bg-gray-800 shadow rounded-lg">
-                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-50 dark:bg-gray-900">
+            <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                    <thead className="bg-gray-50/50 dark:bg-gray-800/50">
                         <tr>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Sender</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Token</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Rate</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Accrued Amount</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Deposited</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Withdrawn</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
                             <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
                         </tr>
@@ -79,10 +70,10 @@ const IncomingStreams: React.FC = () => {
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                         {filteredStreams.map((stream) => (
                             <tr key={stream.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 font-mono">{stream.sender}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 font-mono">{stream.id}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.token}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.rate}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-bold">{stream.accrued.toFixed(2)}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.deposited} {stream.token}</td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-bold">{stream.withdrawn} {stream.token}</td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                                     <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
                                         ${stream.status === 'Active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
@@ -93,8 +84,12 @@ const IncomingStreams: React.FC = () => {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
-                                        onClick={() => handleWithdraw(stream.id)}
-                                        className="text-blue-600 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-3 py-1 rounded-md transition-colors"
+                                        disabled={stream.status !== 'Active'}
+                                        onClick={handleWithdraw}
+                                        className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
+                                                ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
+                                                : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                            }`}
                                     >
                                         Withdraw
                                     </button>
@@ -103,12 +98,13 @@ const IncomingStreams: React.FC = () => {
                         ))}
                     </tbody>
                 </table>
-                {filteredStreams.length === 0 && (
-                    <div className="p-8 text-center text-gray-500 dark:text-gray-400">
-                        No {filter !== 'All' ? filter.toLowerCase() : ''} streams found.
-                    </div>
-                )}
             </div>
+
+            {filteredStreams.length === 0 && (
+                <div className="p-12 text-center">
+                    <p className="text-gray-500 dark:text-gray-400">No incoming streams found matching the filter.</p>
+                </div>
+            )}
         </div>
     );
 };

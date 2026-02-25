@@ -1,0 +1,116 @@
+{
+  "v": 6,
+  "id": "c3d4e5f6-a7b8-9012-cdef-012345678902",
+  "name": "FlowFi API",
+  "folders": [
+    {
+      "v": 1,
+      "id": "d4e5f6a7-b8c9-0123-defa-123456789013",
+      "name": "Health",
+      "folders": [],
+      "requests": [
+        {
+          "v": "1",
+          "id": "e5f6a7b8-c9d0-1234-efab-234567890124",
+          "name": "Root ping",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "f6a7b8c9-d0e1-2345-fabc-345678901235",
+          "name": "Detailed health check",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/health",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        }
+      ]
+    },
+    {
+      "v": 1,
+      "id": "a7b8c9d0-e1f2-3456-abcd-456789012346",
+      "name": "Streams",
+      "folders": [],
+      "requests": [
+        {
+          "v": "1",
+          "id": "b8c9d0e1-f2a3-4567-bcde-567890123457",
+          "name": "Create stream",
+          "method": "POST",
+          "endpoint": "<<baseUrl>>/streams",
+          "params": [],
+          "headers": [
+            { "key": "Content-Type", "value": "application/json", "active": true }
+          ],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": {
+            "contentType": "application/json",
+            "body": "{\n  \"sender\": \"<<senderPublicKey>>\",\n  \"recipient\": \"<<recipientPublicKey>>\",\n  \"amount\": 10000,\n  \"token\": \"<<tokenAddress>>\",\n  \"startTime\": 1708531200,\n  \"endTime\": 1711209600\n}"
+          },
+          "requestVariables": []
+        }
+      ]
+    },
+    {
+      "v": 1,
+      "id": "c9d0e1f2-a3b4-5678-cdef-678901234568",
+      "name": "Events",
+      "folders": [],
+      "requests": [
+        {
+          "v": "1",
+          "id": "d0e1f2a3-b4c5-6789-defa-789012345679",
+          "name": "Subscribe to stream events (SSE)",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/events/subscribe",
+          "params": [
+            { "key": "streams", "value": "123", "active": true },
+            { "key": "users", "value": "<<senderPublicKey>>", "active": true },
+            { "key": "all", "value": "false", "active": true }
+          ],
+          "headers": [
+            { "key": "Accept", "value": "text/event-stream", "active": true },
+            { "key": "Cache-Control", "value": "no-cache", "active": true }
+          ],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "e1f2a3b4-c5d6-7890-efab-890123456780",
+          "name": "Get SSE connection stats",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/events/stats",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        }
+      ]
+    }
+  ],
+  "requests": [],
+  "auth": { "authType": "none", "authActive": false },
+  "headers": []
+}

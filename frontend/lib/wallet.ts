@@ -1,4 +1,34 @@
-export type WalletId = "freighter" | "albedo" | "xbull";
+/**
+ * lib/wallet.ts
+ *
+ * Production wallet adapter for FlowFi.
+ * Supports Freighter (browser extension), Albedo (web auth popup),
+ * and xBull (extension / mobile handoff) via @creit.tech/stellar-wallets-kit.
+ *
+ * No mock sessions are created in production paths.
+ * Set NEXT_PUBLIC_STELLAR_NETWORK=TESTNET|MAINNET in .env to control network.
+ */
+
+// ── Network configuration ─────────────────────────────────────────────────────
+
+export const STELLAR_NETWORK =
+  (process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET") as
+  | "TESTNET"
+  | "MAINNET";
+
+export const STELLAR_NETWORK_ID =
+  STELLAR_NETWORK === "MAINNET"
+    ? "Public Global Stellar Network ; September 2015"
+    : "Test SDF Network ; September 2015";
+
+import {
+  isConnected,
+  setAllowed,
+  getAddress,
+  getNetworkDetails,
+} from "@stellar/freighter-api";
+
+export type WalletId = "freighter";
 
 export interface WalletDescriptor {
   id: WalletId;
@@ -16,26 +46,23 @@ export interface WalletSession {
   mocked: boolean;
 }
 
-interface FreighterApi {
-  getPublicKey: () => Promise<string>;
-  setAllowed?: () => Promise<void>;
-  getNetwork?: () => Promise<string | { network: string }>;
-}
+// ── Error types ───────────────────────────────────────────────────────────────
 
-declare global {
-  interface Window {
-    freighterApi?: FreighterApi;
+/**
+ * Thrown when the user tries to connect Freighter but the extension is not
+ * installed. The UI checks for this to show an install prompt instead of a
+ * generic error message.
+ */
+export class FreighterNotInstalledError extends Error {
+  constructor() {
+    super(
+      "Freighter extension is not installed. Please install it from freighter.app.",
+    );
+    this.name = "FreighterNotInstalledError";
   }
 }
 
-const DEFAULT_NETWORK = "Stellar Testnet";
-const CONNECT_DELAY_MS = 1050;
-
-const MOCK_PUBLIC_KEYS: Record<WalletId, string> = {
-  freighter: "GCFLOWFIFREIGHTERMOCKPUBKEY9Q6YB6PW46O67Q3N",
-  albedo: "GCFLOWFIALBEDOMOCKPUBKEYYPP7RBJ5QCY5NG4DNCDG",
-  xbull: "GCFLOWFIXBULLMOCKPUBKEY2QXH4N4R6NDT2Z3QF6W7",
-};
+// ── Wallet metadata ───────────────────────────────────────────────────────────
 
 export const SUPPORTED_WALLETS: readonly WalletDescriptor[] = [
   {
@@ -44,33 +71,16 @@ export const SUPPORTED_WALLETS: readonly WalletDescriptor[] = [
     badge: "Extension",
     description: "Direct browser wallet for Stellar accounts and Soroban apps.",
   },
-  {
-    id: "albedo",
-    name: "Albedo",
-    badge: "Web Auth",
-    description: "Signing flow through Albedo web authentication.",
-  },
-  {
-    id: "xbull",
-    name: "xBull",
-    badge: "Mobile",
-    description: "Mobile-first Stellar wallet compatible with dApp handoffs.",
-  },
 ];
 
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
+// ── Internal helpers ──────────────────────────────────────────────────────────
 
 function buildSession(
   walletId: WalletId,
   publicKey: string,
-  mocked: boolean,
-  network = DEFAULT_NETWORK,
+  network: string,
 ): WalletSession {
-  const descriptor = SUPPORTED_WALLETS.find((wallet) => wallet.id === walletId);
+  const descriptor = SUPPORTED_WALLETS.find((w) => w.id === walletId);
 
   if (!descriptor) {
     throw new Error("Unsupported wallet selected.");
@@ -82,71 +92,61 @@ function buildSession(
     publicKey,
     connectedAt: new Date().toISOString(),
     network,
-    mocked,
+    mocked: false,
   };
 }
 
-async function connectMock(walletId: WalletId): Promise<WalletSession> {
-  await wait(CONNECT_DELAY_MS);
-  return buildSession(walletId, MOCK_PUBLIC_KEYS[walletId], true);
-}
-
-function pickFreighterNetwork(networkResult: string | { network: string }): string {
-  if (typeof networkResult === "string" && networkResult.length > 0) {
-    return networkResult;
-  }
-
-  if (
-    typeof networkResult === "object" &&
-    networkResult !== null &&
-    typeof networkResult.network === "string" &&
-    networkResult.network.length > 0
-  ) {
-    return networkResult.network;
-  }
-
-  return DEFAULT_NETWORK;
-}
+// ── Freighter ─────────────────────────────────────────────────────────────────
 
 async function connectFreighter(): Promise<WalletSession> {
-  const api = window.freighterApi;
-
-  if (!api?.getPublicKey) {
-    return connectMock("freighter");
+  const connObj = await isConnected();
+  if (!connObj.isConnected) {
+    throw new FreighterNotInstalledError();
   }
 
-  if (typeof api.setAllowed === "function") {
-    await api.setAllowed();
+  await setAllowed();
+
+  const { address, error: addressError } = await getAddress();
+
+  if (!address || addressError) {
+    throw new Error(addressError || "Freighter did not return a valid public key.");
   }
 
-  const publicKey = await api.getPublicKey();
+  let networkId =STELLAR_NETWORK_ID.toLowerCase().includes("public") ? "Mainnet" : "Testnet";
 
-  if (!publicKey) {
-    throw new Error("Freighter did not return a valid public key.");
+  try {
+    const details = await getNetworkDetails();
+    if (details.networkPassphrase && !details.error) {
+      const raw = String(details.networkPassphrase).toLowerCase();
+      if (raw.includes("public") || raw === "mainnet") {
+        networkId = "Mainnet";
+      } else if (raw.includes("test") || raw.includes("sdf")) {
+        networkId = "Testnet";
+      } else {
+        networkId = "Other";
+      }
+    }
+  } catch {
+    // ignore
   }
 
-  let network = DEFAULT_NETWORK;
-
-  if (typeof api.getNetwork === "function") {
-    const result = await api.getNetwork();
-    network = pickFreighterNetwork(result);
-  }
-
-  return buildSession("freighter", publicKey, false, network);
+  return buildSession("freighter", address, networkId);
 }
 
-export async function connectWallet(walletId: WalletId): Promise<WalletSession> {
+// ── Public connect dispatch ───────────────────────────────────────────────────
+
+export async function connectWallet(
+  walletId: WalletId,
+): Promise<WalletSession> {
   switch (walletId) {
     case "freighter":
       return connectFreighter();
-    case "albedo":
-      return connectMock("albedo");
-    case "xbull":
-      return connectMock("xbull");
     default:
       throw new Error("Unsupported wallet selected.");
   }
 }
+
+// ── Error message mapping ─────────────────────────────────────────────────────
 
 const USER_REJECTION_PATTERNS = [
   /rejected/i,
@@ -155,9 +155,18 @@ const USER_REJECTION_PATTERNS = [
   /canceled/i,
   /cancelled/i,
   /closed/i,
+  /user.*denied/i,
+  /user.*abort/i,
+  /popup.*closed/i,
+  /window.*closed/i,
 ];
 
 export function toWalletErrorMessage(error: unknown): string {
+  // Provide a specialised message for the extension-not-installed case.
+  if (error instanceof FreighterNotInstalledError) {
+    return error.message;
+  }
+
   const baseMessage =
     error instanceof Error
       ? error.message
@@ -166,11 +175,13 @@ export function toWalletErrorMessage(error: unknown): string {
         : "Wallet connection failed. Please try again.";
 
   if (USER_REJECTION_PATTERNS.some((pattern) => pattern.test(baseMessage))) {
-    return "User rejected the wallet connection request.";
+    return "You rejected the connection request. Try again when ready.";
   }
 
   return baseMessage;
 }
+
+// ── Display helpers ───────────────────────────────────────────────────────────
 
 export function shortenPublicKey(publicKey: string): string {
   if (publicKey.length <= 14) {
@@ -178,4 +189,37 @@ export function shortenPublicKey(publicKey: string): string {
   }
 
   return `${publicKey.slice(0, 7)}...${publicKey.slice(-7)}`;
+}
+
+/**
+ * Maps raw Stellar network strings (passphrases, env-style IDs, legacy labels)
+ * to friendly display labels: "Mainnet" | "Testnet" | original string.
+ */
+export function formatNetwork(network: string): string {
+  const n = network.trim().toLowerCase();
+
+  if (n.includes("public") || n === "mainnet" || n === "public") {
+    return "Mainnet";
+  }
+
+  if (
+    n.includes("test") ||
+    n === "testnet" ||
+    n.includes("sdf") ||
+    n === "stellar testnet"
+  ) {
+    return "Testnet";
+  }
+
+  return network;
+}
+
+/**
+ * Returns true if the connected wallet's network matches what this app is
+ * configured to use (NEXT_PUBLIC_STELLAR_NETWORK).
+ */
+export function isExpectedNetwork(sessionNetwork: string): boolean {
+  const sessionLabel = formatNetwork(sessionNetwork);
+  const expectedLabel = STELLAR_NETWORK === "MAINNET" ? "Mainnet" : "Testnet";
+  return sessionLabel === expectedLabel;
 }

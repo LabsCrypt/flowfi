@@ -1,31 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Copy, Check, LogOut, Moon, Sun, Bell } from "lucide-react";
 
 export default function SettingsPage() {
   const [emailNotifications, setEmailNotifications] = useState(true);
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  // Use lazy initialization to avoid setState in useEffect
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("flowfi-theme") as
+        | "light"
+        | "dark"
+        | null;
+      if (saved) {
+        document.documentElement.classList.toggle("dark", saved === "dark");
+        return saved;
+      }
+    }
+    return "dark";
+  });
   const [copied, setCopied] = useState(false);
 
   const connectedAddress =
     "0x92f4D9b123456789ABCDEF123456789ABCDEF123";
-
-  /* ---------------- THEME INIT ---------------- */
-  useEffect(() => {
-    const saved = localStorage.getItem("flowfi-theme") as
-      | "light"
-      | "dark"
-      | null;
-
-    if (saved) {
-      setTheme(saved);
-      document.documentElement.classList.toggle(
-        "dark",
-        saved === "dark"
-      );
-    }
-  }, []);
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";

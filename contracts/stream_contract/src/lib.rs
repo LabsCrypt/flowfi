@@ -1,73 +1,118 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, Symbol, symbol_short, token};
 
-#[derive(Clone)]
-#[contracttype]
-pub struct Stream {
-    pub sender: Address,
-    pub recipient: Address,
-    pub token_address: Address,
-    pub rate_per_second: i128,
-    pub deposited_amount: i128,
-    pub withdrawn_amount: i128,
-    pub start_time: u64,
-    pub last_update_time: u64,
-    pub is_active: bool,
-}
+mod errors;
+mod events;
+mod storage;
+mod types;
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum StreamError {
-    InvalidAmount = 1,
-    StreamNotFound = 2,
-    Unauthorized = 3,
-    StreamInactive = 4,
-}
+#[cfg(test)]
+mod test;
 
-// Event definitions for indexing
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamCreatedEvent {
-    pub stream_id: u64,
-    pub sender: Address,
-    pub recipient: Address,
-    pub rate: i128,
-    pub token_address: Address,
-    pub start_time: u64,
-}
+use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamCancelledEvent {
-    pub stream_id: u64,
-    pub sender: Address,
-    pub recipient: Address,
-    pub amount_withdrawn: i128,
-}
+use errors::StreamError;
+use events::{
+    FeeCollectedEvent, StreamCancelledEvent, StreamCreatedEvent, StreamToppedUpEvent,
+    TokensWithdrawnEvent,
+};
+use storage::{
+    config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
+    try_load_config, try_load_stream,
+};
+use types::{ProtocolConfig, Stream};
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokensWithdrawnEvent {
-    pub stream_id: u64,
-    pub recipient: Address,
-    pub amount: i128,
-    pub timestamp: u64,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamToppedUpEvent {
-    pub stream_id: u64,
-    pub sender: Address,
-    pub amount: i128,
-    pub new_deposited_amount: i128,
-}
+/// Maximum allowed protocol fee: 1 000 bps = 10%.
+const MAX_FEE_RATE_BPS: u32 = 1_000;
 
 #[contract]
 pub struct StreamContract;
 
 #[contractimpl]
 impl StreamContract {
+    // ─── Protocol Administration ──────────────────────────────────────────────
+
+    /// One-time initialization of the protocol fee configuration.
+    ///
+    /// # Errors
+    /// - `AlreadyInitialized` — called more than once.
+    /// - `InvalidFeeRate`     — `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS`.
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+        fee_rate_bps: u32,
+    ) -> Result<(), StreamError> {
+        admin.require_auth();
+
+        if config_exists(&env) {
+            return Err(StreamError::AlreadyInitialized);
+        }
+        if fee_rate_bps > MAX_FEE_RATE_BPS {
+            return Err(StreamError::InvalidFeeRate);
+        }
+
+        save_config(
+            &env,
+            &ProtocolConfig {
+                admin,
+                treasury,
+                fee_rate_bps,
+            },
+        );
+        Ok(())
+    }
+
+    /// Update the treasury address and/or fee rate. Admin-only.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — `initialize` has not been called.
+    /// - `NotAdmin`       — caller is not the current admin.
+    /// - `InvalidFeeRate` — `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS`.
+    pub fn update_fee_config(
+        env: Env,
+        admin: Address,
+        treasury: Address,
+        fee_rate_bps: u32,
+    ) -> Result<(), StreamError> {
+        admin.require_auth();
+
+        let config = load_config(&env)?;
+        if config.admin != admin {
+            return Err(StreamError::NotAdmin);
+        }
+        if fee_rate_bps > MAX_FEE_RATE_BPS {
+            return Err(StreamError::InvalidFeeRate);
+        }
+
+        save_config(
+            &env,
+            &ProtocolConfig {
+                admin: config.admin,
+                treasury,
+                fee_rate_bps,
+            },
+        );
+        Ok(())
+    }
+
+    /// Returns the current protocol fee configuration, or `None` if not yet initialized.
+    pub fn get_fee_config(env: Env) -> Option<ProtocolConfig> {
+        try_load_config(&env)
+    }
+
+    // ─── Stream Operations ────────────────────────────────────────────────────
+
+    /// Create a new payment stream.
+    ///
+    /// Transfers `amount` tokens from `sender` to the contract, deducts the
+    /// protocol fee (if configured), and records the stream with a calculated
+    /// `rate_per_second = net_amount / duration`.
+    ///
+    /// Returns the new stream ID (starts at 1, increments monotonically).
+    ///
+    /// # Errors
+    /// - `InvalidAmount`   — `amount` ≤ 0.
+    /// - `InvalidDuration` — `duration` is 0.
     pub fn create_stream(
         env: Env,
         sender: Address,
@@ -75,196 +120,283 @@ impl StreamContract {
         token_address: Address,
         amount: i128,
         duration: u64,
-    ) -> u64 {
+    ) -> Result<u64, StreamError> {
         sender.require_auth();
-        // Placeholder for stream creation logic
-        // 1. Transfer tokens to contract
-        // 2. Store stream state
 
-        // Generate stream ID (placeholder - use proper counter in production)
-        let stream_id: u64 = env.ledger().sequence() as u64;
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+        if duration == 0 {
+            return Err(StreamError::InvalidDuration);
+        }
+
+        let stream_id = next_stream_id(&env);
         let start_time = env.ledger().timestamp();
 
-        // Emit StreamCreated event
+        // Transfer gross amount from sender to this contract.
+        let token_client = token::Client::new(&env, &token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&sender, &contract_address, &amount);
+
+        // Deduct protocol fee; returns net amount (== amount when no fee config).
+        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+        let rate_per_second = net_amount / (duration as i128);
+
+        save_stream(
+            &env,
+            stream_id,
+            &Stream {
+                sender: sender.clone(),
+                recipient: recipient.clone(),
+                token_address: token_address.clone(),
+                rate_per_second,
+                deposited_amount: net_amount,
+                withdrawn_amount: 0,
+                start_time,
+                last_update_time: start_time,
+                is_active: true,
+            },
+        );
+
         env.events().publish(
             (Symbol::new(&env, "stream_created"), stream_id),
             StreamCreatedEvent {
                 stream_id,
-                sender: sender.clone(),
-                recipient: recipient.clone(),
-                rate,
-                token_address: token_address.clone(),
-                start_time,
-            }
-        );
-    }
-
-    fn get_next_stream_id(env: &Env) -> u64 {
-        let counter: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::StreamCounter)
-            .unwrap_or(0);
-        let next_id = counter + 1;
-        env.storage()
-            .instance()
-            .set(&DataKey::StreamCounter, &next_id);
-        next_id
-    }
-
-    pub fn withdraw(_env: Env, _recipient: Address, _stream_id: u64) {
-        // Placeholder for withdraw logic
-        // 1. Calculate claimable amount based on time delta
-        // 2. Transfer tokens to recipient
-        // 3. Update stream state
-
-        // Placeholder amount calculation
-        let amount: i128 = 0; // Calculate actual amount in production
-        let timestamp = env.ledger().timestamp();
-
-        // Emit TokensWithdrawn event
-        env.events().publish(
-            (Symbol::new(&env, "tokens_withdrawn"), stream_id),
-            TokensWithdrawnEvent {
-                stream_id,
-                recipient: recipient.clone(),
-                amount,
-                timestamp,
-            }
-        );
-    }
-
-    pub fn cancel_stream(env: Env, sender: Address, stream_id: u64) {
-        sender.require_auth();
-        // Placeholder for cancel logic
-        // 1. Calculate amount already withdrawn
-        // 2. Return remaining tokens to sender
-        // 3. Mark stream as cancelled
-
-        // Placeholder values
-        let recipient = sender.clone(); // Get actual recipient from storage in production
-        let amount_withdrawn: i128 = 0; // Calculate actual amount in production
-
-        // Emit StreamCancelled event
-        env.events().publish(
-            (Symbol::new(&env, "stream_cancelled"), stream_id),
-            StreamCancelledEvent {
-                stream_id,
-                sender: sender.clone(),
+                sender,
                 recipient,
-                amount_withdrawn,
-            }
+                rate_per_second,
+                token_address,
+                deposited_amount: net_amount,
+                start_time,
+            },
         );
+
+        Ok(stream_id)
     }
 
-    /// Allows the sender to add more funds to an existing stream
-    /// This extends the duration of the stream without creating a new one
-    pub fn top_up_stream(env: Env, sender: Address, stream_id: u64, amount: i128) -> Result<(), StreamError> {
-        // Require sender authentication
+    /// Top up an active stream with additional tokens.
+    ///
+    /// Only the original sender may top up their own stream.
+    ///
+    /// # Errors
+    /// - `InvalidAmount`   — `amount` ≤ 0.
+    /// - `StreamNotFound`  — no stream exists with `stream_id`.
+    /// - `Unauthorized`    — caller is not the stream's sender.
+    /// - `StreamInactive`  — stream has been cancelled or fully withdrawn.
+    pub fn top_up_stream(
+        env: Env,
+        sender: Address,
+        stream_id: u64,
+        amount: i128,
+    ) -> Result<(), StreamError> {
         sender.require_auth();
 
-        // Validate amount is positive
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
         }
 
-        // Get the stream from storage
-        let storage = env.storage().persistent();
-        let stream_key = (symbol_short!("STREAMS"), stream_id);
+        let mut stream = load_stream(&env, stream_id)?;
 
-        let mut stream: Stream = match storage.get(&stream_key) {
-            Some(s) => s,
-            None => return Err(StreamError::StreamNotFound),
-        };
-
-        // Verify the caller is the original sender
         if stream.sender != sender {
             return Err(StreamError::Unauthorized);
         }
-
-        // Verify stream is still active
         if !stream.is_active {
             return Err(StreamError::StreamInactive);
         }
 
-        // Transfer tokens from sender to contract
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        // Update stream state with additional deposit
-        stream.deposited_amount += amount;
+        let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id);
+
+        stream.deposited_amount += net_amount;
         stream.last_update_time = env.ledger().timestamp();
 
-        // Save updated stream back to storage
-        storage.set(&stream_key, &stream);
+        save_stream(&env, stream_id, &stream);
 
-        // Emit StreamToppedUp event
         env.events().publish(
             (Symbol::new(&env, "stream_topped_up"), stream_id),
             StreamToppedUpEvent {
                 stream_id,
-                sender: sender.clone(),
-                amount,
+                sender,
+                amount: net_amount,
                 new_deposited_amount: stream.deposited_amount,
-            }
+            },
         );
 
         Ok(())
     }
 
-    /// Allows the sender to add more funds to an existing stream
-    /// This extends the duration of the stream without creating a new one
-    pub fn top_up_stream(env: Env, sender: Address, stream_id: u64, amount: i128) -> Result<(), StreamError> {
-        // Require sender authentication
-        sender.require_auth();
+    // ─── Internal Helpers ─────────────────────────────────────────────────────
 
-        // Validate amount is positive
-        if amount <= 0 {
-            return Err(StreamError::InvalidAmount);
+    fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
+        let elapsed = now.saturating_sub(stream.last_update_time);
+
+        let streamed = (elapsed as i128)
+            .checked_mul(stream.rate_per_second)
+            .unwrap_or(i128::MAX);
+
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
+
+        if streamed > remaining {
+            remaining
+        } else {
+            streamed
         }
+    }
 
-        // Get the stream from storage
-        let storage = env.storage().persistent();
-        let stream_key = (symbol_short!("STREAMS"), stream_id);
+    /// Withdraw all currently claimable tokens from a stream.
+    ///
+    /// Only the stream's recipient may call this. The stream is marked
+    /// inactive once fully drained.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`  — no stream exists with `stream_id`.
+    /// - `Unauthorized`    — caller is not the stream's recipient.
+    /// - `StreamInactive`  — stream is already inactive.
+    /// - `InvalidAmount`   — no claimable balance (fully withdrawn already).
+    pub fn withdraw(env: Env, recipient: Address, stream_id: u64) -> Result<i128, StreamError> {
+        recipient.require_auth();
 
-        let mut stream: Stream = match storage.get(&stream_key) {
-            Some(s) => s,
-            None => return Err(StreamError::StreamNotFound),
-        };
+        let mut stream = load_stream(&env, stream_id)?;
 
-        // Verify the caller is the original sender
-        if stream.sender != sender {
+        if stream.recipient != recipient {
             return Err(StreamError::Unauthorized);
         }
-
-        // Verify stream is still active
         if !stream.is_active {
             return Err(StreamError::StreamInactive);
         }
 
-        // Transfer tokens from sender to contract
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
+
+        if claimable <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
-        token_client.transfer(&sender, &contract_address, &amount);
+        token_client.transfer(&contract_address, &recipient, &claimable);
 
-        // Update stream state with additional deposit
-        stream.deposited_amount += amount;
-        stream.last_update_time = env.ledger().timestamp();
+        stream.withdrawn_amount += claimable;
+        stream.last_update_time = now;
 
-        // Save updated stream back to storage
-        storage.set(&stream_key, &stream);
+        // Mark stream as inactive if all funds have been withdrawn
+        if stream.withdrawn_amount >= stream.deposited_amount {
+            stream.is_active = false;
+        }
+
+        save_stream(&env, stream_id, &stream);
+
+        env.events().publish(
+            (Symbol::new(&env, "tokens_withdrawn"), stream_id),
+            TokensWithdrawnEvent {
+                stream_id,
+                recipient,
+                amount: claimable,
+                timestamp: stream.last_update_time,
+            },
+        );
+
+        Ok(claimable)
+    }
+
+    /// Cancel an active stream.
+    ///
+    /// Only the stream's original sender may cancel. Any unspent balance
+    /// (deposited − withdrawn) is returned to the sender.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`  — no stream exists with `stream_id`.
+    /// - `Unauthorized`    — caller is not the stream's sender.
+    /// - `StreamInactive`  — stream is already inactive.
+    pub fn cancel_stream(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
+        sender.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+
+        if stream.sender != sender {
+            return Err(StreamError::Unauthorized);
+        }
+        if !stream.is_active {
+            return Err(StreamError::StreamInactive);
+        }
+
+        // Calculate accrued tokens that belong to the recipient
+        let now = env.ledger().timestamp();
+        let accrued_amount = Self::calculate_claimable(&stream, now);
+
+        // Refund only the unspent balance minus accrued tokens (accrued tokens stay for recipient)
+        let refunded_amount = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(accrued_amount);
+
+        if refunded_amount > 0 {
+            let token_client = token::Client::new(&env, &stream.token_address);
+            let contract_address = env.current_contract_address();
+            token_client.transfer(&contract_address, &sender, &refunded_amount);
+        }
+
+        stream.is_active = false;
+        stream.last_update_time = now;
+
+        let recipient = stream.recipient.clone();
+        let amount_withdrawn = stream.withdrawn_amount;
+
+        save_stream(&env, stream_id, &stream);
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_cancelled"), stream_id),
+            StreamCancelledEvent {
+                stream_id,
+                sender,
+                recipient,
+                amount_withdrawn,
+                refunded_amount,
+            },
+        );
 
         Ok(())
     }
 
+    // ─── Read-only Queries ────────────────────────────────────────────────────
+
+    /// Returns the stream record for `stream_id`, or `None` if it does not exist.
     pub fn get_stream(env: Env, stream_id: u64) -> Option<Stream> {
-        env.storage().instance().get(&DataKey::Stream(stream_id))
+        try_load_stream(&env, stream_id)
     }
 
-    pub fn get_stream(env: Env, stream_id: u64) -> Option<Stream> {
-        env.storage().instance().get(&DataKey::Stream(stream_id))
+    // ─── Internal Helpers ─────────────────────────────────────────────────────
+
+    /// Deducts the protocol fee from `amount`, transfers it to the treasury,
+    /// emits a `fee_collected` event, and returns the net amount.
+    ///
+    /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
+    /// Time complexity: O(1).
+    fn collect_fee(env: &Env, token_address: &Address, amount: i128, stream_id: u64) -> i128 {
+        match try_load_config(env) {
+            Some(cfg) if cfg.fee_rate_bps > 0 => {
+                let fee = amount * (cfg.fee_rate_bps as i128) / 10_000;
+                if fee > 0 {
+                    let token_client = token::Client::new(env, token_address);
+                    token_client.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
+                    env.events().publish(
+                        (Symbol::new(env, "fee_collected"), stream_id),
+                        FeeCollectedEvent {
+                            stream_id,
+                            treasury: cfg.treasury,
+                            fee_amount: fee,
+                            token: token_address.clone(),
+                        },
+                    );
+                }
+                amount - fee
+            }
+            _ => amount,
+        }
     }
 }
-
-mod test;
