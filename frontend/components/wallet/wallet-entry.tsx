@@ -1,12 +1,21 @@
 "use client";
 
 import { DashboardView } from "@/components/dashboard/dashboard-view";
-import { WalletSelectionModal } from "@/components/wallet/wallet-selection-modal";
+import { WalletModal } from "@/components/wallet/WalletModal";
 import { useWallet } from "@/context/wallet-context";
-import { useEffect } from "react";
+import { useState, useEffect } from "react";
 
 export function WalletEntry() {
   const { status, session, isHydrated, disconnect } = useWallet();
+  const [showModal, setShowModal] = useState(false);
+
+  useEffect(() => {
+    if (isHydrated && status !== "connected") {
+      setShowModal(true);
+    } else if (status === "connected") {
+      setShowModal(false);
+    }
+  }, [isHydrated, status]);
 
   if (!isHydrated) {
     return (
@@ -26,10 +35,7 @@ export function WalletEntry() {
     return <DashboardView session={session} onDisconnect={disconnect} />;
   }
 
-  return (
-    <WalletSelectionModal
-      isOpen={status !== "connected"}
-      onClose={undefined}
-    />
-  );
+  return showModal ? (
+    <WalletModal onClose={() => setShowModal(false)} />
+  ) : null;
 }

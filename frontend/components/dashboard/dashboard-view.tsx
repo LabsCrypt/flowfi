@@ -434,14 +434,6 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
-  const handleCreateStream = async (data: StreamFormData) => {
-    console.log("Creating stream with data:", data);
-    // TODO: Integrate with Soroban contract's create_stream function
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    alert(
-      `Stream created successfully!\n\nRecipient: ${data.recipient}\nToken: ${data.token}\nAmount: ${data.amount}\nDuration: ${data.duration} ${data.durationUnit}`,
-    );
-    setShowWizard(false);
   const handleApplyTemplate = (templateId: string) => {
     const template = templates.find((item) => item.id === templateId);
     if (!template) {
@@ -597,14 +589,9 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (activeTab === "incoming") {
       return (
         <div className="mt-8">
-          <IncomingStreams />
+          <IncomingStreams streams={stats?.incomingStreams || []} />
         </div>
       );
-    }
-
-    if (activeTab === "overview") {
-      if (!stats) {
-      return <div className="mt-8"><IncomingStreams streams={stats?.incomingStreams || []} /></div>;
     }
 
     if (activeTab === "streams") {
