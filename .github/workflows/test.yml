@@ -1,0 +1,74 @@
+name: CI / Validation
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install backend dependencies
+        run: npm install
+        working-directory: ./backend
+
+      - name: Install frontend dependencies
+        run: npm install
+        working-directory: ./frontend
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+        working-directory: ./backend
+
+      - name: Run linting (backend)
+        run: npm run lint --if-present
+        working-directory: ./backend
+        continue-on-error: false
+
+      - name: Run linting (frontend)
+        run: npm run lint --if-present
+        working-directory: ./frontend
+        continue-on-error: false
+
+      - name: Run Rust tests
+        run: cargo test
+        working-directory: ./contracts
+        continue-on-error: false
+
+      - name: Run backend tests
+        run: npm test
+        working-directory: ./backend
+        continue-on-error: false
+        env:
+          DATABASE_URL: file:./dev.db
+
+      - name: Run frontend tests
+        run: npm test
+        working-directory: ./frontend
+        continue-on-error: false
