@@ -61,6 +61,14 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       },
     ],
     components: {
+      securitySchemes: {
+        BearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'Stellar Signed Transaction (XDR)',
+          description: 'Stellar SEP-10 authentication. Provide a signed transaction envelope in XDR format.'
+        }
+      },
       schemas: {
         User: {
           type: 'object',
