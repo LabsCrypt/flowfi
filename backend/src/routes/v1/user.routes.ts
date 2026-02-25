@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { registerUser, getUser } from '../../controllers/user.controller.js';
+import { registerUser, getUser, getUserEvents } from '../../controllers/user.controller.js';
 
 const router = Router();
 
@@ -65,5 +65,34 @@ const router = Router();
  */
 router.post('/', registerUser);
 router.get('/:publicKey', getUser);
+
+/**
+ * @openapi
+ * /v1/users/{publicKey}/events:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Fetch user activity history
+ *     description: Returns a chronological history of all stream events associated with the user.
+ *     parameters:
+ *       - in: path
+ *         name: publicKey
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key
+ *     responses:
+ *       200:
+ *         description: List of user events
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/StreamEvent'
+ *       404:
+ *         description: User not found
+ */
+router.get('/:publicKey/events', getUserEvents);
 
 export default router;

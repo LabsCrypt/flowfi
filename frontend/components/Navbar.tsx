@@ -1,9 +1,12 @@
-import React from "react";
+import { NotificationDropdown } from "./NotificationDropdown";
+import { useWallet } from "@/context/wallet-context";
 import { Button } from "./ui/Button";
 import { ModeToggle } from "./ModeToggle";
 import { WalletButton } from "./wallet/WalletButton";
 
 export const Navbar = () => {
+  const { session, status } = useWallet();
+
   return (
     <nav className="sticky top-0 z-50 flex items-center justify-between px-6 py-4 backdrop-blur-md md:px-12 border-b border-glass-border bg-background/50">
       <div className="flex items-center gap-2">
@@ -44,6 +47,9 @@ export const Navbar = () => {
       </div>
 
       <div className="flex items-center gap-4">
+        {status === "connected" && session?.publicKey && (
+          <NotificationDropdown publicKey={session.publicKey} />
+        )}
         <Button variant="ghost" className="hidden sm:inline-flex">
           Log In
         </Button>

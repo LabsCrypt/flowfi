@@ -192,6 +192,22 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
   }
 }
 
+/**
+ * Fetches activity history for a given public key.
+ */
+export async function fetchUserEvents(publicKey: string): Promise<BackendStreamEvent[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/users/${publicKey}/events`);
+    if (!res.ok) {
+      throw new Error("Failed to fetch user events from backend.");
+    }
+    return await res.json();
+  } catch (error) {
+    console.error("User events fetch error:", error);
+    throw error;
+  }
+}
+
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function getDashboardAnalytics(
