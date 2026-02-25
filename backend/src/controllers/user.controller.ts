@@ -38,7 +38,7 @@ export const registerUser = async (req: Request, res: Response, next: NextFuncti
  */
 export const getUser = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { publicKey } = req.params;
+        const publicKey = req.params.publicKey as string;
 
         const user = await prisma.user.findUnique({
             where: { publicKey },
