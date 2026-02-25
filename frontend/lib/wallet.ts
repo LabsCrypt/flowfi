@@ -16,7 +16,7 @@ export const STELLAR_NETWORK =
   | "TESTNET"
   | "MAINNET";
 
-export const STELLAR_NETWORK_PASSPHRASE =
+export const STELLAR_NETWORK_ID =
   STELLAR_NETWORK === "MAINNET"
     ? "Public Global Stellar Network ; September 2015"
     : "Test SDF Network ; September 2015";
@@ -112,18 +112,18 @@ async function connectFreighter(): Promise<WalletSession> {
     throw new Error(addressError || "Freighter did not return a valid public key.");
   }
 
-  let network = STELLAR_NETWORK_PASSPHRASE;
+  let networkId = STELLAR_NETWORK_ID;
 
   try {
-    const { networkPassphrase, error: networkError } = await getNetworkDetails();
-    if (networkPassphrase && !networkError) {
-      network = networkPassphrase;
+    const details = await getNetworkDetails();
+    if (details.networkPassphrase && !details.error) {
+      networkId = details.networkPassphrase;
     }
   } catch {
     // ignore
   }
 
-  return buildSession("freighter", address, network);
+  return buildSession("freighter", address, networkId);
 }
 
 // ── Public connect dispatch ───────────────────────────────────────────────────
