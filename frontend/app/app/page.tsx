@@ -1,5 +1,5 @@
-import { WalletEntry } from "@/components/wallet/wallet-entry";
+import { OutgoingStreams } from "@/components/OutgoingStreams";
 
 export default function AppDashboardPage() {
-  return <WalletEntry />;
+  return <OutgoingStreams />;
 }
