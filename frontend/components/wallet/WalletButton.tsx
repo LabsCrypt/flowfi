@@ -62,6 +62,13 @@ export function WalletButton() {
     disconnect();
   };
 
+  // Close modal when connection is successful
+  useEffect(() => {
+    if (status === "connected") {
+      setModalOpen(false);
+    }
+  }, [status]);
+
   // Don't render anything until client-side hydration is complete to avoid
   // localStorage mismatch flicker.
   if (!isHydrated) {
