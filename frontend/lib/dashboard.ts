@@ -1,4 +1,5 @@
 import type { BackendStream } from "./api-types";
+import type { WalletId } from "./wallet";
 
 export interface ActivityItem {
   id: string;
@@ -45,7 +46,7 @@ const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
     totalReceived: 4720,
     totalValueLocked: 32140,
     activeStreamsCount: 2,
-    streams: [
+    outgoingStreams: [
       {
         id: "stream-1",
         date: "2023-10-25",
@@ -67,6 +68,7 @@ const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
         withdrawn: 300,
       },
     ],
+    incomingStreams: [],
     recentActivity: [
       {
         id: "act-1",

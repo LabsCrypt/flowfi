@@ -365,9 +365,33 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [streamFormMessage, setStreamFormMessage] =
     React.useState<StreamFormMessageState | null>(null);
   const [showWizard, setShowWizard] = React.useState(false);
-  const [loading, setLoading] = React.useState(false);
+  const [stats, setStats] = React.useState<DashboardSnapshot | null>(null);
+  const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const stats = getMockDashboardStats(session.walletId);
+  const [prevKey, setPrevKey] = React.useState(session.publicKey);
+
+  // Reset loading state during render if key changes
+  if (session.publicKey !== prevKey) {
+    setPrevKey(session.publicKey);
+    setLoading(true);
+  }
+
+  React.useEffect(() => {
+    async function loadData() {
+      try {
+        setError(null);
+        const data = await fetchDashboardData(session.publicKey);
+        setStats(data);
+      } catch (err) {
+        setError("Failed to load dashboard data. Please check your connection to the FlowFi backend.");
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadData();
+  }, [session.publicKey]);
 
   React.useEffect(() => {
     const loadedTemplates = safeLoadTemplates();
