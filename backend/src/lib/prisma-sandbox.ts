@@ -20,11 +20,11 @@ const globalForSandboxPrisma = globalThis as unknown as {
  */
 export function getSandboxPrisma(): PrismaClient {
   const config = getSandboxConfig();
-  
+
   // Use sandbox-specific database URL if provided
-  const databaseUrl = config.databaseUrl || 
-    (process.env.DATABASE_URL 
-      ? `${process.env.DATABASE_URL}_sandbox` 
+  const databaseUrl = config.databaseUrl ||
+    (process.env.DATABASE_URL
+      ? `${process.env.DATABASE_URL}_sandbox`
       : 'file:./sandbox.db');
 
   if (globalForSandboxPrisma.sandboxPrisma) {
@@ -37,10 +37,10 @@ export function getSandboxPrisma(): PrismaClient {
         url: databaseUrl,
       },
     },
-    log: process.env.NODE_ENV === 'development' 
-      ? ['query', 'error', 'warn'] 
+    log: process.env.NODE_ENV === 'development'
+      ? ['query', 'error', 'warn']
       : ['error'],
-  });
+  } as any);
 
   if (process.env.NODE_ENV !== 'production') {
     globalForSandboxPrisma.sandboxPrisma = sandboxPrisma;
@@ -56,7 +56,7 @@ export async function getPrismaClient(isSandbox: boolean): Promise<PrismaClient>
   if (isSandbox) {
     return getSandboxPrisma();
   }
-  
+
   // Import production prisma client dynamically
   const { prisma } = await import('./prisma.js');
   return prisma;

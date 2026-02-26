@@ -12,6 +12,10 @@ export const createStream = async (req: Request, res: Response) => {
   try {
     const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
 
+    if (typeof streamId !== 'string') {
+      return res.status(400).json({ error: 'Invalid streamId' });
+    }
+
     const stream = await prisma.stream.upsert({
       where: { streamId: parseInt(streamId) },
       update: {
@@ -72,6 +76,10 @@ export const getStream = async (req: Request, res: Response) => {
   try {
     const { streamId } = req.params;
 
+    if (typeof streamId !== 'string') {
+      return res.status(400).json({ error: 'Invalid streamId' });
+    }
+
     const stream = await prisma.stream.findUnique({
       where: { streamId: parseInt(streamId) },
       include: {
@@ -100,6 +108,10 @@ export const getStream = async (req: Request, res: Response) => {
 export const getStreamEvents = async (req: Request, res: Response) => {
   try {
     const { streamId } = req.params;
+
+    if (typeof streamId !== 'string') {
+      return res.status(400).json({ error: 'Invalid streamId' });
+    }
 
     const events = await prisma.streamEvent.findMany({
       where: { streamId: parseInt(streamId) },

@@ -7,7 +7,7 @@
 
 export interface SandboxConfig {
   enabled: boolean;
-  databaseUrl?: string;
+  databaseUrl?: string | undefined;
   allowHeader: boolean;
   allowQueryParam: boolean;
   headerName: string;
@@ -20,7 +20,7 @@ export interface SandboxConfig {
 export function getSandboxConfig(): SandboxConfig {
   const enabled = process.env.SANDBOX_MODE_ENABLED === 'true';
   const databaseUrl = process.env.SANDBOX_DATABASE_URL;
-  
+
   return {
     enabled,
     databaseUrl: databaseUrl || undefined,
