@@ -1,4 +1,4 @@
-import type { BackendStream } from "./api-types";
+import type { BackendStream, BackendStreamEvent } from "./api-types";
 
 export interface ActivityItem {
   id: string;
@@ -14,10 +14,13 @@ export interface Stream {
   recipient: string;
   amount: number;
   token: string;
-  status: "Active" | "Completed" | "Paused";
+  status: "Active" | "Completed" | "Paused" | "Cancelled";
   deposited: number;
   withdrawn: number;
   date: string;
+  ratePerSecond: number;
+  lastUpdateTime: number;
+  isActive: boolean;
 }
 
 export interface DashboardSnapshot {
@@ -100,6 +103,7 @@ async function fetchStreams(
 function mapBackendStreamToFrontend(s: BackendStream, counterparty: string): Stream {
   const deposited = toTokenAmount(s.depositedAmount);
   const withdrawn = toTokenAmount(s.withdrawnAmount);
+  const ratePerSecond = toTokenAmount(s.ratePerSecond);
 
   return {
     id: s.streamId.toString(),
@@ -110,6 +114,9 @@ function mapBackendStreamToFrontend(s: BackendStream, counterparty: string): Str
     deposited,
     withdrawn,
     date: new Date(s.startTime * 1000).toISOString().split("T")[0],
+    ratePerSecond,
+    lastUpdateTime: s.lastUpdateTime,
+    isActive: s.isActive,
   };
 }
 

@@ -25,6 +25,7 @@ import {
   isExpectedNetwork,
   type WalletSession,
 } from "@/lib/wallet";
+import { isValidStellarPublicKey } from "@/lib/stellar";
 import {
   createStream as sorobanCreateStream,
   topUpStream as sorobanTopUp,
@@ -522,7 +523,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         ...prev,
         outgoingStreams: prev.outgoingStreams.map((s) =>
           s.id === streamId
-            ? { ...s, status: "Cancelled" as "Active" | "Completed" | "Paused" }
+            ? { ...s, status: "Cancelled", isActive: false }
             : s,
         ),
         activeStreamsCount: Math.max(0, prev.activeStreamsCount - 1),
@@ -552,6 +553,9 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       status: "Active",
       deposited: parseFloat(data.amount),
       withdrawn: 0,
+      ratePerSecond: 0,
+      lastUpdateTime: Math.floor(Date.now() / 1000),
+      isActive: true,
     };
     setSnapshot((prev) => {
       if (!prev) return prev;
@@ -662,7 +666,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
 
     const recipient = streamForm.recipient.trim();
-    if (!/^G[A-Z0-9]{55}$/.test(recipient)) {
+    if (!isValidStellarPublicKey(recipient)) {
       setStreamFormMessage({
         text: "Recipient must be a valid Stellar public key.",
         tone: "error",
@@ -939,7 +943,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     type="text"
                     value={streamForm.recipient}
                     onChange={(event) => updateStreamForm("recipient", event.target.value)}
-                    placeholder="G... or 0x..."
+                    placeholder="G..."
                   />
                 </label>
 
@@ -1111,6 +1115,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <StreamCreationWizard
           onClose={() => setShowWizard(false)}
           onSubmit={handleCreateStream}
+          walletPublicKey={session.publicKey}
         />
       )}
 

@@ -6,6 +6,8 @@ import { RecipientStep } from "./RecipientStep";
 import { TokenStep } from "./TokenStep";
 import { AmountStep } from "./AmountStep";
 import { ScheduleStep } from "./ScheduleStep";
+import { fetchTokenBalanceDisplay } from "@/lib/soroban";
+import { isValidStellarPublicKey } from "@/lib/stellar";
 
 export interface StreamFormData {
   recipient: string;
@@ -18,6 +20,7 @@ export interface StreamFormData {
 interface StreamCreationWizardProps {
   onClose: () => void;
   onSubmit: (data: StreamFormData) => Promise<void>;
+  walletPublicKey?: string;
 }
 
 const STEPS = ["Recipient", "Token", "Amount", "Schedule"];
@@ -25,6 +28,7 @@ const STEPS = ["Recipient", "Token", "Amount", "Schedule"];
 export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   onClose,
   onSubmit,
+  walletPublicKey,
 }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -36,6 +40,41 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     durationUnit: "days",
   });
   const [errors, setErrors] = useState<Partial<Record<keyof StreamFormData, string>>>({});
+  const [walletBalance, setWalletBalance] = useState<string | null>(null);
+  const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
+  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!walletPublicKey || !formData.token) {
+      setWalletBalance(null);
+      setWalletBalanceError(null);
+      setWalletBalanceLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWalletBalanceLoading(true);
+    setWalletBalanceError(null);
+
+    fetchTokenBalanceDisplay(walletPublicKey, formData.token)
+      .then((balance) => {
+        if (cancelled) return;
+        setWalletBalance(balance);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWalletBalance(null);
+        setWalletBalanceError("Unable to fetch wallet balance right now.");
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setWalletBalanceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletPublicKey, formData.token]);
 
   const updateFormData = (updates: Partial<StreamFormData>) => {
     setFormData((prev) => ({ ...prev, ...updates }));
@@ -56,7 +95,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       case 1: // Recipient
         if (!formData.recipient.trim()) {
           newErrors.recipient = "Recipient address is required";
-        } else if (!/^G[A-Z0-9]{55}$/.test(formData.recipient.trim())) {
+        } else if (!isValidStellarPublicKey(formData.recipient.trim())) {
           newErrors.recipient = "Invalid Stellar public key format";
         }
         break;
@@ -72,6 +111,11 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           const amount = parseFloat(formData.amount);
           if (isNaN(amount) || amount <= 0) {
             newErrors.amount = "Amount must be a positive number";
+          } else if (walletBalance) {
+            const available = parseFloat(walletBalance);
+            if (!isNaN(available) && amount > available) {
+              newErrors.amount = "Amount exceeds wallet balance";
+            }
           }
         }
         break;
@@ -162,6 +206,13 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
             onChange={(value) => updateFormData({ amount: value })}
             error={errors.amount}
             token={formData.token}
+            availableBalance={walletBalance}
+            isBalanceLoading={walletBalanceLoading}
+            balanceError={walletBalanceError}
+            onSetMax={() => {
+              if (!walletBalance) return;
+              updateFormData({ amount: walletBalance });
+            }}
           />
         );
       case 4:

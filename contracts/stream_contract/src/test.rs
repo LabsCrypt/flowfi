@@ -112,10 +112,6 @@ fn test_initialize_rejects_second_call() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
 
-    assert_eq!(stream_id1, 1);
-    assert_eq!(stream_id2, 2);
-    assert!(client.get_stream(&stream_id1).is_some());
-    assert!(client.get_stream(&stream_id2).is_some());
     client.initialize(&admin, &treasury, &100);
     let result = client.try_initialize(&admin, &treasury, &100);
     assert_eq!(result, Err(Ok(StreamError::AlreadyInitialized)));
@@ -270,6 +266,24 @@ fn test_create_stream_rejects_zero_duration() {
 }
 
 #[test]
+fn test_create_stream_rejects_invalid_token_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    // Account addresses are not token contracts.
+    let invalid_token = Address::generate(&env);
+    let result = client.try_create_stream(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &invalid_token,
+        &500,
+        &100,
+    );
+    assert_eq!(result, Err(Ok(StreamError::InvalidTokenAddress)));
+}
+
+#[test]
 fn test_create_stream_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
@@ -344,10 +358,6 @@ fn test_top_up_rejects_negative_amount() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    let contract_id = env.register(StreamContract, ());
-    let client = StreamContractClient::new(&env, &contract_id);
-    let token_client = token::Client::new(&env, &token_address);
-    token_client.approve(&sender, &contract_id, &20_000, &1_000_000);
     assert_eq!(
         client.try_top_up_stream(&sender, &id, &-50),
         Err(Ok(StreamError::InvalidAmount))
@@ -522,10 +532,6 @@ fn test_withdraw_emits_event() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &recipient, &token, &500, &100);
 
-    let contract_id = env.register(StreamContract, ());
-    let client = StreamContractClient::new(&env, &contract_id);
-    let token_client = token::Client::new(&env, &token_address);
-    token_client.approve(&sender, &contract_id, &20_000, &1_000_000);
     // Advance time by 100 seconds to allow full withdrawal (500 tokens / 100 seconds = 5 tokens/sec)
     env.ledger().with_mut(|l| {
         l.timestamp += 100;
