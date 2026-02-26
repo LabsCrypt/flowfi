@@ -1,5 +1,4 @@
 import type { BackendStream } from "./api-types";
-import type { WalletId } from "./wallet";
 
 export interface ActivityItem {
   id: string;
@@ -40,77 +39,73 @@ export interface DashboardAnalyticsMetric {
   unavailableText: string;
 }
 
-const MOCK_STATS_BY_WALLET: Record<WalletId, DashboardSnapshot | null> = {
-  freighter: {
-    totalSent: 12850,
-    totalReceived: 4720,
-    totalValueLocked: 32140,
-    activeStreamsCount: 2,
-    outgoingStreams: [
-      {
-        id: "stream-1",
-        date: "2023-10-25",
-        recipient: "G...ABCD",
-        amount: 500,
-        token: "USDC",
-        status: "Active",
-        deposited: 500,
-        withdrawn: 100,
-      },
-      {
-        id: "stream-2",
-        date: "2023-10-26",
-        recipient: "G...EFGH",
-        amount: 1200,
-        token: "XLM",
-        status: "Active",
-        deposited: 1200,
-        withdrawn: 300,
-      },
-    ],
-    incomingStreams: [],
-    recentActivity: [
-      {
-        id: "act-1",
-        title: "Design Retainer",
-        description: "Outgoing stream settled",
-        amount: 250,
-        direction: "sent",
-        timestamp: "2026-02-19T13:10:00.000Z",
-      },
-      {
-        id: "act-2",
-        title: "Community Grant",
-        description: "Incoming stream payout",
-        amount: 420,
-        direction: "received",
-        timestamp: "2026-02-18T17:45:00.000Z",
-      },
-      {
-        id: "act-3",
-        title: "Developer Subscription",
-        description: "Outgoing recurring payment",
-        amount: 85,
-        direction: "sent",
-        timestamp: "2026-02-18T09:15:00.000Z",
-      },
-    ],
-  },
-};
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+
+const STROOPS_DIVISOR = 1e7;
+
+function toTokenAmount(raw: string): number {
+  return parseFloat(raw) / STROOPS_DIVISOR;
+}
+
+function shortenAddress(address: string): string {
+  if (!address || address.length < 10) return address;
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function getStreamsEndpointCandidates(): string[] {
+  const baseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001").replace(/\/+$/, "");
+  const candidates = new Set<string>();
+
+  if (baseUrl.endsWith("/api/v1") || baseUrl.endsWith("/v1")) {
+    candidates.add(`${baseUrl}/streams`);
+  } else if (baseUrl.endsWith("/api")) {
+    candidates.add(`${baseUrl}/v1/streams`);
+    candidates.add(`${baseUrl.replace(/\/api$/, "")}/v1/streams`);
+  } else {
+    candidates.add(`${baseUrl}/api/v1/streams`);
+    candidates.add(`${baseUrl}/v1/streams`);
+  }
+
+  return [...candidates];
+}
+
+async function fetchStreams(
+  publicKey: string,
+  role: "sender" | "recipient",
+): Promise<BackendStream[]> {
+  const endpoints = getStreamsEndpointCandidates();
+  const params = new URLSearchParams({ [role]: publicKey });
+  let lastError: Error | null = null;
+
+  for (const endpoint of endpoints) {
+    const response = await fetch(`${endpoint}?${params.toString()}`);
+    if (response.ok) {
+      return (await response.json()) as BackendStream[];
+    }
+
+    if (response.status === 404) {
+      lastError = new Error(`Endpoint not found: ${endpoint}`);
+      continue;
+    }
+
+    lastError = new Error(`Failed to fetch streams (${response.status}) from ${endpoint}`);
+  }
+
+  throw lastError ?? new Error("Failed to fetch streams from backend.");
+}
 
 /**
  * Maps a backend stream object to the frontend Stream interface.
  */
-function mapBackendStreamToFrontend(s: BackendStream): Stream {
-  const deposited = parseFloat(s.depositedAmount) / 1e7; // Assuming 7 decimals for now, should ideally come from token config
-  const withdrawn = parseFloat(s.withdrawnAmount) / 1e7;
+function mapBackendStreamToFrontend(s: BackendStream, counterparty: string): Stream {
+  const deposited = toTokenAmount(s.depositedAmount);
+  const withdrawn = toTokenAmount(s.withdrawnAmount);
 
   return {
     id: s.streamId.toString(),
-    recipient: s.recipient.slice(0, 4) + "..." + s.recipient.slice(-4),
+    recipient: shortenAddress(counterparty),
     amount: deposited,
-    token: "TOKEN", // We don't have token symbols from backend yet
+    token: "TOKEN",
     status: s.isActive ? "Active" : "Completed",
     deposited,
     withdrawn,
@@ -123,20 +118,17 @@ function mapBackendStreamToFrontend(s: BackendStream): Stream {
  */
 export async function fetchDashboardData(publicKey: string): Promise<DashboardSnapshot> {
   try {
-    const [outgoingRes, incomingRes] = await Promise.all([
-      fetch(`${API_BASE_URL}/streams?sender=${publicKey}`),
-      fetch(`${API_BASE_URL}/streams?recipient=${publicKey}`),
+    const [outgoing, incoming] = await Promise.all([
+      fetchStreams(publicKey, "sender"),
+      fetchStreams(publicKey, "recipient"),
     ]);
 
-    if (!outgoingRes.ok || !incomingRes.ok) {
-      throw new Error("Failed to fetch streams from backend.");
-    }
-
-    const outgoing: BackendStream[] = await outgoingRes.json();
-    const incoming: BackendStream[] = await incomingRes.json();
-
-    const outgoingStreams = outgoing.map(mapBackendStreamToFrontend);
-    const incomingStreams = incoming.map(mapBackendStreamToFrontend);
+    const outgoingStreams = outgoing.map((stream) =>
+      mapBackendStreamToFrontend(stream, stream.recipient),
+    );
+    const incomingStreams = incoming.map((stream) =>
+      mapBackendStreamToFrontend(stream, stream.sender),
+    );
 
     // Aggregation logic
     let totalSent = 0;
@@ -144,8 +136,8 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
     let activeStreamsCount = 0;
 
     outgoing.forEach(s => {
-      const dep = parseFloat(s.depositedAmount) / 1e7;
-      const withdr = parseFloat(s.withdrawnAmount) / 1e7;
+      const dep = toTokenAmount(s.depositedAmount);
+      const withdr = toTokenAmount(s.withdrawnAmount);
       totalSent += withdr;
       if (s.isActive) {
         totalValueLocked += (dep - withdr);
@@ -155,7 +147,7 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
 
     let totalReceived = 0;
     incoming.forEach(s => {
-      totalReceived += parseFloat(s.withdrawnAmount) / 1e7;
+      totalReceived += toTokenAmount(s.withdrawnAmount);
     });
 
     // Generate recent activity from streams (simplified for now)
@@ -163,16 +155,16 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
       ...outgoing.map(s => ({
         id: `act-out-${s.id}`,
         title: "Outgoing Stream",
-        description: `Stream to ${s.recipient.slice(0, 6)}...`,
-        amount: parseFloat(s.depositedAmount) / 1e7,
+        description: `Stream to ${shortenAddress(s.recipient)}`,
+        amount: toTokenAmount(s.depositedAmount),
         direction: "sent" as const,
         timestamp: s.createdAt,
       })),
       ...incoming.map(s => ({
         id: `act-in-${s.id}`,
         title: "Incoming Stream",
-        description: `Stream from ${s.sender.slice(0, 6)}...`,
-        amount: parseFloat(s.depositedAmount) / 1e7,
+        description: `Stream from ${shortenAddress(s.sender)}`,
+        amount: toTokenAmount(s.depositedAmount),
         direction: "received" as const,
         timestamp: s.createdAt,
       })),
@@ -190,6 +182,22 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
     };
   } catch (error) {
     console.error("Dashboard data fetch error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Fetches activity history for a given public key.
+ */
+export async function fetchUserEvents(publicKey: string): Promise<BackendStreamEvent[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/users/${publicKey}/events`);
+    if (!res.ok) {
+      throw new Error("Failed to fetch user events from backend.");
+    }
+    return await res.json();
+  } catch (error) {
+    console.error("User events fetch error:", error);
     throw error;
   }
 }

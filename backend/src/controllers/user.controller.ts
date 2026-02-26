@@ -65,6 +65,34 @@ export const getUser = async (req: Request, res: Response, next: NextFunction) =
 };
 
 /**
+ * Get user events (history)
+ */
+export const getUserEvents = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { publicKey } = req.params;
+
+        const events = await prisma.streamEvent.findMany({
+            where: {
+                stream: {
+                    OR: [
+                        { sender: publicKey },
+                        { recipient: publicKey }
+                    ]
+                }
+            },
+            orderBy: { timestamp: 'desc' },
+            include: {
+                stream: true
+            }
+        });
+
+        return res.status(200).json(events);
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
  * Get current authenticated user
  * Requires authMiddleware to be applied
  */
