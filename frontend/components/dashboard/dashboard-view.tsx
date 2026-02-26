@@ -325,9 +325,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   >(null);
   const [streamFormMessage, setStreamFormMessage] =
     React.useState<StreamFormMessageState | null>(null);
+  const [isFormSubmitting, setIsFormSubmitting] = React.useState(false);
 
   // --- Snapshot State (merged) ---
   const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
+  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
+  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
 
   // --- Helper Functions for missing logic ---
   const safeLoadTemplates = (): StreamTemplate[] => {
@@ -370,6 +373,36 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (!templatesHydrated) return;
     persistTemplates(templates);
   }, [templates, templatesHydrated]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const loadSnapshot = async () => {
+      setIsSnapshotLoading(true);
+      setSnapshotError(null);
+
+      try {
+        const nextSnapshot = await fetchDashboardData(session.publicKey);
+        if (!cancelled) setSnapshot(nextSnapshot);
+      } catch (error) {
+        if (!cancelled) {
+          setSnapshot(null);
+          setSnapshotError(
+            error instanceof Error
+              ? error.message
+              : "Failed to fetch dashboard data.",
+          );
+        }
+      } finally {
+        if (!cancelled) setIsSnapshotLoading(false);
+      }
+    };
+
+    void loadSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [session.publicKey]);
 
   const updateStreamForm = (field: keyof StreamFormValues, value: string) => {
     setStreamForm((previous) => ({ ...previous, [field]: value }));
@@ -565,7 +598,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
-  const handleFormCreateStream = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleFormCreateStream = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasRequiredFields =
       streamForm.recipient.trim() &&
@@ -582,21 +615,81 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       return;
     }
 
-    // Convert StreamFormValues to StreamFormData for handleCreateStream if possible
-    // or just show alert for now as per upstream mock logic
-    alert(
-      `Stream prepared for ${streamForm.recipient} with ${streamForm.totalAmount} ${streamForm.token}. You can still edit any field before final submission integration.`,
-    );
-    setStreamFormMessage({
-      text: "Stream draft is ready for submission integration.",
-      tone: "success",
-    });
+    const recipient = streamForm.recipient.trim();
+    if (!/^G[A-Z0-9]{55}$/.test(recipient)) {
+      setStreamFormMessage({
+        text: "Recipient must be a valid Stellar public key.",
+        tone: "error",
+      });
+      return;
+    }
+
+    const startDate = new Date(streamForm.startsAt);
+    const endDate = new Date(streamForm.endsAt);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      setStreamFormMessage({
+        text: "Start and end times must be valid dates.",
+        tone: "error",
+      });
+      return;
+    }
+
+    const durationSeconds = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
+    if (durationSeconds <= 0) {
+      setStreamFormMessage({
+        text: "End time must be after start time.",
+        tone: "error",
+      });
+      return;
+    }
+
+    setIsFormSubmitting(true);
+    try {
+      await handleCreateStream({
+        recipient,
+        token: streamForm.token.trim(),
+        amount: streamForm.totalAmount.trim(),
+        duration: String(durationSeconds),
+        durationUnit: "seconds",
+      });
+
+      handleResetStreamForm();
+      setStreamFormMessage({
+        text: "Stream submitted to wallet and confirmed on-chain.",
+        tone: "success",
+      });
+    } catch (err) {
+      setStreamFormMessage({
+        text: toSorobanErrorMessage(err),
+        tone: "error",
+      });
+    } finally {
+      setIsFormSubmitting(false);
+    }
   };
 
   // ── Tab content ─────────────────────────────────────────────────────────────
 
   const renderContent = () => {
     if (activeTab === "incoming") {
+      if (isSnapshotLoading) {
+        return (
+          <div className="dashboard-empty-state mt-8">
+            <h2>Loading streams...</h2>
+            <p>Fetching your incoming streams from the backend API.</p>
+          </div>
+        );
+      }
+
+      if (snapshotError) {
+        return (
+          <div className="dashboard-empty-state mt-8">
+            <h2>Could not load incoming streams</h2>
+            <p>{snapshotError}</p>
+          </div>
+        );
+      }
+
       return (
         <div className="mt-8">
           <IncomingStreams streams={snapshot?.incomingStreams ?? []} />
@@ -605,6 +698,24 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
 
     if (activeTab === "overview") {
+      if (isSnapshotLoading) {
+        return (
+          <section className="dashboard-empty-state">
+            <h2>Loading dashboard...</h2>
+            <p>Fetching active and incoming streams from the backend API.</p>
+          </section>
+        );
+      }
+
+      if (snapshotError) {
+        return (
+          <section className="dashboard-empty-state">
+            <h2>Dashboard unavailable</h2>
+            <p>{snapshotError}</p>
+          </section>
+        );
+      }
+
       if (!snapshot) {
         return (
           <section className="dashboard-empty-state">
@@ -792,6 +903,89 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       placeholder="USDC"
                     />
                   </label>
+                  <label>
+                    Total Amount
+                    <input
+                      required
+                      type="number"
+                      min="0"
+                      step="0.0000001"
+                      value={streamForm.totalAmount}
+                      onChange={(event) =>
+                        updateStreamForm("totalAmount", event.target.value)
+                      }
+                      placeholder="100"
+                    />
+                  </label>
+                </div>
+
+                <div className="stream-form__row">
+                  <label>
+                    Starts At
+                    <input
+                      required
+                      type="datetime-local"
+                      value={streamForm.startsAt}
+                      onChange={(event) =>
+                        updateStreamForm("startsAt", event.target.value)
+                      }
+                    />
+                  </label>
+                  <label>
+                    Ends At
+                    <input
+                      required
+                      type="datetime-local"
+                      value={streamForm.endsAt}
+                      onChange={(event) =>
+                        updateStreamForm("endsAt", event.target.value)
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="stream-form__row">
+                  <label>
+                    Cadence (seconds)
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={streamForm.cadenceSeconds}
+                      onChange={(event) =>
+                        updateStreamForm("cadenceSeconds", event.target.value)
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  Note
+                  <textarea
+                    value={streamForm.note}
+                    onChange={(event) =>
+                      updateStreamForm("note", event.target.value)
+                    }
+                    placeholder="Optional internal note for this stream configuration."
+                  />
+                </label>
+
+                <div className="stream-form__actions">
+                  <button
+                    type="submit"
+                    className="wallet-button"
+                    disabled={isFormSubmitting}
+                  >
+                    {isFormSubmitting ? "Submitting..." : "Create Stream"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isFormSubmitting}
+                    onClick={handleResetStreamForm}
+                  >
+                    Reset
+                  </button>
                 </div>
               </form>
             </div>
