@@ -20,15 +20,20 @@ export interface SandboxConfig {
 export function getSandboxConfig(): SandboxConfig {
   const enabled = process.env.SANDBOX_MODE_ENABLED === 'true';
   const databaseUrl = process.env.SANDBOX_DATABASE_URL;
-  
-  return {
+
+  const config: SandboxConfig = {
     enabled,
-    databaseUrl: databaseUrl || undefined,
     allowHeader: process.env.SANDBOX_ALLOW_HEADER !== 'false', // Default: true
     allowQueryParam: process.env.SANDBOX_ALLOW_QUERY_PARAM !== 'false', // Default: true
     headerName: process.env.SANDBOX_HEADER_NAME || 'X-Sandbox-Mode',
     queryParamName: process.env.SANDBOX_QUERY_PARAM_NAME || 'sandbox',
   };
+
+  if (databaseUrl) {
+    config.databaseUrl = databaseUrl;
+  }
+
+  return config;
 }
 
 /**

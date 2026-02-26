@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { registerUser, getUser, getUserEvents } from '../../controllers/user.controller.js';
+import { registerUser, getUser, getUserEvents, getCurrentUser } from '../../controllers/user.controller.js';
+import { authMiddleware } from '../../middleware/auth.middleware.js';
 
 const router = Router();
 
@@ -62,8 +63,27 @@ const router = Router();
  *               $ref: '#/components/schemas/User'
  *       404:
  *         description: User not found
+ *
+ * /v1/users/me:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get current authenticated user
+ *     description: Returns the currently authenticated user's details (protected endpoint)
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized - invalid or missing token
  */
 router.post('/', registerUser);
+router.get('/me', authMiddleware, getCurrentUser);
 router.get('/:publicKey', getUser);
 
 /**
