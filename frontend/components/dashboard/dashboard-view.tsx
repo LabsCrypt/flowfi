@@ -29,6 +29,7 @@ import {
   createStream as sorobanCreateStream,
   topUpStream as sorobanTopUp,
   cancelStream as sorobanCancel,
+  withdrawFromStream as sorobanWithdraw,
   toBaseUnits,
   toDurationSeconds,
   getTokenAddress,
@@ -149,11 +150,15 @@ function renderStats(snapshot: DashboardSnapshot | null) {
       </div>
       <div className="dashboard-panel">
         <h3>Total Received</h3>
-        <p className="text-2xl font-bold">{formatCurrency(snapshot.totalReceived)}</p>
+        <p className="text-2xl font-bold">
+          {formatCurrency(snapshot.totalReceived)}
+        </p>
       </div>
       <div className="dashboard-panel">
         <h3>Total Value Locked</h3>
-        <p className="text-2xl font-bold">{formatCurrency(snapshot.totalValueLocked)}</p>
+        <p className="text-2xl font-bold">
+          {formatCurrency(snapshot.totalValueLocked)}
+        </p>
       </div>
     </div>
   );
@@ -185,9 +190,7 @@ function renderAnalytics(snapshot: DashboardSnapshot | null) {
                   ? "No data"
                   : formatAnalyticsValue(metric.value!, metric.format)}
               </h2>
-              <span>
-                {isUnavailable ? metric.unavailableText : metric.detail}
-              </span>
+              <span>{isUnavailable ? metric.unavailableText : metric.detail}</span>
             </article>
           );
         })}
@@ -207,7 +210,10 @@ function renderStreams(
     <section className="dashboard-panel">
       <div className="dashboard-panel__header">
         <h3>My Active Streams</h3>
-        <span>{snapshot.outgoingStreams.filter(s => s.status === "Active").length} total</span>
+        <span>
+          {snapshot.outgoingStreams.filter((s) => s.status === "Active").length}{" "}
+          total
+        </span>
       </div>
       <div className="overflow-x-auto">
         <table className="dashboard-table">
@@ -228,8 +234,7 @@ function renderStreams(
                   key={stream.id}
                   className="cursor-pointer hover:bg-white/5"
                   onClick={(e) => {
-                    // Prevent row click if clicking buttons
-                    if ((e.target as HTMLElement).closest('button')) return;
+                    if ((e.target as HTMLElement).closest("button")) return;
                     onShowDetails(stream);
                   }}
                 >
@@ -328,14 +333,18 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [templates, setTemplates] = React.useState<StreamTemplate[]>([]);
   const [templatesHydrated, setTemplatesHydrated] = React.useState(false);
   const [templateNameInput, setTemplateNameInput] = React.useState("");
-  const [editingTemplateId, setEditingTemplateId] = React.useState<
-    string | null
-  >(null);
+  const [editingTemplateId, setEditingTemplateId] = React.useState<string | null>(
+    null,
+  );
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<
     string | null
   >(null);
   const [streamFormMessage, setStreamFormMessage] =
     React.useState<StreamFormMessageState | null>(null);
+
+  // merged states
+  const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] =
+    React.useState<string | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = React.useState(false);
 
   // --- Snapshot State (merged) ---
@@ -365,8 +374,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   };
 
   const isTemplateNameValid = templateNameInput.trim().length > 0;
-  const saveTemplateButtonLabel = editingTemplateId ? "Update Template" : "Save Template";
-  const requiredFieldsCompleted = Object.values(streamForm).filter(v => v.trim().length > 0).length;
+  const saveTemplateButtonLabel = editingTemplateId
+    ? "Update Template"
+    : "Save Template";
+  const requiredFieldsCompleted = Object.values(streamForm).filter(
+    (v) => v.trim().length > 0,
+  ).length;
 
   const handleClearTemplateEditor = () => {
     setTemplateNameInput("");
@@ -399,9 +412,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         if (!cancelled) {
           setSnapshot(null);
           setSnapshotError(
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch dashboard data.",
+            error instanceof Error ? error.message : "Failed to fetch dashboard data.",
           );
         }
       } finally {
@@ -446,7 +457,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             : t,
         ),
       );
-      setStreamFormMessage({ text: `Template "${cleanedName}" updated.`, tone: "success" });
+      setStreamFormMessage({
+        text: `Template "${cleanedName}" updated.`,
+        tone: "success",
+      });
       setSelectedTemplateId(editingTemplateId);
       setEditingTemplateId(null);
       setTemplateNameInput("");
@@ -462,7 +476,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setTemplates((prev) => [newTemplate, ...prev]);
     setSelectedTemplateId(newTemplate.id);
     setTemplateNameInput("");
-    setStreamFormMessage({ text: `Template "${cleanedName}" saved.`, tone: "success" });
+    setStreamFormMessage({
+      text: `Template "${cleanedName}" saved.`,
+      tone: "success",
+    });
   };
 
   const handleEditTemplate = (templateId: string) => {
@@ -498,36 +515,33 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
   // ── Optimistic helpers ──────────────────────────────────────────────────────
 
-  /** Mark a stream as cancelled in local state. */
   const removeStreamLocally = (streamId: string) => {
     setSnapshot((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
         outgoingStreams: prev.outgoingStreams.map((s) =>
-          s.id === streamId ? { ...s, status: "Cancelled" as "Active" | "Completed" | "Paused" } : s,
+          s.id === streamId
+            ? { ...s, status: "Cancelled" as "Active" | "Completed" | "Paused" }
+            : s,
         ),
         activeStreamsCount: Math.max(0, prev.activeStreamsCount - 1),
       };
     });
   };
 
-  /** Add top-up amount to a stream in local state. */
   const topUpStreamLocally = (streamId: string, amount: number) => {
     setSnapshot((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
         outgoingStreams: prev.outgoingStreams.map((s) =>
-          s.id === streamId
-            ? { ...s, deposited: s.deposited + amount }
-            : s,
+          s.id === streamId ? { ...s, deposited: s.deposited + amount } : s,
         ),
       };
     });
   };
 
-  /** Prepend a new stream to local state after creation. */
   const addStreamLocally = (data: StreamFormData) => {
     const newStream: Stream = {
       id: `stream-${Date.now()}`,
@@ -570,7 +584,6 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       toast.success("Stream created successfully!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
-      // Re-throw so the wizard's isSubmitting state resets properly
       throw err;
     }
   };
@@ -609,7 +622,29 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
-  const handleFormCreateStream = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleIncomingWithdraw = async (stream: Stream) => {
+    const toastId = toast.loading("Withdrawing stream funds…");
+    setWithdrawingIncomingStreamId(stream.id);
+
+    try {
+      await sorobanWithdraw(session, {
+        streamId: BigInt(stream.id.replace(/\D/g, "") || "0"),
+      });
+
+      const refreshed = await fetchDashboardData(session.publicKey);
+      setSnapshot(refreshed);
+      toast.success("Withdrawal successful!", { id: toastId });
+    } catch (err) {
+      toast.error(toSorobanErrorMessage(err), { id: toastId });
+      throw err;
+    } finally {
+      setWithdrawingIncomingStreamId(null);
+    }
+  };
+
+  const handleFormCreateStream = async (
+    event: React.FormEvent<HTMLFormElement>,
+  ) => {
     event.preventDefault();
     const hasRequiredFields =
       streamForm.recipient.trim() &&
@@ -645,7 +680,9 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       return;
     }
 
-    const durationSeconds = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
+    const durationSeconds = Math.floor(
+      (endDate.getTime() - startDate.getTime()) / 1000,
+    );
     if (durationSeconds <= 0) {
       setStreamFormMessage({
         text: "End time must be after start time.",
@@ -703,7 +740,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
       return (
         <div className="mt-8">
-          <IncomingStreams streams={snapshot?.incomingStreams ?? []} />
+          <IncomingStreams
+            streams={snapshot?.incomingStreams ?? []}
+            onWithdraw={handleIncomingWithdraw}
+            withdrawingStreamId={withdrawingIncomingStreamId}
+          />
         </div>
       );
     }
@@ -732,8 +773,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           <section className="dashboard-empty-state">
             <h2>No stream data yet</h2>
             <p>
-              Your account is connected, but there are no active or historical
-              stream records available yet.
+              Your account is connected, but there are no active or historical stream
+              records available yet.
             </p>
             <ul>
               <li>Create your first payment stream</li>
@@ -757,7 +798,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             snapshot,
             (stream: Stream) => setModal({ type: "topup", stream }),
             (stream: Stream) => setModal({ type: "cancel", stream }),
-            (stream: Stream) => setModal({ type: "details", stream })
+            (stream: Stream) => setModal({ type: "details", stream }),
           )}
           {renderRecentActivity(snapshot)}
         </div>
@@ -783,8 +824,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
               <div className="stream-template-manager">
                 <h4>Template Library</h4>
                 <p>
-                  Save recurring stream settings once, apply instantly, then
-                  override before submitting.
+                  Save recurring stream settings once, apply instantly, then override
+                  before submitting.
                 </p>
 
                 <div className="stream-template-editor">
@@ -831,9 +872,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       >
                         <div className="stream-template-item__meta">
                           <strong>{template.name}</strong>
-                          <small>
-                            Updated {formatTemplateUpdatedAt(template.updatedAt)}
-                          </small>
+                          <small>Updated {formatTemplateUpdatedAt(template.updatedAt)}</small>
                         </div>
                         <div className="stream-template-item__actions">
                           <button
@@ -899,9 +938,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     required
                     type="text"
                     value={streamForm.recipient}
-                    onChange={(event) =>
-                      updateStreamForm("recipient", event.target.value)
-                    }
+                    onChange={(event) => updateStreamForm("recipient", event.target.value)}
                     placeholder="G... or 0x..."
                   />
                 </label>
@@ -927,9 +964,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       min="0"
                       step="0.0000001"
                       value={streamForm.totalAmount}
-                      onChange={(event) =>
-                        updateStreamForm("totalAmount", event.target.value)
-                      }
+                      onChange={(event) => updateStreamForm("totalAmount", event.target.value)}
                       placeholder="100"
                     />
                   </label>
@@ -942,9 +977,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       required
                       type="datetime-local"
                       value={streamForm.startsAt}
-                      onChange={(event) =>
-                        updateStreamForm("startsAt", event.target.value)
-                      }
+                      onChange={(event) => updateStreamForm("startsAt", event.target.value)}
                     />
                   </label>
                   <label>
@@ -953,9 +986,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       required
                       type="datetime-local"
                       value={streamForm.endsAt}
-                      onChange={(event) =>
-                        updateStreamForm("endsAt", event.target.value)
-                      }
+                      onChange={(event) => updateStreamForm("endsAt", event.target.value)}
                     />
                   </label>
                 </div>
@@ -979,9 +1010,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                   Note
                   <textarea
                     value={streamForm.note}
-                    onChange={(event) =>
-                      updateStreamForm("note", event.target.value)
-                    }
+                    onChange={(event) => updateStreamForm("note", event.target.value)}
                     placeholder="Optional internal note for this stream configuration."
                   />
                 </label>
@@ -1045,9 +1074,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <header className="dashboard-header">
           <div>
             <p className="kicker">Dashboard</p>
-            <h1>
-              {SIDEBAR_ITEMS.find((item) => item.id === activeTab)?.label}
-            </h1>
+            <h1>{SIDEBAR_ITEMS.find((item) => item.id === activeTab)?.label}</h1>
           </div>
 
           <div className="flex items-center gap-4">
@@ -1055,7 +1082,6 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
               Create Stream
             </Button>
 
-            {/* Wallet chip — shows wallet name, network, and shortened key */}
             <div className="wallet-chip" title={session.publicKey}>
               <span className="wallet-chip__name">{session.walletName}</span>
               <span
@@ -1072,76 +1098,52 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           </div>
         </header>
 
-        {
-          session.mocked ? (
-            <p className="dashboard-note">
-              Mocked wallet session active — contract calls are simulated.
-            </p>
-          ) : null
-        }
-
         {renderContent()}
 
         <div className="dashboard-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onDisconnect}
-          >
+          <button type="button" className="secondary-button" onClick={onDisconnect}>
             Disconnect Wallet
           </button>
         </div>
       </section>
 
-      {/* Create Stream Wizard */}
-      {
-        showWizard && (
-          <StreamCreationWizard
-            onClose={() => setShowWizard(false)}
-            onSubmit={handleCreateStream}
-          />
-        )
-      }
+      {showWizard && (
+        <StreamCreationWizard
+          onClose={() => setShowWizard(false)}
+          onSubmit={handleCreateStream}
+        />
+      )}
 
-      {/* Top Up Modal */}
-      {
-        modal?.type === "topup" && (
-          <TopUpModal
-            streamId={modal.stream.id}
-            token={modal.stream.token}
-            currentDeposited={modal.stream.deposited}
-            onConfirm={handleTopUpConfirm}
-            onClose={() => setModal(null)}
-          />
-        )
-      }
+      {modal?.type === "topup" && (
+        <TopUpModal
+          streamId={modal.stream.id}
+          token={modal.stream.token}
+          currentDeposited={modal.stream.deposited}
+          onConfirm={handleTopUpConfirm}
+          onClose={() => setModal(null)}
+        />
+      )}
 
-      {/* Cancel Confirmation Modal */}
-      {
-        modal?.type === "cancel" && (
-          <CancelConfirmModal
-            streamId={modal.stream.id}
-            recipient={modal.stream.recipient}
-            token={modal.stream.token}
-            deposited={modal.stream.deposited}
-            withdrawn={modal.stream.withdrawn}
-            onConfirm={handleCancelConfirm}
-            onClose={() => setModal(null)}
-          />
-        )
-      }
+      {modal?.type === "cancel" && (
+        <CancelConfirmModal
+          streamId={modal.stream.id}
+          recipient={modal.stream.recipient}
+          token={modal.stream.token}
+          deposited={modal.stream.deposited}
+          withdrawn={modal.stream.withdrawn}
+          onConfirm={handleCancelConfirm}
+          onClose={() => setModal(null)}
+        />
+      )}
 
-      {/* Stream Details Modal */}
-      {
-        modal?.type === "details" && (
-          <StreamDetailsModal
-            stream={modal.stream}
-            onClose={() => setModal(null)}
-            onCancelClick={() => setModal({ type: "cancel", stream: modal.stream })}
-            onTopUpClick={() => setModal({ type: "topup", stream: modal.stream })}
-          />
-        )
-      }
+      {modal?.type === "details" && (
+        <StreamDetailsModal
+          stream={modal.stream}
+          onClose={() => setModal(null)}
+          onCancelClick={() => setModal({ type: "cancel", stream: modal.stream })}
+          onTopUpClick={() => setModal({ type: "topup", stream: modal.stream })}
+        />
+      )}
     </main>
   );
 }

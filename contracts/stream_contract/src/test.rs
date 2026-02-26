@@ -860,20 +860,23 @@ fn test_cancel_stream_refunds_sender() {
         l.timestamp += 300;
     });
 
-    // Cancel stream: should refund 700 tokens to sender (1000 - 300 accrued)
+    // Cancel stream: should pay 300 to recipient and refund 700 to sender
     client.cancel_stream(&sender, &stream_id);
 
     let sender_balance_after = token_client.balance(&sender);
     let contract_balance_after = token_client.balance(&contract_id);
+    let recipient_balance_after = token_client.balance(&recipient);
 
     // Sender should receive 700 tokens back
     assert_eq!(sender_balance_after - sender_balance_before, 700);
-    // Contract should have 300 tokens remaining (for recipient to withdraw)
-    assert_eq!(contract_balance_after, 300);
+    // Recipient should receive final claimable 300 immediately
+    assert_eq!(recipient_balance_after, 300);
+    // Contract should be fully drained
+    assert_eq!(contract_balance_after, 0);
 
     let stream = client.get_stream(&stream_id).unwrap();
     assert!(!stream.is_active);
-    assert_eq!(stream.withdrawn_amount, 0); // Recipient hasn't withdrawn yet
+    assert_eq!(stream.withdrawn_amount, 300);
 }
 
 #[test]
@@ -909,14 +912,17 @@ fn test_cancel_stream_after_partial_withdrawal() {
         l.timestamp += 100;
     });
 
-    // Cancel stream: should refund 700 tokens to sender (1000 - 200 withdrawn - 100 accrued)
+    // Cancel stream: should pay final 100 to recipient and refund 700 to sender
     client.cancel_stream(&sender, &stream_id);
 
     let sender_balance_after = token_client.balance(&sender);
     let contract_balance_after = token_client.balance(&contract_id);
+    let recipient_balance_after = token_client.balance(&recipient);
 
     // Sender should receive 700 tokens back
     assert_eq!(sender_balance_after - sender_balance_before, 700);
-    // Contract should have 100 tokens remaining (for recipient to withdraw)
-    assert_eq!(contract_balance_after, 100);
+    // Recipient should now hold total 300 (200 withdrawn earlier + 100 settled at cancel)
+    assert_eq!(recipient_balance_after, 300);
+    // Contract should be fully drained
+    assert_eq!(contract_balance_after, 0);
 }

@@ -1,32 +1,24 @@
 'use client';
 
 import React, { useState } from 'react';
-import toast from "react-hot-toast";
 import type { Stream } from '@/lib/dashboard';
 
 interface IncomingStreamsProps {
     streams: Stream[];
+    onWithdraw: (stream: Stream) => Promise<void>;
+    withdrawingStreamId?: string | null;
 }
 
-const IncomingStreams: React.FC<IncomingStreamsProps> = ({ streams }) => {
+const IncomingStreams: React.FC<IncomingStreamsProps> = ({
+    streams,
+    onWithdraw,
+    withdrawingStreamId = null,
+}) => {
     const [filter, setFilter] = useState<'All' | 'Active' | 'Completed' | 'Paused'>('All');
 
     const filteredStreams = filter === 'All'
         ? streams
         : streams.filter(s => s.status === filter);
-
-    const handleWithdraw = async () => {
-        const toastId = toast.loading("Transaction pending...");
-
-        try {
-            // Simulate async transaction (replace with real blockchain call later)
-            await new Promise((resolve) => setTimeout(resolve, 2000));
-
-            toast.success("Withdrawal successful!", { id: toastId });
-        } catch {
-            toast.error("Transaction failed.", { id: toastId });
-        }
-    };
 
     const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setFilter(e.target.value as 'All' | 'Active' | 'Completed' | 'Paused');
@@ -84,14 +76,16 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({ streams }) => {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
-                                        disabled={stream.status !== 'Active'}
-                                        onClick={handleWithdraw}
+                                        disabled={stream.status !== 'Active' || withdrawingStreamId === stream.id}
+                                        onClick={() => {
+                                            void onWithdraw(stream);
+                                        }}
                                         className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
                                                 ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
                                                 : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                                             }`}
                                     >
-                                        Withdraw
+                                        {withdrawingStreamId === stream.id ? 'Withdrawing...' : 'Withdraw'}
                                     </button>
                                 </td>
                             </tr>
