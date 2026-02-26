@@ -1,25 +1,22 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import type { Stream } from "@/lib/dashboard";
+import { shortenPublicKey } from "@/lib/wallet";
 
 interface StreamDetailsModalProps {
     stream: Stream;
-    isRecipient?: boolean;
     onClose: () => void;
     onCancelClick: () => void;
     onTopUpClick: () => void;
-    onWithdrawClick: () => void;
 }
 
 export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
     stream,
-    isRecipient = false,
     onClose,
     onCancelClick,
     onTopUpClick,
-    onWithdrawClick,
 }) => {
     // Escape key support
     useEffect(() => {
@@ -79,7 +76,7 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
                             <div className="p-4 rounded-2xl bg-white/5 border border-glass-border">
                                 <label className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-1 block">Status</label>
                                 <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-bold ${stream.status === 'Active' ? 'bg-green-500/20 text-green-400' :
-                                    stream.status === 'Completed' ? 'bg-blue-500/20 text-blue-400' : 'bg-red-500/20 text-red-400'
+                                        stream.status === 'Completed' ? 'bg-blue-500/20 text-blue-400' : 'bg-red-500/20 text-red-400'
                                     }`}>
                                     {stream.status}
                                 </span>
@@ -94,7 +91,7 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
                             <label className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-4 block">Streaming Progress</label>
 
                             <div className="flex justify-between items-end mb-2">
-                                <span className="text-2xl font-black text-white">{stream.withdrawn} i</span>
+                                <span className="text-2xl font-black text-white">{stream.withdrawn}</span>
                                 <span className="text-slate-400 text-sm">of {stream.deposited} {stream.token}</span>
                             </div>
 
@@ -120,41 +117,25 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
 
                         <div className="space-y-3 pt-4">
                             <p className="text-sm font-bold text-slate-400 px-1">Actions</p>
-
-                            {isRecipient ? (
-                                <Button
-                                    onClick={onWithdrawClick}
-                                    disabled={stream.status !== 'Active'}
-                                    className="w-full justify-center h-12 text-lg"
-                                    glow
-                                >
-                                    Withdraw Accrued
-                                </Button>
-                            ) : (
-                                <>
-                                    <Button
-                                        onClick={onTopUpClick}
-                                        disabled={stream.status !== 'Active'}
-                                        className="w-full justify-center h-12 text-lg"
-                                        glow
-                                    >
-                                        Add Funds
-                                    </Button>
-                                    <button
-                                        onClick={onCancelClick}
-                                        disabled={stream.status !== 'Active'}
-                                        className="w-full h-12 rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all font-bold disabled:opacity-50 disabled:pointer-events-none active:scale-95"
-                                    >
-                                        Cancel Stream
-                                    </button>
-                                </>
-                            )}
+                            <Button
+                                onClick={onTopUpClick}
+                                disabled={stream.status !== 'Active'}
+                                className="w-full justify-center h-12 text-lg"
+                                glow
+                            >
+                                Add Funds
+                            </Button>
+                            <button
+                                onClick={onCancelClick}
+                                disabled={stream.status !== 'Active'}
+                                className="w-full h-12 rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-all font-bold disabled:opacity-50 disabled:pointer-events-none active:scale-95"
+                            >
+                                Cancel Stream
+                            </button>
                         </div>
 
-                        <div className="p-4 rounded-2xl bg-accent/5 border border-accent/10 text-xs text-slate-400 italic">
-                            {isRecipient
-                                ? "As a recipient, you can withdraw any funds that have already accrued according to the streaming rate."
-                                : `Cancelling a stream will return any unspent funds (${remaining} ${stream.token}) to your wallet.`}
+                        <div className="p-4 rounded-2xl bg-red-500/5 border border-red-500/10 text-xs text-slate-400 italic">
+                            Note: Cancelling a stream will return any unspent funds ({remaining} {stream.token}) to your wallet. This action cannot be undone.
                         </div>
                     </div>
                 </div>

@@ -43,7 +43,12 @@ export default function IncomingPage() {
                             <p>Loading incoming streams...</p>
                         </div>
                     ) : (
-                        <IncomingStreams streams={streams} />
+                        <IncomingStreams
+                            streams={streams}
+                            onWithdraw={async () => {
+                                // Withdraw action is currently handled in the dashboard context.
+                            }}
+                        />
                     )}
                 </div>
             </main>

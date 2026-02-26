@@ -8,7 +8,7 @@ mod types;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractimpl, token, vec, Address, Env, InvokeError, Symbol};
 
 use errors::StreamError;
 use events::{
@@ -113,6 +113,7 @@ impl StreamContract {
     /// # Errors
     /// - `InvalidAmount`   — `amount` ≤ 0.
     /// - `InvalidDuration` — `duration` is 0.
+    /// - `InvalidTokenAddress` — `token_address` is not a token contract.
     pub fn create_stream(
         env: Env,
         sender: Address,
@@ -129,6 +130,7 @@ impl StreamContract {
         if duration == 0 {
             return Err(StreamError::InvalidDuration);
         }
+        Self::validate_token_contract(&env, &token_address)?;
 
         let stream_id = next_stream_id(&env);
         let start_time = env.ledger().timestamp();
@@ -230,6 +232,18 @@ impl StreamContract {
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
+    /// Ensures the supplied token address implements the Soroban token interface.
+    fn validate_token_contract(env: &Env, token_address: &Address) -> Result<(), StreamError> {
+        match env.try_invoke_contract::<u32, InvokeError>(
+            token_address,
+            &Symbol::new(env, "decimals"),
+            vec![env],
+        ) {
+            Ok(Ok(_)) => Ok(()),
+            _ => Err(StreamError::InvalidTokenAddress),
+        }
+    }
+
     fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
         let elapsed = now.saturating_sub(stream.last_update_time);
 
@@ -329,15 +343,21 @@ impl StreamContract {
         let now = env.ledger().timestamp();
         let accrued_amount = Self::calculate_claimable(&stream, now);
 
-        // Refund only the unspent balance minus accrued tokens (accrued tokens stay for recipient)
+        let token_client = token::Client::new(&env, &stream.token_address);
+        let contract_address = env.current_contract_address();
+
+        // Settle recipient immediately with all final claimable amount at cancellation.
+        if accrued_amount > 0 {
+            token_client.transfer(&contract_address, &stream.recipient, &accrued_amount);
+            stream.withdrawn_amount = stream.withdrawn_amount.saturating_add(accrued_amount);
+        }
+
+        // Refund remaining unspent balance after recipient settlement.
         let refunded_amount = stream
             .deposited_amount
-            .saturating_sub(stream.withdrawn_amount)
-            .saturating_sub(accrued_amount);
+            .saturating_sub(stream.withdrawn_amount);
 
         if refunded_amount > 0 {
-            let token_client = token::Client::new(&env, &stream.token_address);
-            let contract_address = env.current_contract_address();
             token_client.transfer(&contract_address, &sender, &refunded_amount);
         }
 

@@ -84,6 +84,15 @@ export function toBaseUnits(value: string, decimals = 7): bigint {
   return BigInt(Math.round(parsed * 10 ** decimals));
 }
 
+export function fromBaseUnits(value: bigint | string, decimals = 7): string {
+  const units = typeof value === "bigint" ? value : BigInt(value);
+  const divisor = BigInt(10) ** BigInt(decimals);
+  const whole = units / divisor;
+  const fraction = (units % divisor).toString().padStart(decimals, "0").replace(/0+$/, "");
+
+  return fraction.length > 0 ? `${whole}.${fraction}` : whole.toString();
+}
+
 export const TOKEN_ADDRESSES: Record<string, string> = {
   USDC: process.env.NEXT_PUBLIC_USDC_ADDRESS  ?? "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
   XLM:  process.env.NEXT_PUBLIC_XLM_ADDRESS   ?? "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN",
@@ -96,6 +105,62 @@ export function getTokenAddress(symbol: string): string {
     throw new SorobanCallError(`Unsupported token: ${symbol}`, "Unknown");
   }
   return address;
+}
+
+export async function fetchTokenBalance(
+  publicKey: string,
+  tokenSymbol: string,
+): Promise<bigint> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sdk: any = await import("@stellar/stellar-sdk");
+  const { Address, Contract, TransactionBuilder, BASE_FEE, scValToNative } = sdk;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
+
+  const tokenAddress = getTokenAddress(tokenSymbol);
+  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  const account = await server.getAccount(publicKey);
+  const tokenContract = new Contract(tokenAddress);
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(tokenContract.call("balance", new Address(publicKey).toScVal()))
+    .setTimeout(30)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+    throw new SorobanCallError(`Failed to fetch token balance: ${simResult.error}`, "NetworkError");
+  }
+
+  const rawResult = simResult?.result?.retval;
+  if (!rawResult) {
+    throw new SorobanCallError("Token balance query returned no value.", "NetworkError");
+  }
+
+  const nativeValue = scValToNative(rawResult);
+  if (typeof nativeValue === "bigint") {
+    return nativeValue;
+  }
+  if (typeof nativeValue === "number") {
+    return BigInt(Math.trunc(nativeValue));
+  }
+  if (typeof nativeValue === "string") {
+    return BigInt(nativeValue);
+  }
+
+  throw new SorobanCallError("Token balance query returned an invalid value.", "NetworkError");
+}
+
+export async function fetchTokenBalanceDisplay(
+  publicKey: string,
+  tokenSymbol: string,
+  decimals = 7,
+): Promise<string> {
+  const rawBalance = await fetchTokenBalance(publicKey, tokenSymbol);
+  return fromBaseUnits(rawBalance, decimals);
 }
 
 function wait(ms: number): Promise<void> {
