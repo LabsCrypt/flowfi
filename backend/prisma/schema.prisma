@@ -13,6 +13,9 @@ datasource db {
 // User model - represents Stellar wallet addresses interacting with the protocol
 model User {
   id              String   @id @default(uuid())
+  email           String?  @unique
+  hashedPassword  String?
+  name            String?
   publicKey       String   @unique // Stellar public key (G...)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
