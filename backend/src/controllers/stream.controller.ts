@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
+import { claimableAmountService } from '../services/claimable.service.js';
 
 /**
  * Create a new stream (stub for on-chain indexing)
@@ -70,10 +71,17 @@ export const listStreams = async (req: Request, res: Response) => {
  */
 export const getStream = async (req: Request, res: Response) => {
   try {
-    const { streamId } = req.params;
+    const streamIdParam = Array.isArray(req.params.streamId)
+      ? req.params.streamId[0]
+      : req.params.streamId;
+    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
+
+    if (!Number.isFinite(parsedStreamId)) {
+      return res.status(400).json({ error: 'Invalid streamId parameter' });
+    }
 
     const stream = await prisma.stream.findUnique({
-      where: { streamId: parseInt(streamId) },
+      where: { streamId: parsedStreamId },
       include: {
         senderUser: true,
         recipientUser: true,
@@ -99,16 +107,76 @@ export const getStream = async (req: Request, res: Response) => {
  */
 export const getStreamEvents = async (req: Request, res: Response) => {
   try {
-    const { streamId } = req.params;
+    const streamIdParam = Array.isArray(req.params.streamId)
+      ? req.params.streamId[0]
+      : req.params.streamId;
+    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
+
+    if (!Number.isFinite(parsedStreamId)) {
+      return res.status(400).json({ error: 'Invalid streamId parameter' });
+    }
 
     const events = await prisma.streamEvent.findMany({
-      where: { streamId: parseInt(streamId) },
+      where: { streamId: parsedStreamId },
       orderBy: { timestamp: 'desc' }
     });
 
     return res.status(200).json(events);
   } catch (error) {
     logger.error('Error fetching stream events:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Get actionable claimable amount for a stream (no direct RPC call).
+ */
+export const getStreamClaimableAmount = async (req: Request, res: Response) => {
+  try {
+    const streamIdParam = Array.isArray(req.params.streamId)
+      ? req.params.streamId[0]
+      : req.params.streamId;
+    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
+
+    if (!Number.isFinite(parsedStreamId)) {
+      return res.status(400).json({ error: 'Invalid streamId parameter' });
+    }
+
+    const atQuery = req.query.at as string | undefined;
+    let requestedAt: number | undefined;
+
+    if (atQuery !== undefined) {
+      requestedAt = Number.parseInt(atQuery, 10);
+      if (!Number.isFinite(requestedAt) || requestedAt < 0) {
+        return res.status(400).json({
+          error: 'Invalid query parameter',
+          message: "'at' must be a non-negative Unix timestamp in seconds",
+        });
+      }
+    }
+
+    const stream = await prisma.stream.findUnique({
+      where: { streamId: parsedStreamId },
+      select: {
+        streamId: true,
+        ratePerSecond: true,
+        depositedAmount: true,
+        withdrawnAmount: true,
+        lastUpdateTime: true,
+        isActive: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+
+    const result = claimableAmountService.getClaimableAmount(stream, requestedAt);
+
+    return res.status(200).json(result);
+  } catch (error) {
+    logger.error('Error calculating stream claimable amount:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
