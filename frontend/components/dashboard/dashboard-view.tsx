@@ -41,6 +41,7 @@ import {
 } from "../stream-creation/StreamCreationWizard";
 import { TopUpModal } from "../stream-creation/TopUpModal";
 import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
+import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,7 +60,8 @@ interface SidebarItem {
 type ModalState =
   | null
   | { type: "topup"; stream: Stream }
-  | { type: "cancel"; stream: Stream };
+  | { type: "cancel"; stream: Stream }
+  | { type: "details"; stream: Stream };
 
 interface StreamFormValues {
   recipient: string;
@@ -198,6 +200,7 @@ function renderStreams(
   snapshot: DashboardSnapshot | null,
   onTopUp: (stream: Stream) => void,
   onCancel: (stream: Stream) => void,
+  onShowDetails: (stream: Stream) => void,
 ) {
   if (!snapshot) return null;
   return (
@@ -221,7 +224,15 @@ function renderStreams(
             {snapshot.outgoingStreams
               .filter((s) => s.status === "Active")
               .map((stream) => (
-                <tr key={stream.id}>
+                <tr
+                  key={stream.id}
+                  className="cursor-pointer hover:bg-white/5"
+                  onClick={(e) => {
+                    // Prevent row click if clicking buttons
+                    if ((e.target as HTMLElement).closest('button')) return;
+                    onShowDetails(stream);
+                  }}
+                >
                   <td>{stream.date}</td>
                   <td>
                     <code className="text-xs">{stream.recipient}</code>
@@ -742,7 +753,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
-          {renderStreams(snapshot, (stream: Stream) => setModal({ type: "topup", stream }), (stream: Stream) => setModal({ type: "cancel", stream }))}
+          {renderStreams(
+            snapshot,
+            (stream: Stream) => setModal({ type: "topup", stream }),
+            (stream: Stream) => setModal({ type: "cancel", stream }),
+            (stream: Stream) => setModal({ type: "details", stream })
+          )}
           {renderRecentActivity(snapshot)}
         </div>
       );
@@ -1111,6 +1127,18 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             withdrawn={modal.stream.withdrawn}
             onConfirm={handleCancelConfirm}
             onClose={() => setModal(null)}
+          />
+        )
+      }
+
+      {/* Stream Details Modal */}
+      {
+        modal?.type === "details" && (
+          <StreamDetailsModal
+            stream={modal.stream}
+            onClose={() => setModal(null)}
+            onCancelClick={() => setModal({ type: "cancel", stream: modal.stream })}
+            onTopUpClick={() => setModal({ type: "topup", stream: modal.stream })}
           />
         )
       }
