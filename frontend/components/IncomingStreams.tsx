@@ -125,8 +125,8 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                                             void onWithdraw(stream);
                                         }}
                                         className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
-                                                ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
-                                                : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                            ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
+                                            : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                                             }`}
                                     >
                                         {withdrawingStreamId === stream.id ? 'Withdrawing...' : 'Withdraw'}
