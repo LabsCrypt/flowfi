@@ -11,5 +11,8 @@ export default defineConfig({
         },
         testTimeout: 30000,
         hookTimeout: 30000,
+        // Run each test file in its own forked process so vi.mock() doesn't leak
+        pool: 'forks',
+        isolate: true,
     },
 });
