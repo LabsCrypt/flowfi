@@ -59,7 +59,7 @@ function decodeAddress(val: xdr.ScVal): string {
   ) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
-  return StrKey.encodeContract(addr.contractId());
+  return StrKey.encodeContract(Buffer.from(addr.contractId()));
 }
 
 /**
@@ -205,7 +205,12 @@ export class SorobanEventWorker {
 
     await prisma.indexerState.update({
       where: { id: INDEXER_STATE_ID },
-      data: { lastLedger, lastCursor },
+      create: {
+        id: INDEXER_STATE_ID,
+        lastLedger,
+        lastCursor,
+      },
+      update: { lastLedger, lastCursor },
     });
 
     logger.info(
@@ -281,7 +286,7 @@ export class SorobanEventWorker {
     const depositedAmount = decodeI128(body['deposited_amount']);
     const startTime = Number(decodeU64(body['start_time']));
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // Ensure both wallet accounts exist in the Users table.
       await tx.user.upsert({
         where: { publicKey: sender },
@@ -367,7 +372,7 @@ export class SorobanEventWorker {
     const newDepositedAmount = decodeI128(body['new_deposited_amount']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       await tx.stream.update({
         where: { streamId },
         data: {
@@ -423,7 +428,7 @@ export class SorobanEventWorker {
     const amount = decodeI128(body['amount']);
     const timestamp = Number(decodeU64(body['timestamp']));
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       // Accumulate the withdrawn total.
       const stream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
@@ -490,7 +495,7 @@ export class SorobanEventWorker {
     const refundedAmount = decodeI128(body['refunded_amount']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       await tx.stream.update({
         where: { streamId },
         data: {
