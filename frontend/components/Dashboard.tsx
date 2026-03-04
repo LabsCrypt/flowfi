@@ -1,7 +1,9 @@
+import React from 'react';
 import { ActivityHistory } from './dashboard/ActivityHistory';
 import { fetchUserEvents } from '@/lib/dashboard';
 import { useWallet } from '@/context/wallet-context';
 import { BackendStreamEvent } from '@/lib/api-types';
+import { downloadCSV } from '@/utils/csvExport';
 
 interface StreamData extends Record<string, unknown> {
     id: string;

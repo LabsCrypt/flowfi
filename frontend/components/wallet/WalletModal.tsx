@@ -12,7 +12,7 @@
  * - Dismiss via Escape key or backdrop click.
  */
 
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect, useCallback, useState } from "react";
 import { type WalletId } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
 
