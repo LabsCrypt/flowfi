@@ -35,7 +35,7 @@ interface WalletContextValue {
 // so stale persisted sessions are discarded rather than causing type errors.
 const STORAGE_KEY = "flowfi.wallet.session.v1";
 const WalletContext = createContext<WalletContextValue | undefined>(undefined);
-const VALID_WALLET_IDS: WalletId[] = ["freighter"];
+const VALID_WALLET_IDS: WalletId[] = ["freighter", "albedo", "xbull"];
 
 interface WalletState {
   status: WalletStatus;

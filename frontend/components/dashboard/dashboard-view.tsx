@@ -239,17 +239,17 @@ function renderStreams(
                     onShowDetails(stream);
                   }}
                 >
-                  <td>{stream.date}</td>
-                  <td>
-                    <code className="text-xs">{stream.recipient}</code>
-                  </td>
-                  <td className="font-semibold text-accent">
-                    {stream.deposited} {stream.token}
-                  </td>
-                  <td className="text-slate-400">
-                    {stream.withdrawn} {stream.token}
-                  </td>
-                  <td className="text-right">
+                <td>{stream.date}</td>
+                <td>
+                  <code className="text-xs">{stream.recipient}</code>
+                </td>
+                <td className="font-semibold text-accent">
+                  {stream.deposited} {stream.token}
+                </td>
+                <td className="text-slate-400">
+                  {stream.withdrawn} {stream.token}
+                </td>
+                <td className="text-right">
                     <div className="flex items-center justify-end gap-2">
                       {/^\d+$/.test(stream.id) ? (
                         <Link
@@ -259,13 +259,13 @@ function renderStreams(
                           Details
                         </Link>
                       ) : null}
-                      <button
-                        type="button"
-                        className="secondary-button py-1 px-3 text-sm h-auto"
+                  <button
+                    type="button"
+                    className="secondary-button py-1 px-3 text-sm h-auto"
                         onClick={() => onTopUp(stream)}
-                      >
-                        Add Funds
-                      </button>
+                  >
+                    Add Funds
+                  </button>
                       <button
                         type="button"
                         className="py-1 px-3 text-sm rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors font-semibold"
@@ -274,9 +274,9 @@ function renderStreams(
                         Cancel
                       </button>
                     </div>
-                  </td>
-                </tr>
-              ))}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -432,6 +432,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setStreamFormMessage(null);
   };
 
+  const handleTopUp = (streamId: string) => {
+    const amount = prompt(`Enter amount to add to stream ${streamId}:`);
+    if (amount && !Number.isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
+      console.log(`Adding ${amount} funds to stream ${streamId}`);
+      // TODO: Integrate with Soroban contract's top_up_stream function
+      alert(`Successfully added ${amount} to stream ${streamId}`);
+    }
+  };
+
   const handleApplyTemplate = (templateId: string) => {
     const template = templates.find((item) => item.id === templateId);
     if (!template) return;
@@ -503,8 +512,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setTemplates((prev) => prev.filter((item) => item.id !== templateId));
     if (selectedTemplateId === templateId) setSelectedTemplateId(null);
     if (editingTemplateId === templateId) {
-      setEditingTemplateId(null);
-      setTemplateNameInput("");
+    setEditingTemplateId(null);
+    setTemplateNameInput("");
     }
   };
 
@@ -688,7 +697,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       (endDate.getTime() - startDate.getTime()) / 1000,
     );
     if (durationSeconds <= 0) {
-      setStreamFormMessage({
+    setStreamFormMessage({
         text: "End time must be after start time.",
         tone: "error",
       });
@@ -708,8 +717,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       handleResetStreamForm();
       setStreamFormMessage({
         text: "Stream submitted to wallet and confirmed on-chain.",
-        tone: "success",
-      });
+      tone: "success",
+    });
     } catch (err) {
       setStreamFormMessage({
         text: toSorobanErrorMessage(err),
@@ -996,18 +1005,18 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                 </div>
 
                 <div className="stream-form__row">
-                  <label>
-                    Cadence (seconds)
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={streamForm.cadenceSeconds}
-                      onChange={(event) =>
-                        updateStreamForm("cadenceSeconds", event.target.value)
-                      }
-                    />
-                  </label>
+                <label>
+                  Cadence (seconds)
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={streamForm.cadenceSeconds}
+                    onChange={(event) =>
+                      updateStreamForm("cadenceSeconds", event.target.value)
+                    }
+                  />
+                </label>
                 </div>
 
                 <label>

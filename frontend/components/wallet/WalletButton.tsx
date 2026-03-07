@@ -16,7 +16,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { useWallet } from "@/context/wallet-context";
 import {
-  formatNetwork,
   shortenPublicKey,
   isExpectedNetwork,
 } from "@/lib/wallet";
@@ -61,6 +60,14 @@ export function WalletButton() {
     setModalOpen(false);
     disconnect();
   };
+
+  // Close modal when connection is successful
+  useEffect(() => {
+    if (status === "connected") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setModalOpen(false);
+    }
+  }, [status]);
 
   // Don't render anything until client-side hydration is complete to avoid
   // localStorage mismatch flicker.

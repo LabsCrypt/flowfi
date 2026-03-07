@@ -12,7 +12,7 @@
  * - Dismiss via Escape key or backdrop click.
  */
 
-import React, { useEffect, useCallback, useState } from "react";
+import React, { useEffect, useCallback } from "react";
 import { type WalletId } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
 
@@ -22,7 +22,10 @@ interface WalletModalProps {
   onClose: () => void;
 }
 
-const WALLET_NOTES: Partial<Record<WalletId, string>> = {};
+const WALLET_NOTES: Partial<Record<WalletId, string>> = {
+  albedo: "A popup window will open for authentication.",
+  xbull: "Available as browser extension or mobile app.",
+};
 
 export function WalletModal({ onClose }: WalletModalProps) {
   const { wallets, status, selectedWalletId, errorMessage, connect, clearError } =
@@ -193,7 +196,7 @@ export function WalletModal({ onClose }: WalletModalProps) {
         >
           {isConnecting
             ? "Waiting for wallet approval…"
-            : "Freighter"}
+            : "Supported wallets: Freighter, Albedo, xBull"}
         </p>
       </div>
     </div>
