@@ -14,30 +14,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run npm audit
-        run: npm audit --audit-level=moderate || true
-
-      - name: Check for known vulnerabilities in frontend
-        run: |
-          cd frontend
-          npm audit --audit-level=moderate || true
-
-      - name: Check for known vulnerabilities in backend
-        run: |
-          cd backend
-          npm audit --audit-level=moderate || true
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.19.0'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      env:
+        HUSKY: 0
+      run: npm ci
+      
+    - name: Run npm audit (production dependencies)
+      run: npm audit --omit=dev --audit-level=critical
+      
+    - name: Check for known vulnerabilities in frontend (production dependencies)
+      run: npm audit --workspace=frontend --omit=dev --audit-level=critical
+        
+    - name: Check for known vulnerabilities in backend (production dependencies)
+      run: npm audit --workspace=backend --omit=dev --audit-level=critical
 
   codeql-analysis:
     name: CodeQL Analysis
@@ -53,16 +51,16 @@ jobs:
         language: [ 'javascript', 'typescript' ]
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+      
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3

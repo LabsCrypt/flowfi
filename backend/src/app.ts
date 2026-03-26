@@ -8,11 +8,53 @@ import { globalRateLimiter } from './middleware/rate-limiter.middleware.js';
 import v1Routes from './routes/v1/index.js';
 
 const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
 // Apply global rate limiter first
 app.use(globalRateLimiter);
 
-app.use(cors());
+app.disable('x-powered-by');
+
+// Helmet-equivalent core headers without external dependency.
+app.use((req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    res.setHeader('X-Download-Options', 'noopen');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    if (isProduction) {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+});
+
+app.use(cors({
+    origin(origin, callback) {
+        if (!isProduction) {
+            callback(null, true);
+            return;
+        }
+
+        // Allow non-browser clients (no Origin header)
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+
+        callback(new Error('CORS origin not allowed'));
+    },
+    credentials: true,
+}));
 app.use(express.json());
 
 // Sandbox mode detection (before versioning)

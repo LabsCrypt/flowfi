@@ -6,6 +6,10 @@ interface AmountStepProps {
   onChange: (value: string) => void;
   error?: string;
   token?: string;
+  availableBalance?: string | null;
+  isBalanceLoading?: boolean;
+  balanceError?: string | null;
+  onSetMax?: () => void;
 }
 
 export const AmountStep: React.FC<AmountStepProps> = ({
@@ -13,6 +17,10 @@ export const AmountStep: React.FC<AmountStepProps> = ({
   onChange,
   error,
   token,
+  availableBalance,
+  isBalanceLoading = false,
+  balanceError,
+  onSetMax,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -31,12 +39,31 @@ export const AmountStep: React.FC<AmountStepProps> = ({
       </div>
 
       <div>
-        <label
-          htmlFor="amount"
-          className="block text-sm font-medium mb-2 text-foreground"
-        >
-          Amount {token && `(${token})`}
-        </label>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <label
+            htmlFor="amount"
+            className="block text-sm font-medium text-foreground"
+          >
+            Amount {token && `(${token})`}
+          </label>
+          <div className="flex items-center gap-2">
+            {isBalanceLoading ? (
+              <span className="text-xs text-slate-500">Loading balance...</span>
+            ) : availableBalance ? (
+              <span className="text-xs text-slate-500">
+                Balance: {availableBalance} {token}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={onSetMax}
+              disabled={!onSetMax || !availableBalance || isBalanceLoading}
+              className="px-2.5 py-1 rounded-full border border-accent/40 text-xs font-semibold text-accent hover:bg-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Max
+            </button>
+          </div>
+        </div>
         <div className="relative">
           <input
             ref={inputRef}
@@ -81,6 +108,11 @@ export const AmountStep: React.FC<AmountStepProps> = ({
               />
             </svg>
             {error}
+          </p>
+        )}
+        {!error && balanceError && (
+          <p className="mt-2 text-sm text-amber-400" role="status">
+            {balanceError}
           </p>
         )}
       </div>

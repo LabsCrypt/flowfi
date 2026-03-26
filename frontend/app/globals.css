@@ -1283,6 +1283,277 @@ body {
   }
 }
 
+/* ── Wallet Modal ─────────────────────────────────────────────────────────── */
+
+.wallet-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  animation: fade-in 180ms ease-out;
+}
+
+.wallet-modal {
+  width: min(860px, 100%);
+  border-radius: 1.55rem;
+  border: 1px solid var(--surface-border);
+  background: var(--surface);
+  box-shadow: 0 30px 70px rgba(13, 48, 90, 0.22);
+  backdrop-filter: blur(12px);
+  padding: clamp(1.25rem, 2.8vw, 2.5rem);
+  animation: panel-rise 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.wallet-modal__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.wallet-modal__header h2 {
+  margin: 0.5rem 0 0;
+  font-size: clamp(1.4rem, 2.5vw, 2rem);
+  line-height: 1.12;
+}
+
+.wallet-modal__close {
+  flex-shrink: 0;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 1px solid rgba(19, 38, 61, 0.14);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 160ms;
+}
+
+.wallet-modal__close:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--text-main);
+}
+
+.wallet-modal__close:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Wallet card notes */
+.wallet-card__note {
+  margin: -0.35rem 0 0;
+  font-size: 0.8rem !important;
+  color: var(--accent-strong) !important;
+  font-style: italic;
+}
+
+/* Install link variant of the wallet button */
+.wallet-button--install {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  background: linear-gradient(90deg, #1a6480, var(--wallet-accent));
+  font-size: 0.9rem;
+}
+
+/* Spinner row inside connecting button */
+.wallet-button__spinner-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.wallet-button__spinner {
+  width: 0.82rem;
+  height: 0.82rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  animation: spin 700ms linear infinite;
+  display: inline-block;
+}
+
+/* Card unavailable state (e.g. Freighter not installed) */
+.wallet-card[data-unavailable="true"] {
+  opacity: 0.72;
+}
+
+/* ── WalletButton ─────────────────────────────────────────────────────────── */
+
+.wallet-connect-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.4rem;
+  padding: 0 1.15rem;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-strong), var(--wallet-accent));
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 180ms ease, transform 140ms ease, box-shadow 180ms ease;
+  box-shadow: 0 4px 14px rgba(15, 122, 153, 0.28);
+}
+
+.wallet-connect-btn:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 122, 153, 0.35);
+}
+
+.wallet-connect-btn:active {
+  transform: translateY(0);
+}
+
+.wallet-btn-skeleton {
+  width: 140px;
+  height: 2.4rem;
+  border-radius: 999px;
+  background: rgba(19, 38, 61, 0.1);
+  animation: pulse 920ms ease-in-out infinite alternate;
+}
+
+.wallet-btn-connecting {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  height: 2.4rem;
+  padding: 0 1rem;
+  border-radius: 999px;
+  background: rgba(15, 122, 153, 0.14);
+  color: var(--accent-strong);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.wallet-status-spinner {
+  width: 0.82rem;
+  height: 0.82rem;
+  border-radius: 999px;
+  border: 2px solid rgba(13, 83, 120, 0.22);
+  border-top-color: var(--accent-strong);
+  animation: spin 700ms linear infinite;
+}
+
+/* Connected chip wrapper (positions dropdown) */
+.wallet-chip-wrapper {
+  position: relative;
+}
+
+/* Network mismatch badge state */
+.wallet-chip__network[data-mismatch="true"] {
+  background: rgba(177, 47, 63, 0.14);
+  color: var(--danger);
+}
+
+/* ── Wallet Dropdown ──────────────────────────────────────────────────────── */
+
+.wallet-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  min-width: 240px;
+  border-radius: 1rem;
+  border: 1px solid rgba(19, 38, 61, 0.14);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 36px rgba(13, 48, 90, 0.18);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  animation: slide-down 180ms ease-out;
+  z-index: 201;
+}
+
+.wallet-dropdown__key {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid rgba(19, 38, 61, 0.1);
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.wallet-dropdown__key code {
+  font-family: var(--font-mono), "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  color: #183355;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.wallet-dropdown__copy {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.4rem;
+  transition: background 140ms;
+}
+
+.wallet-dropdown__copy:hover {
+  background: rgba(13, 83, 120, 0.1);
+}
+
+.wallet-dropdown__warning {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #8c2230;
+  background: rgba(255, 243, 245, 0.9);
+  border: 1px solid rgba(177, 47, 63, 0.24);
+  border-radius: 0.65rem;
+  padding: 0.45rem 0.6rem;
+  line-height: 1.4;
+}
+
+.wallet-dropdown__disconnect {
+  border: 1px solid rgba(19, 38, 61, 0.16);
+  border-radius: 0.7rem;
+  height: 2.1rem;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--danger);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms;
+}
+
+.wallet-dropdown__disconnect:hover {
+  background: rgba(177, 47, 63, 0.06);
+}
+
+@media (max-width: 640px) {
+  .wallet-dropdown {
+    right: auto;
+    left: 0;
+  }
+
+  .wallet-modal {
+    border-radius: 1.15rem;
+  }
+}
+
 .dashboard-loading-state,
 .dashboard-error-state {
   display: flex;

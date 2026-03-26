@@ -286,22 +286,47 @@ This repository uses GitHub Actions for continuous integration. Workflows are lo
     - CodeQL analysis for JavaScript/TypeScript
   - View workflow: [Security Checks](.github/workflows/security.yml)
 
+- **CI** (`.github/workflows/ci.yml`)
+  - Runs on: push to `main`/`develop` and pull requests
+  - Performs:
+    - Frontend: lint and build
+    - Backend: prisma generation, build, and tests
+    - Soroban Contracts: build (wasm) and tests
+  - View workflow: [CI](.github/workflows/ci.yml)
+
 ### Running CI Checks Locally
 
-Before pushing, ensure your changes pass:
+Before pushing, ensure your changes pass all the same checks that run in GitHub Actions.
 
+#### 1. Frontend Checks
 ```bash
-# Frontend linting
-cd frontend && npm run lint
+cd frontend
+npm run lint    # Runs ESLint
+npm run build   # Verifies the build
+```
 
-# Backend tests
-cd backend && npm run test
+#### 2. Backend Checks
+```bash
+cd backend
+npm run prisma:generate  # Ensure Prisma client is up to date
+npm run build           # Verifies TypeScript compilation
+npm run test            # Runs backend vitest suite
+```
+*Note: Backend tests require a running PostgreSQL instance and `DATABASE_URL` environment variable.*
 
-# Security verification
+#### 3. Smart Contract Checks
+```bash
+cd contracts
+cargo build --target wasm32-unknown-unknown --release  # Verifies contract build
+cargo test                                            # Runs contract tests
+```
+
+#### 4. Security Verification
+```bash
+# From the repository root
 npm run verify-security
 ```
 
-For more details, see the [Security Workflow](.github/workflows/security.yml).
 
 ---
 

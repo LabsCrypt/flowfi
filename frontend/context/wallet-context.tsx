@@ -31,6 +31,8 @@ interface WalletContextValue {
   clearError: () => void;
 }
 
+// STORAGE_KEY version should be bumped whenever WalletSession shape changes,
+// so stale persisted sessions are discarded rather than causing type errors.
 const STORAGE_KEY = "flowfi.wallet.session.v1";
 const WalletContext = createContext<WalletContextValue | undefined>(undefined);
 const VALID_WALLET_IDS: WalletId[] = ["freighter", "albedo", "xbull"];

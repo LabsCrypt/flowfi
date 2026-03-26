@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { registerUser, getUser } from '../../controllers/user.controller.js';
+import { registerUser, getUser, getUserEvents, getCurrentUser } from '../../controllers/user.controller.js';
+import { authMiddleware } from '../../middleware/auth.middleware.js';
 
 const router = Router();
 
@@ -62,8 +63,56 @@ const router = Router();
  *               $ref: '#/components/schemas/User'
  *       404:
  *         description: User not found
+ *
+ * /v1/users/me:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get current authenticated user
+ *     description: Returns the currently authenticated user's details (protected endpoint)
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Current user details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/User'
+ *       401:
+ *         description: Unauthorized - invalid or missing token
  */
 router.post('/', registerUser);
+router.get('/me', authMiddleware, getCurrentUser);
 router.get('/:publicKey', getUser);
+
+/**
+ * @openapi
+ * /v1/users/{publicKey}/events:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Fetch user activity history
+ *     description: Returns a chronological history of all stream events associated with the user.
+ *     parameters:
+ *       - in: path
+ *         name: publicKey
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key
+ *     responses:
+ *       200:
+ *         description: List of user events
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 $ref: '#/components/schemas/StreamEvent'
+ *       404:
+ *         description: User not found
+ */
+router.get('/:publicKey/events', getUserEvents);
 
 export default router;

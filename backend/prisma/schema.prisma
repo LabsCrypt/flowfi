@@ -51,6 +51,14 @@ model Stream {
   @@index([isActive])
 }
 
+// IndexerState model - tracks the last processed ledger/cursor for the Soroban event worker
+model IndexerState {
+  id          String   @id @default("singleton")
+  lastLedger  Int      @default(0)
+  lastCursor  String?  // Paging token of the last processed event (for cursor-based pagination)
+  updatedAt   DateTime @updatedAt
+}
+
 // StreamEvent model - indexer events for tracking all on-chain stream activities
 model StreamEvent {
   id              String   @id @default(uuid())

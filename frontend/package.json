@@ -10,15 +10,18 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@stellar/freighter-api": "^6.0.1",
+    "@stellar/stellar-sdk": "^14.5.0",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
     "next-themes": "^0.4.6",
-    "react": "19.2.3",
-
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
     "react-hot-toast": "^2.6.0"
 
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

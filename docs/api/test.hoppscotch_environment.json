@@ -22,6 +22,16 @@
       "key": "tokenAddress",
       "value": "CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE",
       "secret": false
+    },
+    {
+      "key": "streamId",
+      "value": "1",
+      "secret": false
+    },
+    {
+      "key": "authToken",
+      "value": "",
+      "secret": true
     }
   ]
 }

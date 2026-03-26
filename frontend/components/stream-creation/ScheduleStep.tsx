@@ -36,36 +36,48 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
     durationInputRef.current?.focus();
   }, []);
 
+  const totalSeconds = useMemo(() => {
+    if (!duration || parseFloat(duration) <= 0) {
+      return null;
+    }
+
+    let seconds = parseFloat(duration);
+
+    switch (durationUnit) {
+      case "seconds":
+        break;
+      case "minutes":
+        seconds *= 60;
+        break;
+      case "hours":
+        seconds *= 3600;
+        break;
+      case "days":
+        seconds *= 86400;
+        break;
+      case "weeks":
+        seconds *= 604800;
+        break;
+      case "months":
+        seconds *= 2592000; // 30 days
+        break;
+    }
+
+    return seconds;
+  }, [duration, durationUnit]);
+
   const ratePerSecond = useMemo(() => {
     if (!amount || !duration || parseFloat(amount) <= 0 || parseFloat(duration) <= 0) {
       return null;
     }
 
     const totalAmount = parseFloat(amount);
-    let totalSeconds = parseFloat(duration);
-
-    switch (durationUnit) {
-      case "seconds":
-        break;
-      case "minutes":
-        totalSeconds *= 60;
-        break;
-      case "hours":
-        totalSeconds *= 3600;
-        break;
-      case "days":
-        totalSeconds *= 86400;
-        break;
-      case "weeks":
-        totalSeconds *= 604800;
-        break;
-      case "months":
-        totalSeconds *= 2592000; // 30 days
-        break;
+    if (!totalSeconds || totalSeconds <= 0) {
+      return null;
     }
 
     return totalAmount / totalSeconds;
-  }, [amount, duration, durationUnit]);
+  }, [amount, duration, totalSeconds]);
 
   const formattedRate = useMemo(() => {
     if (!ratePerSecond) return null;
@@ -77,6 +89,15 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
     } else {
       return `${(ratePerSecond * 3600).toFixed(4)} ${token || ""}/hr`;
     }
+  }, [ratePerSecond, token]);
+
+  const ratePerDayPreview = useMemo(() => {
+    if (!ratePerSecond) return null;
+    const dailyRate = ratePerSecond * 86400;
+    if (token === "USDC" || token === "EURC") {
+      return `$${dailyRate.toFixed(2)} / day`;
+    }
+    return `${dailyRate.toFixed(4)} ${token || ""} / day`;
   }, [ratePerSecond, token]);
 
   return (
@@ -167,6 +188,14 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
 
       {amount && duration && ratePerSecond && !error && (
         <div className="mt-6 space-y-3">
+          {ratePerDayPreview && (
+            <div className="p-4 rounded-lg bg-gradient-to-r from-accent/20 to-accent-tertiary/10 border border-accent/30">
+              <p className="text-xs uppercase tracking-wider text-accent/80 font-semibold">
+                Live Stream Rate Preview
+              </p>
+              <p className="mt-1 text-xl font-bold text-foreground">{ratePerDayPreview}</p>
+            </div>
+          )}
           <div className="p-4 rounded-lg bg-accent/5 border border-accent/20">
             <h4 className="font-semibold text-sm mb-2 text-accent">
               Stream Summary
@@ -185,6 +214,10 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
               <p>
                 <span className="text-slate-400">Stream Rate:</span>{" "}
                 <strong className="text-foreground">{formattedRate}</strong>
+              </p>
+              <p>
+                <span className="text-slate-400">Rate / Day:</span>{" "}
+                <strong className="text-foreground">{ratePerDayPreview}</strong>
               </p>
             </div>
           </div>

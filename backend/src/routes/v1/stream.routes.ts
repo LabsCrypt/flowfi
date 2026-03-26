@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { createStream, listStreams, getStream, getStreamEvents } from '../../controllers/stream.controller.js';
+import {
+  createStream,
+  listStreams,
+  getStream,
+  getStreamEvents,
+  getStreamClaimableAmount,
+} from '../../controllers/stream.controller.js';
 
 const router = Router();
 
@@ -166,5 +172,67 @@ router.get('/:streamId', getStream);
  *                 $ref: '#/components/schemas/StreamEvent'
  */
 router.get('/:streamId/events', getStreamEvents);
+
+/**
+ * @openapi
+ * /v1/streams/{streamId}/claimable:
+ *   get:
+ *     tags:
+ *       - Streams
+ *     summary: Get actionable claimable amount for a stream
+ *     description: |
+ *       Returns the exact actionable amount currently withdrawable from a stream,
+ *       using indexed stream state in PostgreSQL and overflow-safe logic equivalent
+ *       to the Soroban contract's `calculate_claimable` function.
+ *
+ *       **Performance:**
+ *       - Uses an in-memory cache for hot reads
+ *       - Does not call Soroban RPC for this computation
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *       - in: query
+ *         name: at
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: Optional Unix timestamp in seconds used for deterministic calculation
+ *     responses:
+ *       200:
+ *         description: Claimable amount calculated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 streamId:
+ *                   type: integer
+ *                   example: 1
+ *                 claimableAmount:
+ *                   type: string
+ *                   description: Actionable amount currently withdrawable (i128 as string)
+ *                   example: "1500"
+ *                 actionable:
+ *                   type: boolean
+ *                   description: Whether a withdrawal is currently actionable
+ *                   example: true
+ *                 calculatedAt:
+ *                   type: integer
+ *                   description: Unix timestamp (seconds) used for calculation
+ *                   example: 1708534800
+ *                 cached:
+ *                   type: boolean
+ *                   description: Whether response was served from cache
+ *                   example: false
+ *       400:
+ *         description: Invalid streamId or query parameter
+ *       404:
+ *         description: Stream not found
+ */
+router.get('/:streamId/claimable', getStreamClaimableAmount);
 
 export default router;

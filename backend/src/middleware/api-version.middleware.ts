@@ -34,7 +34,7 @@ export function apiVersionMiddleware(
 
   if (versionMatch) {
     const versionString = `v${versionMatch[1]}`;
-    
+
     // Type guard to check if version is supported
     if (SUPPORTED_VERSIONS.includes(versionString as ApiVersion)) {
       const version = versionString as ApiVersion;
@@ -52,9 +52,6 @@ export function apiVersionMiddleware(
       });
       return;
     }
-  } else {
-    // No version specified, use default
-    req.apiVersion = DEFAULT_VERSION;
   }
 
   next();
