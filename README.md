@@ -1,5 +1,9 @@
 # FlowFi
 
+[![codecov](https://codecov.io/gh/LabsCrypt/flowfi/graph/badge.svg?token=YOUR_TOKEN_HERE)](https://codecov.io/gh/LabsCrypt/flowfi)
+**DeFi Payment Streaming on Stellar**
+...
+
 **DeFi Payment Streaming on Stellar**
 
 _Programmable, real-time payment streams and recurring subscriptions._
@@ -214,35 +218,37 @@ Sandbox mode uses a separate database and clearly labels all responses. See [San
 
 Pre-built collections for exploring all endpoints without any manual setup.
 
-| File | Client |
-|---|---|
-| [`docs/api/flowfi.postman_collection.json`](docs/api/flowfi.postman_collection.json) | Postman |
+| File                                                                                       | Client     |
+| ------------------------------------------------------------------------------------------ | ---------- |
+| [`docs/api/flowfi.postman_collection.json`](docs/api/flowfi.postman_collection.json)       | Postman    |
 | [`docs/api/flowfi.hoppscotch_collection.json`](docs/api/flowfi.hoppscotch_collection.json) | Hoppscotch |
 
 Environment files (import alongside the collection):
 
-| File | Target |
-|---|---|
-| [`docs/api/local.postman_environment.json`](docs/api/local.postman_environment.json) | Postman — local |
-| [`docs/api/test.postman_environment.json`](docs/api/test.postman_environment.json) | Postman — test |
+| File                                                                                       | Target             |
+| ------------------------------------------------------------------------------------------ | ------------------ |
+| [`docs/api/local.postman_environment.json`](docs/api/local.postman_environment.json)       | Postman — local    |
+| [`docs/api/test.postman_environment.json`](docs/api/test.postman_environment.json)         | Postman — test     |
 | [`docs/api/local.hoppscotch_environment.json`](docs/api/local.hoppscotch_environment.json) | Hoppscotch — local |
-| [`docs/api/test.hoppscotch_environment.json`](docs/api/test.hoppscotch_environment.json) | Hoppscotch — test |
+| [`docs/api/test.hoppscotch_environment.json`](docs/api/test.hoppscotch_environment.json)   | Hoppscotch — test  |
 
 ### Quick start
 
 **Postman**
-1. *Import* → select `flowfi.postman_collection.json`.
-2. *Import* → select the matching `*.postman_environment.json`.
+
+1. _Import_ → select `flowfi.postman_collection.json`.
+2. _Import_ → select the matching `*.postman_environment.json`.
 3. Pick the environment from the top-right dropdown and send requests.
 
 **Hoppscotch**
-1. *Collections* → *Import / Export* → *Import from JSON* → select `flowfi.hoppscotch_collection.json`.
-2. *Environments* → *Import* → select the matching `*.hoppscotch_environment.json`.
+
+1. _Collections_ → _Import / Export_ → _Import from JSON_ → select `flowfi.hoppscotch_collection.json`.
+2. _Environments_ → _Import_ → select the matching `*.hoppscotch_environment.json`.
 3. Activate the environment and send requests.
 
 ### SSE note
 
-`GET /events/subscribe` streams `text/event-stream` data and keeps the connection open. Postman buffers the response — use *Send and Download* to capture it, or test interactively with:
+`GET /events/subscribe` streams `text/event-stream` data and keeps the connection open. Postman buffers the response — use _Send and Download_ to capture it, or test interactively with:
 
 ```bash
 curl -N --no-buffer 'http://localhost:3001/events/subscribe?all=true'
