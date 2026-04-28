@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Copy, Check, LogOut, Moon, Sun, Bell, Globe } from "lucide-react";
+import { STELLAR_NETWORK } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -10,6 +11,12 @@ import toast from "react-hot-toast";
 
 type DisplayCurrency = "USD" | "XLM" | "USDC";
 type AmountFormat = "full" | "compact";
+type DecimalPlaces = 2 | 4 | 7;
+
+// App version from package.json or env
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAMING_CONTRACT || "CDV4K...7ZQY";
+const INDEXER_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -44,6 +51,16 @@ export default function SettingsPage() {
     }
     return "full";
   });
+
+  const [decimalPlaces, setDecimalPlaces] = useState<DecimalPlaces>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("flowfi-decimal-places");
+      return (saved ? parseInt(saved, 10) : 7) as DecimalPlaces;
+    }
+    return 7;
+  });
+
+  const [lastLedger, setLastLedger] = useState<string>("Loading...");
 
   const [copied, setCopied] = useState(false);
 
@@ -89,6 +106,28 @@ export default function SettingsPage() {
       toast("Browser notifications disabled");
     }
   };
+
+  // Fetch last ledger from indexer
+  useEffect(() => {
+    const fetchLastLedger = async () => {
+      try {
+        const response = await fetch(`${INDEXER_URL}/health`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.ledger) {
+            setLastLedger(data.ledger.toString());
+          } else {
+            setLastLedger("Unknown");
+          }
+        } else {
+          setLastLedger("Unavailable");
+        }
+      } catch {
+        setLastLedger("Error");
+      }
+    };
+    fetchLastLedger();
+  }, []);
 
   if (!isHydrated) {
     return (
@@ -239,6 +278,29 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
+
+              <div>
+                <label className="text-sm text-white/60 dark:text-black/60">Decimal Places</label>
+                <div className="flex gap-2 mt-1">
+                  {([2, 4, 7] as DecimalPlaces[]).map((places) => (
+                    <button
+                      key={places}
+                      onClick={() => {
+                        setDecimalPlaces(places);
+                        localStorage.setItem("flowfi-decimal-places", places.toString());
+                        toast.success(`Decimal places set to ${places}`);
+                      }}
+                      className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                        decimalPlaces === places
+                          ? "border-green-500 bg-green-500/20 text-white"
+                          : "border-white/10 text-white/60 hover:border-white/20"
+                      }`}
+                    >
+                      {places} decimals
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
 
@@ -293,6 +355,57 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          {/* About Section */}
+          <div className="space-y-4 pt-6 border-t border-white/10 dark:border-black/10">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-slate-500/20 text-slate-400">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M12 16v-4M12 8h.01"/>
+                </svg>
+              </div>
+              <div>
+                <p className="font-medium text-white dark:text-black">About</p>
+                <p className="text-sm opacity-60">App and contract information</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pl-12">
+              <div className="flex items-center justify-between py-2 border-b border-white/5 dark:border-black/5">
+                <span className="text-sm text-white/60 dark:text-black/60">App Version</span>
+                <span className="text-sm font-mono text-white dark:text-black">{APP_VERSION}</span>
+              </div>
+
+              <div className="flex items-center justify-between py-2 border-b border-white/5 dark:border-black/5">
+                <span className="text-sm text-white/60 dark:text-black/60">Contract Address</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-mono text-white dark:text-black">{shortenPublicKey(CONTRACT_ADDRESS)}</span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(CONTRACT_ADDRESS);
+                      toast.success("Contract address copied");
+                    }}
+                    className="opacity-60 hover:opacity-100 transition"
+                  >
+                    <Copy size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between py-2 border-b border-white/5 dark:border-black/5">
+                <span className="text-sm text-white/60 dark:text-black/60">Network</span>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                  {STELLAR_NETWORK === "MAINNET" ? "Mainnet" : "Testnet"}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between py-2">
+                <span className="text-sm text-white/60 dark:text-black/60">Indexer Last Ledger</span>
+                <span className="text-sm font-mono text-white dark:text-black">{lastLedger}</span>
+              </div>
+            </div>
+          </div>
 
           {/* Disconnect */}
           {session && (
