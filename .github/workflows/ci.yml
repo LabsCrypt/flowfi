@@ -31,6 +31,14 @@ jobs:
         run: npm run lint
         working-directory: frontend
 
+      - name: Install Rollup Native Binding
+        run: npm install @rollup/rollup-linux-x64-gnu --no-save
+        working-directory: frontend
+
+      - name: Run Frontend Tests
+        run: npm test
+        working-directory: frontend
+
       - name: Build
         run: npm run build
         working-directory: frontend
