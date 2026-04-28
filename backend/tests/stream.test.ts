@@ -157,7 +157,10 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '30', 
           startTime: 1000,
           lastUpdateTime: 2000,
-          isActive: true 
+          isActive: true,
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration: 0 
         },
         { 
           id: '2', 
@@ -172,7 +175,10 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '20', 
           startTime: 1000,
           lastUpdateTime: 2000,
-          isActive: false 
+          isActive: false,
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration: 0 
         },
       ])
       .mockResolvedValueOnce([
@@ -190,6 +196,9 @@ describe('GET /v1/users/:address/summary', () => {
           startTime: 1000,
           lastUpdateTime: 0,
           isActive: true,
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration: 0
         },
         {
           id: '4',
@@ -205,6 +214,9 @@ describe('GET /v1/users/:address/summary', () => {
           startTime: 1000,
           lastUpdateTime: 0,
           isActive: false,
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration: 0
         },
       ]);
 
@@ -238,7 +250,10 @@ describe('GET /v1/users/:address/summary', () => {
         withdrawnAmount: '1',
         startTime: 1000,
         lastUpdateTime: 2000,
-        isActive: true 
+        isActive: true,
+        isPaused: false,
+        pausedAt: null,
+        totalPausedDuration: 0
       }])
       .mockResolvedValueOnce([]);
 

@@ -8,6 +8,9 @@ export interface ClaimableStreamState {
   withdrawnAmount: string;
   lastUpdateTime: number;
   isActive: boolean;
+  isPaused: boolean;
+  pausedAt: number | null;
+  totalPausedDuration: number;
   updatedAt?: Date;
 }
 
@@ -108,7 +111,14 @@ export class ClaimableAmountService {
 
     const streamLastUpdate = BigInt(Math.max(0, stream.lastUpdateTime));
     const nowTs = BigInt(Math.max(0, calculatedAt));
-    const elapsed = nowTs > streamLastUpdate ? nowTs - streamLastUpdate : 0n;
+    let elapsed = nowTs > streamLastUpdate ? nowTs - streamLastUpdate : 0n;
+    
+    // Subtract total paused duration from elapsed time
+    // Only if stream is currently active (not paused)
+    if (!stream.isPaused && stream.totalPausedDuration > 0) {
+      const pausedDuration = BigInt(Math.max(0, stream.totalPausedDuration));
+      elapsed = elapsed > pausedDuration ? elapsed - pausedDuration : 0n;
+    }
 
     const ratePerSecond = parseI128(stream.ratePerSecond, 'ratePerSecond');
     const depositedAmount = parseI128(stream.depositedAmount, 'depositedAmount');

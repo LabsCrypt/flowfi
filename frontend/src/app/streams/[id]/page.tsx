@@ -12,6 +12,8 @@ import {
   withdrawFromStream,
   cancelStream,
   topUpStream,
+  pauseStream,
+  resumeStream,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import type { WalletSession } from "@/lib/wallet";
@@ -43,6 +45,8 @@ export default function StreamDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [withdrawing, setWithdrawing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState("");
   const [showTopUp, setShowTopUp] = useState(false);
 
@@ -170,6 +174,44 @@ export default function StreamDetailsPage() {
     }
   };
 
+  const handlePause = async () => {
+    if (!session) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    setPausing(true);
+    try {
+      await pauseStream(session, { streamId: BigInt(streamId) });
+      toast.success("Stream paused successfully!");
+      // Refresh stream data
+      window.location.reload();
+    } catch (err) {
+      toast.error(toSorobanErrorMessage(err));
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!session) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    setResuming(true);
+    try {
+      await resumeStream(session, { streamId: BigInt(streamId) });
+      toast.success("Stream resumed successfully!");
+      // Refresh stream data
+      window.location.reload();
+    } catch (err) {
+      toast.error(toSorobanErrorMessage(err));
+    } finally {
+      setResuming(false);
+    }
+  };
+
   if (loading) {
     return (
       <main style={{ minHeight: "100vh", padding: "clamp(1rem, 3vw, 2rem)" }}>
@@ -257,6 +299,21 @@ export default function StreamDetailsPage() {
           </div>
         </div>
 
+        {/* Paused banner */}
+        {stream.isPaused && (
+          <div className="dashboard-panel" style={{ backgroundColor: "rgba(251, 191, 36, 0.1)", border: "1px solid rgba(251, 191, 36, 0.3)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span style={{ fontSize: "1.2rem" }}>⏸️</span>
+              <div>
+                <h4 style={{ margin: "0", color: "#f59e0b" }}>Stream Paused</h4>
+                <p style={{ margin: "0.2rem 0 0", fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                  {stream.pausedAt ? `Paused at ${new Date(parseInt(stream.pausedAt) * 1000).toLocaleString()}` : 'Stream is currently paused'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Progress bar */}
         <div className="dashboard-panel">
           <div className="dashboard-panel__header">
@@ -273,7 +330,12 @@ export default function StreamDetailsPage() {
           <div className="dashboard-panel__header">
             <h3>Claimable Balance</h3>
           </div>
-          <LiveCounter initial={claimable} label="Available to withdraw" />
+          <LiveCounter 
+            initial={claimable} 
+            label="Available to withdraw" 
+            isPaused={stream.isPaused} 
+            pausedAt={stream.pausedAt}
+          />
         </div>
 
         {/* Actions */}
@@ -296,6 +358,27 @@ export default function StreamDetailsPage() {
             >
               {showTopUp ? "Cancel Top-Up" : "Top Up"}
             </Button>
+            {/* Pause button - show for active streams owned by sender */}
+            {stream.isActive && !stream.isPaused && session?.publicKey === stream.sender && (
+              <Button
+                onClick={handlePause}
+                disabled={pausing}
+                style={{ borderColor: "#f59e0b", color: "#f59e0b" }}
+                variant="outline"
+              >
+                {pausing ? "Pausing..." : "Pause Stream"}
+              </Button>
+            )}
+            {/* Resume button - show for paused streams owned by sender */}
+            {stream.isActive && stream.isPaused && session?.publicKey === stream.sender && (
+              <Button
+                onClick={handleResume}
+                disabled={resuming}
+                glow
+              >
+                {resuming ? "Resuming..." : "Resume Stream"}
+              </Button>
+            )}
             <Button
               onClick={handleCancel}
               disabled={cancelling || !stream.isActive}

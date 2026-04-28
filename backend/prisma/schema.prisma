@@ -37,6 +37,9 @@ model Stream {
   startTime         Int       // Unix timestamp when stream started
   lastUpdateTime    Int       // Unix timestamp of last update
   isActive          Boolean   @default(true)
+  isPaused          Boolean   @default(false)    // Whether stream is currently paused
+  pausedAt          Int?      // Unix timestamp when stream was last paused
+  totalPausedDuration Int     @default(0)        // Accumulated paused seconds
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

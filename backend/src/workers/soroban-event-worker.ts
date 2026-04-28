@@ -263,6 +263,12 @@ export class SorobanEventWorker {
       case 'fee_collected':
         await this.handleFeeCollected(event, topic1);
         break;
+      case 'stream_paused':
+        await this.handleStreamPaused(event, topic1);
+        break;
+      case 'stream_resumed':
+        await this.handleStreamResumed(event, topic1);
+        break;
       default:
         // Unrecognised event — ignore silently.
         break;
@@ -586,11 +592,131 @@ export class SorobanEventWorker {
     });
 
     // Broadcast to admin channel for treasury reporting
-    sseService.broadcast('admin', 'stream.fee_collected', {
+    sseService.broadcast('stream.fee_collected', {
       streamId,
       treasury,
       feeAmount,
       token,
+      transactionHash: event.txHash,
+      ledger: event.ledger,
+      timestamp,
+    });
+  }
+
+  private async handleStreamPaused(
+    event: rpc.Api.EventResponse,
+    streamIdTopic: xdr.ScVal,
+  ): Promise<void> {
+    const streamId = Number(decodeU64(streamIdTopic));
+    const body = decodeMap(event.value);
+
+    if (!body['sender'] || !body['paused_at']) {
+      throw new Error(`StreamPaused #${streamId}: missing body fields`);
+    }
+
+    const sender = decodeAddress(body['sender']);
+    const pausedAt = Number(decodeU64(body['paused_at']));
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    await prisma.$transaction(async (tx: any) => {
+      // Get current stream to preserve totalPausedDuration
+      const currentStream = await tx.stream.findUniqueOrThrow({
+        where: { streamId },
+        select: { totalPausedDuration: true },
+      });
+
+      await tx.stream.update({
+        where: { streamId },
+        data: {
+          isPaused: true,
+          pausedAt,
+          lastUpdateTime: timestamp,
+        },
+      });
+
+      await tx.streamEvent.create({
+        data: {
+          streamId,
+          eventType: 'PAUSED',
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ sender, pausedAt }),
+        },
+      });
+    });
+
+    sseService.broadcastToStream(String(streamId), 'stream.paused', {
+      streamId,
+      sender,
+      pausedAt,
+      transactionHash: event.txHash,
+      ledger: event.ledger,
+      timestamp,
+    });
+  }
+
+  private async handleStreamResumed(
+    event: rpc.Api.EventResponse,
+    streamIdTopic: xdr.ScVal,
+  ): Promise<void> {
+    const streamId = Number(decodeU64(streamIdTopic));
+    const body = decodeMap(event.value);
+
+    if (!body['sender'] || !body['new_end_time']) {
+      throw new Error(`StreamResumed #${streamId}: missing body fields`);
+    }
+
+    const sender = decodeAddress(body['sender']);
+    const newEndTime = Number(decodeU64(body['new_end_time']));
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    await prisma.$transaction(async (tx: any) => {
+      // Get current stream to calculate paused duration
+      const currentStream = await tx.stream.findUniqueOrThrow({
+        where: { streamId },
+        select: { pausedAt: true, totalPausedDuration: true },
+      });
+
+      // Calculate the duration of this pause interval
+      let additionalPausedDuration = 0;
+      if (currentStream.pausedAt) {
+        additionalPausedDuration = timestamp - currentStream.pausedAt;
+      }
+
+      const newTotalPausedDuration = currentStream.totalPausedDuration + additionalPausedDuration;
+
+      await tx.stream.update({
+        where: { streamId },
+        data: {
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration: newTotalPausedDuration,
+          lastUpdateTime: timestamp,
+        },
+      });
+
+      await tx.streamEvent.create({
+        data: {
+          streamId,
+          eventType: 'RESUMED',
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ 
+            sender, 
+            newEndTime, 
+            pausedDuration: additionalPausedDuration,
+            totalPausedDuration: newTotalPausedDuration 
+          }),
+        },
+      });
+    });
+
+    sseService.broadcastToStream(String(streamId), 'stream.resumed', {
+      streamId,
+      sender,
+      newEndTime,
       transactionHash: event.txHash,
       ledger: event.ledger,
       timestamp,
