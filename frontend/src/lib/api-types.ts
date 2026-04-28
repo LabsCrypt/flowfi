@@ -5,7 +5,7 @@ export interface BackendUser {
     updatedAt: string;
 }
 
-export type StreamEventType = "CREATED" | "TOPPED_UP" | "WITHDRAWN" | "CANCELLED" | "COMPLETED";
+export type StreamEventType = "CREATED" | "TOPPED_UP" | "WITHDRAWN" | "CANCELLED" | "COMPLETED" | "FEE_COLLECTED";
 
 export interface BackendStreamEvent {
     id: string;

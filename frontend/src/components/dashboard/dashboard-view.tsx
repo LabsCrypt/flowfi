@@ -459,13 +459,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setStreamFormMessage(null);
   };
 
-  const handleTopUp = (streamId: string) => {
-    const amount = prompt(`Enter amount to add to stream ${streamId}:`);
-    if (amount && !Number.isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
-      console.log(`Adding ${amount} funds to stream ${streamId}`);
-      // TODO: Integrate with Soroban contract's top_up_stream function
-      alert(`Successfully added ${amount} to stream ${streamId}`);
-    }
+  const handleTopUp = (stream: Stream) => {
+    setModal({ type: "topup", stream });
   };
 
   const handleApplyTemplate = (templateId: string) => {

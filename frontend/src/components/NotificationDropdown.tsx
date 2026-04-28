@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { BackendStreamEvent } from '@/lib/api-types';
 import { fetchUserEvents } from '@/lib/dashboard';
 import { Button } from './ui/Button';
+import { useStreamEvents } from '@/hooks/useStreamEvents';
 
 interface NotificationDropdownProps {
     publicKey: string;
@@ -12,18 +13,63 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     const [isOpen, setIsOpen] = useState(false);
     const [events, setEvents] = useState<BackendStreamEvent[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    // Wire up SSE for real-time events
+    const { events: streamEvents } = useStreamEvents({
+        userPublicKeys: [publicKey],
+        autoReconnect: true,
+    });
 
     useEffect(() => {
         if (isOpen && publicKey) {
             loadEvents();
+            setUnreadCount(0); // Clear unread count when dropdown opens
         }
     }, [isOpen, publicKey]);
+
+    // Handle incoming SSE events
+    useEffect(() => {
+        if (streamEvents.length > 0 && !isOpen) {
+            // Increment unread count for new events while dropdown is closed
+            setUnreadCount(prev => prev + 1);
+        }
+
+        // Prepend live events to notification list
+        if (streamEvents.length > 0) {
+            const latestEvent = streamEvents[0];
+            const newEvent: BackendStreamEvent = {
+                id: `sse-${Date.now()}`,
+                streamId: latestEvent.data.streamId || 0,
+                eventType: mapEventType(latestEvent.type),
+                amount: latestEvent.data.amount || latestEvent.data.feeAmount || null,
+                transactionHash: latestEvent.data.transactionHash || '',
+                ledgerSequence: latestEvent.data.ledger || 0,
+                timestamp: latestEvent.timestamp / 1000,
+                metadata: null,
+                createdAt: new Date().toISOString(),
+            };
+
+            setEvents(prev => [newEvent, ...prev.slice(0, 19)]); // Keep max 20
+        }
+    }, [streamEvents, isOpen]);
+
+    const mapEventType = (type: string): BackendStreamEvent['eventType'] => {
+        switch (type) {
+            case 'created': return 'CREATED';
+            case 'topped_up': return 'TOPPED_UP';
+            case 'withdrawn': return 'WITHDRAWN';
+            case 'cancelled': return 'CANCELLED';
+            case 'completed': return 'COMPLETED';
+            default: return 'CREATED';
+        }
+    };
 
     const loadEvents = async () => {
         setIsLoading(true);
         try {
             const data = await fetchUserEvents(publicKey);
-            setEvents(data.slice(0, 5)); // Show only last 5
+            setEvents(data.slice(0, 20)); // Show last 20
         } catch (error) {
             console.error(error);
         } finally {
@@ -38,6 +84,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             case 'TOPPED_UP': return `Topped up #${event.streamId}`;
             case 'WITHDRAWN': return `Withdrew ${amount} from #${event.streamId}`;
             case 'CANCELLED': return `Cancelled #${event.streamId}`;
+            case 'COMPLETED': return `Completed #${event.streamId}`;
             default: return `Event on #${event.streamId}`;
         }
     };
@@ -51,8 +98,10 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                 </svg>
-                {events.length > 0 && (
-                    <span className="absolute top-0 right-0 h-3 w-3 bg-accent rounded-full border-2 border-background"></span>
+                {unreadCount > 0 && (
+                    <span className="absolute top-0 right-0 h-5 w-5 bg-accent rounded-full border-2 border-background flex items-center justify-center text-xs font-bold text-white">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
                 )}
             </button>
 
