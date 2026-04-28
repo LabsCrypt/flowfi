@@ -4,9 +4,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 jobs:
   frontend:
@@ -19,13 +19,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
-
 
       - name: Lint
         run: npm run lint
@@ -68,8 +67,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
@@ -128,19 +127,28 @@ jobs:
       - name: Install Stellar CLI
         run: |
           curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
+          echo "$HOME/.stellar-cli/bin" >> $GITHUB_PATH
         shell: bash
 
       - name: Optimize WASM files
         run: |
           set -euo pipefail
-          WASMS=$(find contracts/target -type f -name "*.wasm" -print)
+
+          # Navigate to the release directory where build artifacts are stored
+          RELEASE_DIR="contracts/target/wasm32-unknown-unknown/release"
+
+          # Find raw WASM files, excluding already optimized ones or internal deps
+          WASMS=$(find "$RELEASE_DIR" -maxdepth 1 -type f -name "*.wasm" ! -name "*.optimized.wasm")
+
           if [ -z "$WASMS" ]; then
-            echo "No wasm files found"
+            echo "Error: No WASM files found in $RELEASE_DIR"
             exit 1
           fi
+
           for w in $WASMS; do
-            out="${w%%.wasm}.optimized.wasm"
-            echo "Optimizing $w -> $out"
+            filename=$(basename "$w")
+            out="$RELEASE_DIR/${filename%.wasm}.optimized.wasm"
+            echo "Optimizing $filename -> $(basename "$out")"
             stellar contract optimize --wasm "$w" --wasm-out "$out"
           done
         shell: bash
@@ -148,6 +156,6 @@ jobs:
       - name: Upload optimized WASM artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: optimized-wasm
-          path: |
-            contracts/target/**/**/*.optimized.wasm
+          name: optimized-soroban-contracts
+          path: contracts/target/wasm32-unknown-unknown/release/*.optimized.wasm
+          if-no-files-found: error
