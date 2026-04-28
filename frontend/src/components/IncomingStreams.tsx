@@ -5,6 +5,7 @@ import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
 import { fromStroops } from '@/utils/amount';
+import LiveCounter from '@/components/Livecounter';
 
 interface IncomingStreamsProps {
     streams: Stream[];
@@ -26,17 +27,26 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
         isActive: stream.status === 'Active' && stream.isActive,
     });
 
-    const isPaused = stream.status === 'Paused';
+    const isPaused = stream.status === 'Paused' || (stream as any).isPaused;
     const liveRate = stream.status === 'Active' && stream.ratePerSecond > 0;
 
     return (
         <div className="flex flex-col">
             <span className={`font-bold tabular-nums ${liveRate ? 'text-emerald-600 dark:text-emerald-300' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
-                {formatTokenAmount(claimable)} {stream.token}
+                {isPaused ? (
+                    <LiveCounter 
+                        initial={claimable} 
+                        isPaused={isPaused} 
+                        pausedAt={(stream as any).pausedAt} 
+                        label="Claimable"
+                    />
+                ) : (
+                    `${formatTokenAmount(claimable)} ${stream.token}`
+                )}
             </span>
             <span className={`text-xs tabular-nums ${liveRate ? 'text-emerald-500 dark:text-emerald-400' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-400 dark:text-gray-500'}`}>
                 {isPaused
-                    ? 'Stream paused'
+                    ? ''
                     : liveRate
                         ? `+${formatTokenAmount(stream.ratePerSecond)} ${stream.token}/sec`
                         : 'Stream inactive'}
@@ -147,11 +157,11 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                         </thead>
                         <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredStreams.map((stream) => {
-                                const isPaused = stream.status === 'Paused';
+                                const isPaused = stream.status === 'Paused' || (stream as any).isPaused;
                                 return (
                                     <tr
                                         key={stream.id}
-                                        className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${isPaused ? 'bg-gray-50/50 dark:bg-gray-800/50 opacity-75' : ''}`}
+                                        className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${isPaused ? 'bg-gray-50/50 dark:bg-gray-800/50 grayscale opacity-75' : ''}`}
                                     >
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className={`text-sm font-mono ${isPaused ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>

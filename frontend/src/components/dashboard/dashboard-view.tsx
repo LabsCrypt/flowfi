@@ -49,6 +49,7 @@ import { TopUpModal } from "../stream-creation/TopUpModal";
 import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
+import LiveCounter from "@/components/Livecounter";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -475,6 +476,40 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
   const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
   const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+  const [pausedStreamsData, setPausedStreamsData] = React.useState<Stream[]>([]);
+  const [isPausedLoading, setIsPausedLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (activeTab === "paused") {
+      setIsPausedLoading(true);
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const endpoints = [
+        `${baseUrl}/v1/streams?status=paused&sender=${session.publicKey}`,
+        `${baseUrl}/v1/streams?status=paused&recipient=${session.publicKey}`
+      ];
+      Promise.all(endpoints.map(ep => fetch(ep).then(res => res.ok ? res.json() : [])))
+        .then(([outPaused, inPaused]) => {
+          const allPaused = [...outPaused, ...inPaused].map((s: any) => ({
+             id: s.streamId?.toString() || s.id,
+             recipient: s.recipient || s.sender,
+             amount: s.depositedAmount ? parseFloat(s.depositedAmount)/1e7 : s.amount,
+             token: "TOKEN",
+             status: "Paused",
+             deposited: s.depositedAmount ? parseFloat(s.depositedAmount)/1e7 : s.deposited,
+             withdrawn: s.withdrawnAmount ? parseFloat(s.withdrawnAmount)/1e7 : s.withdrawn,
+             date: s.startTime ? new Date(s.startTime * 1000).toISOString().split("T")[0] : s.date,
+             ratePerSecond: s.ratePerSecond ? parseFloat(s.ratePerSecond)/1e7 : s.ratePerSecond,
+             lastUpdateTime: s.lastUpdateTime,
+             isActive: false,
+             isPaused: true,
+             pausedAt: s.pausedAt
+          }));
+          setPausedStreamsData(allPaused);
+        })
+        .catch(console.error)
+        .finally(() => setIsPausedLoading(false));
+    }
+  }, [activeTab, session.publicKey]);
 
   const safeLoadTemplates = (): StreamTemplate[] => {
     try {
@@ -804,10 +839,13 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
     // ── Paused ────────────────────────────────────────────────────────────
     if (activeTab === "paused") {
-      const pausedStreams = [
+      const pausedStreams = pausedStreamsData.length > 0 ? pausedStreamsData : [
         ...snapshot!.outgoingStreams.filter((s) => s.status === "Paused"),
         ...snapshot!.incomingStreams.filter((s) => s.status === "Paused"),
       ];
+      if (isPausedLoading) {
+        return <div className="mt-8 text-center text-slate-400">Loading paused streams...</div>;
+      }
       if (pausedStreams.length === 0) {
         return (
           <div className="glass-card p-12 rounded-3xl border-slate-800 text-center text-slate-400 mt-8">
@@ -828,14 +866,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             </thead>
             <tbody>
               {pausedStreams.map((s) => (
-                <tr key={s.id}>
+                <tr key={s.id} className="grayscale opacity-75">
                   <td>#{s.id}</td>
                   <td className="font-mono text-xs">{s.recipient}</td>
                   <td>{s.token}</td>
-                  <td>
+                  <td className="flex items-center gap-2">
                     <span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">
                       Paused
                     </span>
+                    <LiveCounter initial={0} isPaused={(s as any).isPaused || true} pausedAt={(s as any).pausedAt} />
                   </td>
                 </tr>
               ))}
