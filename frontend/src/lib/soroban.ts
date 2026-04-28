@@ -1,4 +1,5 @@
 import type { WalletSession } from "@/lib/wallet";
+import { toStroops, fromStroops } from "@/utils/amount";
 
 const CONTRACT_ID =
   process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID ?? "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
@@ -77,20 +78,16 @@ export function toDurationSeconds(value: string, unit: DurationUnit): bigint {
 }
 
 export function toBaseUnits(value: string, decimals = 7): bigint {
-  const parsed = parseFloat(value);
-  if (isNaN(parsed) || parsed <= 0) {
+  const amount = toStroops(value, decimals);
+  if (amount <= 0n) {
     throw new SorobanCallError("Amount must be a positive number.", "InvalidAmount");
   }
-  return BigInt(Math.round(parsed * 10 ** decimals));
+  return amount;
 }
 
 export function fromBaseUnits(value: bigint | string, decimals = 7): string {
   const units = typeof value === "bigint" ? value : BigInt(value);
-  const divisor = BigInt(10) ** BigInt(decimals);
-  const whole = units / divisor;
-  const fraction = (units % divisor).toString().padStart(decimals, "0").replace(/0+$/, "");
-
-  return fraction.length > 0 ? `${whole}.${fraction}` : whole.toString();
+  return fromStroops(units, decimals);
 }
 
 export const TOKEN_ADDRESSES: Record<string, string> = {

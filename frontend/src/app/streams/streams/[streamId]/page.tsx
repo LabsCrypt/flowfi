@@ -14,10 +14,9 @@ import {
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import { shortenPublicKey } from "@/lib/wallet";
+import { fromStroops, toStroops, hasValidPrecision } from "@/utils/amount";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
-const TOKEN_DECIMALS = 1e7;
-
 interface StreamDetailsPageProps {
   params: {
     streamId: string;
@@ -25,9 +24,7 @@ interface StreamDetailsPageProps {
 }
 
 function toDisplayAmount(baseUnits: string): number {
-  const parsed = Number(baseUnits);
-  if (!Number.isFinite(parsed)) return 0;
-  return parsed / TOKEN_DECIMALS;
+  return Number(fromStroops(BigInt(baseUnits), 7));
 }
 
 function formatUnixTimestamp(timestamp: number): string {
@@ -307,7 +304,7 @@ export default function StreamDetailsPage({ params }: StreamDetailsPageProps) {
                       <td>{event.eventType}</td>
                       <td>
                         {event.amount
-                          ? `${toDisplayAmount(event.amount).toFixed(2)} ${tokenSymbol}`
+                          ? `${fromStroops(BigInt(event.amount), 7)} ${tokenSymbol}`
                           : "-"}
                       </td>
                       <td>{event.ledgerSequence}</td>

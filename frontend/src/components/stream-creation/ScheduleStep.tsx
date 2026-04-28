@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useRef, useEffect } from "react";
+import { fromStroops, formatRate, toStroops } from "@/utils/amount";
 
 interface ScheduleStepProps {
   duration: string;
@@ -79,25 +80,13 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
     return totalAmount / totalSeconds;
   }, [amount, duration, totalSeconds]);
 
-  const formattedRate = useMemo(() => {
+  const ratePreview = useMemo(() => {
     if (!ratePerSecond) return null;
-
-    if (ratePerSecond >= 1) {
-      return `${ratePerSecond.toFixed(4)} ${token || ""}/sec`;
-    } else if (ratePerSecond >= 0.0001) {
-      return `${(ratePerSecond * 60).toFixed(4)} ${token || ""}/min`;
-    } else {
-      return `${(ratePerSecond * 3600).toFixed(4)} ${token || ""}/hr`;
-    }
-  }, [ratePerSecond, token]);
-
-  const ratePerDayPreview = useMemo(() => {
-    if (!ratePerSecond) return null;
-    const dailyRate = ratePerSecond * 86400;
-    if (token === "USDC" || token === "EURC") {
-      return `$${dailyRate.toFixed(2)} / day`;
-    }
-    return `${dailyRate.toFixed(4)} ${token || ""} / day`;
+    
+    // Convert float rate back to stroops for consistent formatting
+    // 1e7 is standard for XLM/Stellar tokens in this app
+    const rateBigInt = BigInt(Math.floor(ratePerSecond * 1e7));
+    return formatRate(rateBigInt, 7, token || "USDC");
   }, [ratePerSecond, token]);
 
   return (
@@ -188,12 +177,12 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
 
       {amount && duration && ratePerSecond && !error && (
         <div className="mt-6 space-y-3">
-          {ratePerDayPreview && (
+          {ratePreview && (
             <div className="p-4 rounded-lg bg-gradient-to-r from-accent/20 to-accent-tertiary/10 border border-accent/30">
               <p className="text-xs uppercase tracking-wider text-accent/80 font-semibold">
                 Live Stream Rate Preview
               </p>
-              <p className="mt-1 text-xl font-bold text-foreground">{ratePerDayPreview}</p>
+              <p className="mt-1 text-xl font-bold text-foreground">{ratePreview}</p>
             </div>
           )}
           <div className="p-4 rounded-lg bg-accent/5 border border-accent/20">
@@ -213,11 +202,7 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
               </p>
               <p>
                 <span className="text-slate-400">Stream Rate:</span>{" "}
-                <strong className="text-foreground">{formattedRate}</strong>
-              </p>
-              <p>
-                <span className="text-slate-400">Rate / Day:</span>{" "}
-                <strong className="text-foreground">{ratePerDayPreview}</strong>
+                <strong className="text-foreground">{ratePreview}</strong>
               </p>
             </div>
           </div>

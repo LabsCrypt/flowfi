@@ -8,6 +8,7 @@ import {
   getTokenAddress, 
   toSorobanErrorMessage 
 } from "@/lib/soroban";
+import { hasValidPrecision, formatRate, toStroops } from "@/utils/amount";
 import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -101,7 +102,7 @@ export default function CreateStreamPage() {
               placeholder="G..."
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.recipient}
-              onChange={(e) => setFormData({ ...formData, recipient: e.target.value })}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, recipient: e.target.value })}
               required
             />
           </div>
@@ -114,7 +115,7 @@ export default function CreateStreamPage() {
               <select
                 className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors appearance-none"
                 value={formData.token}
-                onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFormData({ ...formData, token: e.target.value })}
               >
                 <option value="XLM">XLM</option>
                 <option value="USDC">USDC</option>
@@ -130,7 +131,12 @@ export default function CreateStreamPage() {
                 placeholder="0.00"
                 className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
                 value={formData.amount}
-                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const val = e.target.value;
+                  if (hasValidPrecision(val, 7)) {
+                    setFormData({ ...formData, amount: val });
+                  }
+                }}
                 required
               />
             </div>
@@ -145,7 +151,7 @@ export default function CreateStreamPage() {
               placeholder="30"
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.duration}
-              onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, duration: e.target.value })}
               required
             />
           </div>
@@ -155,8 +161,8 @@ export default function CreateStreamPage() {
               <span className="text-slate-400">Streaming Rate</span>
               <span className="font-mono font-medium text-accent">
                 {formData.amount && formData.duration 
-                  ? (Number(formData.amount) / (Number(formData.duration) * 86400)).toFixed(8)
-                  : "0.00000000"} {formData.token}/sec
+                  ? formatRate(toStroops(formData.amount, 7) / toDurationSeconds(formData.duration, "days"), 7, formData.token)
+                  : "0.00000000 " + formData.token + "/sec"}
               </span>
             </div>
             <div className="flex justify-between items-center text-sm">

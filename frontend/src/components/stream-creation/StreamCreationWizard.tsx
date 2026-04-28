@@ -9,6 +9,7 @@ import { ScheduleStep } from "./ScheduleStep";
 import { TemplateStep, type StreamTemplate } from "./TemplateStep";
 import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
+import { hasValidPrecision } from "@/utils/amount";
 import toast from "react-hot-toast";
 
 export interface StreamFormData {
@@ -258,6 +259,8 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           const amount = parseFloat(formData.amount);
           if (isNaN(amount) || amount <= 0) {
             newErrors.amount = "Amount must be a positive number";
+          } else if (!hasValidPrecision(formData.amount, 7)) {
+            newErrors.amount = "Maximum 7 decimal places allowed";
           } else if (walletBalance) {
             const available = parseFloat(walletBalance);
             if (!isNaN(available) && amount > available) {

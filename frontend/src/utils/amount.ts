@@ -37,7 +37,21 @@ export function toStroops(amount: string, decimals: number): bigint {
 }
 
 /**
- * Format stream rate as human-readable string (e.g., "0.0001 USDC/sec")
+ * Format stream rate as human-readable string (e.g., "0.0001 USDC/sec (8.64 USDC/day)")
+ */
+export function formatRate(
+  ratePerSecond: bigint,
+  decimals: number,
+  tokenSymbol: string = "USDC"
+): string {
+  const perSecond = fromStroops(ratePerSecond, decimals);
+  const perDay = fromStroops(ratePerSecond * 60n * 60n * 24n, decimals);
+
+  return `${perSecond} ${tokenSymbol}/sec (${perDay} ${tokenSymbol}/day)`;
+}
+
+/**
+ * Format stream rate as human-readable string (e.g., "0.0001 USDC/sec (0.2592 USDC/month)")
  */
 export function formatStreamRate(
   ratePerSecond: bigint,

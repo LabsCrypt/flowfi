@@ -1,4 +1,5 @@
 import type { BackendStream, BackendStreamEvent } from "./api-types";
+import { fromStroops } from "@/utils/amount";
 
 export interface ActivityItem {
   id: string;
@@ -47,7 +48,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v
 const STROOPS_DIVISOR = 1e7;
 
 function toTokenAmount(raw: string): number {
-  return parseFloat(raw) / STROOPS_DIVISOR;
+  return Number(fromStroops(BigInt(raw), 7));
 }
 
 function shortenAddress(address: string): string {

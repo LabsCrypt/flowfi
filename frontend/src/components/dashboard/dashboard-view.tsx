@@ -19,13 +19,9 @@ import {
   type DashboardSnapshot,
   type Stream,
 } from "@/lib/dashboard";
-import {
-  shortenPublicKey,
-  formatNetwork,
-  isExpectedNetwork,
-  type WalletSession,
-} from "@/lib/wallet";
+import { shortenPublicKey, formatNetwork, isExpectedNetwork, type WalletSession } from "@/lib/wallet";
 import { isValidStellarPublicKey } from "@/lib/stellar";
+import { fromStroops, toStroops, hasValidPrecision } from "@/utils/amount";
 import {
   createStream as sorobanCreateStream,
   topUpStream as sorobanTopUp,
@@ -575,10 +571,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       id: `stream-${Date.now()}`,
       date: new Date().toISOString().split("T")[0],
       recipient: shortenPublicKey(data.recipient),
-      amount: parseFloat(data.amount),
+      amount: Number(fromStroops(toStroops(data.amount, 7), 7)),
       token: data.token,
       status: "Active",
-      deposited: parseFloat(data.amount),
+      deposited: Number(fromStroops(toStroops(data.amount, 7), 7)),
       withdrawn: 0,
       ratePerSecond: 0,
       lastUpdateTime: Math.floor(Date.now() / 1000),
@@ -628,7 +624,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         amount,
       });
 
-      topUpStreamLocally(streamId, parseFloat(amountStr));
+      topUpStreamLocally(streamId, Number(fromStroops(toStroops(amountStr, 7), 7)));
       setModal(null);
       toast.success("Stream topped up successfully!", { id: toastId });
     } catch (err) {
@@ -1054,9 +1050,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       required
                       type="number"
                       min="0"
-                      step="0.0000001"
+                      step="any"
                       value={streamForm.totalAmount}
-                      onChange={(event) => updateStreamForm("totalAmount", event.target.value)}
+                      onChange={(event) => {
+                        const val = event.target.value;
+                        if (hasValidPrecision(val, 7)) {
+                          updateStreamForm("totalAmount", val);
+                        }
+                      }}
                       placeholder="100"
                     />
                   </label>

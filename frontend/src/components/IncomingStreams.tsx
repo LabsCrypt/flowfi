@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
-import { fromStroops } from '@/utils/amount';
+import { fromStroops, formatRate } from '@/utils/amount';
 
 interface IncomingStreamsProps {
     streams: Stream[];
@@ -38,7 +38,7 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
                 {isPaused
                     ? 'Stream paused'
                     : liveRate
-                        ? `+${formatTokenAmount(stream.ratePerSecond)} ${stream.token}/sec`
+                        ? formatRate(BigInt(Math.floor(stream.ratePerSecond * 1e7)), 7, stream.token)
                         : 'Stream inactive'}
             </span>
         </div>
