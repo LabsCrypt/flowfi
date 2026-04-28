@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import LiveCounter from "@/components/Livecounter";
+import ClaimableAmountDisplay from "@/components/streams/ClaimableAmountDisplay";
 import ProgressBar from "@/components/Progressbar";
 import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
@@ -330,10 +330,12 @@ export default function StreamDetailsPage() {
           <div className="dashboard-panel__header">
             <h3>Claimable Balance</h3>
           </div>
-          <LiveCounter 
-            initial={claimable} 
-            label="Available to withdraw" 
-            isPaused={stream.isPaused} 
+          <ClaimableAmountDisplay
+            streamId={stream.id}
+            initialAmount={claimable}
+            ratePerSecond={parseFloat(stream.ratePerSecond) / 1e7}
+            isActive={stream.isActive}
+            isPaused={stream.isPaused}
             pausedAt={stream.pausedAt}
           />
         </div>
