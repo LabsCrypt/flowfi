@@ -73,11 +73,6 @@ vi.mock('../../src/lib/redis.js', () => ({
   },
 }));
 
-vi.mock('../../src/lib/prisma.js', () => ({
-  default: mockPrisma,
-  prisma: mockPrisma,
-}));
-
 // ─── App import (after mocks) ─────────────────────────────────────────────────
 
 import app from '../../src/app.js';
