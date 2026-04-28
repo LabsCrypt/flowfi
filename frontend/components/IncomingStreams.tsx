@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
+import toast from 'react-hot-toast';
+import { fromStroops } from '@/utils/amount';
 
 interface IncomingStreamsProps {
     streams: Stream[];
@@ -10,13 +12,10 @@ interface IncomingStreamsProps {
     withdrawingStreamId?: string | null;
 }
 
-function formatTokenAmount(value: number): string {
-    if (!Number.isFinite(value)) return '0.0000';
+function formatTokenAmount(value: number, decimals: number = 7): string {
+    if (!Number.isFinite(value)) return '0.0000000';
 
-    return new Intl.NumberFormat('en-US', {
-        minimumFractionDigits: 4,
-        maximumFractionDigits: 4,
-    }).format(value);
+    return fromStroops(BigInt(Math.floor(value)), decimals);
 }
 
 const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
@@ -60,6 +59,15 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
 
     const handleFilterChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         setFilter(e.target.value as 'All' | 'Active' | 'Completed' | 'Paused');
+    };
+
+    const handleWithdraw = async (stream: Stream) => {
+        try {
+            await onWithdraw(stream);
+            toast.success(`Successfully withdrew from stream #${stream.id}`);
+        } catch (error) {
+            toast.error(`Failed to withdraw from stream #${stream.id}`);
+        }
     };
 
     return (
@@ -128,7 +136,7 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                                         <button
                                             disabled={stream.status !== 'Active' || withdrawingStreamId === stream.id}
                                             onClick={() => {
-                                                void onWithdraw(stream);
+                                                void handleWithdraw(stream);
                                             }}
                                             className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
                                                     ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'

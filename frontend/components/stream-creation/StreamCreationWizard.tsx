@@ -8,6 +8,7 @@ import { AmountStep } from "./AmountStep";
 import { ScheduleStep } from "./ScheduleStep";
 import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
+import toast from "react-hot-toast";
 
 export interface StreamFormData {
   recipient: string;
@@ -167,9 +168,10 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       setIsSubmitting(true);
       try {
         await onSubmit(formData);
+        toast.success("Stream created successfully!");
       } catch (error) {
         console.error("Failed to create stream:", error);
-        // Error handling can be added here (e.g., toast notification)
+        toast.error("Failed to create stream. Please try again.");
         setIsSubmitting(false);
       }
     } else {

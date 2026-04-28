@@ -9,6 +9,7 @@
 
 import React, { useRef, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import toast from "react-hot-toast";
 
 interface TopUpModalProps {
   streamId: string;
@@ -56,9 +57,9 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     setIsSubmitting(true);
     try {
       await onConfirm(streamId, amount);
-      // onConfirm is responsible for closing + toasting on success
+      toast.success(`Successfully added ${amount} ${token} to stream`);
     } catch {
-      // Errors are handled upstream (toast in dashboard-view)
+      toast.error("Failed to top up stream. Please try again.");
       setIsSubmitting(false);
     }
   };

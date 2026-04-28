@@ -4,6 +4,8 @@ import { fetchUserEvents } from '@/lib/dashboard';
 import { useWallet } from '@/context/wallet-context';
 import { BackendStreamEvent } from '@/lib/api-types';
 import { downloadCSV } from '@/utils/csvExport';
+import toast from 'react-hot-toast';
+import { fromStroops } from '@/utils/amount';
 
 interface StreamData extends Record<string, unknown> {
     id: string;
@@ -51,6 +53,7 @@ const Dashboard: React.FC = () => {
 
     const handleExport = () => {
         downloadCSV(mockStreams, 'flowfi-stream-history.csv');
+        toast.success('CSV exported successfully!');
     };
 
     const handleTopUp = (streamId: string) => {
@@ -58,7 +61,7 @@ const Dashboard: React.FC = () => {
         if (amount && parseFloat(amount) > 0) {
             console.log(`Adding ${amount} funds to stream ${streamId}`);
             // TODO: Integrate with Soroban contract's top_up_stream function
-            alert(`Successfully added ${amount} to stream ${streamId}`);
+            toast.success(`Successfully added ${amount} to stream ${streamId}`);
         }
     };
 
@@ -108,14 +111,14 @@ const Dashboard: React.FC = () => {
                                 <tr key={stream.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.date}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 font-mono">{stream.recipient}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-semibold">{stream.deposited} {stream.token}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{stream.withdrawn} {stream.token}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-semibold">{fromStroops(BigInt(stream.deposited), 7)} {stream.token}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{fromStroops(BigInt(stream.withdrawn), 7)} {stream.token}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{stream.token}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
-                        ${stream.status === 'Active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
-                                                stream.status === 'Completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
-                                                    'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'}`}>
+                            ${stream.status === 'Active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+                                            stream.status === 'Completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                                                'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'}`}>
                                             {stream.status}
                                         </span>
                                     </td>
@@ -135,7 +138,21 @@ const Dashboard: React.FC = () => {
                     </table>
                 </div>
             ) : (
-                <ActivityHistory events={events} isLoading={isLoadingEvents} />
+                <>
+                    {isLoadingEvents ? (
+                        <div className="space-y-4">
+                            {[1, 2, 3].map((i) => (
+                                <div key={i} className="animate-pulse bg-white dark:bg-gray-800 shadow rounded-lg p-6">
+                                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-4"></div>
+                                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-full mb-2"></div>
+                                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-3/4"></div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <ActivityHistory events={events} isLoading={isLoadingEvents} />
+                    )}
+                </>
             )}
         </div>
     );

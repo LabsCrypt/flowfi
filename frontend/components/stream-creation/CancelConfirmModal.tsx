@@ -10,6 +10,7 @@
 
 import React, { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import toast from "react-hot-toast";
 
 interface CancelConfirmModalProps {
   streamId: string;
@@ -47,8 +48,9 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
     setIsSubmitting(true);
     try {
       await onConfirm(streamId);
+      toast.success(`Stream ${streamId} cancelled successfully`);
     } catch {
-      // Errors are handled upstream (toast in dashboard-view)
+      toast.error("Failed to cancel stream. Please try again.");
       setIsSubmitting(false);
     }
   };

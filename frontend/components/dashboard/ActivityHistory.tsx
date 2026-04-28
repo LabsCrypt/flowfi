@@ -1,5 +1,7 @@
 import React from 'react';
 import { BackendStreamEvent } from '@/lib/api-types';
+import { fromStroops } from '@/utils/amount';
+import TransactionTracker from '@/components/TransactionTracker';
 
 interface ActivityHistoryProps {
     events: BackendStreamEvent[];
@@ -8,7 +10,7 @@ interface ActivityHistoryProps {
 
 export const ActivityHistory: React.FC<ActivityHistoryProps> = ({ events, isLoading }) => {
     const formatEventMessage = (event: BackendStreamEvent) => {
-        const amount = event.amount ? parseFloat(event.amount) / 1e7 : 0;
+        const amount = event.amount ? fromStroops(BigInt(event.amount), 7) : '0';
         const streamId = event.streamId;
 
         switch (event.eventType) {
@@ -29,8 +31,13 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({ events, isLoad
 
     if (isLoading) {
         return (
-            <div className="flex justify-center items-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
+            <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                    <div key={i} className="animate-pulse p-4 bg-white/5 border border-glass-border rounded-xl">
+                        <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
+                        <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+                    </div>
+                ))}
             </div>
         );
     }
@@ -58,6 +65,15 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({ events, isLoad
                             {event.eventType}
                         </div>
                     </div>
+                    {(event.txHash || event.transactionStatus) && (
+                        <div className="mt-3">
+                            <TransactionTracker
+                                status={event.transactionStatus || 'confirmed'}
+                                txHash={event.txHash}
+                                streamId={event.streamId}
+                            />
+                        </div>
+                    )}
                 </div>
             ))}
         </div>
