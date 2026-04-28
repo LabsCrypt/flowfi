@@ -38,6 +38,7 @@ import {
 } from "@/lib/soroban";
 import IncomingStreams from "../IncomingStreams";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { SSEStatusIndicator } from "./SSEStatusIndicator";
 import {
   StreamCreationWizard,
   type StreamFormData,
@@ -329,7 +330,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [modal, setModal] = React.useState<ModalState>(null);
 
   // SSE integration for real-time stream updates
-  const { events: streamEvents } = useStreamEvents({
+  const { events: streamEvents, connected, reconnecting, error } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
   });
@@ -342,7 +343,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       // Refresh dashboard data on relevant events
       if (latestEvent.type === 'created' || latestEvent.type === 'topped_up' || 
           latestEvent.type === 'withdrawn' || latestEvent.type === 'cancelled' ||
-          latestEvent.type === 'completed') {
+          latestEvent.type === 'completed' || latestEvent.type === 'paused' ||
+          latestEvent.type === 'resumed') {
         fetchDashboardData(session.publicKey)
           .then(setSnapshot)
           .catch(err => {
@@ -1177,6 +1179,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           </div>
 
           <div className="flex items-center gap-4">
+            <SSEStatusIndicator 
+              connected={connected} 
+              reconnecting={reconnecting} 
+              error={error} 
+            />
+
             <Button onClick={() => setShowWizard(true)} glow>
               Create Stream
             </Button>

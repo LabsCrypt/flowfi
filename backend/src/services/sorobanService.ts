@@ -77,7 +77,7 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
       depositedAmount: decodeI128(fields['deposited_amount']!),
       withdrawnAmount: decodeI128(fields['withdrawn_amount']!),
       startTime: Number(fields['start_time']!.u64().toString()),
-      isActive: fields['is_active']!.bool(),
+      isActive: fields['is_active']!.switch().value === xdr.ScValType.scvBool().value && fields['is_active']!.b() === true,
     };
   } catch (err) {
     logger.error(`[SorobanService] getStreamFromChain(${streamId}) failed:`, err);

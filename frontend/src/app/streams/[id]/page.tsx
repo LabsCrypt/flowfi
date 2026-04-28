@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import LiveCounter from "@/components/Livecounter";
 import ProgressBar from "@/components/Progressbar";
 import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
+import { useWallet } from "@/context/wallet-context";
+import { useStreamEvents } from "@/hooks/useStreamEvents";
 import {
   withdrawFromStream,
   cancelStream,
@@ -26,11 +28,15 @@ interface StreamDetail {
   lastUpdateTime: number;
   isActive: boolean;
   status: string;
+  isPaused?: boolean;
+  pausedAt?: string;
 }
 
 export default function StreamDetailsPage() {
   const params = useParams();
+  const router = useRouter();
   const streamId = params.id as string;
+  const { session, isHydrated } = useWallet();
   
   const [stream, setStream] = useState<StreamDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,23 +45,18 @@ export default function StreamDetailsPage() {
   const [cancelling, setCancelling] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState("");
   const [showTopUp, setShowTopUp] = useState(false);
-  const [session, setSession] = useState<WalletSession | null>(null);
 
-  // Mock session - in production this would come from a wallet context
-  useEffect(() => {
-    // This would normally come from a wallet provider context
-    // For now, we'll use a mock session
-    setSession({
-      walletId: "freighter",
-      publicKey: "GD...",
-      network: "TESTNET",
-      walletName: "Freighter",
-      connectedAt: new Date().toISOString(),
-      mocked: true,
-    });
-  }, []);
+  // SSE integration for real-time stream updates
+  const { events: streamEvents, connected, reconnecting } = useStreamEvents({
+    streamIds: [streamId],
+    autoReconnect: true,
+  });
 
   useEffect(() => {
+    if (!isHydrated || !session) {
+      return;
+    }
+
     async function fetchStream() {
       try {
         const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
@@ -75,7 +76,31 @@ export default function StreamDetailsPage() {
     if (streamId) {
       fetchStream();
     }
-  }, [streamId]);
+  }, [streamId, session, isHydrated]);
+
+  // Handle SSE events to update stream state in real-time
+  useEffect(() => {
+    if (streamEvents.length > 0) {
+      const latestEvent = streamEvents[0];
+      console.log('Stream event received:', latestEvent);
+      
+      // Re-fetch stream data to get the latest state from server
+      async function refetchStream() {
+        try {
+          const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+          const response = await fetch(`${baseUrl}/v1/streams/${streamId}`);
+          if (response.ok) {
+            const data = await response.json();
+            setStream(data);
+          }
+        } catch (err) {
+          console.error('Failed to refresh stream:', err);
+        }
+      }
+
+      refetchStream();
+    }
+  }, [streamEvents, streamId]);
 
   const handleWithdraw = async () => {
     if (!session) {

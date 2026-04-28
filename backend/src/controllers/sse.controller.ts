@@ -9,7 +9,7 @@ const subscribeSchema = z.object({
   all: z.boolean().optional().default(false),
 });
 
-export const subscribe = (req: Request, res: Response) => {
+export const subscribe = async (req: Request, res: Response) => {
   if (sseService.isShuttingDown()) {
     return res.status(503).json({ message: 'Server is shutting down, please reconnect shortly.' });
   }
@@ -23,17 +23,17 @@ export const subscribe = (req: Request, res: Response) => {
       where: { OR: [{ sender: publicKey }, { recipient: publicKey }] },
       select: { streamId: true },
     });
-    const ownedIds = new Set(ownedStreams.map((s) => String(s.streamId)));
+    const ownedIds = new Set(ownedStreams.map((s: any) => String(s.streamId)));
 
     let subscriptions: string[];
     if (all) {
       // "all" still scoped to the user's own streams
-      subscriptions = [...ownedIds];
+      subscriptions = [...ownedIds] as string[];
     } else if (streams.length > 0) {
       // Only allow subscribing to streams the user owns
       subscriptions = streams.filter((id) => ownedIds.has(id));
     } else {
-      subscriptions = [...ownedIds];
+      subscriptions = [...ownedIds] as string[];
     }
 
     // Always add user-scoped subscription key

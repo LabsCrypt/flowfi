@@ -123,6 +123,14 @@ export class SorobanEventWorker {
     if (this.activeBatch) await this.activeBatch;
   }
 
+  /** Trigger an immediate poll cycle (used for replay functionality). */
+  async triggerPoll(): Promise<void> {
+    if (!this.isRunning) return;
+    await this.fetchAndProcessEvents().catch((err) => {
+      logger.error('[SorobanWorker] Manual poll error:', err);
+    });
+  }
+
   // ─── Internal ──────────────────────────────────────────────────────────────
 
   private scheduleNext(): void {

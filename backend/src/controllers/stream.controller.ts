@@ -134,6 +134,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const rawOffset = req.query['offset'];
     const cursor = typeof req.query['cursor'] === 'string' ? req.query['cursor'] : undefined;
     const direction = req.query['direction'] === 'asc' ? 'asc' as const : 'desc' as const;
+    const order = req.query['order'] === 'asc' ? 'asc' as const : 'desc' as const;
+    const eventType = typeof req.query['eventType'] === 'string' ? req.query['eventType'] : undefined;
 
     const limit = Math.min(
       rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
@@ -142,16 +144,28 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const offset =
       rawOffset && typeof rawOffset === 'string' ? (Number.parseInt(rawOffset, 10) || 0) : 0;
 
+    const whereClause: any = { streamId: parsedStreamId };
+    if (eventType) {
+      const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED'];
+      if (!validEventTypes.includes(eventType)) {
+        return res.status(400).json({ 
+          error: 'Invalid eventType parameter',
+          message: `eventType must be one of: ${validEventTypes.join(', ')}`
+        });
+      }
+      whereClause.type = eventType;
+    }
+
     const [events, total] = await Promise.all([
       prisma.streamEvent.findMany({
-        where: { streamId: parsedStreamId },
-        orderBy: { createdAt: direction },
+        where: whereClause,
+        orderBy: { createdAt: order },
         take: limit,
         ...(cursor
           ? { cursor: { id: cursor }, skip: 1 }
           : { skip: offset }),
       }),
-      prisma.streamEvent.count({ where: { streamId: parsedStreamId } }),
+      prisma.streamEvent.count({ where: whereClause }),
     ]);
 
     const hasMore = cursor

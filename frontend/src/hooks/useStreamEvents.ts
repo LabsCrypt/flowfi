@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 
 interface StreamEvent {
-  type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed';
+  type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed' | 'paused' | 'resumed';
   data: unknown;
   timestamp: number;
 }
@@ -12,6 +12,7 @@ interface UseStreamEventsOptions {
   subscribeToAll?: boolean;
   autoReconnect?: boolean;
   maxRetryDelay?: number;
+  jwtToken?: string;
 }
 
 interface UseStreamEventsReturn {
@@ -31,6 +32,7 @@ export function useStreamEvents(
     subscribeToAll = false,
     autoReconnect = true,
     maxRetryDelay = 30000,
+    jwtToken,
   } = options;
 
   const [events, setEvents] = useState<StreamEvent[]>([]);
@@ -53,9 +55,15 @@ export function useStreamEvents(
       userPublicKeys.forEach(key => params.append('users', key));
     }
 
+    // Add JWT token to query string for authentication
+    // (EventSource doesn't support custom headers in browser)
+    if (jwtToken) {
+      params.append('token', jwtToken);
+    }
+
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-    return `${baseUrl}/events/subscribe?${params}`;
-  }, [streamIds, userPublicKeys, subscribeToAll]);
+    return `${baseUrl}/v1/events/subscribe?${params}`;
+  }, [streamIds, userPublicKeys, subscribeToAll, jwtToken]);
 
   const clearEvents = useCallback(() => {
     setEvents([]);
@@ -101,6 +109,8 @@ export function useStreamEvents(
     eventSource.addEventListener('stream.withdrawn', handleEvent('withdrawn'));
     eventSource.addEventListener('stream.cancelled', handleEvent('cancelled'));
     eventSource.addEventListener('stream.completed', handleEvent('completed'));
+    eventSource.addEventListener('stream.paused', handleEvent('paused'));
+    eventSource.addEventListener('stream.resumed', handleEvent('resumed'));
 
     eventSource.onerror = () => {
       setConnected(false);
