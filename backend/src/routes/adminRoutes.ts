@@ -66,6 +66,8 @@ function adminAuth(req: Request, res: Response, next: NextFunction): void {
  *                   properties:
  *                     activeConnections:
  *                       type: integer
+ *                     perIpPeakConnections:
+ *                       type: integer
  *                 indexer:
  *                   type: object
  *                   properties:
@@ -120,7 +122,10 @@ router.get('/metrics', adminAuth, async (_req: Request, res: Response) => {
         },
       },
       events: { last24h: eventsLast24h },
-      sse: { activeConnections: sseService.getClientCount() },
+      sse: {
+        activeConnections: sseService.getClientCount(),
+        perIpPeakConnections: sseService.getPerIpPeakConnections(),
+      },
       indexer: {
         lastLedger: indexerState?.lastLedger ?? 0,
         lagSeconds,

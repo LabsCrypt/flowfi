@@ -4,6 +4,44 @@ import logger from '../logger.js';
 import { claimableAmountService } from '../services/claimable.service.js';
 import { getStreamFromChain, getClaimableFromChain, isStale } from '../services/sorobanService.js';
 
+interface UserStreamSummary {
+  address: string;
+  totalStreamsCreated: number;
+  totalStreamedOut: string;
+  totalStreamedIn: string;
+  currentClaimable: string;
+  activeOutgoingCount: number;
+  activeIncomingCount: number;
+}
+
+interface UserSummaryCacheEntry {
+  value: UserStreamSummary;
+  expiresAtMs: number;
+}
+
+const USER_SUMMARY_CACHE_TTL_MS = 30_000;
+const userSummaryCache = new Map<string, UserSummaryCacheEntry>();
+
+function pruneUserSummaryCache(nowMs: number): void {
+  for (const [key, entry] of userSummaryCache.entries()) {
+    if (entry.expiresAtMs <= nowMs) {
+      userSummaryCache.delete(key);
+    }
+  }
+}
+
+function sumStringI128(values: string[]): string {
+  let total = 0n;
+  for (const value of values) {
+    try {
+      total += BigInt(value);
+    } catch {
+      logger.warn(`[UserSummary] Skipping invalid i128 value: ${value}`);
+    }
+  }
+  return total.toString();
+}
+
 /**
  * Create a new stream (stub for on-chain indexing)
  */
@@ -134,6 +172,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const rawOffset = req.query['offset'];
     const cursor = typeof req.query['cursor'] === 'string' ? req.query['cursor'] : undefined;
     const direction = req.query['direction'] === 'asc' ? 'asc' as const : 'desc' as const;
+    const order = req.query['order'] === 'asc' ? 'asc' as const : 'desc' as const;
+    const eventType = typeof req.query['eventType'] === 'string' ? req.query['eventType'] : undefined;
 
     const limit = Math.min(
       rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
@@ -142,16 +182,28 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const offset =
       rawOffset && typeof rawOffset === 'string' ? (Number.parseInt(rawOffset, 10) || 0) : 0;
 
+    const whereClause: any = { streamId: parsedStreamId };
+    if (eventType) {
+      const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED'];
+      if (!validEventTypes.includes(eventType)) {
+        return res.status(400).json({ 
+          error: 'Invalid eventType parameter',
+          message: `eventType must be one of: ${validEventTypes.join(', ')}`
+        });
+      }
+      whereClause.type = eventType;
+    }
+
     const [events, total] = await Promise.all([
       prisma.streamEvent.findMany({
-        where: { streamId: parsedStreamId },
-        orderBy: { createdAt: direction },
+        where: whereClause,
+        orderBy: { createdAt: order },
         take: limit,
         ...(cursor
           ? { cursor: { id: cursor }, skip: 1 }
           : { skip: offset }),
       }),
-      prisma.streamEvent.count({ where: { streamId: parsedStreamId } }),
+      prisma.streamEvent.count({ where: whereClause }),
     ]);
 
     const hasMore = cursor
@@ -241,6 +293,83 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
     return res.status(200).json(result);
   } catch (error) {
     logger.error('Error calculating stream claimable amount:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Get user-level stream summary used by dashboard/profile cards.
+ */
+export const getUserStreamSummary = async (req: Request, res: Response) => {
+  try {
+    const address = (req.params.address ?? '').trim();
+    if (!address) {
+      return res.status(400).json({ error: 'Address is required' });
+    }
+
+    const nowMs = Date.now();
+    const cacheKey = address;
+    const cached = userSummaryCache.get(cacheKey);
+    if (cached && cached.expiresAtMs > nowMs) {
+      return res.status(200).json(cached.value);
+    }
+
+    pruneUserSummaryCache(nowMs);
+
+    const [outgoingStreams, incomingStreams] = await Promise.all([
+      prisma.stream.findMany({
+        where: { sender: address },
+        select: {
+          withdrawnAmount: true,
+          isActive: true,
+        },
+      }),
+      prisma.stream.findMany({
+        where: { recipient: address },
+        select: {
+          streamId: true,
+          ratePerSecond: true,
+          depositedAmount: true,
+          withdrawnAmount: true,
+          lastUpdateTime: true,
+          isActive: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
+
+    const totalStreamsCreated = outgoingStreams.length;
+    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream) => stream.withdrawnAmount));
+    const totalStreamedIn = sumStringI128(incomingStreams.map((stream) => stream.withdrawnAmount));
+    const activeOutgoingCount = outgoingStreams.filter((stream) => stream.isActive).length;
+    const activeIncomingCount = incomingStreams.filter((stream) => stream.isActive).length;
+
+    const calculatedAt = Math.floor(nowMs / 1000);
+    let claimableTotal = 0n;
+    for (const stream of incomingStreams) {
+      if (!stream.isActive) continue;
+      const claimable = claimableAmountService.getClaimableAmount(stream, calculatedAt);
+      claimableTotal += BigInt(claimable.claimableAmount);
+    }
+
+    const summary: UserStreamSummary = {
+      address,
+      totalStreamsCreated,
+      totalStreamedOut,
+      totalStreamedIn,
+      currentClaimable: claimableTotal.toString(),
+      activeOutgoingCount,
+      activeIncomingCount,
+    };
+
+    userSummaryCache.set(cacheKey, {
+      value: summary,
+      expiresAtMs: nowMs + USER_SUMMARY_CACHE_TTL_MS,
+    });
+
+    return res.status(200).json(summary);
+  } catch (error) {
+    logger.error('Error fetching user stream summary:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

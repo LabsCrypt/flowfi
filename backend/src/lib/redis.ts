@@ -21,9 +21,10 @@ export function isRedisAvailable(): boolean {
 }
 
 function makeClient(url: string): Redis {
-  return new (RedisClass as any)(url, {
+  return new RedisClass(url, {
     maxRetriesPerRequest: 3,
-    retryStrategy: (times: number) => (times > 3 ? null : Math.min(times * 200, 2000)),
+    retryStrategy: (times: number) =>
+      times > 3 ? null : Math.min(times * 200, 2000),
     enableOfflineQueue: false,
     lazyConnect: true,
   });
@@ -36,14 +37,21 @@ export async function connectRedis(): Promise<void> {
   }
 
   try {
-    _publisher = makeClient(REDIS_URL);
-    _subscriber = makeClient(REDIS_URL);
+    const publisher = makeClient(REDIS_URL);
+    const subscriber = makeClient(REDIS_URL);
 
-    await Promise.all([_publisher.connect(), _subscriber.connect()]);
+    await Promise.all([publisher.connect(), subscriber.connect()]);
+    _publisher = publisher;
+    _subscriber = subscriber;
     _available = true;
+
     logger.info('[Redis] Connected — horizontal SSE scaling enabled.');
   } catch (err) {
-    logger.warn('[Redis] Connection failed — falling back to single-instance SSE mode:', err);
+    logger.warn(
+      '[Redis] Connection failed — falling back to single-instance SSE mode:',
+      err
+    );
+
     _publisher?.disconnect();
     _subscriber?.disconnect();
     _publisher = null;

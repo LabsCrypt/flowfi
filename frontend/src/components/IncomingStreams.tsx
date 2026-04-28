@@ -28,17 +28,20 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
         isActive: stream.status === 'Active' && stream.isActive,
     });
 
+    const isPaused = stream.status === 'Paused';
     const liveRate = stream.status === 'Active' && stream.ratePerSecond > 0;
 
     return (
         <div className="flex flex-col">
-            <span className={`font-bold tabular-nums ${liveRate ? 'text-emerald-600 dark:text-emerald-300' : 'text-gray-900 dark:text-gray-100'}`}>
+            <span className={`font-bold tabular-nums ${liveRate ? 'text-emerald-600 dark:text-emerald-300' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
                 {formatTokenAmount(claimable)} {stream.token}
             </span>
-            <span className={`text-xs tabular-nums ${liveRate ? 'text-emerald-500 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'}`}>
-                {liveRate
-                    ? `+${formatTokenAmount(stream.ratePerSecond)} ${stream.token}/sec`
-                    : 'Stream inactive'}
+            <span className={`text-xs tabular-nums ${liveRate ? 'text-emerald-500 dark:text-emerald-400' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-400 dark:text-gray-500'}`}>
+                {isPaused
+                    ? 'Stream paused'
+                    : liveRate
+                        ? `+${formatTokenAmount(stream.ratePerSecond)} ${stream.token}/sec`
+                        : 'Stream inactive'}
             </span>
         </div>
     );
@@ -98,42 +101,46 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                         </tr>
                     </thead>
                     <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                        {filteredStreams.map((stream) => (
-                            <tr key={stream.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                                <td className="px-6 py-4 whitespace-nowrap">
-                                    <div className="text-sm text-gray-900 dark:text-gray-100 font-mono">{stream.recipient}</div>
-                                    <div className="text-xs text-gray-500 dark:text-gray-400">Stream #{stream.id}</div>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.token}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 tabular-nums">{formatTokenAmount(stream.deposited)} {stream.token}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-bold tabular-nums">{formatTokenAmount(stream.withdrawn)} {stream.token}</td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                    <ClaimableAmount stream={stream} />
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                    <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                                        ${stream.status === 'Active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
-                                            stream.status === 'Completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
-                                                'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'}`}>
-                                        {stream.status}
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                    <button
-                                        disabled={stream.status !== 'Active' || withdrawingStreamId === stream.id}
-                                        onClick={() => {
-                                            void onWithdraw(stream);
-                                        }}
-                                        className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
-                                                ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
-                                                : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                                            }`}
-                                    >
-                                        {withdrawingStreamId === stream.id ? 'Withdrawing...' : 'Withdraw'}
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
+                        {filteredStreams.map((stream) => {
+                            const isPaused = stream.status === 'Paused';
+                            return (
+                                <tr key={stream.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${isPaused ? 'bg-gray-50/50 dark:bg-gray-800/50 opacity-75' : ''}`}>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className={`text-sm font-mono ${isPaused ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>{stream.recipient}</div>
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">Stream #{stream.id}</div>
+                                    </td>
+                                    <td className={`px-6 py-4 whitespace-nowrap text-sm ${isPaused ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>{stream.token}</td>
+                                    <td className={`px-6 py-4 whitespace-nowrap text-sm tabular-nums ${isPaused ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatTokenAmount(stream.deposited)} {stream.token}</td>
+                                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-bold tabular-nums ${isPaused ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>{formatTokenAmount(stream.withdrawn)} {stream.token}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                        <ClaimableAmount stream={stream} />
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                            ${stream.status === 'Active' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+                                                stream.status === 'Paused' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+                                                    stream.status === 'Completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                                                        'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'}`}>
+                                            {stream.status}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button
+                                            disabled={stream.status !== 'Active' || withdrawingStreamId === stream.id}
+                                            onClick={() => {
+                                                void onWithdraw(stream);
+                                            }}
+                                            className={`px-4 py-2 rounded-lg transition-all ${stream.status === 'Active'
+                                                    ? 'bg-accent text-white hover:bg-accent-hover shadow-lg'
+                                                    : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                                                }`}
+                                        >
+                                            {withdrawingStreamId === stream.id ? 'Withdrawing...' : 'Withdraw'}
+                                        </button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>

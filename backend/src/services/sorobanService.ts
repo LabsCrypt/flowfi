@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, Address, nativeToScVal } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
@@ -45,31 +45,53 @@ function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
 
 async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<xdr.ScVal> {
   const contract = new Contract(CONTRACT_ID);
+
   const op = contract.call(method, ...args);
-  const tx = new (await import('@stellar/stellar-sdk')).TransactionBuilder(
-    new (await import('@stellar/stellar-sdk')).Account('GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN', '0'),
-    { fee: '100', networkPassphrase: process.env.STELLAR_NETWORK === 'mainnet'
-        ? (await import('@stellar/stellar-sdk')).Networks.PUBLIC
-        : (await import('@stellar/stellar-sdk')).Networks.TESTNET }
-  ).addOperation(op).setTimeout(30).build();
+
+  const { TransactionBuilder, Account, Networks } = await import('@stellar/stellar-sdk');
+
+  const tx = new TransactionBuilder(
+    new Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0'
+    ),
+    {
+      fee: '100',
+      networkPassphrase:
+        process.env.STELLAR_NETWORK === 'mainnet'
+          ? Networks.PUBLIC
+          : Networks.TESTNET,
+    }
+  )
+    .addOperation(op)
+    .setTimeout(30)
+    .build();
 
   const result = await server.simulateTransaction(tx);
+
   if (rpc.Api.isSimulationError(result)) {
     throw new Error(`Simulation error: ${result.error}`);
   }
+
   const simSuccess = result as rpc.Api.SimulateTransactionSuccessResponse;
   return simSuccess.result!.retval;
 }
 
 export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
   if (!CONTRACT_ID) return null;
+
   try {
     const retval = await simulateContractCall('get_stream', [
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
+
     const fields = decodeMap(retval);
+
     const isActiveVal = fields['is_active']!;
-    const isActive = isActiveVal.b() !== undefined;
+    const isActive =
+      isActiveVal.switch().value === xdr.ScValType.scvBool().value &&
+      isActiveVal.b() === true;
+
     return {
       streamId,
       sender: decodeAddress(fields['sender']!),
@@ -89,10 +111,12 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
 
 export async function getClaimableFromChain(streamId: number): Promise<string | null> {
   if (!CONTRACT_ID) return null;
+
   try {
     const retval = await simulateContractCall('get_claimable_amount', [
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
+
     return decodeI128(retval);
   } catch (err) {
     logger.error(`[SorobanService] getClaimableFromChain(${streamId}) failed:`, err);

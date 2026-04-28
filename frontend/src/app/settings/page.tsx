@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Copy, Check, LogOut, Moon, Sun, Bell } from "lucide-react";
+import { useWallet } from "@/context/wallet-context";
+import { useRouter } from "next/navigation";
+import { shortenPublicKey, formatNetwork } from "@/lib/wallet";
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const { session, disconnect, isHydrated } = useWallet();
   const [emailNotifications, setEmailNotifications] = useState(true);
-  // Use lazy initialization to avoid setState in useEffect
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("flowfi-theme") as
@@ -21,9 +25,6 @@ export default function SettingsPage() {
   });
   const [copied, setCopied] = useState(false);
 
-  const connectedAddress =
-    "0x92f4D9b123456789ABCDEF123456789ABCDEF123";
-
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
@@ -35,14 +36,25 @@ export default function SettingsPage() {
   };
 
   const copyAddress = async () => {
-    await navigator.clipboard.writeText(connectedAddress);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (session?.publicKey) {
+      await navigator.clipboard.writeText(session.publicKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
   };
 
   const handleDisconnect = () => {
-    console.log("Wallet disconnected");
+    disconnect();
+    router.push("/");
   };
+
+  if (!isHydrated) {
+    return (
+      <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-black dark:from-white dark:via-gray-100 dark:to-gray-200 transition-colors flex items-center justify-center">
+        <div className="text-white dark:text-black">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-black dark:from-white dark:via-gray-100 dark:to-gray-200 transition-colors">
@@ -124,42 +136,67 @@ export default function SettingsPage() {
           </div>
 
           {/* Wallet Section */}
-          <div className="space-y-3">
-            <p className="font-medium text-white dark:text-black">
-              Connected Wallet
-            </p>
+          {session ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="font-medium text-white dark:text-black">
+                  Connected Wallet
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    {formatNetwork(session.network)}
+                  </span>
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                    {session.walletName}
+                  </span>
+                </div>
+              </div>
 
-            <div className="relative flex items-center justify-between bg-black/40 dark:bg-white/40 px-5 py-4 rounded-xl font-mono text-sm break-all text-white dark:text-black border border-white/10 dark:border-black/10">
+              <div className="relative flex items-center justify-between bg-black/40 dark:bg-white/40 px-5 py-4 rounded-xl font-mono text-sm break-all text-white dark:text-black border border-white/10 dark:border-black/10">
+                <span className="pr-4">{session.publicKey}</span>
 
-              <span className="pr-4">{connectedAddress}</span>
+                <button
+                  onClick={copyAddress}
+                  className="ml-3 opacity-70 hover:opacity-100 transition flex-shrink-0"
+                >
+                  {copied ? (
+                    <Check size={18} className="text-green-400" />
+                  ) : (
+                    <Copy size={18} />
+                  )}
+                </button>
 
-              <button
-                onClick={copyAddress}
-                className="ml-3 opacity-70 hover:opacity-100 transition"
-              >
-                {copied ? (
-                  <Check size={18} className="text-green-400" />
-                ) : (
-                  <Copy size={18} />
+                {copied && (
+                  <span className="absolute -top-8 right-2 text-xs bg-black text-white dark:bg-white dark:text-black px-2 py-1 rounded-md shadow">
+                    Copied
+                  </span>
                 )}
-              </button>
-
-              {copied && (
-                <span className="absolute -top-8 right-2 text-xs bg-black text-white dark:bg-white dark:text-black px-2 py-1 rounded-md shadow">
-                  Copied
-                </span>
-              )}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="font-medium text-white dark:text-black">
+                Wallet Status
+              </p>
+              <div className="flex items-center justify-between bg-black/40 dark:bg-white/40 px-5 py-4 rounded-xl text-white dark:text-black border border-white/10 dark:border-black/10">
+                <span>Not connected</span>
+                <a href="/" className="text-accent hover:opacity-80 transition font-semibold">
+                  Connect Wallet
+                </a>
+              </div>
+            </div>
+          )}
 
           {/* Disconnect */}
-          <button
-            onClick={handleDisconnect}
-            className="w-full flex items-center justify-center gap-2 bg-red-600/90 hover:bg-red-600 transition px-4 py-3 rounded-xl text-white font-medium shadow-lg hover:shadow-red-500/30"
-          >
-            <LogOut size={18} />
-            Disconnect Wallet
-          </button>
+          {session && (
+            <button
+              onClick={handleDisconnect}
+              className="w-full flex items-center justify-center gap-2 bg-red-600/90 hover:bg-red-600 transition px-4 py-3 rounded-xl text-white font-medium shadow-lg hover:shadow-red-500/30"
+            >
+              <LogOut size={18} />
+              Disconnect Wallet
+            </button>
+          )}
 
         </div>
       </div>

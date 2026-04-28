@@ -191,6 +191,19 @@ router.get('/:streamId', getStream);
  *           enum: [asc, desc]
  *           default: desc
  *         description: Sort direction (default desc)
+ *       - in: query
+ *         name: order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
+ *         description: Sort order by timestamp (default desc)
+ *       - in: query
+ *         name: eventType
+ *         schema:
+ *           type: string
+ *           enum: [CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED, PAUSED, RESUMED]
+ *         description: Filter by event type
  *     responses:
  *       200:
  *         description: Paginated list of stream events

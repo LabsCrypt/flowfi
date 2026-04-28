@@ -38,6 +38,7 @@ import {
 } from "@/lib/soroban";
 import IncomingStreams from "../IncomingStreams";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { SSEStatusIndicator } from "./SSEStatusIndicator";
 import {
   StreamCreationWizard,
   type StreamFormData,
@@ -94,8 +95,8 @@ interface StreamFormMessageState {
 const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: "overview", label: "Overview" },
   { id: "incoming", label: "Incoming" },
-  { id: "streams", label: "Outgoing" },
-  { id: "subscriptions", label: "Subscriptions" },
+  { id: "outgoing", label: "Outgoing" },
+  { id: "paused", label: "Paused" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
 ];
@@ -329,7 +330,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [modal, setModal] = React.useState<ModalState>(null);
 
   // SSE integration for real-time stream updates
-  const { events: streamEvents } = useStreamEvents({
+  const { events: streamEvents, connected, reconnecting, error } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
   });
@@ -342,7 +343,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       // Refresh dashboard data on relevant events
       if (latestEvent.type === 'created' || latestEvent.type === 'topped_up' || 
           latestEvent.type === 'withdrawn' || latestEvent.type === 'cancelled' ||
-          latestEvent.type === 'completed') {
+          latestEvent.type === 'completed' || latestEvent.type === 'paused' ||
+          latestEvent.type === 'resumed') {
         fetchDashboardData(session.publicKey)
           .then(setSnapshot)
           .catch(err => {
@@ -757,77 +759,55 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   // ── Tab content ─────────────────────────────────────────────────────────────
 
   const renderContent = () => {
-    if (activeTab === "incoming") {
-      if (isSnapshotLoading) {
-        return (
-          <div className="dashboard-empty-state mt-8">
-            <h2>Loading streams...</h2>
-            <p>Fetching your incoming streams from the backend API.</p>
-          </div>
-        );
-      }
-
-      if (snapshotError) {
-        return (
-          <div className="dashboard-empty-state mt-8">
-            <h2>Could not load incoming streams</h2>
-            <p>{snapshotError}</p>
-          </div>
-        );
-      }
-
+    if (isSnapshotLoading) {
       return (
-        <div className="mt-8">
-          <IncomingStreams
-            streams={snapshot?.incomingStreams ?? []}
-            onWithdraw={handleIncomingWithdraw}
-            withdrawingStreamId={withdrawingIncomingStreamId}
-          />
+        <div className="mt-8 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-32 rounded-2xl bg-white/5 animate-pulse" />
+            ))}
+          </div>
+          <div className="h-64 rounded-2xl bg-white/5 animate-pulse" />
+          <div className="h-96 rounded-2xl bg-white/5 animate-pulse" />
         </div>
       );
     }
 
+    if (snapshotError) {
+      return (
+        <section className="dashboard-empty-state mt-8">
+          <div className="p-8 rounded-2xl bg-red-500/10 border border-red-500/20 text-center">
+            <h2 className="text-xl font-bold text-red-400">Dashboard unavailable</h2>
+            <p className="text-slate-400 mt-2">{snapshotError}</p>
+            <Button onClick={() => window.location.reload()} variant="ghost" className="mt-4">
+              Try Again
+            </Button>
+          </div>
+        </section>
+      );
+    }
+
+    if (!snapshot || (snapshot.outgoingStreams.length === 0 && snapshot.incomingStreams.length === 0)) {
+      return (
+        <section className="dashboard-empty-state mt-8 flex flex-col items-center justify-center p-12 glass-card rounded-3xl border-slate-800">
+          <div className="h-20 w-20 rounded-full bg-accent/10 flex items-center justify-center mb-6">
+            <svg className="h-10 w-10 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Start your first stream</h2>
+          <p className="text-slate-400 text-center max-w-md mb-8">
+            You haven't created or received any payment streams yet. 
+            Connect with others and start streaming tokens in real-time.
+          </p>
+          <Button onClick={() => setShowWizard(true)} glow size="lg">
+            Create Stream
+          </Button>
+        </section>
+      );
+    }
+
     if (activeTab === "overview") {
-      if (isSnapshotLoading) {
-        return (
-          <section className="dashboard-empty-state">
-            <h2>Loading dashboard...</h2>
-            <p>Fetching active and incoming streams from the backend API.</p>
-          </section>
-        );
-      }
-
-      if (snapshotError) {
-        return (
-          <section className="dashboard-empty-state">
-            <h2>Dashboard unavailable</h2>
-            <p>{snapshotError}</p>
-          </section>
-        );
-      }
-
-      if (!snapshot) {
-        return (
-          <section className="dashboard-empty-state">
-            <h2>No stream data yet</h2>
-            <p>
-              Your account is connected, but there are no active or historical stream
-              records available yet.
-            </p>
-            <ul>
-              <li>Create your first payment stream</li>
-              <li>Invite a recipient to start receiving funds</li>
-              <li>Check back once transactions are confirmed</li>
-            </ul>
-            <div className="mt-6">
-              <Button onClick={() => setShowWizard(true)} glow>
-                Create Your First Stream
-              </Button>
-            </div>
-          </section>
-        );
-      }
-
       return (
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
@@ -843,7 +823,90 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       );
     }
 
-    if (activeTab === "streams") {
+    if (activeTab === "incoming") {
+      return (
+        <div className="mt-8">
+          <IncomingStreams
+            streams={snapshot.incomingStreams}
+            onWithdraw={handleIncomingWithdraw}
+            withdrawingStreamId={withdrawingIncomingStreamId}
+          />
+        </div>
+      );
+    }
+
+    if (activeTab === "outgoing") {
+      const activeOutgoing = snapshot.outgoingStreams.filter(s => s.status === 'Active');
+      return (
+        <div className="mt-8">
+          {activeOutgoing.length > 0 ? (
+            renderStreams(
+              { ...snapshot, outgoingStreams: activeOutgoing },
+              (stream: Stream) => setModal({ type: "topup", stream }),
+              (stream: Stream) => setModal({ type: "cancel", stream }),
+              (stream: Stream) => setModal({ type: "details", stream }),
+            )
+          ) : (
+            <div className="glass-card p-12 rounded-3xl border-slate-800 text-center">
+              <p className="text-slate-400">No active outgoing streams.</p>
+              <Button onClick={() => setShowWizard(true)} variant="ghost" className="mt-4">
+                Create One Now
+              </Button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (activeTab === "paused") {
+      const pausedStreams = [
+        ...snapshot.outgoingStreams.filter(s => s.status === 'Paused'),
+        ...snapshot.incomingStreams.filter(s => s.status === 'Paused')
+      ];
+      return (
+        <div className="mt-8">
+          {pausedStreams.length > 0 ? (
+            <div className="glass-card rounded-3xl border-slate-800 overflow-hidden">
+               {/* Simplified list for paused streams */}
+               <table className="dashboard-table w-full">
+                 <thead>
+                   <tr>
+                     <th>Stream ID</th>
+                     <th>Counterparty</th>
+                     <th>Token</th>
+                     <th>Status</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {pausedStreams.map(s => (
+                     <tr key={s.id}>
+                       <td>#{s.id}</td>
+                       <td className="font-mono text-xs">{s.recipient}</td>
+                       <td>{s.token}</td>
+                       <td><span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">Paused</span></td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+            </div>
+          ) : (
+            <div className="glass-card p-12 rounded-3xl border-slate-800 text-center text-slate-400">
+              No paused streams found.
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (activeTab === "activity") {
+      return (
+        <div className="mt-8">
+          {renderRecentActivity(snapshot)}
+        </div>
+      );
+    }
+
+    if (activeTab === "settings") {
       return (
         <div className="dashboard-content-stack mt-8">
           <section className="dashboard-panel dashboard-panel--stream-builder">
@@ -1116,6 +1179,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           </div>
 
           <div className="flex items-center gap-4">
+            <SSEStatusIndicator 
+              connected={connected} 
+              reconnecting={reconnecting} 
+              error={error} 
+            />
+
             <Button onClick={() => setShowWizard(true)} glow>
               Create Stream
             </Button>

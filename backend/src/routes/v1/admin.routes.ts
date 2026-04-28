@@ -7,10 +7,73 @@ import {
   replayFromLedger,
 } from '../../services/indexerService.js';
 
+import { prisma } from '../../lib/prisma.js';
+import { sseService } from '../../services/sse.service.js';
+import logger from '../../logger.js';
+
 const router = Router();
 
 // All admin routes require admin JWT
 router.use(requireAdmin);
+
+/**
+ * @openapi
+ * /v1/admin/metrics:
+ *   get:
+ *     tags: [Admin]
+ *     summary: Protocol health metrics
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Protocol health metrics
+ */
+router.get('/metrics', async (_req: Request, res: Response) => {
+  try {
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [activeCount, totalCount, cancelledCount, completedCount, eventsLast24h, indexerState] =
+      await Promise.all([
+        prisma.stream.count({ where: { isActive: true } }),
+        prisma.stream.count(),
+        prisma.stream.count({
+          where: { isActive: false, events: { some: { eventType: 'CANCELLED' } } },
+        }),
+        prisma.stream.count({
+          where: { isActive: false, events: { some: { eventType: 'COMPLETED' } } },
+        }),
+        prisma.streamEvent.count({ where: { createdAt: { gte: since24h } } }),
+        prisma.indexerState.findUnique({ where: { id: 'singleton' } }),
+      ]);
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const lagSeconds = indexerState
+      ? nowSec - Math.floor(indexerState.updatedAt.getTime() / 1000)
+      : null;
+
+    res.json({
+      streams: {
+        active: activeCount,
+        total: totalCount,
+        byStatus: {
+          active: activeCount,
+          cancelled: cancelledCount,
+          completed: completedCount,
+        },
+      },
+      events: { last24h: eventsLast24h },
+      sse: { activeConnections: sseService.getClientCount() },
+      indexer: {
+        lastLedger: indexerState?.lastLedger ?? 0,
+        lagSeconds,
+        lastUpdated: indexerState?.updatedAt ?? null,
+      },
+      uptime: process.uptime(),
+    });
+  } catch (err) {
+    logger.error('Error fetching admin metrics:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 /**
  * @openapi

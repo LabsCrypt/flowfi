@@ -1,5 +1,6 @@
 "use client";
 import { NotificationDropdown } from "./NotificationDropdown";
+import Link from "next/link";
 import { useWallet } from "@/context/wallet-context";
 import { Button } from "./ui/Button";
 import { ModeToggle } from "./ModeToggle";
@@ -32,18 +33,18 @@ export const Navbar = () => {
       </div>
 
       <div className="hidden items-center gap-8 text-sm font-semibold text-slate-400 md:flex">
-        <a href="#features" className="transition-colors hover:text-accent">
-          Features
-        </a>
-        <a href="#how-it-works" className="transition-colors hover:text-accent">
-          Process
-        </a>
-        <a href="#faq" className="transition-colors hover:text-accent">
-          FAQ
-        </a>
-        <a href="#" className="transition-colors hover:text-accent">
-          Ecosystem
-        </a>
+        <Link href="/" className="transition-colors hover:text-accent">
+          Home
+        </Link>
+        <Link href="/dashboard" className="transition-colors hover:text-accent">
+          Dashboard
+        </Link>
+        <Link href="/streams/create" className="transition-colors hover:text-accent">
+          Create Stream
+        </Link>
+        <Link href="/settings" className="transition-colors hover:text-accent">
+          Settings
+        </Link>
         <ModeToggle />
       </div>
 

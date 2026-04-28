@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { registerUser, getUser, getUserEvents, getCurrentUser } from '../../controllers/user.controller.js';
+import { getUserStreamSummary } from '../../controllers/stream.controller.js';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 
 const router = Router();
@@ -84,6 +85,50 @@ const router = Router();
  */
 router.post('/', registerUser);
 router.get('/me', authMiddleware, getCurrentUser);
+/**
+ * @openapi
+ * /v1/users/{address}/summary:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Get aggregate stream summary for a user
+ *     description: |
+ *       Returns dashboard/profile summary data for a wallet address:
+ *       total created streams, total streamed out/in, current claimable across
+ *       active incoming streams, and active stream counts.
+ *
+ *       Response is cached for 30 seconds to reduce DB load.
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key address
+ *     responses:
+ *       200:
+ *         description: User stream summary
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 address:
+ *                   type: string
+ *                 totalStreamsCreated:
+ *                   type: integer
+ *                 totalStreamedOut:
+ *                   type: string
+ *                 totalStreamedIn:
+ *                   type: string
+ *                 currentClaimable:
+ *                   type: string
+ *                 activeOutgoingCount:
+ *                   type: integer
+ *                 activeIncomingCount:
+ *                   type: integer
+ */
+router.get('/:address/summary', getUserStreamSummary);
 router.get('/:publicKey', getUser);
 
 /**

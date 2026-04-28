@@ -115,3 +115,86 @@ describe('GET /v1/streams', () => {
     expect(Array.isArray(response.body)).toBe(true);
   });
 });
+
+describe('GET /v1/users/:address/summary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns all-zero summary for addresses with no streams', async () => {
+    prisma.stream.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const address = 'GZERO000000000000000000000000000000000000000000000000000000';
+    const response = await request(app).get(`/v1/users/${address}/summary`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      address,
+      totalStreamsCreated: 0,
+      totalStreamedOut: '0',
+      totalStreamedIn: '0',
+      currentClaimable: '0',
+      activeOutgoingCount: 0,
+      activeIncomingCount: 0,
+    });
+  });
+
+  it('returns accurate outgoing/incoming aggregates and claimable sum', async () => {
+    prisma.stream.findMany
+      .mockResolvedValueOnce([
+        { withdrawnAmount: '30', isActive: true },
+        { withdrawnAmount: '20', isActive: false },
+      ])
+      .mockResolvedValueOnce([
+        {
+          streamId: 11,
+          ratePerSecond: '10',
+          depositedAmount: '1000',
+          withdrawnAmount: '100',
+          lastUpdateTime: 0,
+          isActive: true,
+          updatedAt: new Date(),
+        },
+        {
+          streamId: 12,
+          ratePerSecond: '1',
+          depositedAmount: '200',
+          withdrawnAmount: '50',
+          lastUpdateTime: 0,
+          isActive: false,
+          updatedAt: new Date(),
+        },
+      ]);
+
+    const address = 'GACCURATE00000000000000000000000000000000000000000000000000';
+    const response = await request(app).get(`/v1/users/${address}/summary`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      address,
+      totalStreamsCreated: 2,
+      totalStreamedOut: '50',
+      totalStreamedIn: '150',
+      currentClaimable: '900',
+      activeOutgoingCount: 1,
+      activeIncomingCount: 1,
+    });
+  });
+
+  it('caches summary results for repeated requests within TTL', async () => {
+    prisma.stream.findMany
+      .mockResolvedValueOnce([{ withdrawnAmount: '1', isActive: true }])
+      .mockResolvedValueOnce([]);
+
+    const address = 'GCACHE000000000000000000000000000000000000000000000000000000';
+
+    const first = await request(app).get(`/v1/users/${address}/summary`);
+    const second = await request(app).get(`/v1/users/${address}/summary`);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(prisma.stream.findMany).toHaveBeenCalledTimes(2);
+  });
+});

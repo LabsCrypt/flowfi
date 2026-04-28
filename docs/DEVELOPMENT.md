@@ -1,95 +1,249 @@
+````md
 # Development Guide
 
+This guide is intended to let a new contributor run the full FlowFi stack from a fresh clone.
+
+---
+
 ## Prerequisites
-- Rust toolchain (stable)
-- Node.js 20
+
+Required:
+
+- Rust toolchain (stable via rustup)
+- Node.js 20+
 - npm
-- Docker & Docker Compose (for Postgres)
-- `stellar` CLI (install from https://github.com/stellar/stellar-cli)
-- PostgreSQL (or use Docker)
+- PostgreSQL 14+
+- Docker & Docker Compose (recommended for local infra)
+- Stellar CLI / Soroban CLI (https://github.com/stellar/stellar-cli)
 
-## Local setup (quick)
+Optional:
 
-1. Start Postgres (docker-compose):
+- Redis 7+ (for multi-instance SSE testing)
+
+---
+
+## Quick Start (Recommended)
+
+### 1. Clone repository
 
 ```bash
-docker compose up -d
+git clone https://github.com/LabsCrypt/flowfi.git
+cd flowfi
+````
+
+---
+
+### 2. Start infrastructure
+
+```bash
+docker compose up -d postgres
 ```
 
-2. Backend
+(Optional for SSE fanout testing)
+
+```bash
+docker compose up -d redis
+```
+
+---
+
+### 3. Backend setup
+
+```bash
+cd backend
+npm install
+cp .env.example .env
+```
+
+Configure `.env`:
+
+* DATABASE_URL
+* JWT_SECRET
+* STELLAR_NETWORK=testnet
+* REDIS_URL (optional)
+
+Run database setup:
+
+```bash
+npm run prisma:generate
+npm run prisma:migrate
+```
+
+Start backend:
+
+```bash
+npm run dev
+```
+
+Backend runs at:
+
+* [http://localhost:3001/v1](http://localhost:3001/v1)
+* [http://localhost:3001/health](http://localhost:3001/health)
+
+---
+
+### 4. Frontend setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend:
+
+* [http://localhost:3000](http://localhost:3000)
+
+---
+
+### 5. Contracts (optional)
+
+```bash
+cd contracts
+cargo build --target wasm32-unknown-unknown --release
+cargo test
+```
+
+---
+
+## Full Stack Setup (Detailed Mode)
+
+### Backend
 
 ```bash
 cd backend
 npm ci
-# Set env vars (see .env.example)
-cp .env.example .env
-# Edit .env as needed (DATABASE_URL, STELLAR_NETWORK, etc.)
 npm run dev
 ```
 
-3. Frontend
+### Frontend
 
 ```bash
 cd frontend
 npm ci
 npm run dev
-# open http://localhost:3000
 ```
 
-4. Contracts (build and test)
+### Database
 
 ```bash
-cd contracts
-# Run unit tests
-cargo test
-# Build WASM
-cargo build --target wasm32-unknown-unknown --release
+docker compose up -d postgres
 ```
 
-5. Deploy contract to testnet (optional)
+---
 
-Install `stellar` CLI then run (example):
+## Running Tests
 
-```bash
-./scripts/deploy.sh --network testnet --source-account YOUR_KEY_OR_IDENTITY
-```
-
-This will build, optimize, deploy the WASM and save `deploy/deployment-info.json` with results.
-
-## Running the full stack locally
-- Start Postgres: `docker compose up -d`
-- Run backend: `cd backend && npm run dev`
-- Run frontend: `cd frontend && npm run dev`
-- Build contracts (if developing contracts): `cd contracts && cargo build --target wasm32-unknown-unknown --release`
-
-## Running tests
-- Backend tests (Vitest):
+Backend:
 
 ```bash
 cd backend
-npm ci
-npx vitest
+npm test
 ```
 
-- Contract tests (cargo):
+Frontend:
+
+```bash
+cd frontend
+npm run lint
+```
+
+Contracts:
 
 ```bash
 cd contracts
 cargo test
 ```
 
-## How to run against testnet vs local sandbox
-- Use `.env` to set `SANDBOX_MODE_ENABLED=true` to use local sandbox settings.
-- Set `STELLAR_NETWORK=testnet` and `STELLAR_HORIZON_URL` to talk to testnet.
-- Use `stellar container start` (stellar CLI) to start a local Soroban sandbox environment.
+---
 
-## Troubleshooting
-- If the backend cannot connect to Postgres, verify `DATABASE_URL` and that Docker is running.
-- If contracts fail to build, ensure `wasm32-unknown-unknown` target is installed: `rustup target add wasm32-unknown-unknown`.
-- If `stellar` CLI commands fail in CI, ensure the CLI is installed in the CI environment or use the GitHub Action `stellar/stellar-cli@vX`.
+## Testnet vs Local Mode
+
+Configure in `.env`:
+
+* `STELLAR_NETWORK=testnet`
+* `SANDBOX_MODE_ENABLED=true` (optional)
+* `STELLAR_HORIZON_URL` (if needed)
+
+---
+
+## Common Issues
+
+### Indexer not syncing
+
+* Ensure worker/indexer is running
+* Confirm correct Stellar network (testnet/mainnet)
+* Check DB cursor/state
+* Review logs for RPC/Horizon errors
+
+---
+
+### SSE issues
+
+* Verify JWT token validity
+* Check `/v1/events/stats`
+* Ensure Redis is running (multi-instance mode)
+* Confirm connection limits are not exceeded
+
+---
+
+### Auth failures (401/403)
+
+* Ensure wallet signature matches public key
+* Verify `JWT_SECRET`
+* Confirm Bearer token is included
+
+---
+
+### Database migration issues
+
+* Check `DATABASE_URL`
+* Run `prisma generate`
+* Reset DB if schema drift occurs
+
+---
+
+## Suggested Day-1 Flow
+
+1. Start Postgres (and Redis if needed)
+2. Run backend migrations
+3. Start backend
+4. Start frontend
+5. Create a stream and verify SSE updates
+
+---
+
+## Legacy Quick Setup (Minimal)
+
+```bash
+docker compose up -d
+cd backend && npm ci && npm run dev
+cd frontend && npm ci && npm run dev
+```
+
+---
+
+## Contracts Build Only
+
+```bash
+cd contracts
+cargo build --target wasm32-unknown-unknown --release
+```
+
+---
 
 ## Links
-- Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Contracts: `contracts/stream_contract`
-- Backend: `backend/`
-- Frontend: `frontend/`
+
+* Architecture: `ARCHITECTURE.md`
+* Backend: `backend/`
+* Frontend: `frontend/`
+* Contracts: `contracts/stream_contract`
+
+```
+
+---
+
+If you want next-level polish, I can turn this into:
+- a **Makefile / task runner setup (one-command dev start)**
+- or a **Dockerized full-stack dev environment (zero manual setup)**
+```

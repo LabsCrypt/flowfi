@@ -6,11 +6,30 @@ interface SSEClient {
   id: string;
   res: Response;
   subscriptions: Set<string>;
+  ip: string;
+}
+
+const MAX_CONNECTIONS_PER_IP = 5;
+const RETRY_AFTER_SECONDS = 60;
+
+interface SSECapacityCheckResult {
+  allowed: boolean;
+  status?: number;
+  retryAfterSeconds?: number;
+  message?: string;
 }
 
 class SSEService {
   private clients: Map<string, SSEClient> = new Map();
+  private readonly ipConnectionCounts: Map<string, number> = new Map();
   private shuttingDown = false;
+  private perIpPeakConnections = 0;
+
+  private readonly maxConnections: number = (() => {
+    const parsed = Number.parseInt(process.env.MAX_SSE_CONNECTIONS ?? '10000', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 10000;
+    return parsed;
+  })();
 
   isShuttingDown(): boolean {
     return this.shuttingDown;
@@ -37,20 +56,64 @@ class SSEService {
     logger.info('[SSEService] Redis pub/sub subscription active.');
   }
 
-  addClient(clientId: string, res: Response, subscriptions: string[] = []): void {
+  checkCapacity(ip: string): SSECapacityCheckResult {
+    if (this.clients.size >= this.maxConnections) {
+      return {
+        allowed: false,
+        status: 503,
+        message: 'SSE capacity reached. Please try again shortly.',
+      };
+    }
+
+    const currentIpConnections = this.ipConnectionCounts.get(ip) ?? 0;
+    if (currentIpConnections >= MAX_CONNECTIONS_PER_IP) {
+      return {
+        allowed: false,
+        status: 429,
+        retryAfterSeconds: RETRY_AFTER_SECONDS,
+        message: `Too many SSE connections from this IP. Max ${MAX_CONNECTIONS_PER_IP}.`,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  addClient(clientId: string, res: Response, subscriptions: string[] = [], ip = 'unknown'): void {
+    const nextIpCount = (this.ipConnectionCounts.get(ip) ?? 0) + 1;
+    this.ipConnectionCounts.set(ip, nextIpCount);
+    this.perIpPeakConnections = Math.max(this.perIpPeakConnections, nextIpCount);
+
     const client: SSEClient = {
       id: clientId,
       res,
       subscriptions: new Set(subscriptions),
+      ip,
     };
 
     this.clients.set(clientId, client);
-    logger.info(`SSE client connected: ${clientId}, subscriptions: ${subscriptions.join(', ')}`);
+    logger.info(
+      `SSE client connected: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
+    );
 
     res.on('close', () => {
-      this.clients.delete(clientId);
-      logger.info(`SSE client disconnected: ${clientId}`);
+      this.removeClient(clientId);
     });
+  }
+
+  private removeClient(clientId: string): void {
+    const client = this.clients.get(clientId);
+    if (!client) return;
+
+    this.clients.delete(clientId);
+
+    const currentIpCount = this.ipConnectionCounts.get(client.ip) ?? 0;
+    if (currentIpCount <= 1) {
+      this.ipConnectionCounts.delete(client.ip);
+    } else {
+      this.ipConnectionCounts.set(client.ip, currentIpCount - 1);
+    }
+
+    logger.info(`SSE client disconnected: ${clientId}, ip: ${client.ip}`);
   }
 
   sendReconnectToAll(): void {
@@ -105,6 +168,18 @@ class SSEService {
 
   getClientCount(): number {
     return this.clients.size;
+  }
+
+  getMaxConnections(): number {
+    return this.maxConnections;
+  }
+
+  getPerIpPeakConnections(): number {
+    return this.perIpPeakConnections;
+  }
+
+  getActiveIpCount(): number {
+    return this.ipConnectionCounts.size;
   }
 }
 
