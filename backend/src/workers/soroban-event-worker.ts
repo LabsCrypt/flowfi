@@ -263,6 +263,12 @@ export class SorobanEventWorker {
       case 'fee_collected':
         await this.handleFeeCollected(event, topic1);
         break;
+      case 'stream_paused':
+        await this.handleStreamPaused(event, topic1);
+        break;
+      case 'stream_resumed':
+        await this.handleStreamResumed(event, topic1);
+        break;
       default:
         // Unrecognised event — ignore silently.
         break;
@@ -295,6 +301,10 @@ export class SorobanEventWorker {
     const ratePerSecond = decodeI128(body['rate_per_second']);
     const depositedAmount = decodeI128(body['deposited_amount']);
     const startTime = Number(decodeU64(body['start_time']));
+    
+    // Compute expected end time (assuming no pauses yet)
+    const durationSeconds = Number(BigInt(depositedAmount) / BigInt(ratePerSecond));
+    const endTime = startTime + durationSeconds;
 
     await prisma.$transaction(async (tx: any) => {
       await tx.user.upsert({
@@ -319,6 +329,7 @@ export class SorobanEventWorker {
           depositedAmount,
           withdrawnAmount: '0',
           startTime,
+          endTime,
           lastUpdateTime: startTime,
           isActive: true,
         },
@@ -327,6 +338,7 @@ export class SorobanEventWorker {
           ratePerSecond,
           depositedAmount,
           startTime,
+          endTime,
           lastUpdateTime: startTime,
           isActive: true,
         },
@@ -374,10 +386,19 @@ export class SorobanEventWorker {
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: any) => {
+      const stream = await tx.stream.findUniqueOrThrow({
+        where: { streamId },
+        select: { ratePerSecond: true, startTime: true, totalPausedDuration: true }
+      });
+      
+      const durationSeconds = Number(BigInt(newDepositedAmount) / BigInt(stream.ratePerSecond));
+      const newEndTime = stream.startTime + durationSeconds + stream.totalPausedDuration;
+
       await tx.stream.update({
         where: { streamId },
         data: {
           depositedAmount: newDepositedAmount,
+          endTime: newEndTime,
           lastUpdateTime: timestamp,
         },
       });
@@ -586,11 +607,116 @@ export class SorobanEventWorker {
     });
 
     // Broadcast to admin channel for treasury reporting
-    sseService.broadcast('admin', 'stream.fee_collected', {
+    sseService.broadcast('stream.fee_collected', {
       streamId,
       treasury,
       feeAmount,
       token,
+      transactionHash: event.txHash,
+      ledger: event.ledger,
+      timestamp,
+    }, (client) => client.subscriptions.has('admin') || client.subscriptions.has('*'));
+  }
+
+  private async handleStreamPaused(
+    event: rpc.Api.EventResponse,
+    streamIdTopic: xdr.ScVal,
+  ): Promise<void> {
+    const streamId = Number(decodeU64(streamIdTopic));
+    const body = decodeMap(event.value);
+
+    if (!body['sender'] || !body['paused_at']) {
+      throw new Error(`StreamPaused #${streamId}: missing body fields`);
+    }
+
+    const sender = decodeAddress(body['sender']);
+    const pausedAt = Number(decodeU64(body['paused_at']));
+
+    await prisma.$transaction(async (tx: any) => {
+      await tx.stream.update({
+        where: { streamId },
+        data: {
+          isPaused: true,
+          pausedAt,
+          lastUpdateTime: pausedAt,
+        },
+      });
+
+      await tx.streamEvent.create({
+        data: {
+          streamId,
+          eventType: 'PAUSED',
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp: pausedAt,
+          metadata: JSON.stringify({ sender }),
+        },
+      });
+    });
+
+    sseService.broadcastToStream(String(streamId), 'stream.paused', {
+      streamId,
+      sender,
+      pausedAt,
+      transactionHash: event.txHash,
+      ledger: event.ledger,
+      timestamp: pausedAt,
+    });
+  }
+
+  private async handleStreamResumed(
+    event: rpc.Api.EventResponse,
+    streamIdTopic: xdr.ScVal,
+  ): Promise<void> {
+    const streamId = Number(decodeU64(streamIdTopic));
+    const body = decodeMap(event.value);
+
+    if (!body['sender'] || !body['new_end_time']) {
+      throw new Error(`StreamResumed #${streamId}: missing body fields`);
+    }
+
+    const sender = decodeAddress(body['sender']);
+    const newEndTime = Number(decodeU64(body['new_end_time']));
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    await prisma.$transaction(async (tx: any) => {
+      const stream = await tx.stream.findUniqueOrThrow({
+        where: { streamId },
+        select: { pausedAt: true, totalPausedDuration: true },
+      });
+
+      const pausedAt = stream.pausedAt || timestamp;
+      const pausedDuration = timestamp - pausedAt;
+
+      await tx.stream.update({
+        where: { streamId },
+        data: {
+          isPaused: false,
+          pausedAt: null,
+          endTime: newEndTime,
+          totalPausedDuration: {
+            increment: pausedDuration,
+          },
+          lastUpdateTime: timestamp,
+        },
+      });
+
+      await tx.streamEvent.create({
+        data: {
+          streamId,
+          eventType: 'RESUMED',
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ sender, newEndTime, pausedDuration }),
+        },
+      });
+    });
+
+    sseService.broadcastToStream(String(streamId), 'stream.resumed', {
+      streamId,
+      sender,
+      newEndTime,
       transactionHash: event.txHash,
       ledger: event.ledger,
       timestamp,

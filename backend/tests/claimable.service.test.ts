@@ -14,6 +14,10 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '500',
       withdrawnAmount: '100',
       lastUpdateTime: 7,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
     });
 
@@ -38,6 +42,10 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '1000',
       withdrawnAmount: '900',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
     });
 
@@ -57,6 +65,10 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '1000',
       withdrawnAmount: '100',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: false,
     });
 
@@ -76,6 +88,10 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '100',
       withdrawnAmount: '150',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
     });
 
@@ -96,6 +112,10 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '700',
       withdrawnAmount: '0',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
     };
 
@@ -125,6 +145,10 @@ describe('ClaimableAmountService', () => {
       depositedAmount: i128Max,
       withdrawnAmount: '0',
       lastUpdateTime: 998,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
     });
 

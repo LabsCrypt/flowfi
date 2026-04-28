@@ -7,6 +7,7 @@ interface SSEClient {
   res: Response;
   subscriptions: Set<string>;
   ip: string;
+  lastActivityAt: number;
 }
 
 const MAX_CONNECTIONS_PER_IP = 5;
@@ -24,6 +25,37 @@ class SSEService {
   private readonly ipConnectionCounts: Map<string, number> = new Map();
   private shuttingDown = false;
   private perIpPeakConnections = 0;
+  private heartbeatInterval?: NodeJS.Timeout;
+
+  constructor() {
+    this.startHeartbeat();
+  }
+
+  private startHeartbeat(): void {
+    this.heartbeatInterval = setInterval(() => {
+      const now = Date.now();
+      const timeoutMs = 5 * 60 * 1000;
+
+      for (const [clientId, client] of this.clients.entries()) {
+        if (now - client.lastActivityAt > timeoutMs) {
+          logger.info(`[SSEService] Connection timed out: ${clientId}, ip: ${client.ip}`);
+          try {
+            client.res.end();
+          } catch (err) {
+            // ignore
+          }
+          continue;
+        }
+
+        try {
+          client.res.write(': keep-alive\n\n');
+          logger.debug(`[SSEService] Heartbeat sent: ${clientId}`);
+        } catch (err) {
+          // ignore
+        }
+      }
+    }, 30 * 1000);
+  }
 
   private readonly maxConnections: number = (() => {
     const parsed = Number.parseInt(process.env.MAX_SSE_CONNECTIONS ?? '10000', 10);
@@ -88,11 +120,12 @@ class SSEService {
       res,
       subscriptions: new Set(subscriptions),
       ip,
+      lastActivityAt: Date.now(),
     };
 
     this.clients.set(clientId, client);
     logger.info(
-      `SSE client connected: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
+      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
@@ -113,15 +146,19 @@ class SSEService {
       this.ipConnectionCounts.set(client.ip, currentIpCount - 1);
     }
 
-    logger.info(`SSE client disconnected: ${clientId}, ip: ${client.ip}`);
+    logger.info(`[SSEService] Connection closed: ${clientId}, ip: ${client.ip}`);
   }
 
   sendReconnectToAll(): void {
     this.shuttingDown = true;
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
     const message = 'event: reconnect\ndata: {}\n\n';
     for (const client of this.clients.values()) {
       try {
         client.res.write(message);
+        client.lastActivityAt = Date.now();
       } catch {
         // ignore write errors during shutdown
       }
@@ -133,7 +170,12 @@ class SSEService {
     const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of this.clients.values()) {
       if (!filter || filter(client)) {
-        client.res.write(message);
+        try {
+          client.res.write(message);
+          client.lastActivityAt = Date.now();
+        } catch (err) {
+          // ignore write errors
+        }
       }
     }
   }
