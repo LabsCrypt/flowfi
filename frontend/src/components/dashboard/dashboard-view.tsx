@@ -7,10 +7,12 @@ import toast from "react-hot-toast";
 /**
  * components/dashboard/dashboard-view.tsx
  *
- * Changes from previous version:
- *  - Removed "Mocked wallet session" warning banner (no longer relevant).
- *  - wallet-chip now shows network badge alongside the public key.
- *  - formatNetwork() used so "PUBLIC" → "Mainnet", "TESTNET" → "Testnet".
+ * Changes:
+ *  - Skeleton shimmer cards while GET /v1/streams is fetching (3 placeholder cards)
+ *  - Empty state for no outgoing streams: illustration + "Create your first stream" CTA
+ *  - Empty state for no incoming streams: "No streams are sending you funds yet"
+ *  - Empty state for the activity tab: "No stream activity yet"
+ *  - Error state: "Failed to load streams" with a retry button
  */
 
 import {
@@ -56,7 +58,6 @@ interface SidebarItem {
   label: string;
 }
 
-// Modal state: null = closed
 type ModalState =
   | null
   | { type: "topup"; stream: Stream }
@@ -96,6 +97,120 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
 ];
+
+// ─── Skeleton & Empty State Components ───────────────────────────────────────
+
+/** Shimmer card used as a placeholder while data loads */
+function SkeletonCard({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`rounded-2xl bg-white/5 overflow-hidden relative ${className}`}
+      aria-hidden="true"
+    >
+      {/* shimmer sweep */}
+      <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.4s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+    </div>
+  );
+}
+
+/** Three stat cards + one table skeleton rendered while the API call is in-flight */
+function DashboardSkeleton() {
+  return (
+    <div className="mt-8 space-y-6" aria-label="Loading dashboard…" role="status">
+      {/* stat cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <SkeletonCard className="h-32" />
+        <SkeletonCard className="h-32" />
+        <SkeletonCard className="h-32" />
+      </div>
+      {/* analytics strip */}
+      <SkeletonCard className="h-40" />
+      {/* streams table */}
+      <SkeletonCard className="h-72" />
+      {/* activity list */}
+      <SkeletonCard className="h-48" />
+    </div>
+  );
+}
+
+/** Generic empty state with an optional CTA */
+function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col items-center justify-center p-12 glass-card rounded-3xl border-slate-800 text-center mt-8">
+      <div className="h-20 w-20 rounded-full bg-accent/10 flex items-center justify-center mb-6">
+        {icon}
+      </div>
+      <h2 className="text-2xl font-bold mb-2">{title}</h2>
+      <p className="text-slate-400 max-w-md mb-8">{description}</p>
+      {action}
+    </section>
+  );
+}
+
+/** Shown when the API call to /v1/streams fails */
+function ErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="mt-8">
+      <div className="p-8 rounded-2xl bg-red-500/10 border border-red-500/20 text-center">
+        <div className="h-16 w-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4">
+          <svg className="h-8 w-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold text-red-400">Failed to load streams</h2>
+        <p className="text-slate-400 mt-2 mb-6">{message}</p>
+        <Button onClick={onRetry} variant="ghost">
+          Retry
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+// ─── Icon helpers ─────────────────────────────────────────────────────────────
+
+function BoltIcon() {
+  return (
+    <svg className="h-10 w-10 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+    </svg>
+  );
+}
+
+function InboxIcon() {
+  return (
+    <svg className="h-10 w-10 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+        d="M20 13V7a2 2 0 00-2-2H6a2 2 0 00-2 2v6m16 0l-2 4H6l-2-4m16 0H4" />
+    </svg>
+  );
+}
+
+function ActivityIcon() {
+  return (
+    <svg className="h-10 w-10 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2"
+        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  );
+}
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -149,15 +264,11 @@ function renderStats(snapshot: DashboardSnapshot | null) {
       </div>
       <div className="dashboard-panel">
         <h3>Total Received</h3>
-        <p className="text-2xl font-bold">
-          {formatCurrency(snapshot.totalReceived)}
-        </p>
+        <p className="text-2xl font-bold">{formatCurrency(snapshot.totalReceived)}</p>
       </div>
       <div className="dashboard-panel">
         <h3>Total Value Locked</h3>
-        <p className="text-2xl font-bold">
-          {formatCurrency(snapshot.totalValueLocked)}
-        </p>
+        <p className="text-2xl font-bold">{formatCurrency(snapshot.totalValueLocked)}</p>
       </div>
     </div>
   );
@@ -166,10 +277,7 @@ function renderStats(snapshot: DashboardSnapshot | null) {
 function renderAnalytics(snapshot: DashboardSnapshot | null) {
   const metrics = getDashboardAnalytics(snapshot);
   return (
-    <section
-      className="dashboard-analytics-section"
-      aria-label="Analytics overview"
-    >
+    <section className="dashboard-analytics-section" aria-label="Analytics overview">
       <div className="dashboard-panel__header">
         <h3>Analytics Overview</h3>
         <span>Computed from wallet activity</span>
@@ -210,8 +318,7 @@ function renderStreams(
       <div className="dashboard-panel__header">
         <h3>My Active Streams</h3>
         <span>
-          {snapshot.outgoingStreams.filter((s) => s.status === "Active").length}{" "}
-          total
+          {snapshot.outgoingStreams.filter((s) => s.status === "Active").length} total
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -237,17 +344,11 @@ function renderStreams(
                     onShowDetails(stream);
                   }}
                 >
-                <td>{stream.date}</td>
-                <td>
-                  <code className="text-xs">{stream.recipient}</code>
-                </td>
-                <td className="font-semibold text-accent">
-                  {stream.deposited} {stream.token}
-                </td>
-                <td className="text-slate-400">
-                  {stream.withdrawn} {stream.token}
-                </td>
-                <td className="text-right">
+                  <td>{stream.date}</td>
+                  <td><code className="text-xs">{stream.recipient}</code></td>
+                  <td className="font-semibold text-accent">{stream.deposited} {stream.token}</td>
+                  <td className="text-slate-400">{stream.withdrawn} {stream.token}</td>
+                  <td className="text-right">
                     <div className="flex items-center justify-end gap-2">
                       {/^\d+$/.test(stream.id) ? (
                         <Link
@@ -257,13 +358,13 @@ function renderStreams(
                           Details
                         </Link>
                       ) : null}
-                  <button
-                    type="button"
-                    className="secondary-button py-1 px-3 text-sm h-auto"
+                      <button
+                        type="button"
+                        className="secondary-button py-1 px-3 text-sm h-auto"
                         onClick={() => onTopUp(stream)}
-                  >
-                    Add Funds
-                  </button>
+                      >
+                        Add Funds
+                      </button>
                       <button
                         type="button"
                         className="py-1 px-3 text-sm rounded-full border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors font-semibold"
@@ -272,9 +373,9 @@ function renderStreams(
                         Cancel
                       </button>
                     </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              ))}
           </tbody>
         </table>
       </div>
@@ -282,101 +383,95 @@ function renderStreams(
   );
 }
 
-function renderRecentActivity(snapshot: DashboardSnapshot | null) {
+function renderRecentActivity(snapshot: DashboardSnapshot | null, onCreateStream?: () => void) {
   if (!snapshot) return null;
+
+  if (snapshot.recentActivity.length === 0) {
+    return (
+      <EmptyState
+        icon={<ActivityIcon />}
+        title="No stream activity yet"
+        description="Transactions will appear here once you start creating or receiving payment streams."
+        action={
+          onCreateStream ? (
+            <Button onClick={onCreateStream} variant="ghost">
+              Create a Stream
+            </Button>
+          ) : undefined
+        }
+      />
+    );
+  }
+
   return (
     <section className="dashboard-panel">
       <div className="dashboard-panel__header">
         <h3>Recent Activity</h3>
         <span>{snapshot.recentActivity.length} items</span>
       </div>
-      {snapshot.recentActivity.length > 0 ? (
-        <ul className="activity-list">
-          {snapshot.recentActivity.map((activity) => {
-            const amountPrefix = activity.direction === "received" ? "+" : "-";
-            const amountClass =
-              activity.direction === "received" ? "is-positive" : "is-negative";
-            return (
-              <li key={activity.id} className="activity-item">
-                <div>
-                  <strong>{activity.title}</strong>
-                  <p>{activity.description}</p>
-                  <small>{formatActivityTime(activity.timestamp)}</small>
-                </div>
-                <span className={amountClass}>
-                  {amountPrefix}
-                  {formatCurrency(activity.amount)}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <div className="mini-empty-state">
-          <p>No recent activity yet.</p>
-        </div>
-      )}
+      <ul className="activity-list">
+        {snapshot.recentActivity.map((activity) => {
+          const amountPrefix = activity.direction === "received" ? "+" : "-";
+          const amountClass = activity.direction === "received" ? "is-positive" : "is-negative";
+          return (
+            <li key={activity.id} className="activity-item">
+              <div>
+                <strong>{activity.title}</strong>
+                <p>{activity.description}</p>
+                <small>{formatActivityTime(activity.timestamp)}</small>
+              </div>
+              <span className={amountClass}>
+                {amountPrefix}{formatCurrency(activity.amount)}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [activeTab, setActiveTab] = React.useState("overview");
   const [showWizard, setShowWizard] = React.useState(false);
   const [modal, setModal] = React.useState<ModalState>(null);
 
-  // SSE integration for real-time stream updates
   const { events: streamEvents, connected, reconnecting, error } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
   });
 
-  // Refresh dashboard when SSE events arrive
   React.useEffect(() => {
     if (streamEvents.length > 0) {
       const latestEvent = streamEvents[0];
-      console.log('SSE event received:', latestEvent);
-      // Refresh dashboard data on relevant events
-      if (latestEvent.type === 'created' || latestEvent.type === 'topped_up' || 
-          latestEvent.type === 'withdrawn' || latestEvent.type === 'cancelled' ||
-          latestEvent.type === 'completed' || latestEvent.type === 'paused' ||
-          latestEvent.type === 'resumed') {
+      const relevantTypes = ["created", "topped_up", "withdrawn", "cancelled", "completed", "paused", "resumed"];
+      if (relevantTypes.includes(latestEvent.type)) {
         fetchDashboardData(session.publicKey)
           .then(setSnapshot)
-          .catch(err => {
-            setSnapshotError(err instanceof Error ? err.message : 'Failed to refresh dashboard');
+          .catch((err) => {
+            setSnapshotError(err instanceof Error ? err.message : "Failed to refresh dashboard");
           });
       }
     }
   }, [streamEvents, session.publicKey]);
 
-  // --- Templates State (from upstream) ---
-  const [streamForm, setStreamForm] = React.useState<StreamFormValues>(
-    EMPTY_STREAM_FORM,
-  );
+  const [streamForm, setStreamForm] = React.useState<StreamFormValues>(EMPTY_STREAM_FORM);
   const [templates, setTemplates] = React.useState<StreamTemplate[]>([]);
   const [templatesHydrated, setTemplatesHydrated] = React.useState(false);
   const [templateNameInput, setTemplateNameInput] = React.useState("");
-  const [editingTemplateId, setEditingTemplateId] = React.useState<string | null>(
-    null,
-  );
-  const [selectedTemplateId, setSelectedTemplateId] = React.useState<
-    string | null
-  >(null);
-  const [streamFormMessage, setStreamFormMessage] =
-    React.useState<StreamFormMessageState | null>(null);
+  const [editingTemplateId, setEditingTemplateId] = React.useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(null);
+  const [streamFormMessage, setStreamFormMessage] = React.useState<StreamFormMessageState | null>(null);
 
-  // merged states
-  const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] =
-    React.useState<string | null>(null);
+  const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] = React.useState<string | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = React.useState(false);
 
-  // --- Snapshot State (merged) ---
   const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
   const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
   const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
 
-  // --- Helper Functions for missing logic ---
   const safeLoadTemplates = (): StreamTemplate[] => {
     try {
       if (typeof window === "undefined") return [];
@@ -398,22 +493,16 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   };
 
   const isTemplateNameValid = templateNameInput.trim().length > 0;
-  const saveTemplateButtonLabel = editingTemplateId
-    ? "Update Template"
-    : "Save Template";
-  const requiredFieldsCompleted = Object.values(streamForm).filter(
-    (v) => v.trim().length > 0,
-  ).length;
+  const saveTemplateButtonLabel = editingTemplateId ? "Update Template" : "Save Template";
+  const requiredFieldsCompleted = Object.values(streamForm).filter((v) => v.trim().length > 0).length;
 
   const handleClearTemplateEditor = () => {
     setTemplateNameInput("");
     setEditingTemplateId(null);
   };
 
-  // --- Templates Effects & Handlers ---
   React.useEffect(() => {
-    const loadedTemplates = safeLoadTemplates();
-    setTemplates(loadedTemplates);
+    setTemplates(safeLoadTemplates());
     setTemplatesHydrated(true);
   }, []);
 
@@ -422,190 +511,122 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     persistTemplates(templates);
   }, [templates, templatesHydrated]);
 
+  // ── Load dashboard snapshot ───────────────────────────────────────────────
+
+  const loadSnapshot = React.useCallback(async () => {
+    setIsSnapshotLoading(true);
+    setSnapshotError(null);
+    try {
+      const next = await fetchDashboardData(session.publicKey);
+      setSnapshot(next);
+    } catch (err) {
+      setSnapshot(null);
+      setSnapshotError(err instanceof Error ? err.message : "Failed to fetch dashboard data.");
+    } finally {
+      setIsSnapshotLoading(false);
+    }
+  }, [session.publicKey]);
+
   React.useEffect(() => {
     let cancelled = false;
-
-    const loadSnapshot = async () => {
+    const run = async () => {
       setIsSnapshotLoading(true);
       setSnapshotError(null);
-
       try {
-        const nextSnapshot = await fetchDashboardData(session.publicKey);
-        if (!cancelled) setSnapshot(nextSnapshot);
-      } catch (error) {
+        const next = await fetchDashboardData(session.publicKey);
+        if (!cancelled) setSnapshot(next);
+      } catch (err) {
         if (!cancelled) {
           setSnapshot(null);
-          setSnapshotError(
-            error instanceof Error ? error.message : "Failed to fetch dashboard data.",
-          );
+          setSnapshotError(err instanceof Error ? err.message : "Failed to fetch dashboard data.");
         }
       } finally {
         if (!cancelled) setIsSnapshotLoading(false);
       }
     };
-
-    void loadSnapshot();
-    return () => {
-      cancelled = true;
-    };
+    void run();
+    return () => { cancelled = true; };
   }, [session.publicKey]);
 
+  // ── Template handlers ─────────────────────────────────────────────────────
+
   const updateStreamForm = (field: keyof StreamFormValues, value: string) => {
-    setStreamForm((previous) => ({ ...previous, [field]: value }));
+    setStreamForm((prev) => ({ ...prev, [field]: value }));
     setStreamFormMessage(null);
   };
 
   const handleApplyTemplate = (templateId: string) => {
-    const template = templates.find((item) => item.id === templateId);
+    const template = templates.find((t) => t.id === templateId);
     if (!template) return;
     setStreamForm({ ...template.values });
     setSelectedTemplateId(template.id);
-    setStreamFormMessage({
-      text: `Applied template "${template.name}". You can still adjust any field.`,
-      tone: "success",
-    });
+    setStreamFormMessage({ text: `Applied template "${template.name}". You can still adjust any field.`, tone: "success" });
   };
 
   const handleSaveTemplate = () => {
     const cleanedName = templateNameInput.trim();
-    if (!cleanedName) {
-      setStreamFormMessage({ text: "Template name is required.", tone: "error" });
-      return;
-    }
+    if (!cleanedName) { setStreamFormMessage({ text: "Template name is required.", tone: "error" }); return; }
     const now = new Date().toISOString();
     if (editingTemplateId) {
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.id === editingTemplateId
-            ? { ...t, name: cleanedName, updatedAt: now, values: { ...streamForm } }
-            : t,
-        ),
-      );
-      setStreamFormMessage({
-        text: `Template "${cleanedName}" updated.`,
-        tone: "success",
-      });
+      setTemplates((prev) => prev.map((t) => t.id === editingTemplateId ? { ...t, name: cleanedName, updatedAt: now, values: { ...streamForm } } : t));
+      setStreamFormMessage({ text: `Template "${cleanedName}" updated.`, tone: "success" });
       setSelectedTemplateId(editingTemplateId);
       setEditingTemplateId(null);
       setTemplateNameInput("");
       return;
     }
-    const newTemplate: StreamTemplate = {
-      id: `template-${Date.now()}`,
-      name: cleanedName,
-      createdAt: now,
-      updatedAt: now,
-      values: { ...streamForm },
-    };
+    const newTemplate: StreamTemplate = { id: `template-${Date.now()}`, name: cleanedName, createdAt: now, updatedAt: now, values: { ...streamForm } };
     setTemplates((prev) => [newTemplate, ...prev]);
     setSelectedTemplateId(newTemplate.id);
     setTemplateNameInput("");
-    setStreamFormMessage({
-      text: `Template "${cleanedName}" saved.`,
-      tone: "success",
-    });
+    setStreamFormMessage({ text: `Template "${cleanedName}" saved.`, tone: "success" });
   };
 
   const handleEditTemplate = (templateId: string) => {
-    const template = templates.find((item) => item.id === templateId);
+    const template = templates.find((t) => t.id === templateId);
     if (!template) return;
     setEditingTemplateId(template.id);
     setTemplateNameInput(template.name);
     setSelectedTemplateId(template.id);
     setStreamForm({ ...template.values });
-    setStreamFormMessage({
-      text: `Editing template "${template.name}". Save to overwrite it.`,
-      tone: "info",
-    });
+    setStreamFormMessage({ text: `Editing template "${template.name}". Save to overwrite it.`, tone: "info" });
   };
 
   const handleDeleteTemplate = (templateId: string) => {
-    const template = templates.find((item) => item.id === templateId);
+    const template = templates.find((t) => t.id === templateId);
     if (!template) return;
     if (!window.confirm(`Delete stream template "${template.name}"?`)) return;
-    setTemplates((prev) => prev.filter((item) => item.id !== templateId));
+    setTemplates((prev) => prev.filter((t) => t.id !== templateId));
     if (selectedTemplateId === templateId) setSelectedTemplateId(null);
-    if (editingTemplateId === templateId) {
-    setEditingTemplateId(null);
-    setTemplateNameInput("");
-    }
+    if (editingTemplateId === templateId) { setEditingTemplateId(null); setTemplateNameInput(""); }
   };
 
-  const handleResetStreamForm = () => {
-    setStreamForm(EMPTY_STREAM_FORM);
-    setSelectedTemplateId(null);
-    setStreamFormMessage(null);
-  };
+  const handleResetStreamForm = () => { setStreamForm(EMPTY_STREAM_FORM); setSelectedTemplateId(null); setStreamFormMessage(null); };
 
-  // ── Optimistic helpers ──────────────────────────────────────────────────────
+  // ── Optimistic helpers ────────────────────────────────────────────────────
 
   const removeStreamLocally = (streamId: string) => {
     setSnapshot((prev) => {
       if (!prev) return prev;
-      return {
-        ...prev,
-        outgoingStreams: prev.outgoingStreams.map((s) =>
-          s.id === streamId
-            ? { ...s, status: "Cancelled", isActive: false }
-            : s,
-        ),
-        activeStreamsCount: Math.max(0, prev.activeStreamsCount - 1),
-      };
+      return { ...prev, outgoingStreams: prev.outgoingStreams.map((s) => s.id === streamId ? { ...s, status: "Cancelled", isActive: false } : s), activeStreamsCount: Math.max(0, prev.activeStreamsCount - 1) };
     });
   };
 
   const topUpStreamLocally = (streamId: string, amount: number) => {
-    setSnapshot((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        outgoingStreams: prev.outgoingStreams.map((s) =>
-          s.id === streamId ? { ...s, deposited: s.deposited + amount } : s,
-        ),
-      };
-    });
+    setSnapshot((prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: prev.outgoingStreams.map((s) => s.id === streamId ? { ...s, deposited: s.deposited + amount } : s) }; });
   };
 
   const addStreamLocally = (data: StreamFormData) => {
-    const newStream: Stream = {
-      id: `stream-${Date.now()}`,
-      date: new Date().toISOString().split("T")[0],
-      recipient: shortenPublicKey(data.recipient),
-      amount: Number(fromStroops(toStroops(data.amount, 7), 7)),
-      token: data.token,
-      status: "Active",
-      deposited: Number(fromStroops(toStroops(data.amount, 7), 7)),
-      withdrawn: 0,
-      ratePerSecond: 0,
-      lastUpdateTime: Math.floor(Date.now() / 1000),
-      isActive: true,
-    };
-    setSnapshot((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        outgoingStreams: [newStream, ...prev.outgoingStreams],
-        activeStreamsCount: prev.activeStreamsCount + 1,
-      };
-    });
+    const newStream: Stream = { id: `stream-${Date.now()}`, date: new Date().toISOString().split("T")[0], recipient: shortenPublicKey(data.recipient), amount: parseFloat(data.amount), token: data.token, status: "Active", deposited: parseFloat(data.amount), withdrawn: 0, ratePerSecond: 0, lastUpdateTime: Math.floor(Date.now() / 1000), isActive: true };
+    setSnapshot((prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: [newStream, ...prev.outgoingStreams], activeStreamsCount: prev.activeStreamsCount + 1 }; });
   };
 
-  // ── Contract handlers ───────────────────────────────────────────────────────
+  // ── Contract handlers ─────────────────────────────────────────────────────
 
   const handleCreateStream = async (data: StreamFormData) => {
     const toastId = toast.loading("Creating stream…");
     try {
-      const durationSecs = toDurationSeconds(data.duration, data.durationUnit);
-      const amount = toBaseUnits(data.amount);
-      const tokenAddress = getTokenAddress(data.token);
-
-      await sorobanCreateStream(session, {
-        recipient: data.recipient,
-        tokenAddress,
-        amount,
-        durationSeconds: durationSecs,
-      });
-
+      await sorobanCreateStream(session, { recipient: data.recipient, tokenAddress: getTokenAddress(data.token), amount: toBaseUnits(data.amount), durationSeconds: toDurationSeconds(data.duration, data.durationUnit) });
       addStreamLocally(data);
       setShowWizard(false);
       toast.success("Stream created successfully!", { id: toastId });
@@ -618,13 +639,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const handleTopUpConfirm = async (streamId: string, amountStr: string) => {
     const toastId = toast.loading("Topping up stream…");
     try {
-      const amount = toBaseUnits(amountStr);
-      await sorobanTopUp(session, {
-        streamId: BigInt(streamId.replace(/\D/g, "") || "0"),
-        amount,
-      });
-
-      topUpStreamLocally(streamId, Number(fromStroops(toStroops(amountStr, 7), 7)));
+      await sorobanTopUp(session, { streamId: BigInt(streamId.replace(/\D/g, "") || "0"), amount: toBaseUnits(amountStr) });
+      topUpStreamLocally(streamId, parseFloat(amountStr));
       setModal(null);
       toast.success("Stream topped up successfully!", { id: toastId });
     } catch (err) {
@@ -636,10 +652,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const handleCancelConfirm = async (streamId: string) => {
     const toastId = toast.loading("Cancelling stream…");
     try {
-      await sorobanCancel(session, {
-        streamId: BigInt(streamId.replace(/\D/g, "") || "0"),
-      });
-
+      await sorobanCancel(session, { streamId: BigInt(streamId.replace(/\D/g, "") || "0") });
       removeStreamLocally(streamId);
       setModal(null);
       toast.success("Stream cancelled.", { id: toastId });
@@ -652,12 +665,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const handleIncomingWithdraw = async (stream: Stream) => {
     const toastId = toast.loading("Withdrawing stream funds…");
     setWithdrawingIncomingStreamId(stream.id);
-
     try {
-      await sorobanWithdraw(session, {
-        streamId: BigInt(stream.id.replace(/\D/g, "") || "0"),
-      });
-
+      await sorobanWithdraw(session, { streamId: BigInt(stream.id.replace(/\D/g, "") || "0") });
       const refreshed = await fetchDashboardData(session.publicKey);
       setSnapshot(refreshed);
       toast.success("Withdrawal successful!", { id: toastId });
@@ -669,152 +678,89 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
-  const handleFormCreateStream = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ) => {
+  const handleFormCreateStream = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const hasRequiredFields =
-      streamForm.recipient.trim() &&
-      streamForm.token.trim() &&
-      streamForm.totalAmount.trim() &&
-      streamForm.startsAt.trim() &&
-      streamForm.endsAt.trim();
-
-    if (!hasRequiredFields) {
-      setStreamFormMessage({
-        text: "Complete all required fields before creating.",
-        tone: "error",
-      });
-      return;
-    }
-
+    const hasRequiredFields = streamForm.recipient.trim() && streamForm.token.trim() && streamForm.totalAmount.trim() && streamForm.startsAt.trim() && streamForm.endsAt.trim();
+    if (!hasRequiredFields) { setStreamFormMessage({ text: "Complete all required fields before creating.", tone: "error" }); return; }
     const recipient = streamForm.recipient.trim();
-    if (!isValidStellarPublicKey(recipient)) {
-      setStreamFormMessage({
-        text: "Recipient must be a valid Stellar public key.",
-        tone: "error",
-      });
-      return;
-    }
-
+    if (!isValidStellarPublicKey(recipient)) { setStreamFormMessage({ text: "Recipient must be a valid Stellar public key.", tone: "error" }); return; }
     const startDate = new Date(streamForm.startsAt);
     const endDate = new Date(streamForm.endsAt);
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      setStreamFormMessage({
-        text: "Start and end times must be valid dates.",
-        tone: "error",
-      });
-      return;
-    }
-
-    const durationSeconds = Math.floor(
-      (endDate.getTime() - startDate.getTime()) / 1000,
-    );
-    if (durationSeconds <= 0) {
-    setStreamFormMessage({
-        text: "End time must be after start time.",
-        tone: "error",
-      });
-      return;
-    }
-
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) { setStreamFormMessage({ text: "Start and end times must be valid dates.", tone: "error" }); return; }
+    const durationSeconds = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
+    if (durationSeconds <= 0) { setStreamFormMessage({ text: "End time must be after start time.", tone: "error" }); return; }
     setIsFormSubmitting(true);
     try {
-      await handleCreateStream({
-        recipient,
-        token: streamForm.token.trim(),
-        amount: streamForm.totalAmount.trim(),
-        duration: String(durationSeconds),
-        durationUnit: "seconds",
-      });
-
+      await handleCreateStream({ recipient, token: streamForm.token.trim(), amount: streamForm.totalAmount.trim(), duration: String(durationSeconds), durationUnit: "seconds" });
       handleResetStreamForm();
-      setStreamFormMessage({
-        text: "Stream submitted to wallet and confirmed on-chain.",
-      tone: "success",
-    });
+      setStreamFormMessage({ text: "Stream submitted to wallet and confirmed on-chain.", tone: "success" });
     } catch (err) {
-      setStreamFormMessage({
-        text: toSorobanErrorMessage(err),
-        tone: "error",
-      });
+      setStreamFormMessage({ text: toSorobanErrorMessage(err), tone: "error" });
     } finally {
       setIsFormSubmitting(false);
     }
   };
 
-  // ── Tab content ─────────────────────────────────────────────────────────────
+  // ── Tab content ───────────────────────────────────────────────────────────
 
   const renderContent = () => {
+    // ── Loading state ─────────────────────────────────────────────────────
     if (isSnapshotLoading) {
-      return (
-        <div className="mt-8 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-32 rounded-2xl bg-white/5 animate-pulse" />
-            ))}
-          </div>
-          <div className="h-64 rounded-2xl bg-white/5 animate-pulse" />
-          <div className="h-96 rounded-2xl bg-white/5 animate-pulse" />
-        </div>
-      );
+      return <DashboardSkeleton />;
     }
 
+    // ── Error state ───────────────────────────────────────────────────────
     if (snapshotError) {
+      return <ErrorState message={snapshotError} onRetry={loadSnapshot} />;
+    }
+
+    // ── First-time / completely empty wallet ──────────────────────────────
+    const hasNoStreams =
+      !snapshot ||
+      (snapshot.outgoingStreams.length === 0 && snapshot.incomingStreams.length === 0);
+
+    if (hasNoStreams) {
       return (
-        <section className="dashboard-empty-state mt-8">
-          <div className="p-8 rounded-2xl bg-red-500/10 border border-red-500/20 text-center">
-            <h2 className="text-xl font-bold text-red-400">Dashboard unavailable</h2>
-            <p className="text-slate-400 mt-2">{snapshotError}</p>
-            <Button onClick={() => window.location.reload()} variant="ghost" className="mt-4">
-              Try Again
+        <EmptyState
+          icon={<BoltIcon />}
+          title="Start your first stream"
+          description="You haven't created or received any payment streams yet. Connect with others and start streaming tokens in real-time."
+          action={
+            <Button onClick={() => setShowWizard(true)} glow size="lg">
+              Create Stream
             </Button>
-          </div>
-        </section>
+          }
+        />
       );
     }
 
-    if (!snapshot || (snapshot.outgoingStreams.length === 0 && snapshot.incomingStreams.length === 0)) {
-      return (
-        <section className="dashboard-empty-state mt-8 flex flex-col items-center justify-center p-12 glass-card rounded-3xl border-slate-800">
-          <div className="h-20 w-20 rounded-full bg-accent/10 flex items-center justify-center mb-6">
-            <svg className="h-10 w-10 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold mb-2">Start your first stream</h2>
-          <p className="text-slate-400 text-center max-w-md mb-8">
-            You haven&apos;t created or received any payment streams yet. 
-            Connect with others and start streaming tokens in real-time.
-          </p>
-          <Button onClick={() => setShowWizard(true)} glow size="lg">
-            Create Stream
-          </Button>
-        </section>
-      );
-    }
-
+    // ── Overview ──────────────────────────────────────────────────────────
     if (activeTab === "overview") {
       return (
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
-          {renderStreams(
-            snapshot,
-            (stream: Stream) => setModal({ type: "topup", stream }),
-            (stream: Stream) => setModal({ type: "cancel", stream }),
-            (stream: Stream) => setModal({ type: "details", stream }),
-          )}
-          {renderRecentActivity(snapshot)}
+          {renderStreams(snapshot, (s) => setModal({ type: "topup", stream: s }), (s) => setModal({ type: "cancel", stream: s }), (s) => setModal({ type: "details", stream: s }))}
+          {renderRecentActivity(snapshot, () => setShowWizard(true))}
         </div>
       );
     }
 
+    // ── Incoming ──────────────────────────────────────────────────────────
     if (activeTab === "incoming") {
+      if (snapshot!.incomingStreams.length === 0) {
+        return (
+          <EmptyState
+            icon={<InboxIcon />}
+            title="No incoming streams yet"
+            description="No streams are sending you funds yet. Share your wallet address with a sender to receive streaming payments."
+          />
+        );
+      }
       return (
         <div className="mt-8">
           <IncomingStreams
-            streams={snapshot.incomingStreams}
+            streams={snapshot!.incomingStreams}
             onWithdraw={handleIncomingWithdraw}
             withdrawingStreamId={withdrawingIncomingStreamId}
           />
@@ -822,77 +768,83 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       );
     }
 
+    // ── Outgoing ──────────────────────────────────────────────────────────
     if (activeTab === "outgoing") {
-      const activeOutgoing = snapshot.outgoingStreams.filter(s => s.status === 'Active');
+      const activeOutgoing = snapshot!.outgoingStreams.filter((s) => s.status === "Active");
+      if (activeOutgoing.length === 0) {
+        return (
+          <EmptyState
+            icon={<BoltIcon />}
+            title="No active outgoing streams"
+            description="You don't have any active outgoing payment streams. Create one to start streaming tokens to a recipient."
+            action={
+              <Button onClick={() => setShowWizard(true)} glow>
+                Create a Stream
+              </Button>
+            }
+          />
+        );
+      }
       return (
         <div className="mt-8">
-          {activeOutgoing.length > 0 ? (
-            renderStreams(
-              { ...snapshot, outgoingStreams: activeOutgoing },
-              (stream: Stream) => setModal({ type: "topup", stream }),
-              (stream: Stream) => setModal({ type: "cancel", stream }),
-              (stream: Stream) => setModal({ type: "details", stream }),
-            )
-          ) : (
-            <div className="glass-card p-12 rounded-3xl border-slate-800 text-center">
-              <p className="text-slate-400">No active outgoing streams.</p>
-              <Button onClick={() => setShowWizard(true)} variant="ghost" className="mt-4">
-                Create One Now
-              </Button>
-            </div>
-          )}
+          {renderStreams({ ...snapshot!, outgoingStreams: activeOutgoing }, (s) => setModal({ type: "topup", stream: s }), (s) => setModal({ type: "cancel", stream: s }), (s) => setModal({ type: "details", stream: s }))}
         </div>
       );
     }
 
+    // ── Paused ────────────────────────────────────────────────────────────
     if (activeTab === "paused") {
       const pausedStreams = [
-        ...snapshot.outgoingStreams.filter(s => s.status === 'Paused'),
-        ...snapshot.incomingStreams.filter(s => s.status === 'Paused')
+        ...snapshot!.outgoingStreams.filter((s) => s.status === "Paused"),
+        ...snapshot!.incomingStreams.filter((s) => s.status === "Paused"),
       ];
+      if (pausedStreams.length === 0) {
+        return (
+          <div className="glass-card p-12 rounded-3xl border-slate-800 text-center text-slate-400 mt-8">
+            No paused streams found.
+          </div>
+        );
+      }
       return (
-        <div className="mt-8">
-          {pausedStreams.length > 0 ? (
-            <div className="glass-card rounded-3xl border-slate-800 overflow-hidden">
-               {/* Simplified list for paused streams */}
-               <table className="dashboard-table w-full">
-                 <thead>
-                   <tr>
-                     <th>Stream ID</th>
-                     <th>Counterparty</th>
-                     <th>Token</th>
-                     <th>Status</th>
-                   </tr>
-                 </thead>
-                 <tbody>
-                   {pausedStreams.map(s => (
-                     <tr key={s.id}>
-                       <td>#{s.id}</td>
-                       <td className="font-mono text-xs">{s.recipient}</td>
-                       <td>{s.token}</td>
-                       <td><span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">Paused</span></td>
-                     </tr>
-                   ))}
-                 </tbody>
-               </table>
-            </div>
-          ) : (
-            <div className="glass-card p-12 rounded-3xl border-slate-800 text-center text-slate-400">
-              No paused streams found.
-            </div>
-          )}
+        <div className="mt-8 glass-card rounded-3xl border-slate-800 overflow-hidden">
+          <table className="dashboard-table w-full">
+            <thead>
+              <tr>
+                <th>Stream ID</th>
+                <th>Counterparty</th>
+                <th>Token</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pausedStreams.map((s) => (
+                <tr key={s.id}>
+                  <td>#{s.id}</td>
+                  <td className="font-mono text-xs">{s.recipient}</td>
+                  <td>{s.token}</td>
+                  <td>
+                    <span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">
+                      Paused
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       );
     }
 
+    // ── Activity ──────────────────────────────────────────────────────────
     if (activeTab === "activity") {
       return (
         <div className="mt-8">
-          {renderRecentActivity(snapshot)}
+          {renderRecentActivity(snapshot, () => setShowWizard(true))}
         </div>
       );
     }
 
+    // ── Settings ──────────────────────────────────────────────────────────
     if (activeTab === "settings") {
       return (
         <div className="dashboard-content-stack mt-8">
@@ -911,79 +863,30 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             <div className="stream-template-layout">
               <div className="stream-template-manager">
                 <h4>Template Library</h4>
-                <p>
-                  Save recurring stream settings once, apply instantly, then override
-                  before submitting.
-                </p>
+                <p>Save recurring stream settings once, apply instantly, then override before submitting.</p>
 
                 <div className="stream-template-editor">
-                  <input
-                    value={templateNameInput}
-                    onChange={(event) => setTemplateNameInput(event.target.value)}
-                    placeholder="e.g. Monthly Contributor Payroll"
-                    aria-label="Template name"
-                  />
+                  <input value={templateNameInput} onChange={(e) => setTemplateNameInput(e.target.value)} placeholder="e.g. Monthly Contributor Payroll" aria-label="Template name" />
                   <div className="stream-template-editor__actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={!isTemplateNameValid}
-                      onClick={handleSaveTemplate}
-                    >
-                      {saveTemplateButtonLabel}
-                    </button>
-                    {editingTemplateId ? (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={handleClearTemplateEditor}
-                      >
-                        Stop Editing
-                      </button>
-                    ) : null}
+                    <button type="button" className="secondary-button" disabled={!isTemplateNameValid} onClick={handleSaveTemplate}>{saveTemplateButtonLabel}</button>
+                    {editingTemplateId ? <button type="button" className="secondary-button" onClick={handleClearTemplateEditor}>Stop Editing</button> : null}
                   </div>
                 </div>
 
                 {templates.length === 0 ? (
-                  <div className="mini-empty-state">
-                    <p>No templates yet. Save your first stream setup.</p>
-                  </div>
+                  <div className="mini-empty-state"><p>No templates yet. Save your first stream setup.</p></div>
                 ) : (
                   <ul className="stream-template-list">
-                    {templates.map((template) => (
-                      <li
-                        key={template.id}
-                        className="stream-template-item"
-                        data-active={
-                          selectedTemplateId === template.id ? "true" : undefined
-                        }
-                      >
+                    {templates.map((t) => (
+                      <li key={t.id} className="stream-template-item" data-active={selectedTemplateId === t.id ? "true" : undefined}>
                         <div className="stream-template-item__meta">
-                          <strong>{template.name}</strong>
-                          <small>Updated {formatTemplateUpdatedAt(template.updatedAt)}</small>
+                          <strong>{t.name}</strong>
+                          <small>Updated {formatTemplateUpdatedAt(t.updatedAt)}</small>
                         </div>
                         <div className="stream-template-item__actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => handleApplyTemplate(template.id)}
-                          >
-                            Apply
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => handleEditTemplate(template.id)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button secondary-button--danger"
-                            onClick={() => handleDeleteTemplate(template.id)}
-                          >
-                            Delete
-                          </button>
+                          <button type="button" className="secondary-button" onClick={() => handleApplyTemplate(t.id)}>Apply</button>
+                          <button type="button" className="secondary-button" onClick={() => handleEditTemplate(t.id)}>Edit</button>
+                          <button type="button" className="secondary-button secondary-button--danger" onClick={() => handleDeleteTemplate(t.id)}>Delete</button>
                         </div>
                       </li>
                     ))}
@@ -999,131 +902,30 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                   </div>
                   <label className="stream-form__template-select">
                     Load template
-                    <select
-                      value={selectedTemplateId ?? ""}
-                      onChange={(event) => {
-                        const templateId = event.target.value;
-                        if (!templateId) {
-                          setSelectedTemplateId(null);
-                          return;
-                        }
-                        handleApplyTemplate(templateId);
-                      }}
-                    >
+                    <select value={selectedTemplateId ?? ""} onChange={(e) => { const id = e.target.value; if (!id) { setSelectedTemplateId(null); return; } handleApplyTemplate(id); }}>
                       <option value="">Select saved template</option>
-                      {templates.map((template) => (
-                        <option key={template.id} value={template.id}>
-                          {template.name}
-                        </option>
-                      ))}
+                      {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                   </label>
                 </div>
 
-                <label>
-                  Recipient Address
-                  <input
-                    required
-                    type="text"
-                    value={streamForm.recipient}
-                    onChange={(event) => updateStreamForm("recipient", event.target.value)}
-                    placeholder="G..."
-                  />
-                </label>
-
+                <label>Recipient Address<input required type="text" value={streamForm.recipient} onChange={(e) => updateStreamForm("recipient", e.target.value)} placeholder="G..." /></label>
                 <div className="stream-form__row">
-                  <label>
-                    Token
-                    <input
-                      required
-                      type="text"
-                      value={streamForm.token}
-                      onChange={(event) =>
-                        updateStreamForm("token", event.target.value.toUpperCase())
-                      }
-                      placeholder="USDC"
-                    />
-                  </label>
-                  <label>
-                    Total Amount
-                    <input
-                      required
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={streamForm.totalAmount}
-                      onChange={(event) => {
-                        const val = event.target.value;
-                        if (hasValidPrecision(val, 7)) {
-                          updateStreamForm("totalAmount", val);
-                        }
-                      }}
-                      placeholder="100"
-                    />
-                  </label>
+                  <label>Token<input required type="text" value={streamForm.token} onChange={(e) => updateStreamForm("token", e.target.value.toUpperCase())} placeholder="USDC" /></label>
+                  <label>Total Amount<input required type="number" min="0" step="0.0000001" value={streamForm.totalAmount} onChange={(e) => updateStreamForm("totalAmount", e.target.value)} placeholder="100" /></label>
                 </div>
-
                 <div className="stream-form__row">
-                  <label>
-                    Starts At
-                    <input
-                      required
-                      type="datetime-local"
-                      value={streamForm.startsAt}
-                      onChange={(event) => updateStreamForm("startsAt", event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Ends At
-                    <input
-                      required
-                      type="datetime-local"
-                      value={streamForm.endsAt}
-                      onChange={(event) => updateStreamForm("endsAt", event.target.value)}
-                    />
-                  </label>
+                  <label>Starts At<input required type="datetime-local" value={streamForm.startsAt} onChange={(e) => updateStreamForm("startsAt", e.target.value)} /></label>
+                  <label>Ends At<input required type="datetime-local" value={streamForm.endsAt} onChange={(e) => updateStreamForm("endsAt", e.target.value)} /></label>
                 </div>
-
                 <div className="stream-form__row">
-                <label>
-                  Cadence (seconds)
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={streamForm.cadenceSeconds}
-                    onChange={(event) =>
-                      updateStreamForm("cadenceSeconds", event.target.value)
-                    }
-                  />
-                </label>
+                  <label>Cadence (seconds)<input type="number" min="1" step="1" value={streamForm.cadenceSeconds} onChange={(e) => updateStreamForm("cadenceSeconds", e.target.value)} /></label>
                 </div>
-
-                <label>
-                  Note
-                  <textarea
-                    value={streamForm.note}
-                    onChange={(event) => updateStreamForm("note", event.target.value)}
-                    placeholder="Optional internal note for this stream configuration."
-                  />
-                </label>
+                <label>Note<textarea value={streamForm.note} onChange={(e) => updateStreamForm("note", e.target.value)} placeholder="Optional internal note for this stream configuration." /></label>
 
                 <div className="stream-form__actions">
-                  <button
-                    type="submit"
-                    className="wallet-button"
-                    disabled={isFormSubmitting}
-                  >
-                    {isFormSubmitting ? "Submitting..." : "Create Stream"}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={isFormSubmitting}
-                    onClick={handleResetStreamForm}
-                  >
-                    Reset
-                  </button>
+                  <button type="submit" className="wallet-button" disabled={isFormSubmitting}>{isFormSubmitting ? "Submitting..." : "Create Stream"}</button>
+                  <button type="button" className="secondary-button" disabled={isFormSubmitting} onClick={handleResetStreamForm}>Reset</button>
                 </div>
               </form>
             </div>
@@ -1149,14 +951,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="brand">FlowFi</div>
         <nav aria-label="Sidebar">
           {SIDEBAR_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="sidebar-item"
-              data-active={activeTab === item.id ? "true" : undefined}
-              aria-current={activeTab === item.id ? "page" : undefined}
-              onClick={() => setActiveTab(item.id)}
-            >
+            <button key={item.id} type="button" className="sidebar-item" data-active={activeTab === item.id ? "true" : undefined} aria-current={activeTab === item.id ? "page" : undefined} onClick={() => setActiveTab(item.id)}>
               {item.label}
             </button>
           ))}
@@ -1169,30 +964,13 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             <p className="kicker">Dashboard</p>
             <h1>{SIDEBAR_ITEMS.find((item) => item.id === activeTab)?.label}</h1>
           </div>
-
           <div className="flex items-center gap-4">
-            <SSEStatusIndicator 
-              connected={connected} 
-              reconnecting={reconnecting} 
-              error={error} 
-            />
-
-            <Button onClick={() => setShowWizard(true)} glow>
-              Create Stream
-            </Button>
-
+            <SSEStatusIndicator connected={connected} reconnecting={reconnecting} error={error} />
+            <Button onClick={() => setShowWizard(true)} glow>Create Stream</Button>
             <div className="wallet-chip" title={session.publicKey}>
               <span className="wallet-chip__name">{session.walletName}</span>
-              <span
-                className="wallet-chip__network"
-                data-mainnet={networkLabel === "Mainnet" ? "true" : undefined}
-                data-mismatch={!networkOk ? "true" : undefined}
-              >
-                {networkLabel}
-              </span>
-              <span className="wallet-chip__key">
-                {shortenPublicKey(session.publicKey)}
-              </span>
+              <span className="wallet-chip__network" data-mainnet={networkLabel === "Mainnet" ? "true" : undefined} data-mismatch={!networkOk ? "true" : undefined}>{networkLabel}</span>
+              <span className="wallet-chip__key">{shortenPublicKey(session.publicKey)}</span>
             </div>
           </div>
         </header>
@@ -1200,50 +978,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         {renderContent()}
 
         <div className="dashboard-actions">
-          <button type="button" className="secondary-button" onClick={onDisconnect}>
-            Disconnect Wallet
-          </button>
+          <button type="button" className="secondary-button" onClick={onDisconnect}>Disconnect Wallet</button>
         </div>
       </section>
 
-      {showWizard && (
-        <StreamCreationWizard
-          onClose={() => setShowWizard(false)}
-          onSubmit={handleCreateStream}
-          walletPublicKey={session.publicKey}
-        />
-      )}
-
-      {modal?.type === "topup" && (
-        <TopUpModal
-          streamId={modal.stream.id}
-          token={modal.stream.token}
-          currentDeposited={modal.stream.deposited}
-          onConfirm={handleTopUpConfirm}
-          onClose={() => setModal(null)}
-        />
-      )}
-
-      {modal?.type === "cancel" && (
-        <CancelConfirmModal
-          streamId={modal.stream.id}
-          recipient={modal.stream.recipient}
-          token={modal.stream.token}
-          deposited={modal.stream.deposited}
-          withdrawn={modal.stream.withdrawn}
-          onConfirm={handleCancelConfirm}
-          onClose={() => setModal(null)}
-        />
-      )}
-
-      {modal?.type === "details" && (
-        <StreamDetailsModal
-          stream={modal.stream}
-          onClose={() => setModal(null)}
-          onCancelClick={() => setModal({ type: "cancel", stream: modal.stream })}
-          onTopUpClick={() => setModal({ type: "topup", stream: modal.stream })}
-        />
-      )}
+      {showWizard && <StreamCreationWizard onClose={() => setShowWizard(false)} onSubmit={handleCreateStream} walletPublicKey={session.publicKey} />}
+      {modal?.type === "topup" && <TopUpModal streamId={modal.stream.id} token={modal.stream.token} currentDeposited={modal.stream.deposited} onConfirm={handleTopUpConfirm} onClose={() => setModal(null)} />}
+      {modal?.type === "cancel" && <CancelConfirmModal streamId={modal.stream.id} recipient={modal.stream.recipient} token={modal.stream.token} deposited={modal.stream.deposited} withdrawn={modal.stream.withdrawn} onConfirm={handleCancelConfirm} onClose={() => setModal(null)} />}
+      {modal?.type === "details" && <StreamDetailsModal stream={modal.stream} onClose={() => setModal(null)} onCancelClick={() => setModal({ type: "cancel", stream: modal.stream })} onTopUpClick={() => setModal({ type: "topup", stream: modal.stream })} />}
     </main>
   );
 }

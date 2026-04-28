@@ -253,9 +253,9 @@ export const getStreamEvents = async (req: Request, res: Response) => {
 
     const whereClause: any = { streamId: parsedStreamId };
     if (eventType) {
-      const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED'];
+      const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED'];
       if (!validEventTypes.includes(eventType)) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Invalid eventType parameter',
           message: `eventType must be one of: ${validEventTypes.join(', ')}`
         });

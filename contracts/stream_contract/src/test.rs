@@ -1532,3 +1532,277 @@ fn test_partial_withdrawal_does_not_complete() {
     assert!(s.is_active);
     assert!(!client.is_stream_completed(&id));
 }
+
+#[test]
+fn test_withdraw_on_paused_then_resume() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &10_000, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    client.pause_stream(&sender, &id);
+
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    client.resume_stream(&sender, &id);
+
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    let claimable = client.get_claimable_amount(&id);
+
+    assert!(claimable.is_some() && claimable.unwrap() > 0);
+}
+
+#[test]
+fn test_multiple_pause_resume_preserves_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &10_000, &50);
+
+    for _ in 0..3 {
+        env.ledger().with_mut(|l| l.timestamp += 100);
+        client.pause_stream(&sender, &id);
+        env.ledger().with_mut(|l| l.timestamp += 50);
+        client.resume_stream(&sender, &id);
+    }
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(stream.is_active);
+    assert!(!stream.paused);
+}
+
+#[test]
+fn test_cancel_while_paused_keeps_inactive() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.cancel_stream(&sender, &id);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(!stream.is_active);
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+}
+
+#[test]
+fn test_top_up_while_paused_increases_deposited() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 500);
+    client.pause_stream(&sender, &id);
+
+    let old_deposited = client.get_stream(&id).unwrap().deposited_amount;
+    client.top_up_stream(&sender, &id, &1_000);
+    let new_deposited = client.get_stream(&id).unwrap().deposited_amount;
+
+    assert!(new_deposited > old_deposited);
+}
+
+#[test]
+fn test_withdraw_after_long_stream_runtime_is_bounded() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 5_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &5_000, &10);
+
+    env.ledger().with_mut(|l| l.timestamp += 10_000);
+    let withdrawn = client.withdraw(&recipient, &id);
+
+    assert!(withdrawn <= 5_000);
+}
+
+// ─── Property-Based Fuzz Tests ────────────────────────────────────────────────
+
+#[test]
+fn test_fuzz_withdrawn_never_exceeds_deposited() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+
+    let mut seed = 1u64;
+    for iteration in 0..50 {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let amount = 1 + ((seed / 2) % 100_000) as i128;
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, amount);
+
+        let client = create_contract(&env);
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &100);
+
+        env.ledger().with_mut(|l| l.timestamp += 1000);
+        let withdrawn = client.withdraw(&recipient, &id);
+
+        let stream = client.get_stream(&id).unwrap();
+        assert!(
+            stream.withdrawn_amount <= stream.deposited_amount,
+            "Iteration {}: withdrawn {} > deposited {}",
+            iteration,
+            stream.withdrawn_amount,
+            stream.deposited_amount
+        );
+        assert!(withdrawn <= amount);
+    }
+}
+
+#[test]
+fn test_fuzz_claimable_never_exceeds_remaining() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+
+    let mut seed = 2u64;
+    for iteration in 0..50 {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let amount = 1 + ((seed / 2) % 100_000) as i128;
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let duration = 1 + (seed % 10_000) as u64;
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, amount);
+
+        let client = create_contract(&env);
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &duration);
+
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let elapsed = seed % duration;
+        env.ledger().with_mut(|l| l.timestamp += elapsed);
+
+        let claimable = client.get_claimable_amount(&id).unwrap_or(0);
+        let stream = client.get_stream(&id).unwrap();
+        let remaining = stream.deposited_amount - stream.withdrawn_amount;
+
+        assert!(
+            claimable <= remaining,
+            "Iteration {}: claimable {} > remaining {}",
+            iteration,
+            claimable,
+            remaining
+        );
+    }
+}
+
+#[test]
+fn test_fuzz_cancel_early_refunds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+
+    let mut seed = 3u64;
+    for iteration in 0..50 {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let amount = 10_000 + ((seed / 2) % 100_000) as i128;
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, amount);
+
+        let client = create_contract(&env);
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &10);
+
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let partial_time = 1 + (seed % 100) as u64;
+        env.ledger().with_mut(|l| l.timestamp += partial_time);
+
+        client.cancel_stream(&sender, &id);
+        let stream = client.get_stream(&id).unwrap();
+        assert!(!stream.is_active, "Iteration {}: stream should be inactive after cancel", iteration);
+    }
+}
+
+#[test]
+fn test_fuzz_pause_resume_maintains_active_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+
+    let mut seed = 4u64;
+    for iteration in 0..25 {
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let amount = 100_000 + ((seed / 2) % 100_000) as i128;
+        seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let rate = 10 + (seed % 100) as u64;
+
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, amount);
+
+        let client = create_contract(&env);
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &rate);
+
+        for i in 0..3 {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let sleep_time = 10 + (seed % 50) as u64;
+            env.ledger().with_mut(|l| l.timestamp += sleep_time);
+
+            let stream = client.get_stream(&id).unwrap();
+            if i % 2 == 0 {
+                client.pause_stream(&sender, &id);
+            } else if stream.paused {
+                client.resume_stream(&sender, &id);
+            }
+        }
+
+        let stream = client.get_stream(&id).unwrap();
+        assert!(stream.is_active, "Iteration {}: stream should remain active", iteration);
+    }
+}
+
+#[test]
+fn test_fuzz_large_amount_no_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+
+    let large_amounts = [1_000_000_000_000i128, 10_000_000_000_000i128, 100_000_000_000_000i128];
+
+    for amount in large_amounts.iter() {
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, *amount);
+
+        let client = create_contract(&env);
+        let id = client.create_stream(&sender, &recipient, &token, amount, &100);
+
+        env.ledger().with_mut(|l| l.timestamp += 1_000);
+
+        let claimable = client.get_claimable_amount(&id).unwrap_or(0);
+        assert!(claimable > 0);
+        assert!(claimable <= *amount);
+    }
+}
