@@ -6,6 +6,7 @@ import { RecipientStep } from "./RecipientStep";
 import { TokenStep } from "./TokenStep";
 import { AmountStep } from "./AmountStep";
 import { ScheduleStep } from "./ScheduleStep";
+import { TemplateStep, type StreamTemplate } from "./TemplateStep";
 import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
 
@@ -15,6 +16,7 @@ export interface StreamFormData {
   amount: string;
   duration: string;
   durationUnit: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
+  descriptionTag?: string;
 }
 
 interface StreamCreationWizardProps {
@@ -23,7 +25,64 @@ interface StreamCreationWizardProps {
   walletPublicKey?: string;
 }
 
-const STEPS = ["Recipient", "Token", "Amount", "Schedule"];
+const CUSTOM_TEMPLATE_STORAGE_KEY = "flowfi.stream.wizard.custom-templates.v1";
+
+const BUILT_IN_TEMPLATES: StreamTemplate[] = [
+  {
+    id: "monthly-salary",
+    name: "Monthly Salary",
+    description: "Recurring monthly payroll stream",
+    builtIn: true,
+    values: {
+      token: "USDC",
+      amount: "5000",
+      duration: "1",
+      durationUnit: "months",
+      descriptionTag: "salary",
+    },
+  },
+  {
+    id: "weekly-subscription",
+    name: "Weekly Subscription",
+    description: "Weekly recurring subscription billing",
+    builtIn: true,
+    values: {
+      token: "USDC",
+      amount: "49",
+      duration: "1",
+      durationUnit: "weeks",
+      descriptionTag: "subscription",
+    },
+  },
+  {
+    id: "one-time-grant",
+    name: "One-time Grant",
+    description: "Short fixed-duration grant payout",
+    builtIn: true,
+    values: {
+      token: "USDC",
+      amount: "1000",
+      duration: "14",
+      durationUnit: "days",
+      descriptionTag: "grant",
+    },
+  },
+  {
+    id: "custom",
+    name: "Custom",
+    description: "Start with blank defaults",
+    builtIn: true,
+    values: {
+      token: "USDC",
+      amount: "",
+      duration: "",
+      durationUnit: "days",
+      descriptionTag: "custom",
+    },
+  },
+];
+
+const STEPS = ["Template", "Recipient", "Token", "Amount", "Schedule"];
 
 export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   onClose,
@@ -32,17 +91,50 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
 }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [customTemplates, setCustomTemplates] = useState<StreamTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("monthly-salary");
+  const [customTemplateName, setCustomTemplateName] = useState("");
+  const [templateSaveMessage, setTemplateSaveMessage] = useState<string | null>(null);
   const [formData, setFormData] = useState<StreamFormData>({
     recipient: "",
-    token: "",
-    amount: "",
-    duration: "",
-    durationUnit: "days",
+    token: "USDC",
+    amount: "5000",
+    duration: "1",
+    durationUnit: "months",
+    descriptionTag: "salary",
   });
   const [errors, setErrors] = useState<Partial<Record<keyof StreamFormData, string>>>({});
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem(CUSTOM_TEMPLATE_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored);
+      if (!Array.isArray(parsed)) return;
+      const sanitized = parsed
+        .filter((item) => item && typeof item.id === "string" && typeof item.name === "string")
+        .map((item) => ({
+          id: item.id,
+          name: item.name,
+          description: item.description || "Saved custom template",
+          values: item.values || {},
+        } as StreamTemplate));
+      setCustomTemplates(sanitized);
+    } catch {
+      setCustomTemplates([]);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(CUSTOM_TEMPLATE_STORAGE_KEY, JSON.stringify(customTemplates));
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, [customTemplates]);
 
   React.useEffect(() => {
     if (!walletPublicKey || !formData.token) {
@@ -88,23 +180,77 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     });
   };
 
+  const allTemplates = React.useMemo(
+    () => [...BUILT_IN_TEMPLATES, ...customTemplates],
+    [customTemplates]
+  );
+
+  const applyTemplate = (templateId: string) => {
+    const template = allTemplates.find((item) => item.id === templateId);
+    if (!template) return;
+    setSelectedTemplateId(templateId);
+    setTemplateSaveMessage(`Applied template "${template.name}". You can still edit every field.`);
+    updateFormData({
+      token: template.values.token ?? formData.token,
+      amount: template.values.amount ?? formData.amount,
+      duration: template.values.duration ?? formData.duration,
+      durationUnit: template.values.durationUnit ?? formData.durationUnit,
+      descriptionTag: template.values.descriptionTag ?? formData.descriptionTag,
+    });
+  };
+
+  const saveCurrentAsCustomTemplate = () => {
+    const cleanedName = customTemplateName.trim();
+    if (!cleanedName) {
+      setTemplateSaveMessage("Enter a template name first.");
+      return;
+    }
+
+    if (!formData.amount || !formData.duration || !formData.token) {
+      setTemplateSaveMessage("Set amount, duration, and token before saving a custom template.");
+      return;
+    }
+
+    const newTemplate: StreamTemplate = {
+      id: `custom-${Date.now()}`,
+      name: cleanedName,
+      description: formData.descriptionTag
+        ? `Tag: ${formData.descriptionTag}`
+        : "Saved custom template",
+      values: {
+        token: formData.token,
+        amount: formData.amount,
+        duration: formData.duration,
+        durationUnit: formData.durationUnit,
+        descriptionTag: formData.descriptionTag || "custom",
+      },
+    };
+
+    setCustomTemplates((prev) => [newTemplate, ...prev]);
+    setCustomTemplateName("");
+    setTemplateSaveMessage(`Saved custom template "${cleanedName}".`);
+    setSelectedTemplateId(newTemplate.id);
+  };
+
   const validateStep = (step: number): boolean => {
     const newErrors: Partial<Record<keyof StreamFormData, string>> = {};
 
     switch (step) {
-      case 1: // Recipient
+      case 1: // Template
+        break;
+      case 2: // Recipient
         if (!formData.recipient.trim()) {
           newErrors.recipient = "Recipient address is required";
         } else if (!isValidStellarPublicKey(formData.recipient.trim())) {
           newErrors.recipient = "Invalid Stellar public key format";
         }
         break;
-      case 2: // Token
+      case 3: // Token
         if (!formData.token) {
           newErrors.token = "Please select a token";
         }
         break;
-      case 3: // Amount
+      case 4: // Amount
         if (!formData.amount.trim()) {
           newErrors.amount = "Amount is required";
         } else {
@@ -119,7 +265,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           }
         }
         break;
-      case 4: // Schedule
+      case 5: // Schedule
         if (!formData.duration.trim()) {
           newErrors.duration = "Duration is required";
         } else {
@@ -185,13 +331,26 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     switch (currentStep) {
       case 1:
         return (
+          <TemplateStep
+            templates={allTemplates}
+            selectedTemplateId={selectedTemplateId}
+            onSelectTemplate={applyTemplate}
+            customTemplateName={customTemplateName}
+            onCustomTemplateNameChange={setCustomTemplateName}
+            onSaveCustomTemplate={saveCurrentAsCustomTemplate}
+            saveDisabled={isSubmitting}
+            saveMessage={templateSaveMessage}
+          />
+        );
+      case 2:
+        return (
           <RecipientStep
             value={formData.recipient}
             onChange={(value) => updateFormData({ recipient: value })}
             error={errors.recipient}
           />
         );
-      case 2:
+      case 3:
         return (
           <TokenStep
             value={formData.token}
@@ -199,7 +358,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
             error={errors.token}
           />
         );
-      case 3:
+      case 4:
         return (
           <AmountStep
             value={formData.amount}
@@ -215,7 +374,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
             }}
           />
         );
-      case 4:
+      case 5:
         return (
           <ScheduleStep
             duration={formData.duration}
@@ -289,6 +448,13 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
               {Math.round((currentStep / STEPS.length) * 100)}% complete
             </div>
           </div>
+          {formData.descriptionTag && (
+            <div className="mb-4">
+              <span className="inline-flex rounded-full border border-accent/40 px-3 py-1 text-xs font-semibold text-accent">
+                Tag: {formData.descriptionTag}
+              </span>
+            </div>
+          )}
           {renderStepContent()}
         </div>
 
