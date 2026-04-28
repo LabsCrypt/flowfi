@@ -122,7 +122,7 @@ describe('GET /v1/users/:address/summary', () => {
   });
 
   it('returns all-zero summary for addresses with no streams', async () => {
-    prisma.stream.findMany
+    vi.mocked(prisma.stream.findMany)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
 
@@ -142,29 +142,69 @@ describe('GET /v1/users/:address/summary', () => {
   });
 
   it('returns accurate outgoing/incoming aggregates and claimable sum', async () => {
-    prisma.stream.findMany
+    vi.mocked(prisma.stream.findMany)
       .mockResolvedValueOnce([
-        { withdrawnAmount: '30', isActive: true },
-        { withdrawnAmount: '20', isActive: false },
+        { 
+          id: '1', 
+          createdAt: new Date(), 
+          updatedAt: new Date(),
+          streamId: 1,
+          sender: 'GSENDER',
+          recipient: 'GRECIPIENT',
+          tokenAddress: 'TOKEN',
+          ratePerSecond: '10',
+          depositedAmount: '100',
+          withdrawnAmount: '30', 
+          startTime: 1000,
+          lastUpdateTime: 2000,
+          isActive: true 
+        },
+        { 
+          id: '2', 
+          createdAt: new Date(), 
+          updatedAt: new Date(),
+          streamId: 2,
+          sender: 'GSENDER2',
+          recipient: 'GRECIPIENT2',
+          tokenAddress: 'TOKEN2',
+          ratePerSecond: '20',
+          depositedAmount: '200',
+          withdrawnAmount: '20', 
+          startTime: 1000,
+          lastUpdateTime: 2000,
+          isActive: false 
+        },
       ])
       .mockResolvedValueOnce([
         {
+          id: '3',
+          createdAt: new Date(),
+          updatedAt: new Date(),
           streamId: 11,
+          sender: 'GSENDER3',
+          recipient: 'GRECIPIENT3',
+          tokenAddress: 'TOKEN3',
           ratePerSecond: '10',
           depositedAmount: '1000',
           withdrawnAmount: '100',
+          startTime: 1000,
           lastUpdateTime: 0,
           isActive: true,
-          updatedAt: new Date(),
         },
         {
+          id: '4',
+          createdAt: new Date(),
+          updatedAt: new Date(),
           streamId: 12,
-          ratePerSecond: '1',
-          depositedAmount: '200',
-          withdrawnAmount: '50',
+          sender: 'GSENDER4',
+          recipient: 'GRECIPIENT4',
+          tokenAddress: 'TOKEN4',
+          ratePerSecond: '5',
+          depositedAmount: '500',
+          withdrawnAmount: '0',
+          startTime: 1000,
           lastUpdateTime: 0,
           isActive: false,
-          updatedAt: new Date(),
         },
       ]);
 
@@ -184,8 +224,22 @@ describe('GET /v1/users/:address/summary', () => {
   });
 
   it('caches summary results for repeated requests within TTL', async () => {
-    prisma.stream.findMany
-      .mockResolvedValueOnce([{ withdrawnAmount: '1', isActive: true }])
+    vi.mocked(prisma.stream.findMany)
+      .mockResolvedValueOnce([{ 
+        id: '5',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        streamId: 13,
+        sender: 'GSENDER5',
+        recipient: 'GRECIPIENT5',
+        tokenAddress: 'TOKEN5',
+        ratePerSecond: '1',
+        depositedAmount: '100',
+        withdrawnAmount: '1',
+        startTime: 1000,
+        lastUpdateTime: 2000,
+        isActive: true 
+      }])
       .mockResolvedValueOnce([]);
 
     const address = 'GCACHE000000000000000000000000000000000000000000000000000000';

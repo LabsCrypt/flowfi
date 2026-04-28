@@ -1318,7 +1318,7 @@ fn test_resume_adjusts_end_time() {
 
     // Paused for 300 seconds.
     env.ledger().with_mut(|l| l.timestamp += 300);
-    let new_end = client.resume_stream(&sender, &id);
+    let _new_end = client.resume_stream(&sender, &id);
 
     // After resume, stream should be active again.
     let s = client.get_stream(&id).unwrap();

@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { Button } from "@/components/ui/Button";
 import type { Stream } from "@/lib/dashboard";
-import { shortenPublicKey } from "@/lib/wallet";
 
 interface StreamDetailsModalProps {
     stream: Stream;

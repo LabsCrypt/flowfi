@@ -1,3 +1,6 @@
+"use client";
+
+import React, { useState } from "react";
 import { 
   createStream, 
   toBaseUnits, 
@@ -7,6 +10,9 @@ import {
 } from "@/lib/soroban";
 import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { useWallet } from "@/context/wallet-context";
 
 export default function CreateStreamPage() {
   const { status, session } = useWallet();

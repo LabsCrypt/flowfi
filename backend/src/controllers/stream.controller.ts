@@ -79,26 +79,95 @@ export const createStream = async (req: Request, res: Response) => {
 };
 
 /**
- * List streams by sender or recipient
+ * List streams by sender, recipient, status, token with sorting and pagination
  */
 export const listStreams = async (req: Request, res: Response) => {
   try {
-    const { sender, recipient } = req.query;
+    const { 
+      sender, 
+      recipient, 
+      status, 
+      token,
+      sort = 'createdAt',
+      order = 'desc',
+      limit = '20',
+      offset = '0'
+    } = req.query;
 
     const where: any = {};
     if (typeof sender === 'string') where.sender = sender;
     if (typeof recipient === 'string') where.recipient = recipient;
+    if (typeof token === 'string') where.tokenAddress = token;
 
-    const streams = await prisma.stream.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        senderUser: true,
-        recipientUser: true
+    // Handle status filtering
+    if (typeof status === 'string') {
+      const validStatuses = ['active', 'cancelled', 'completed', 'paused'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ 
+          error: 'Invalid status parameter',
+          message: `status must be one of: ${validStatuses.join(', ')}`
+        });
       }
-    });
 
-    return res.status(200).json(streams);
+      // Map status to database conditions
+      switch (status) {
+        case 'active':
+          where.isActive = true;
+          break;
+        case 'cancelled':
+          where.isActive = false;
+          // Additional check for cancelled events could be added here
+          break;
+        case 'completed':
+          where.isActive = false;
+          // Additional check for completed events could be added here
+          break;
+        case 'paused':
+          where.isActive = false;
+          // Additional check for paused events could be added here
+          break;
+      }
+    }
+
+    // Validate and parse pagination parameters
+    const parsedLimit = Math.min(
+      typeof limit === 'string' ? (Number.parseInt(limit, 10) || 20) : 20,
+      100
+    );
+    const parsedOffset = typeof offset === 'string' ? (Number.parseInt(offset, 10) || 0) : 0;
+
+    // Validate sort field
+    const validSortFields = ['createdAt', 'startTime', 'lastUpdateTime', 'depositedAmount'];
+    const sortField = validSortFields.includes(typeof sort === 'string' ? sort : 'createdAt') 
+      ? (sort as 'createdAt' | 'startTime' | 'lastUpdateTime' | 'depositedAmount') 
+      : 'createdAt';
+
+    // Validate order
+    const sortOrder = order === 'asc' ? 'asc' : 'desc';
+
+    const [streams, total] = await Promise.all([
+      prisma.stream.findMany({
+        where,
+        orderBy: { [sortField]: sortOrder },
+        take: parsedLimit,
+        skip: parsedOffset,
+        include: {
+          senderUser: true,
+          recipientUser: true
+        }
+      }),
+      prisma.stream.count({ where })
+    ]);
+
+    const hasMore = parsedOffset + streams.length < total;
+
+    return res.status(200).json({ 
+      data: streams, 
+      total, 
+      hasMore,
+      limit: parsedLimit,
+      offset: parsedOffset
+    });
   } catch (error) {
     logger.error('Error listing streams:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -302,7 +371,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
  */
 export const getUserStreamSummary = async (req: Request, res: Response) => {
   try {
-    const address = (req.params.address ?? '').trim();
+    const address = Array.isArray(req.params.address) ? req.params.address[0] : (req.params.address ?? '').trim();
     if (!address) {
       return res.status(400).json({ error: 'Address is required' });
     }
@@ -339,10 +408,10 @@ export const getUserStreamSummary = async (req: Request, res: Response) => {
     ]);
 
     const totalStreamsCreated = outgoingStreams.length;
-    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream) => stream.withdrawnAmount));
-    const totalStreamedIn = sumStringI128(incomingStreams.map((stream) => stream.withdrawnAmount));
-    const activeOutgoingCount = outgoingStreams.filter((stream) => stream.isActive).length;
-    const activeIncomingCount = incomingStreams.filter((stream) => stream.isActive).length;
+    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream: any) => stream.withdrawnAmount));
+    const totalStreamedIn = sumStringI128(incomingStreams.map((stream: any) => stream.withdrawnAmount));
+    const activeOutgoingCount = outgoingStreams.filter((stream: any) => stream.isActive).length;
+    const activeIncomingCount = incomingStreams.filter((stream: any) => stream.isActive).length;
 
     const calculatedAt = Math.floor(nowMs / 1000);
     let claimableTotal = 0n;

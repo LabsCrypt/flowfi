@@ -101,6 +101,96 @@ cd contracts
 cargo build --target wasm32-unknown-unknown --release
 ```
 
+## Deployment
+
+### Contract Deployment
+
+The FlowFi smart contracts can be deployed to both testnet and mainnet using the automated deployment script.
+
+#### Prerequisites
+
+- Stellar CLI installed and configured
+- Sufficient XLM in the deployment account for network fees
+- Required environment variables set
+
+#### Environment Variables
+
+Before deploying, set the following environment variables:
+
+```bash
+export STELLAR_SECRET_KEY="your_secret_key_here"
+export ADMIN_ADDRESS="your_admin_address_here"
+export TREASURY_ADDRESS="your_treasury_address_here"
+export FEE_RATE_BPS="25"  # 0.25% fee rate
+```
+
+#### Deploy to Testnet
+
+```bash
+npx tsx scripts/deploy.ts --network testnet
+```
+
+#### Deploy to Mainnet
+
+```bash
+npx tsx scripts/deploy.ts --network mainnet
+```
+
+#### Deployment Process
+
+The deployment script automates the following steps:
+
+1. **Build WASM**: Compiles the Rust contract to WebAssembly
+2. **Optimize WASM**: Optimizes the WASM for deployment size
+3. **Deploy Contract**: Deploys the contract to the specified network
+4. **Initialize Contract**: Sets up admin, treasury, and fee rate parameters
+5. **Save Deployment Info**: Stores contract details in `deployment-info.json`
+
+#### Deployment Information
+
+After successful deployment, contract details are saved to `deployment-info.json`:
+
+```json
+{
+  "testnet": {
+    "network": "testnet",
+    "contractId": "CD...ID",
+    "deployedAt": "2024-01-01T00:00:00.000Z",
+    "adminAddress": "G...ADMIN",
+    "treasuryAddress": "G...TREASURY",
+    "feeRateBps": 25,
+    "transactionHash": "TX...HASH"
+  },
+  "mainnet": {
+    "network": "mainnet",
+    "contractId": "CD...ID",
+    "deployedAt": "2024-01-01T00:00:00.000Z",
+    "adminAddress": "G...ADMIN",
+    "treasuryAddress": "G...TREASURY",
+    "feeRateBps": 25,
+    "transactionHash": "TX...HASH"
+  },
+  "lastUpdated": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### Manual Deployment
+
+If you prefer to deploy manually, you can use the Stellar CLI directly:
+
+```bash
+# Build and optimize
+cd contracts
+cargo build --target wasm32-unknown-unknown --release
+stellar contract optimize --wasm target/wasm32-unknown-unknown/release/stream_contract.wasm
+
+# Deploy
+stellar contract deploy --wasm target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm --source YOUR_SECRET_KEY --network https://soroban-testnet.stellar.org
+
+# Initialize
+stellar contract invoke --id CONTRACT_ID --source YOUR_SECRET_KEY --network https://soroban-testnet.stellar.org initialize --admin ADMIN_ADDRESS --treasury TREASURY_ADDRESS --fee_rate_bps 25
+```
+
 ## API Documentation
 
 The FlowFi backend API uses URL-based versioning. All endpoints are prefixed with a version (e.g., `/v1/streams`).

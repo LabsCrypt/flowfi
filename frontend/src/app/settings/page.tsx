@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Copy, Check, LogOut, Moon, Sun, Bell, Globe } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { shortenPublicKey, formatNetwork } from "@/lib/wallet";
 import toast from "react-hot-toast";
 
@@ -286,9 +287,9 @@ export default function SettingsPage() {
               </p>
               <div className="flex items-center justify-between bg-black/40 dark:bg-white/40 px-5 py-4 rounded-xl text-white dark:text-black border border-white/10 dark:border-black/10">
                 <span>Not connected</span>
-                <a href="/" className="text-accent hover:opacity-80 transition font-semibold">
+                <Link href="/" className="text-accent hover:opacity-80 transition font-semibold">
                   Connect Wallet
-                </a>
+                </Link>
               </div>
             </div>
           )}

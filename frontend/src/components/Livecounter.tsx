@@ -18,9 +18,13 @@ export default function LiveCounter({
   const [amount, setAmount] = useState(initial);
 
   useEffect(() => {
+    // Reset amount when initial value changes
+    setAmount(initial);
+  }, [initial]);
+
+  useEffect(() => {
     // Don't increment if paused
     if (isPaused) {
-      setAmount(initial);
       return;
     }
 

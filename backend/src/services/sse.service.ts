@@ -183,4 +183,5 @@ class SSEService {
   }
 }
 
+export { SSEService };
 export const sseService = new SSEService();

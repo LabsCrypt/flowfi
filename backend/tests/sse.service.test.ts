@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { SSEService } from '../src/services/sse.service.js';
+import { SSEService, sseService } from '../src/services/sse.service.js';
 
 function createMockResponse() {
   const emitter = new EventEmitter();

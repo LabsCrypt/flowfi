@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import { X, AlertCircle } from "lucide-react";
 
 interface SSEStatusIndicatorProps {
@@ -14,16 +14,9 @@ export function SSEStatusIndicator({
   reconnecting,
   error,
 }: SSEStatusIndicatorProps) {
-  const [showDisconnectBanner, setShowDisconnectBanner] = useState(false);
-
   // Show disconnect banner when error occurs
-  useEffect(() => {
-    if (error || (reconnecting && !connected)) {
-      setShowDisconnectBanner(true);
-    } else {
-      // Auto-dismiss banner when reconnected
-      setShowDisconnectBanner(false);
-    }
+  const showDisconnectBanner = useMemo(() => {
+    return !!error || (reconnecting && !connected);
   }, [connected, reconnecting, error]);
 
   const isLive = connected && !reconnecting && !error;
@@ -76,13 +69,6 @@ export function SSEStatusIndicator({
                 : "Real-time updates paused. Data may be stale."}
             </p>
           </div>
-          <button
-            onClick={() => setShowDisconnectBanner(false)}
-            className="flex-shrink-0 p-1 hover:bg-red-600/50 rounded transition"
-            aria-label="Close banner"
-          >
-            <X size={20} />
-          </button>
         </div>
       )}
     </>

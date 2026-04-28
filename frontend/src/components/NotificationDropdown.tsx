@@ -1,36 +1,155 @@
 "use client";
-import React, { useState, useEffect } from 'react';
-import { BackendStreamEvent } from '@/lib/api-types';
-import { fetchUserEvents } from '@/lib/dashboard';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useStreamEvents } from '@/hooks/useStreamEvents';
+import { formatAmount } from '@/lib/amount';
 import { Button } from './ui/Button';
+import { useStreamEvents } from '@/hooks/useStreamEvents';
 
 interface NotificationDropdownProps {
     publicKey: string;
 }
 
+interface NotificationItem {
+    id: string;
+    streamId: number;
+    type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed' | 'paused' | 'resumed';
+    message: string;
+    timestamp: number;
+    read: boolean;
+}
+
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publicKey }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+
+    // Subscribe to live stream events for the user
+    const { events, connected } = useStreamEvents({
+        userPublicKeys: [publicKey],
+        autoReconnect: true
+    });
+
+    const formatEventMessage = useCallback((event: { type: string; data?: unknown }): string => {
+        const data = event.data as { streamId?: number; amount?: string; tokenSymbol?: string };
+        const streamId = data?.streamId || 0;
+        const amount = data?.amount ? formatAmount(BigInt(data.amount), 7) : '0';
+        const tokenSymbol = data?.tokenSymbol || 'USDC';
+
+        switch (event.type) {
+            case 'created':
+                return `New stream #${streamId} created`;
+            case 'topped_up':
+                return `Stream #${streamId} was topped up by ${amount} ${tokenSymbol}`;
+            case 'withdrawn':
+                return `You received ${amount} ${tokenSymbol} from stream #${streamId}`;
+            case 'cancelled':
+                return `Stream #${streamId} was cancelled — refund incoming`;
+            case 'completed':
+                return `Stream #${streamId} completed`;
+            case 'paused':
+                return `Stream #${streamId} was paused`;
+            case 'resumed':
+                return `Stream #${streamId} was resumed`;
+            default:
+                return `Activity on stream #${streamId}`;
     const [events, setEvents] = useState<BackendStreamEvent[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    // Wire up SSE for real-time events
+    const { events: streamEvents } = useStreamEvents({
+        userPublicKeys: [publicKey],
+        autoReconnect: true,
+    });
 
     useEffect(() => {
         if (isOpen && publicKey) {
             loadEvents();
+            setUnreadCount(0); // Clear unread count when dropdown opens
         }
-    }, [isOpen, publicKey]);
+    }, []);
+
+    // Process live events into notifications
+    useEffect(() => {
+        const newNotifications = events.map(event => ({
+            id: `${event.type}-${event.timestamp}`,
+            streamId: (event.data as { streamId?: number })?.streamId || 0,
+            type: event.type,
+            message: formatEventMessage(event),
+            timestamp: event.timestamp,
+            read: false
+        }));
+
+        if (newNotifications.length > 0) {
+            // Use setTimeout to defer state update and avoid linting violation
+            setTimeout(() => {
+                setNotifications(prev => {
+                    // Combine with existing notifications, remove duplicates, keep latest 20
+                    const combined = [...newNotifications, ...prev];
+                    const unique = combined.filter((notif, index, self) => 
+                        index === self.findIndex(n => n.id === notif.id)
+                    );
+                    return unique.slice(0, 20);
+                });
+            }, 0);
+    // Handle incoming SSE events
+    useEffect(() => {
+        if (streamEvents.length > 0 && !isOpen) {
+            // Increment unread count for new events while dropdown is closed
+            setUnreadCount(prev => prev + 1);
+        }
+
+        // Prepend live events to notification list
+        if (streamEvents.length > 0) {
+            const latestEvent = streamEvents[0];
+            const newEvent: BackendStreamEvent = {
+                id: `sse-${Date.now()}`,
+                streamId: latestEvent.data.streamId || 0,
+                eventType: mapEventType(latestEvent.type),
+                amount: latestEvent.data.amount || latestEvent.data.feeAmount || null,
+                transactionHash: latestEvent.data.transactionHash || '',
+                ledgerSequence: latestEvent.data.ledger || 0,
+                timestamp: latestEvent.timestamp / 1000,
+                metadata: null,
+                createdAt: new Date().toISOString(),
+            };
+
+            setEvents(prev => [newEvent, ...prev.slice(0, 19)]); // Keep max 20
+        }
+    }, [streamEvents, isOpen]);
+
+    const mapEventType = (type: string): BackendStreamEvent['eventType'] => {
+        switch (type) {
+            case 'created': return 'CREATED';
+            case 'topped_up': return 'TOPPED_UP';
+            case 'withdrawn': return 'WITHDRAWN';
+            case 'cancelled': return 'CANCELLED';
+            case 'completed': return 'COMPLETED';
+            default: return 'CREATED';
+        }
+    };
 
     const loadEvents = async () => {
         setIsLoading(true);
         try {
             const data = await fetchUserEvents(publicKey);
-            setEvents(data.slice(0, 5)); // Show only last 5
+            setEvents(data.slice(0, 20)); // Show last 20
         } catch (error) {
             console.error(error);
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [events, formatEventMessage]);
 
+    // Calculate unread count from notifications
+    const unreadCount = useMemo(() => {
+        return notifications.filter(n => !n.read).length;
+    }, [notifications]);
+
+    // Mark all as read when dropdown opens
+    const handleDropdownOpen = useCallback(() => {
+        setIsOpen(true);
+        if (unreadCount > 0) {
+            setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     const formatEventMessage = (event: BackendStreamEvent) => {
         const amount = event.amount ? parseFloat(event.amount) / 1e7 : 0;
         switch (event.eventType) {
@@ -38,21 +157,33 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             case 'TOPPED_UP': return `Topped up #${event.streamId}`;
             case 'WITHDRAWN': return `Withdrew ${amount} from #${event.streamId}`;
             case 'CANCELLED': return `Cancelled #${event.streamId}`;
+            case 'COMPLETED': return `Completed #${event.streamId}`;
             default: return `Event on #${event.streamId}`;
         }
-    };
+    }, [unreadCount]);
 
     return (
         <div className="relative">
             <button
-                onClick={() => setIsOpen(!isOpen)}
+                onClick={handleDropdownOpen}
                 className="relative p-2 text-slate-400 hover:text-accent transition-colors"
+                disabled={!connected}
             >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                 </svg>
-                {events.length > 0 && (
-                    <span className="absolute top-0 right-0 h-3 w-3 bg-accent rounded-full border-2 border-background"></span>
+                {unreadCount > 0 && (
+                    <span className="absolute top-0 right-0 h-3 w-3 bg-accent rounded-full border-2 border-background flex items-center justify-center">
+                        <span className="text-xs text-white font-bold">
+                            {unreadCount > 9 ? '9+' : unreadCount}
+                        </span>
+                    </span>
+                )}
+                {!connected && (
+                    <span className="absolute bottom-0 right-0 h-2 w-2 bg-red-500 rounded-full border-2 border-background"></span>
+                    <span className="absolute top-0 right-0 h-5 w-5 bg-accent rounded-full border-2 border-background flex items-center justify-center text-xs font-bold text-white">
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
                 )}
             </button>
 
@@ -60,39 +191,51 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                 <div className="absolute right-0 mt-2 w-80 bg-background/95 backdrop-blur-md border border-glass-border rounded-2xl shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2">
                     <div className="p-4 border-b border-glass-border flex justify-between items-center">
                         <h3 className="font-bold text-white">Notifications</h3>
-                        <button
-                            onClick={() => setIsOpen(false)}
-                            className="text-slate-400 hover:text-white"
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {!connected && (
+                                <span className="text-xs text-red-400">Reconnecting...</span>
+                            )}
+                            <button
+                                onClick={() => setIsOpen(false)}
+                                className="text-slate-400 hover:text-white"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                     <div className="max-h-96 overflow-y-auto">
-                        {isLoading ? (
-                            <div className="p-8 flex justify-center">
-                                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-accent"></div>
-                            </div>
-                        ) : events.length > 0 ? (
+                        {notifications.length > 0 ? (
                             <div className="divide-y divide-glass-border">
-                                {events.map((event) => (
-                                    <div key={event.id} className="p-4 hover:bg-white/5 transition-colors">
-                                        <p className="text-sm text-white font-medium">{formatEventMessage(event)}</p>
+                                {notifications.map((notification) => (
+                                    <div 
+                                        key={notification.id} 
+                                        className={`p-4 hover:bg-white/5 transition-colors ${!notification.read ? 'bg-white/2' : ''}`}
+                                    >
+                                        <p className="text-sm text-white font-medium">{notification.message}</p>
                                         <p className="text-xs text-slate-400 mt-1">
-                                            {new Date(event.timestamp * 1000).toLocaleString()}
+                                            {new Date(notification.timestamp).toLocaleString()}
                                         </p>
                                     </div>
                                 ))}
                             </div>
                         ) : (
                             <div className="p-8 text-center text-slate-400 text-sm">
-                                No new notifications
+                                {connected ? 'No new notifications' : 'Connecting to live updates...'}
                             </div>
                         )}
                     </div>
                     <div className="p-3 border-t border-glass-border">
-                        <Button variant="ghost" size="sm" className="w-full text-xs">
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="w-full text-xs"
+                            onClick={() => {
+                                // Navigate to activity page
+                                window.location.href = '/activity';
+                            }}
+                        >
                             View All Activity
                         </Button>
                     </div>
