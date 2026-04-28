@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@/context/wallet-context';
 import { BackendStreamEvent } from '@/lib/api-types';
 import { fetchUserEvents } from '@/lib/dashboard';
@@ -21,7 +21,7 @@ export default function ActivityPage() {
         if (session?.publicKey) {
             loadEvents();
         }
-    }, [session?.publicKey]);
+    }, [session?.publicKey, loadEvents]);
 
     useEffect(() => {
         if (activeFilter === 'All') {
@@ -31,7 +31,7 @@ export default function ActivityPage() {
         }
     }, [activeFilter, events]);
 
-    const loadEvents = async () => {
+    const loadEvents = useCallback(async () => {
         if (!session?.publicKey) return;
         setIsLoading(true);
         try {
@@ -43,7 +43,7 @@ export default function ActivityPage() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [session?.publicKey]);
 
     const handleExportCSV = () => {
         const csvData = filteredEvents.map(event => ({

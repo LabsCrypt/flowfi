@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useStreamEvents } from '@/hooks/useStreamEvents';
 import { fromStroops } from '@/utils/amount';
 import { Button } from './ui/Button';
@@ -19,7 +19,7 @@ interface NotificationItem {
     read: boolean;
 }
 
-export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publicKey }) => {
+export const NotificationDropdown = ({ publicKey }: NotificationDropdownProps) => {
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
@@ -31,12 +31,12 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         autoReconnect: true
     });
 
-    const formatEventMessage = useCallback((event: { type: string; data?: any }): string => {
+    const formatEventMessage = useCallback((event: { type: string; data?: Record<string, unknown> }): string => {
         const data = event.data || {};
-        const streamId = data.streamId || 0;
-        const amountStr = data.amount || data.feeAmount || '0';
+        const streamId = (data.streamId as string | number) || 0;
+        const amountStr = (data.amount as string) || (data.feeAmount as string) || '0';
         const amount = fromStroops(BigInt(amountStr), 7);
-        const tokenSymbol = data.tokenSymbol || 'USDC';
+        const tokenSymbol = (data.tokenSymbol as string) || 'USDC';
 
         switch (event.type) {
             case 'created':
@@ -63,7 +63,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         }
     }, []);
 
-    const loadEvents = async () => {
+    const loadEvents = useCallback(async () => {
         if (!publicKey) return;
         setIsLoading(true);
         try {
@@ -88,14 +88,14 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [publicKey, formatEventMessage]);
 
     useEffect(() => {
         if (isOpen && publicKey) {
             loadEvents();
             setUnreadCount(0);
         }
-    }, [isOpen, publicKey]);
+    }, [isOpen, publicKey, loadEvents]);
 
     // Handle incoming SSE events
     useEffect(() => {
@@ -103,7 +103,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             const latestEvent = streamEvents[0];
             const newNotif: NotificationItem = {
                 id: `live-${Date.now()}-${latestEvent.type}`,
-                streamId: latestEvent.data.streamId || 0,
+                streamId: (latestEvent.data as Record<string, unknown>)?.streamId as number || 0,
                 type: latestEvent.type,
                 message: formatEventMessage(latestEvent),
                 timestamp: latestEvent.timestamp,
@@ -111,10 +111,10 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             };
 
             if (!isOpen) {
-                setUnreadCount(prev => prev + 1);
+                setUnreadCount((prev: number) => prev + 1);
             }
 
-            setNotifications(prev => {
+            setNotifications((prev: NotificationItem[]) => {
                 const combined = [newNotif, ...prev];
                 const unique = combined.filter((notif, index, self) => 
                     index === self.findIndex(n => n.id === notif.id)
@@ -171,7 +171,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                             <div className="p-8 text-center text-slate-400 text-sm">Loading...</div>
                         ) : notifications.length > 0 ? (
                             <div className="divide-y divide-glass-border">
-                                {notifications.map((notification) => (
+                                {notifications.map((notification: NotificationItem) => (
                                     <div 
                                         key={notification.id} 
                                         className={`p-4 hover:bg-white/5 transition-colors ${!notification.read ? 'bg-white/2' : ''}`}

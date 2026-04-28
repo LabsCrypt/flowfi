@@ -14,7 +14,7 @@ import {
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import { shortenPublicKey } from "@/lib/wallet";
-import { fromStroops, toStroops, hasValidPrecision } from "@/utils/amount";
+import { fromStroops } from "@/utils/amount";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 interface StreamDetailsPageProps {

@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Copy, Check, LogOut, Moon, Sun, Bell, Globe } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { shortenPublicKey, formatNetwork } from "@/lib/wallet";
+import { formatNetwork } from "@/lib/wallet";
 import toast from "react-hot-toast";
 
 type DisplayCurrency = "USD" | "XLM" | "USDC";

@@ -64,7 +64,7 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
         try {
             await onWithdraw(stream);
             toast.success(`Successfully withdrew from stream #${stream.id}`);
-        } catch (error) {
+        } catch {
             toast.error(`Failed to withdraw from stream #${stream.id}`);
         }
     };

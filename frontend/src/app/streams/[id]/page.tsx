@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import LiveCounter from "@/components/Livecounter";
 import ProgressBar from "@/components/Progressbar";
 import { Button } from "@/components/ui/Button";
@@ -15,7 +15,7 @@ import {
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import { fromStroops, toStroops, formatRate, hasValidPrecision } from "@/utils/amount";
-import type { WalletSession } from "@/lib/wallet";
+
 
 interface StreamDetail {
   id: string;
@@ -35,7 +35,6 @@ interface StreamDetail {
 
 export default function StreamDetailsPage() {
   const params = useParams();
-  const router = useRouter();
   const streamId = params.id as string;
   const { session, isHydrated } = useWallet();
   
@@ -48,7 +47,7 @@ export default function StreamDetailsPage() {
   const [showTopUp, setShowTopUp] = useState(false);
 
   // SSE integration for real-time stream updates
-  const { events: streamEvents, connected, reconnecting } = useStreamEvents({
+  const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],
     autoReconnect: true,
   });

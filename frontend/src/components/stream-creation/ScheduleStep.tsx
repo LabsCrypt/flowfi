@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useRef, useEffect } from "react";
-import { fromStroops, formatRate, toStroops } from "@/utils/amount";
+import { formatRate } from "@/utils/amount";
 
 interface ScheduleStepProps {
   duration: string;

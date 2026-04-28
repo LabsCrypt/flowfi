@@ -11,7 +11,7 @@ import { EventEmitter } from 'node:events';
 
 // ─── Mocks (must be hoisted before real imports) ──────────────────────────────
 
-const mockSseService = {
+const mockSseService = vi.hoisted(() => ({
   broadcastToStream: vi.fn(),
   broadcastToUser: vi.fn(),
   addClient: vi.fn(),
@@ -23,7 +23,7 @@ const mockSseService = {
   checkCapacity: vi.fn().mockReturnValue({ allowed: true }),
   isShuttingDown: vi.fn().mockReturnValue(false),
   initRedisSubscription: vi.fn().mockResolvedValue(undefined),
-};
+}));
 
 vi.mock('../../src/services/sse.service.js', () => ({
   sseService: mockSseService,
@@ -37,7 +37,7 @@ vi.mock('../../src/lib/redis.js', () => ({
 }));
 
 // Prisma mock – set up base shape; individual tests will override per-method
-const mockPrisma = {
+const mockPrisma = vi.hoisted(() => ({
   stream: {
     upsert: vi.fn(),
     findMany: vi.fn().mockResolvedValue([]),
@@ -51,7 +51,7 @@ const mockPrisma = {
   },
   $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
   $disconnect: vi.fn(),
-};
+}));
 
 vi.mock('../../src/lib/prisma.js', () => ({
   default: mockPrisma,

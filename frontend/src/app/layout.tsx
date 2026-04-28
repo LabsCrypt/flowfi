@@ -6,9 +6,6 @@ import "./globals.css";
 import { WalletProvider } from "@/context/wallet-context";
 import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/context/theme-provider";
-import { Banner } from "@/components/ui/Banner";
-import bannerConfig from "@/lib/banner.config";
-import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 
 const sora = Sora({

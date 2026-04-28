@@ -36,9 +36,9 @@ const Dashboard: React.FC = () => {
         if (activeTab === 'activity' && session?.publicKey) {
             loadEvents();
         }
-    }, [activeTab, session?.publicKey]);
+    }, [activeTab, session?.publicKey, loadEvents]);
 
-    const loadEvents = async () => {
+    const loadEvents = React.useCallback(async () => {
         if (!session?.publicKey) return;
         setIsLoadingEvents(true);
         try {
@@ -50,7 +50,7 @@ const Dashboard: React.FC = () => {
         } finally {
             setIsLoadingEvents(false);
         }
-    };
+    }, [session?.publicKey]);
 
     const handleExport = () => {
         downloadCSV(mockStreams, 'flowfi-stream-history.csv');
