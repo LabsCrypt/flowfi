@@ -468,7 +468,7 @@ export default function StreamDetailsPage() {
               </Button>
             )}
             <Button
-              onClick={handleCancel}
+              onClick={() => setShowCancelModal(true)}
               disabled={cancelling || !stream.isActive}
               style={{ borderColor: "#ef4444", color: "#ef4444" }}
               variant="outline"
