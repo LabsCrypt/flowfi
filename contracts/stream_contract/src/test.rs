@@ -222,6 +222,36 @@ fn test_create_multiple_streams_increments_id() {
 }
 
 #[test]
+fn test_stream_count_returns_total_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    
+    // Initially, no streams exist
+    assert_eq!(client.stream_count(), 0);
+    
+    // Create first stream
+    let id1 = client.create_stream(&sender, &recipient, &token, &500, &100);
+    assert_eq!(id1, 1);
+    assert_eq!(client.stream_count(), 1);
+    
+    // Create second stream
+    let id2 = client.create_stream(&sender, &Address::generate(&env), &token, &300, &50);
+    assert_eq!(id2, 2);
+    assert_eq!(client.stream_count(), 2);
+    
+    // Create third stream
+    let id3 = client.create_stream(&Address::generate(&env), &recipient, &token, &700, &200);
+    assert_eq!(id3, 3);
+    assert_eq!(client.stream_count(), 3);
+}
+
+#[test]
 fn test_create_stream_rejects_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();
