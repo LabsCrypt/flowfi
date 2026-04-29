@@ -358,7 +358,7 @@ export default function StreamDetailsPage() {
             </div>
             <div style={{ textAlign: "right" }}>
               <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
-                Rate: {formatStreamRate(BigInt(stream.ratePerSecond), 7)}
+                Rate: {formatRate(BigInt(stream.ratePerSecond), 7)}
               </p>
               <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
                 Started: {new Date(stream.startTime * 1000).toLocaleDateString()}
