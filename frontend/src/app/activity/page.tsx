@@ -1,116 +1,140 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { useWallet } from '@/context/wallet-context';
-import { BackendStreamEvent } from '@/lib/api-types';
-import { fetchUserEvents } from '@/lib/dashboard';
-import { ActivityHistory } from '@/components/dashboard/ActivityHistory';
-import { downloadCSV } from '@/utils/csvExport';
-import { fromStroops } from '@/utils/amount';
+import React, { useState, useEffect, useCallback } from "react";
+import { useWallet } from "@/context/wallet-context";
+import { ActivityHistory } from "@/components/dashboard/ActivityHistory";
+import { BackendStreamEvent } from "@/lib/api-types";
+import { Button } from "@/components/ui/Button";
+import { Loader2 } from "lucide-react";
 
-type EventFilter = 'All' | 'CREATED' | 'TOPPED_UP' | 'WITHDRAWN' | 'CANCELLED' | 'COMPLETED';
+const PAGE_SIZE = 10;
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
+).replace(/\/+$/, "");
+
+const TABS = [
+  { id: "ALL", label: "All" },
+  { id: "CREATED", label: "Created" },
+  { id: "WITHDRAWN", label: "Withdrawals" },
+  { id: "TOPPED_UP", label: "Top-ups" },
+  { id: "CANCELLED", label: "Cancellations" },
+  { id: "PAUSED", label: "Paused/Resumed" },
+];
 
 export default function ActivityPage() {
-    const { session } = useWallet();
-    const [events, setEvents] = useState<BackendStreamEvent[]>([]);
-    const [filteredEvents, setFilteredEvents] = useState<BackendStreamEvent[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [activeFilter, setActiveFilter] = useState<EventFilter>('All');
+  const { session, status } = useWallet();
+  const [events, setEvents] = useState<BackendStreamEvent[]>([]);
+  const [activeTab, setActiveTab] = useState("ALL");
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
 
-    useEffect(() => {
-        if (session?.publicKey) {
-            loadEvents();
+  const fetchActivity = useCallback(
+    async (pageNum: number, tab: string, append: boolean = false) => {
+      if (!session?.publicKey) return;
+      setLoading(true);
+
+      try {
+        // The 'PAUSED' tab is a UX shortcut that surfaces both PAUSED and RESUMED.
+        const typeFilter = tab === "PAUSED" ? "PAUSED,RESUMED" : tab;
+        const typeQuery = tab === "ALL" ? "" : `&type=${encodeURIComponent(typeFilter)}`;
+        const url =
+          `${API_BASE_URL}/v1/events?address=${encodeURIComponent(session.publicKey)}` +
+          `&page=${pageNum}&limit=${PAGE_SIZE}${typeQuery}`;
+
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch activity (${response.status})`);
         }
-    }, [session?.publicKey]);
+        const data = await response.json();
 
-    useEffect(() => {
-        if (activeFilter === 'All') {
-            setFilteredEvents(events);
+        const next: BackendStreamEvent[] = Array.isArray(data?.events)
+          ? data.events
+          : [];
+
+        setEvents((prev) => (append ? [...prev, ...next] : next));
+
+        // Prefer the server-provided hasMore; fall back to a length heuristic.
+        if (typeof data?.hasMore === "boolean") {
+          setHasMore(data.hasMore);
         } else {
-            setFilteredEvents(events.filter(e => e.eventType === activeFilter));
+          setHasMore(next.length === PAGE_SIZE);
         }
-    }, [activeFilter, events]);
+      } catch (error) {
+        console.error("Failed to fetch activity:", error);
+        if (!append) setEvents([]);
+        setHasMore(false);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [session?.publicKey],
+  );
 
-    const loadEvents = async () => {
-        if (!session?.publicKey) return;
-        setIsLoading(true);
-        try {
-            const data = await fetchUserEvents(session.publicKey);
-            setEvents(data);
-            setFilteredEvents(data);
-        } catch (error) {
-            console.error('Failed to load events:', error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+  useEffect(() => {
+    if (status !== "connected") return;
+    setPage(1);
+    fetchActivity(1, activeTab, false);
+  }, [activeTab, status, fetchActivity]);
 
-    const handleExportCSV = () => {
-        const csvData = filteredEvents.map(event => ({
-            'Stream ID': event.streamId,
-            'Event Type': event.eventType,
-            'Amount': event.amount ? fromStroops(BigInt(event.amount), 7) : '0',
-            'Timestamp': new Date(event.timestamp * 1000).toLocaleString(),
-            'Transaction Hash': event.transactionHash,
-            'Ledger': event.ledgerSequence,
-        }));
-        downloadCSV(csvData, `flowfi-activity-${Date.now()}.csv`);
-    };
+  const loadMore = () => {
+    const nextPage = page + 1;
+    setPage(nextPage);
+    fetchActivity(nextPage, activeTab, true);
+  };
 
-    const filters: EventFilter[] = ['All', 'CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED'];
-
-    if (!session) {
-        return (
-            <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5 flex items-center justify-center">
-                <div className="text-center">
-                    <h1 className="text-2xl font-bold text-white mb-4">Connect Your Wallet</h1>
-                    <p className="text-slate-400">Please connect your wallet to view activity history</p>
-                </div>
-            </div>
-        );
-    }
-
+  if (status !== "connected") {
     return (
-        <div className="min-h-screen bg-gradient-to-br from-background via-background to-accent/5 p-6">
-            <div className="max-w-6xl mx-auto">
-                <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-white mb-2">Stream Activity History</h1>
-                    <p className="text-slate-400">View all your stream events and transactions</p>
-                </div>
-
-                <div className="bg-white/5 border border-glass-border rounded-2xl p-6 mb-6">
-                    <div className="flex flex-wrap gap-2 mb-4">
-                        {filters.map(filter => (
-                            <button
-                                key={filter}
-                                onClick={() => setActiveFilter(filter)}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                                    activeFilter === filter
-                                        ? 'bg-accent text-white'
-                                        : 'bg-white/5 text-slate-400 hover:bg-white/10'
-                                }`}
-                            >
-                                {filter === 'All' ? 'All Events' : filter.replace('_', ' ')}
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="flex justify-between items-center">
-                        <p className="text-sm text-slate-400">
-                            Showing {filteredEvents.length} of {events.length} events
-                        </p>
-                        <button
-                            onClick={handleExportCSV}
-                            disabled={filteredEvents.length === 0}
-                            className="px-4 py-2 bg-accent/10 text-accent rounded-lg text-sm font-medium hover:bg-accent/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            Export CSV
-                        </button>
-                    </div>
-                </div>
-
-                <ActivityHistory events={filteredEvents} isLoading={isLoading} />
-            </div>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
+        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <p className="text-slate-400">
+          Please connect your wallet to view your stream history.
+        </p>
+      </div>
     );
+  }
+
+  return (
+    <main className="max-w-4xl mx-auto py-8 px-4 sm:px-6">
+      <header className="mb-8">
+        <h1 className="text-3xl font-bold text-white mb-2">Stream Activity</h1>
+        <p className="text-slate-400">
+          Track all your incoming and outgoing payment stream events.
+        </p>
+      </header>
+
+      {/* Tabs */}
+      <div className="flex gap-2 overflow-x-auto pb-4 mb-6 no-scrollbar">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap border ${
+              activeTab === tab.id
+                ? "bg-accent text-white border-accent"
+                : "bg-white/5 text-slate-400 border-white/10 hover:bg-white/10"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <ActivityHistory events={events} isLoading={loading} />
+
+      {hasMore && (
+        <div className="mt-12 flex justify-center">
+          <Button
+            variant="secondary"
+            onClick={loadMore}
+            disabled={loading}
+            className="w-full sm:w-auto min-w-[200px]"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            Load More Activity
+          </Button>
+        </div>
+      )}
+    </main>
+  );
 }

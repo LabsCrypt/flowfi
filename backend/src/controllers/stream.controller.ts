@@ -67,6 +67,7 @@ export const createStream = async (req: Request, res: Response) => {
         depositedAmount,
         withdrawnAmount: "0",
         startTime: parseInt(startTime),
+        endTime: parseInt(startTime) + Number(BigInt(depositedAmount) / BigInt(ratePerSecond)),
         lastUpdateTime: parseInt(startTime)
       }
     });
@@ -113,18 +114,18 @@ export const listStreams = async (req: Request, res: Response) => {
       switch (status) {
         case 'active':
           where.isActive = true;
+          where.isPaused = false;
           break;
         case 'cancelled':
           where.isActive = false;
-          // Additional check for cancelled events could be added here
+          where.events = { some: { eventType: 'CANCELLED' } };
           break;
         case 'completed':
           where.isActive = false;
-          // Additional check for completed events could be added here
+          where.events = { some: { eventType: 'COMPLETED' } };
           break;
         case 'paused':
-          where.isActive = false;
-          // Additional check for paused events could be added here
+          where.isPaused = true;
           break;
       }
     }
@@ -137,9 +138,9 @@ export const listStreams = async (req: Request, res: Response) => {
     const parsedOffset = typeof offset === 'string' ? (Number.parseInt(offset, 10) || 0) : 0;
 
     // Validate sort field
-    const validSortFields = ['createdAt', 'startTime', 'lastUpdateTime', 'depositedAmount'];
+    const validSortFields = ['createdAt', 'startTime', 'lastUpdateTime', 'depositedAmount', 'endTime'];
     const sortField = validSortFields.includes(typeof sort === 'string' ? sort : 'createdAt') 
-      ? (sort as 'createdAt' | 'startTime' | 'lastUpdateTime' | 'depositedAmount') 
+      ? (sort as 'createdAt' | 'startTime' | 'lastUpdateTime' | 'depositedAmount' | 'endTime') 
       : 'createdAt';
 
     // Validate order
@@ -320,8 +321,12 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
         ratePerSecond: true,
         depositedAmount: true,
         withdrawnAmount: true,
+        startTime: true,
         lastUpdateTime: true,
         isActive: true,
+        isPaused: true,
+        pausedAt: true,
+        totalPausedDuration: true,
         updatedAt: true,
       },
     });
@@ -369,7 +374,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
 /**
  * Get user-level stream summary used by dashboard/profile cards.
  */
-export const getUserStreamSummary = async (req: Request, res: Response) => {
+export const getUserStreamSummary = async (req: Request<{ address: string }>, res: Response) => {
   try {
     const address = Array.isArray(req.params.address) ? req.params.address[0] : (req.params.address ?? '').trim();
     if (!address) {
@@ -400,8 +405,12 @@ export const getUserStreamSummary = async (req: Request, res: Response) => {
           ratePerSecond: true,
           depositedAmount: true,
           withdrawnAmount: true,
+          startTime: true,
           lastUpdateTime: true,
           isActive: true,
+          isPaused: true,
+          pausedAt: true,
+          totalPausedDuration: true,
           updatedAt: true,
         },
       }),

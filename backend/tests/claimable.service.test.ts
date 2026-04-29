@@ -14,7 +14,14 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '500',
       withdrawnAmount: '100',
       lastUpdateTime: 7,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
     });
 
     // elapsed = 10 - 7 = 3
@@ -38,7 +45,14 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '1000',
       withdrawnAmount: '900',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
     });
 
     expect(result.claimableAmount).toBe('100');
@@ -54,10 +68,17 @@ describe('ClaimableAmountService', () => {
     const result = service.getClaimableAmount({
       streamId: 3,
       ratePerSecond: '10',
-      depositedAmount: '1000',
+      depositedAmount: '100',
       withdrawnAmount: '100',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: false,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
     });
 
     expect(result.claimableAmount).toBe('0');
@@ -76,7 +97,14 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '100',
       withdrawnAmount: '150',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
     });
 
     expect(result.claimableAmount).toBe('0');
@@ -96,7 +124,14 @@ describe('ClaimableAmountService', () => {
       depositedAmount: '700',
       withdrawnAmount: '0',
       lastUpdateTime: 0,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
     };
 
     const first = service.getClaimableAmount(input, 5);
@@ -125,7 +160,14 @@ describe('ClaimableAmountService', () => {
       depositedAmount: i128Max,
       withdrawnAmount: '0',
       lastUpdateTime: 998,
+      startTime: 0,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
     });
 
     // calculatedAt = floor(1_000_000 / 1000) = 1000

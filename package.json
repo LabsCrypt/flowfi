@@ -22,6 +22,7 @@
     ]
   },
   "dependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.60.2",
     "react-hot-toast": "^2.6.0"
   },
   "optionalDependencies": {

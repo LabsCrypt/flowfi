@@ -31,6 +31,14 @@ export interface WithdrawParams {
   streamId: bigint;
 }
 
+export interface PauseParams {
+  streamId: bigint;
+}
+
+export interface ResumeParams {
+  streamId: bigint;
+}
+
 export interface SorobanResult {
   success: true;
   txHash: string;
@@ -319,6 +327,34 @@ export async function withdrawFromStream(
   }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "withdraw", [
+    new Address(session.publicKey).toScVal(),
+    nativeToScVal(params.streamId, { type: "u64" }),
+  ]);
+}
+
+export async function pauseStream(
+  session: WalletSession,
+  params: PauseParams,
+): Promise<SorobanResult> {
+  if (session.mocked) {
+    return mockCall(`pause_stream stream_id=${params.streamId}`);
+  }
+  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  return freighterCall(session.publicKey, "pause_stream", [
+    new Address(session.publicKey).toScVal(),
+    nativeToScVal(params.streamId, { type: "u64" }),
+  ]);
+}
+
+export async function resumeStream(
+  session: WalletSession,
+  params: ResumeParams,
+): Promise<SorobanResult> {
+  if (session.mocked) {
+    return mockCall(`resume_stream stream_id=${params.streamId}`);
+  }
+  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  return freighterCall(session.publicKey, "resume_stream", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),
   ]);

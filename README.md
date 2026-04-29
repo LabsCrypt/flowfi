@@ -23,7 +23,8 @@ flowfi/
 │   ├── stream_contract/  # Core streaming logic
 ├── frontend/             # Next.js + Tailwind CSS frontend
 ├── docs/                 # Documentation
-│   └── ARCHITECTURE.md   # Architecture overview
+│   ├── ARCHITECTURE.md   # Architecture overview
+│   └── DEVELOPMENT.md    # Local development guide
 ```
 
 ## Architecture
@@ -39,6 +40,8 @@ For a detailed explanation of how these components interact, where event indexin
 For full local setup and contributor onboarding, see the [Development Guide](docs/DEVELOPMENT.md).
 
 ## Getting Started
+
+For full step-by-step instructions, see our [Development Guide](docs/DEVELOPMENT.md).
 
 ### Prerequisites
 
@@ -94,11 +97,12 @@ npm install
 npm run dev
 ```
 
-### Smart Contracts
+### Deployment
+
+To build, optimize, and deploy the smart contract to a Stellar network, you can use the automated deployment script:
 
 ```bash
-cd contracts
-cargo build --target wasm32-unknown-unknown --release
+./scripts/deploy.sh --network testnet
 ```
 
 ## Deployment

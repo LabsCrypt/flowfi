@@ -43,7 +43,11 @@ describe('POST /v1/streams', () => {
       withdrawnAmount: '0',
       startTime: 1700000000,
       lastUpdateTime: 1700000000,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      endTime: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -157,7 +161,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '30', 
           startTime: 1000,
           lastUpdateTime: 2000,
-          isActive: true 
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: true 
         },
         { 
           id: '2', 
@@ -172,7 +180,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '20', 
           startTime: 1000,
           lastUpdateTime: 2000,
-          isActive: false 
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: false 
         },
       ])
       .mockResolvedValueOnce([
@@ -189,7 +201,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '100',
           startTime: 1000,
           lastUpdateTime: 0,
-          isActive: true,
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: true,
         },
         {
           id: '4',
@@ -204,7 +220,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '0',
           startTime: 1000,
           lastUpdateTime: 0,
-          isActive: false,
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: false,
         },
       ]);
 
@@ -238,7 +258,11 @@ describe('GET /v1/users/:address/summary', () => {
         withdrawnAmount: '1',
         startTime: 1000,
         lastUpdateTime: 2000,
-        isActive: true 
+        isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: true 
       }])
       .mockResolvedValueOnce([]);
 

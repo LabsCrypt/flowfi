@@ -1,10 +1,134 @@
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { subscribe } from '../../controllers/sse.controller.js';
 import { sseService } from '../../services/sse.service.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { prisma } from '../../lib/prisma.js';
+import logger from '../../logger.js';
 
 const router = Router();
+
+const EVENT_TYPES = new Set([
+  'CREATED',
+  'TOPPED_UP',
+  'WITHDRAWN',
+  'CANCELLED',
+  'COMPLETED',
+  'PAUSED',
+  'RESUMED',
+  'FEE_COLLECTED',
+]);
+
+const MAX_EVENT_LIMIT = 200;
+const DEFAULT_EVENT_LIMIT = 50;
+
+/**
+ * @openapi
+ * /v1/events:
+ *   get:
+ *     tags: [Events]
+ *     summary: List stream events for a wallet (paginated, filterable)
+ *     description: |
+ *       Returns a reverse-chronological list of stream events where the wallet
+ *       was either the sender or recipient. Supports event-type filtering and
+ *       limit/offset pagination — used by the frontend activity timeline.
+ *     parameters:
+ *       - in: query
+ *         name: address
+ *         required: true
+ *         schema: { type: string }
+ *         description: Stellar public key (G...)
+ *       - in: query
+ *         name: type
+ *         required: false
+ *         schema: { type: string }
+ *         description: |
+ *           Comma-separated list of event types to include. Allowed values:
+ *           CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED, PAUSED,
+ *           RESUMED, FEE_COLLECTED.
+ *       - in: query
+ *         name: limit
+ *         required: false
+ *         schema: { type: integer, default: 50, maximum: 200 }
+ *       - in: query
+ *         name: offset
+ *         required: false
+ *         schema: { type: integer, default: 0 }
+ *       - in: query
+ *         name: page
+ *         required: false
+ *         schema: { type: integer, default: 1 }
+ *         description: Optional 1-based page index. Ignored when offset is set.
+ *     responses:
+ *       200:
+ *         description: Paginated event list
+ */
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const address = typeof req.query.address === 'string' ? req.query.address.trim() : '';
+    if (!address) {
+      res.status(400).json({ error: 'address query parameter is required' });
+      return;
+    }
+
+    const rawType = typeof req.query.type === 'string' ? req.query.type : '';
+    const requested = rawType
+      .split(',')
+      .map((t) => t.trim().toUpperCase())
+      .filter(Boolean);
+    const types = requested.filter((t) => EVENT_TYPES.has(t));
+    if (requested.length > 0 && types.length === 0) {
+      res.status(400).json({ error: 'No valid event types in `type` filter' });
+      return;
+    }
+
+    const parsedLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, MAX_EVENT_LIMIT)
+      : DEFAULT_EVENT_LIMIT;
+
+    const hasOffset = req.query.offset !== undefined;
+    const parsedOffset = Number.parseInt(String(req.query.offset ?? ''), 10);
+    const parsedPage = Number.parseInt(String(req.query.page ?? ''), 10);
+    const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+    const offset = hasOffset && Number.isFinite(parsedOffset) && parsedOffset >= 0
+      ? parsedOffset
+      : (page - 1) * limit;
+
+    const where: {
+      stream: { OR: Array<{ sender: string } | { recipient: string }> };
+      eventType?: { in: string[] };
+    } = {
+      stream: {
+        OR: [{ sender: address }, { recipient: address }],
+      },
+    };
+    if (types.length > 0) {
+      where.eventType = { in: types };
+    }
+
+    const [events, total] = await Promise.all([
+      prisma.streamEvent.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      prisma.streamEvent.count({ where }),
+    ]);
+
+    res.json({
+      events,
+      total,
+      limit,
+      offset,
+      hasMore: offset + events.length < total,
+    });
+  } catch (err) {
+    logger.error('GET /v1/events failed:', err);
+    next(err);
+  }
+});
 
 /**
  * @openapi
