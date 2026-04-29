@@ -66,8 +66,8 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                 id: `init-${event.id}`,
                 streamId: event.streamId,
                 type: event.eventType.toLowerCase(),
-                message: formatEventMessage({ 
-                    type: event.eventType.toLowerCase(), 
+                message: formatEventMessage({
+                    type: event.eventType.toLowerCase(),
                     data: { streamId: event.streamId, amount: event.amount } as Record<string, unknown>
                 }),
                 timestamp: event.timestamp * 1000,
@@ -101,7 +101,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
 
             setNotifications(prev => {
                 const combined = [...newNotifications, ...prev];
-                const unique = combined.filter((notif, index, self) => 
+                const unique = combined.filter((notif, index, self) =>
                     index === self.findIndex(n => n.id === notif.id)
                 );
                 return unique.slice(0, 20);
@@ -167,8 +167,8 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                         ) : notifications.length > 0 ? (
                             <div className="divide-y divide-glass-border">
                                 {notifications.map((notification) => (
-                                    <div 
-                                        key={notification.id} 
+                                    <div
+                                        key={notification.id}
                                         className={`p-4 hover:bg-white/5 transition-colors ${!notification.read ? 'bg-white/2' : ''}`}
                                     >
                                         <p className="text-sm text-white font-medium">{notification.message}</p>
@@ -185,9 +185,9 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                         )}
                     </div>
                     <div className="p-3 border-t border-glass-border">
-                        <Button 
-                            variant="ghost" 
-                            size="sm" 
+                        <Button
+                            variant="ghost"
+                            size="sm"
                             className="w-full text-xs"
                             onClick={() => {
                                 window.location.href = '/activity';

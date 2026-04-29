@@ -30,7 +30,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
       event.eventType,
       event.amount ? fromStroops(BigInt(event.amount), 7) : "0",
       new Date(event.timestamp * 1000).toISOString(),
-      event.txHash || "",
+      event.transactionHash || "",
     ]);
 
     const csvContent = [headers, ...rows].map((e) => e.join(",")).join("\n");
@@ -143,15 +143,15 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                 </span>
               </div>
 
-              {event.txHash && (
+              {event.transactionHash && (
                 <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
                   <TransactionTracker
                     status="confirmed"
-                    txHash={event.txHash}
+                    txHash={event.transactionHash}
                     streamId={event.streamId.toString()}
                   />
                   <a
-                    href={`https://stellar.expert/explorer/testnet/tx/${event.txHash}`}
+                    href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                     target="_blank"
                     className="text-slate-500 hover:text-white transition-colors"
                     title="View on Explorer"

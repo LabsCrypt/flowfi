@@ -117,9 +117,9 @@ export default function ActivityPage() {
             Track all your incoming and outgoing payment stream events.
           </p>
         </div>
-        <Button 
-          variant="secondary" 
-          size="sm" 
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={handleExportCSV}
           disabled={events.length === 0}
           className="sm:w-auto w-full"

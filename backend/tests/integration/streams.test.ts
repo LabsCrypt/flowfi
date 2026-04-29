@@ -10,7 +10,7 @@ import request from 'supertest';
 
 // ─── Mocks (using vi.hoisted to ensure they are available to vi.mock) ─────────
 
-const { mockPrisma, mockSseService } = vi.hoisted(() => ({
+const { mockSseService, mockPrisma } = vi.hoisted(() => ({
   mockSseService: {
     broadcastToStream: vi.fn(),
     broadcastToUser: vi.fn(),
@@ -39,7 +39,7 @@ const { mockPrisma, mockSseService } = vi.hoisted(() => ({
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
     $disconnect: vi.fn(),
-  }
+  },
 }));
 
 vi.mock('../../src/services/sse.service.js', () => ({
@@ -54,6 +54,7 @@ vi.mock('../../src/lib/redis.js', () => ({
   cache: {
     get: vi.fn().mockReturnValue(null),
     set: vi.fn(),
+    del: vi.fn(),
     getMetadata: vi.fn().mockReturnValue(null),
   },
 }));
@@ -87,6 +88,8 @@ function makeStream(overrides: Partial<Record<string, unknown>> = {}) {
     lastUpdateTime: 1700000000,
     isActive: true,
     isPaused: false,
+    pausedAt: null,
+    totalPausedDuration: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
     senderUser: null,

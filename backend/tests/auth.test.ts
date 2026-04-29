@@ -148,9 +148,9 @@ describe('Authentication & Middleware Tests', () => {
         .send({ publicKey: keypair.publicKey() });
       const { nonce } = challengeRes.body as { nonce: string };
       const signedTransaction = buildSignedTransaction(keypair, nonce);
-      
+
       vi.spyOn(StellarSdk.Keypair.prototype, 'verify').mockReturnValue(true);
-      
+
       const verifyRes = await request(app)
         .post('/v1/auth/verify')
         .send({ publicKey: keypair.publicKey(), signedTransaction });

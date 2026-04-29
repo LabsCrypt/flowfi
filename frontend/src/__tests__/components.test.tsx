@@ -45,8 +45,7 @@ describe('LiveCounter', () => {
     const { rerender } = render(<LiveCounter initial={5} label="Streamed" />);
     act(() => { vi.advanceTimersByTime(3000); });
     rerender(<LiveCounter initial={5} label="Streamed" isPaused />);
-    // Amount resets to initial=5 on pause
-    expect(screen.getByText(/5/)).toBeInTheDocument();
+    expect(screen.getByText('Paused')).toBeInTheDocument();
   });
 });
 

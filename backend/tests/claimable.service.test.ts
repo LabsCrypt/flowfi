@@ -1,6 +1,22 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { ClaimableAmountService } from '../src/services/claimable.service.js';
 
+function makeStreamState(overrides: Partial<Parameters<ClaimableAmountService['getClaimableAmount']>[0]> = {}) {
+  return {
+    streamId: 1,
+    ratePerSecond: '10',
+    depositedAmount: '100',
+    withdrawnAmount: '0',
+    lastUpdateTime: 0,
+    startTime: 0,
+    isActive: true,
+    isPaused: false,
+    pausedAt: null,
+    totalPausedDuration: 0,
+    ...overrides,
+  };
+}
+
 describe('ClaimableAmountService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -14,20 +30,17 @@ describe('ClaimableAmountService', () => {
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
     });
-    
+
     vi.setSystemTime(10_000);
 
     const result = service.getClaimableAmount({
-      streamId: 1,
-      ratePerSecond: '5',
-      depositedAmount: '500',
-      withdrawnAmount: '100',
-      lastUpdateTime: 7,
-      startTime: 0,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 0,
-      isActive: true,
+      ...makeStreamState({
+        streamId: 1,
+        ratePerSecond: '5',
+        depositedAmount: '500',
+        withdrawnAmount: '100',
+        lastUpdateTime: 7,
+      }),
     });
 
     // elapsed = 10 - 7 = 3
@@ -43,20 +56,15 @@ describe('ClaimableAmountService', () => {
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
     });
-    
+
     vi.setSystemTime(100_000);
 
     const result = service.getClaimableAmount({
-      streamId: 2,
-      ratePerSecond: '10',
-      depositedAmount: '1000',
-      withdrawnAmount: '900',
-      lastUpdateTime: 0,
-      startTime: 0,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 0,
-      isActive: true,
+      ...makeStreamState({
+        streamId: 2,
+        depositedAmount: '1000',
+        withdrawnAmount: '900',
+      }),
     });
 
     expect(result.claimableAmount).toBe('100');
@@ -67,20 +75,32 @@ describe('ClaimableAmountService', () => {
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
     });
-    
+
     vi.setSystemTime(100_000);
 
     const result = service.getClaimableAmount({
-      streamId: 3,
-      ratePerSecond: '10',
-      depositedAmount: '100',
-      withdrawnAmount: '100',
-      lastUpdateTime: 0,
-      startTime: 0,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 0,
-      isActive: false,
+      ...makeStreamState({
+        streamId: 3,
+        withdrawnAmount: '100',
+        isActive: false,
+      }),
+    });
+
+    expect(result.claimableAmount).toBe('0');
+    expect(result.actionable).toBe(false);
+  });
+
+  it('returns zero when withdrawn exceeds deposited (non-actionable)', () => {
+    const service = new ClaimableAmountService({
+      cacheTtlMs: 5_000,
+      nowMs: () => 100_000,
+    });
+
+    const result = service.getClaimableAmount({
+      ...makeStreamState({
+        streamId: 4,
+        withdrawnAmount: '150',
+      }),
     });
 
     expect(result.claimableAmount).toBe('0');
@@ -93,18 +113,11 @@ describe('ClaimableAmountService', () => {
       cacheTtlMs: 10_000,
     });
 
-    const input = {
+    const input = makeStreamState({
       streamId: 5,
       ratePerSecond: '7',
       depositedAmount: '700',
-      withdrawnAmount: '0',
-      lastUpdateTime: 0,
-      startTime: 0,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 0,
-      isActive: true,
-    };
+    });
 
     const first = service.getClaimableAmount(input, 5);
     const second = service.getClaimableAmount(input, 5);
@@ -126,16 +139,11 @@ describe('ClaimableAmountService', () => {
     });
 
     const result = service.getClaimableAmount({
-      streamId: 6,
-      ratePerSecond: i128Max,
-      depositedAmount: i128Max,
-      withdrawnAmount: '0',
-      lastUpdateTime: 0,
-      startTime: 0,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 0,
-      isActive: true,
+      ...makeStreamState({
+        streamId: 6,
+        ratePerSecond: i128Max,
+        depositedAmount: i128Max,
+      }),
     }, 1000); // 1000 seconds elapsed
 
     expect(result.claimableAmount).toBe(i128Max);

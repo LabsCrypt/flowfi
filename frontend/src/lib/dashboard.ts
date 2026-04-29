@@ -83,7 +83,10 @@ async function fetchStreams(
   for (const endpoint of endpoints) {
     const response = await fetch(`${endpoint}?${params.toString()}`);
     if (response.ok) {
-      return (await response.json()) as BackendStream[];
+      const payload = (await response.json()) as
+        | BackendStream[]
+        | { data?: BackendStream[] };
+      return Array.isArray(payload) ? payload : payload.data ?? [];
     }
 
     if (response.status === 404) {

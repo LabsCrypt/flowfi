@@ -13,6 +13,7 @@ const { mockPrisma, mockSseService } = vi.hoisted(() => ({
   mockPrisma: {
     stream: {
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
       upsert: vi.fn(),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
@@ -46,7 +47,9 @@ vi.mock('../../services/sse.service.js', () => ({
 import app from '../../app.js';
 import { sorobanEventWorker } from '../../workers/soroban-event-worker.js';
 
-describe('Stream Lifecycle Integration Tests', () => {
+const describeIfDatabase = process.env.DATABASE_URL ? describe : describe.skip;
+
+describeIfDatabase('Stream Lifecycle Integration Tests', () => {
   const senderPair = Keypair.random();
   const recipientPair = Keypair.random();
   const sender = senderPair.publicKey();
@@ -136,7 +139,7 @@ describe('Stream Lifecycle Integration Tests', () => {
         }),
         new xdr.ScMapEntry({
           key: xdr.ScVal.scvSymbol('paused_at'),
-          val: nativeToScVal(BigInt(1700000000), { type: 'u64' }),
+          val: nativeToScVal(BigInt(Math.floor(Date.now() / 1000)), { type: 'u64' }),
         }),
       ]),
     } as any;
@@ -168,12 +171,11 @@ describe('Stream Lifecycle Integration Tests', () => {
         }),
         new xdr.ScMapEntry({
           key: xdr.ScVal.scvSymbol('new_end_time'),
-          val: nativeToScVal(BigInt(1700003600), { type: 'u64' }),
+          val: nativeToScVal(BigInt(Math.floor(Date.now() / 1000) + 60), { type: 'u64' }),
         }),
       ]),
     } as any;
 
-    // Mock findUniqueOrThrow for resume logic
     mockPrisma.stream.findUniqueOrThrow = vi.fn().mockResolvedValue({
       pausedAt: 1700000000,
       totalPausedDuration: 0,
@@ -184,8 +186,42 @@ describe('Stream Lifecycle Integration Tests', () => {
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { streamId },
-        data: expect.objectContaining({ isPaused: false }),
-      })
+        data: expect.objectContaining({
+          isPaused: false,
+        }),
+      }),
+    );
+  });
+
+  it('Indexer processes stream_cancelled -> stream isActive = false', async () => {
+    const event = {
+      id: 'cancelled-event-1',
+      txHash: 'hash-cancelled',
+      ledger: 104,
+      inSuccessfulContractCall: true,
+      topic: [
+        xdr.ScVal.scvSymbol('stream_cancelled'),
+        nativeToScVal(BigInt(streamId), { type: 'u64' }),
+      ],
+      value: xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('amount_withdrawn'),
+          val: nativeToScVal(BigInt(100), { type: 'i128' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('refunded_amount'),
+          val: nativeToScVal(BigInt(900), { type: 'i128' }),
+        }),
+      ]),
+    } as any;
+
+    await sorobanEventWorker.processEvent(event);
+
+    expect(mockPrisma.stream.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { streamId },
+        data: expect.objectContaining({ isActive: false }),
+      }),
     );
   });
 

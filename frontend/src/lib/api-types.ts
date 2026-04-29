@@ -37,7 +37,11 @@ export interface BackendStream {
   withdrawnAmount: string;
   startTime: number;
   lastUpdateTime: number;
+  endTime?: number | null;
   isActive: boolean;
+  isPaused?: boolean;
+  pausedAt?: number | null;
+  totalPausedDuration?: number;
   createdAt: string;
   updatedAt: string;
   senderUser?: BackendUser;

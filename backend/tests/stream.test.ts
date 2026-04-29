@@ -112,6 +112,7 @@ describe('GET /v1/streams', () => {
 
   it('should return 200 with list of streams', async () => {
     (prisma.stream.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (prisma.stream.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
 
     const response = await request(app)
       .get('/v1/streams')
