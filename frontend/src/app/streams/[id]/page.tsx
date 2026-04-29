@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import LiveCounter from "@/components/Livecounter";
 import ProgressBar from "@/components/Progressbar";
 import { CancelStreamModal } from "@/components/streams/CancelStreamModal";
@@ -13,8 +14,8 @@ import toast from "react-hot-toast";
 import { useWallet } from "@/context/wallet-context";
 import { useCancelStream } from "@/hooks/useCancelStream";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { useWithdrawStream } from "@/hooks/useWithdrawStream";
 import {
-  withdrawFromStream,
   topUpStream,
   pauseStream,
   resumeStream,
@@ -45,10 +46,12 @@ export default function StreamDetailsPage() {
   const [stream, setStream] = useState<StreamDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [withdrawing, setWithdrawing] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState("");
   const [showTopUp, setShowTopUp] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [withdrawTxHash, setWithdrawTxHash] = useState<string | undefined>();
+  const [withdrawStatus, setWithdrawStatus] = useState<TransactionStatus>("idle");
+  const [withdrawError, setWithdrawError] = useState<string | undefined>();
   const { cancel: cancelStream, isPending: cancelling } = useCancelStream<StreamDetail>();
   const [cancelling, setCancelling] = useState(false);
   const [pausing, setPausing] = useState(false);
@@ -63,6 +66,7 @@ export default function StreamDetailsPage() {
   const [pauseResumeError, setPauseResumeError] = useState<string | undefined>(
     undefined,
   );
+  const { withdraw: withdrawStream, isPending: withdrawing } = useWithdrawStream();
 
   // SSE integration for real-time stream updates
   const { events: streamEvents } = useStreamEvents({
@@ -111,16 +115,29 @@ export default function StreamDetailsPage() {
       return;
     }
 
-    setWithdrawing(true);
+    setWithdrawStatus("idle");
+    setWithdrawError(undefined);
+
     try {
-      await withdrawFromStream(session, { streamId: BigInt(streamId) });
-      toast.success("Withdrawal successful!");
-      // Refresh stream data
-      window.location.reload();
+      const { txHash } = await withdrawStream(streamId);
+      setWithdrawTxHash(txHash);
+      setWithdrawStatus("submitted");
+      setStream((current) =>
+        current
+          ? {
+              ...current,
+              withdrawnAmount: current.depositedAmount,
+              lastUpdateTime: Math.floor(Date.now() / 1000),
+            }
+          : current,
+      );
+      toast.success("Withdraw transaction submitted.");
+      void fetchStream();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setWithdrawing(false);
+      const message = err instanceof Error ? err.message : "Failed to withdraw stream.";
+      setWithdrawError(message);
+      setWithdrawStatus("failed");
+      toast.error(message);
     }
   };
 
@@ -266,6 +283,7 @@ export default function StreamDetailsPage() {
   const deposited = parseFloat(stream.depositedAmount) / 1e7;
   const withdrawn = parseFloat(stream.withdrawnAmount) / 1e7;
   const claimable = deposited - withdrawn;
+  const displayedClaimable = withdrawStatus === "submitted" ? 0 : claimable;
   const percentage = Math.round((withdrawn / deposited) * 100);
   const normalizedStatus = (
     stream.status ||
@@ -276,8 +294,13 @@ export default function StreamDetailsPage() {
   const isConnectedSender =
     Boolean(session?.publicKey) &&
     session?.publicKey.toLowerCase() === stream.sender.toLowerCase();
+  const isConnectedRecipient =
+    Boolean(session?.publicKey) &&
+    session?.publicKey.toLowerCase() === stream.recipient.toLowerCase();
   const canCancelStream =
     isConnectedSender && (normalizedStatus === "ACTIVE" || normalizedStatus === "PAUSED");
+  const hasClaimableAmount = displayedClaimable > 0;
+  const canWithdrawStream = isConnectedRecipient && hasClaimableAmount;
 
   return (
     <main style={{ minHeight: "100vh", padding: "clamp(1rem, 3vw, 2rem)" }}>
@@ -378,6 +401,7 @@ export default function StreamDetailsPage() {
             isPaused={stream.isPaused} 
             pausedAt={stream.pausedAt}
           />
+          <LiveCounter initial={displayedClaimable} label="Available to withdraw" />
         </div>
 
         {/* Actions */}
@@ -386,13 +410,22 @@ export default function StreamDetailsPage() {
             <h3>Actions</h3>
           </div>
           <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-            <Button
-              onClick={handleWithdraw}
-              disabled={withdrawing || !stream.isActive || claimable <= 0}
-              glow
-            >
-              {withdrawing ? "Withdrawing..." : "Withdraw"}
-            </Button>
+            {canWithdrawStream && (
+              <Button
+                onClick={() => void handleWithdraw()}
+                disabled={withdrawing || withdrawStatus === "submitted"}
+                glow
+              >
+                {withdrawing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Withdrawing...
+                  </>
+                ) : (
+                  "Withdraw"
+                )}
+              </Button>
+            )}
             <Button
               onClick={() => setShowTopUp(!showTopUp)}
               disabled={!stream.isActive}
@@ -473,6 +506,14 @@ export default function StreamDetailsPage() {
                       : handlePause
                     : undefined
                 }
+          {withdrawStatus !== "idle" && (
+            <div style={{ marginTop: "1rem" }}>
+              <TransactionTracker
+                status={withdrawStatus}
+                txHash={withdrawTxHash}
+                error={withdrawError}
+                streamId={streamId}
+                onRetry={() => void handleWithdraw()}
               />
             </div>
           )}
