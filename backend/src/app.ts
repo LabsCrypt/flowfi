@@ -7,12 +7,67 @@ import { sandboxMiddleware } from './middleware/sandbox.middleware.js';
 import { globalRateLimiter } from './middleware/rate-limiter.middleware.js';
 import v1Routes from './routes/v1/index.js';
 
+import healthRoutes from './routes/health.routes.js';
+
 const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
+const rawCors = process.env.CORS_ALLOWED_ORIGINS ?? '';
+const allowedOrigins = rawCors
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+// Default in development to only localhost:3000 (frontend dev server)
+if (!process.env.CORS_ALLOWED_ORIGINS && !isProduction) {
+    allowedOrigins.push('http://localhost:3000');
+}
 
 // Apply global rate limiter first
 app.use(globalRateLimiter);
 
-app.use(cors());
+app.disable('x-powered-by');
+
+// Helmet-equivalent core headers without external dependency.
+app.use((req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    res.setHeader('X-Download-Options', 'noopen');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    if (isProduction) {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+});
+
+app.use(cors({
+    origin(origin, callback) {
+        // Allow non-browser clients (no Origin header)
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+
+        // Not allowed
+        callback(new Error('CORS origin not allowed'));
+    },
+    credentials: true,
+}));
+
+// Convert CORS errors into 403 responses so callers get a clear status code
+app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (err && err.message === 'CORS origin not allowed') {
+        res.status(403).json({ error: 'CORS origin not allowed' });
+        return;
+    }
+    next(err);
+});
 app.use(express.json());
 
 // Sandbox mode detection (before versioning)
@@ -75,99 +130,23 @@ app.use('/events', (req: Request, res: Response, next) => {
     });
 });
 
+// Health check routes
+app.use('/health', healthRoutes);
+
 /**
  * @openapi
  * /:
  *   get:
  *     tags:
  *       - Health
- *     summary: Health check endpoint
+ *     summary: Simple health check
  *     description: Returns a simple message to verify the API is running
  *     responses:
  *       200:
  *         description: API is running successfully
- *         content:
- *           text/plain:
- *             schema:
- *               type: string
- *               example: FlowFi Backend is running
  */
 app.get('/', (req: Request, res: Response) => {
     res.send('FlowFi Backend is running');
-});
-
-/**
- * @openapi
- * /health:
- *   get:
- *     tags:
- *       - Health
- *     summary: Detailed health check
- *     description: Returns detailed health information about the API
- *     responses:
- *       200:
- *         description: Health check details
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: healthy
- *                 timestamp:
- *                   type: string
- *                   format: date-time
- *                   example: 2024-02-21T14:30:00.000Z
- *                 uptime:
- *                   type: number
- *                   description: Server uptime in seconds
- *                   example: 3600
- *                 version:
- *                   type: string
- *                   example: 1.0.0
- *                 apiVersions:
- *                   type: object
- *                   properties:
- *                     supported:
- *                       type: array
- *                       items:
- *                         type: string
- *                       example: ["v1"]
- *                     default:
- *                       type: string
- *                       example: "v1"
- */
-app.get('/health', async (req: Request, res: Response) => {
-    const { getSandboxConfig } = await import('./config/sandbox.js');
-    const { prisma } = await import('./lib/prisma.js');
-    const sandboxConfig = getSandboxConfig();
-
-    let dbStatus = 'healthy';
-    try {
-        await prisma.$queryRaw`SELECT 1`;
-    } catch (error) {
-        dbStatus = 'unhealthy';
-    }
-
-    const status = dbStatus === 'healthy' ? 'healthy' : 'unhealthy';
-    res.status(status === 'healthy' ? 200 : 503).json({
-        status,
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        version: '1.0.0',
-        apiVersions: {
-            supported: ['v1'],
-            default: 'v1',
-        },
-        services: {
-            database: dbStatus,
-        },
-        sandbox: {
-            enabled: sandboxConfig.enabled,
-            available: sandboxConfig.enabled,
-        },
-    });
 });
 
 import { errorHandler } from './middleware/error.middleware.js';

@@ -80,14 +80,15 @@ export function requireSandbox(
   next: NextFunction
 ): void {
   if (!isSandboxModeEnabled()) {
-    return res.status(503).json({
+    res.status(503).json({
       error: 'Sandbox mode not available',
       message: 'Sandbox mode is not enabled on this server.',
     });
+    return;
   }
 
   if (!isSandboxRequest(req)) {
-    return res.status(400).json({
+    res.status(400).json({
       error: 'Sandbox mode required',
       message: 'This endpoint requires sandbox mode. Add X-Sandbox-Mode: true header or ?sandbox=true query parameter.',
       hint: {
@@ -95,6 +96,7 @@ export function requireSandbox(
         queryParam: '?sandbox=true',
       },
     });
+    return;
   }
 
   next();

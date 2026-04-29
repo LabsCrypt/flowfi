@@ -25,4 +25,6 @@ pub enum StreamError {
     NotInitialized = 8,
     /// Duration supplied to `create_stream` is zero.
     InvalidDuration = 9,
+    /// Supplied token address is not a valid token contract.
+    InvalidTokenAddress = 10,
 }

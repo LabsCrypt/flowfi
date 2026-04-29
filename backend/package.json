@@ -23,11 +23,14 @@
   "license": "ISC",
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.1",
+    "@stellar/stellar-sdk": "^14.5.0",
     "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
+    "ioredis": "^5.3.2",
     "pg": "^8.18.0",
+    "stellar-sdk": "^13.3.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.11.0",
@@ -39,12 +42,15 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.2.3",
     "@types/pg": "^8.16.0",
+    "@types/supertest": "^7.2.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.6",
     "nodemon": "^3.1.11",
     "prisma": "^7.4.1",
+    "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
   }
 }

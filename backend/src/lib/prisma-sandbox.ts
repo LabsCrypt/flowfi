@@ -32,15 +32,10 @@ export function getSandboxPrisma(): PrismaClient {
   }
 
   const sandboxPrisma = new PrismaClient({
-    datasources: {
-      db: {
-        url: databaseUrl,
-      },
-    },
-    log: process.env.NODE_ENV === 'development' 
-      ? ['query', 'error', 'warn'] 
+    log: process.env.NODE_ENV === 'development'
+      ? ['query', 'error', 'warn']
       : ['error'],
-  });
+  } as any);
 
   if (process.env.NODE_ENV !== 'production') {
     globalForSandboxPrisma.sandboxPrisma = sandboxPrisma;

@@ -1,242 +1,157 @@
-# FlowFi Architecture Overview
+# FlowFi Architecture
 
-This document provides a high-level overview of how FlowFi's components interact and how the system processes on-chain events.
+This document explains how FlowFi moves data from on-chain contract events into API responses and real-time frontend updates.
 
-## System Components
+# FlowFi Architecture
 
-FlowFi consists of three main components:
+This document explains how FlowFi moves data from on-chain contract events into API responses and real-time frontend updates.
 
-1. **Soroban Smart Contracts** - On-chain logic for payment streams
-2. **Backend API** - Indexing, API endpoints, and real-time event streaming
-3. **Frontend** - User interface built with Next.js
+## High-Level Overview
 
-```
-┌─────────────┐
-│   Frontend  │ (Next.js + React)
-│  (Port 3000)│
-└──────┬──────┘
-       │ HTTP/REST
-       │ SSE (Server-Sent Events)
-       ▼
-┌─────────────┐
-│   Backend   │ (Express.js + TypeScript)
-│  (Port 3001)│
-└──────┬──────┘
-       │
-       │ Indexes Events
-       │ Queries State
-       ▼
-┌─────────────┐
-│   Stellar   │
-│   Network   │
-└──────┬──────┘
-       │
-       │ Smart Contract
-       │ Events & State
-       ▼
-┌─────────────┐
-│  Soroban    │
-│  Contracts  │ (Rust)
-└─────────────┘
+```mermaid
+flowchart LR
+    Contract[Stream Contract (Soroban WASM)] --> Indexer[Soroban Event Indexer]
+    Indexer --> DB[(Postgres DB)]
+    DB --> API[Backend API (Express + SSE)]
+    API --> UI[Frontend (Next.js)]
+    UI --> API
+
+```mermaid
+flowchart LR
+    C["Soroban Stream Contract\nEvent Emission"] --> W["Event Worker / Indexer\nbackend/src/workers"]
+    W --> P["Prisma ORM"]
+    P --> D[("PostgreSQL")]
+    D --> API["Express API\nREST + SSE"]
+    API --> SSE["SSE Service\nConnection Registry"]
+    SSE --> FE["Next.js Frontend\nDashboard + Profile"]
+
+    API <--> R[("Redis Pub/Sub\nMulti-instance fanout")]
+    R <--> SSE
 ```
 
-## Component Interactions
+## Core Components
 
-### 1. Soroban Smart Contracts
+1. Soroban contract: source of truth for stream state and events.
+1. Event worker/indexer: reads events from Stellar/Soroban, normalizes payloads, and persists stream state + stream events.
+1. PostgreSQL + Prisma: query layer for fast read APIs.
+1. Express API: serves versioned REST endpoints and long-lived SSE subscriptions.
+1. Frontend: consumes REST for initial state and SSE for real-time deltas.
 
-**Location:** `contracts/stream_contract/`
+## Event Type Data Flows
 
-The smart contract handles all on-chain logic for payment streams:
+### 1) CREATED
 
-- **Stream Creation**: Users create streams by depositing tokens
-- **Withdrawals**: Recipients can withdraw available funds
-- **Top-ups**: Senders can add more funds to active streams
-- **Cancellation**: Senders can cancel streams and receive refunds
+1. Contract emits `CREATED`.
+1. Worker inserts `Stream` row with sender, recipient, token, amount/rate/timestamps.
+1. Worker inserts `StreamEvent` row.
+1. SSE broadcasts `stream.created` to stream and user channels.
+1. Frontend refreshes outgoing/incoming lists and summary cards.
 
-**Key Contract Functions:**
-- `create_stream()` - Creates a new payment stream
-- `withdraw()` - Withdraws available funds from a stream
-- `top_up_stream()` - Adds funds to an existing stream
-- `cancel_stream()` - Cancels a stream and refunds remaining balance
-- `get_stream()` - Reads stream state
+### 2) TOPPED_UP
 
-**Events Emitted:**
-The contract emits events for all state changes:
-- `stream_created` - When a new stream is created
-- `tokens_withdrawn` - When funds are withdrawn
-- `stream_topped_up` - When additional funds are added
-- `stream_cancelled` - When a stream is cancelled
+1. Contract emits `TOPPED_UP` with top-up amount.
+1. Worker updates `Stream.depositedAmount` and `lastUpdateTime`.
+1. Worker inserts `StreamEvent`.
+1. SSE broadcasts `stream.topped_up`.
+1. Frontend updates TVL/deposit values.
 
-### 2. Backend API
+### 3) WITHDRAWN
 
-**Location:** `backend/`
+1. Contract emits `WITHDRAWN` with claimed amount.
+1. Worker updates `Stream.withdrawnAmount` and `lastUpdateTime`.
+1. Worker inserts `StreamEvent`.
+1. SSE broadcasts `stream.withdrawn`.
+1. Frontend updates balances and claimable indicators.
 
-The backend serves multiple purposes:
+### 4) CANCELLED
 
-#### A. Event Indexing
+1. Contract emits `CANCELLED`.
+1. Worker marks `Stream.isActive = false` and updates `lastUpdateTime`.
+1. Worker inserts `StreamEvent`.
+1. SSE broadcasts `stream.cancelled`.
+1. Frontend moves stream to historical state.
 
-**Where Indexing Happens:**
+### 5) COMPLETED
 
-The backend indexes on-chain events from Soroban contracts. The indexing process:
+1. Contract emits `COMPLETED` (fully drained lifecycle).
+1. Worker marks `Stream.isActive = false`.
+1. Worker inserts `StreamEvent`.
+1. SSE broadcasts `stream.completed`.
+1. Frontend marks stream complete.
 
-1. **Event Detection**: The backend listens to Stellar network events (via Stellar Horizon API or similar)
-2. **Event Processing**: When contract events are detected, they are processed and stored
-3. **Database Storage**: Events are stored in PostgreSQL using Prisma ORM
+### 6) PAUSED / RESUMED
 
-**Database Models:**
-- `Stream` - Mirrors on-chain stream state for fast querying
-- `StreamEvent` - Stores all on-chain events (CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED)
-- `User` - Tracks Stellar wallet addresses
+FlowFi timing math supports pause windows by excluding paused wall-clock duration from effective streaming time.
 
-**Indexing Implementation:**
+Paused behavior:
 
-The indexing logic is designed to be integrated with a Stellar event listener. See:
-- `backend/src/services/indexer-integration.example.ts` - Example integration pattern
-- `backend/prisma/schema.prisma` - Database schema for indexed data
+1. On `PAUSED`, worker stores pause start metadata and stream remains non-progressing.
+1. On `RESUMED`, worker computes paused interval duration and accumulates `totalPausedSeconds`.
+1. Claimable calculations use effective elapsed time:
 
-**Event Types Indexed:**
-- `CREATED` - Stream creation events
-- `TOPPED_UP` - Additional funds added
-- `WITHDRAWN` - Funds withdrawn by recipient
-- `CANCELLED` - Stream cancellation
-- `COMPLETED` - Stream completion (all funds withdrawn)
+$$
+\text{effectiveElapsed} = \max(0,\, now - lastUpdateTime - totalPausedSecondsSinceLastUpdate)
+$$
 
-#### B. REST API
+$$
+\text{streamed} = \text{effectiveElapsed} \times \text{ratePerSecond}
+$$
 
-The backend provides REST endpoints for:
+$$
+\text{claimable} = \min(\text{streamed},\, depositedAmount - withdrawnAmount)
+$$
 
-- **Stream Management**: Query stream state, create streams (via contract interaction)
-- **User Data**: Get user streams, balances, history
-- **Health Checks**: API status and metrics
+This prevents paused periods from increasing claimable balance.
 
-**API Documentation:**
-- Swagger UI: `http://localhost:3001/api-docs`
-- OpenAPI Spec: `http://localhost:3001/api-docs.json`
+## Pause/Resume Timing Model
 
-#### C. Real-Time Event Streaming
+Rules used by backend/domain logic:
 
-**Server-Sent Events (SSE):**
+1. Time is tracked in Unix seconds.
+1. Claimable only advances while stream is active and not paused.
+1. Multiple pause/resume intervals are cumulative.
+1. Resume re-baselines time accounting so no double counting occurs.
+1. Cancellation/completion finalizes stream and halts further accrual.
 
-The backend provides SSE endpoints for real-time updates:
+## Authentication Flow
 
-- **Endpoint**: `GET /events/subscribe`
-- **Purpose**: Push real-time stream updates to frontend clients
-- **Event Types**: `stream.created`, `stream.topped_up`, `stream.withdrawn`, `stream.cancelled`, `stream.completed`
+```mermaid
+sequenceDiagram
+    participant U as User Wallet (Freighter)
+    participant FE as Frontend
+    participant API as Backend Auth API
+    participant SSE as SSE Endpoint
 
-**How It Works:**
-1. Frontend connects to SSE endpoint
-2. Backend maintains connection and broadcasts events
-3. When on-chain events are indexed, they trigger SSE broadcasts
-4. Frontend receives real-time updates without polling
+    FE->>API: Request challenge for public key
+    API-->>FE: Nonce/challenge payload
+    FE->>U: Ask wallet to sign challenge
+    U-->>FE: Signed challenge
+    FE->>API: Verify signature
+    API-->>FE: JWT token
+    FE->>SSE: Subscribe with Bearer JWT
+    SSE-->>FE: Connected + real-time events
+```
 
-See `backend/docs/SSE_ARCHITECTURE.md` for detailed SSE implementation.
+## SSE in Single vs Multi-Instance Mode
 
-### 3. Frontend
+Single instance:
 
-**Location:** `frontend/`
+1. API writes SSE event directly to in-memory client registry.
 
-The frontend is a Next.js application that:
+Multi-instance (recommended for horizontal scale):
 
-- **Displays Streams**: Shows active streams, incoming/outgoing payments
-- **Wallet Integration**: Connects to Stellar wallets (Freighter, etc.)
-- **Real-Time Updates**: Subscribes to SSE events for live stream updates
-- **Stream Management**: UI for creating, viewing, and managing streams
+1. Instance A receives event and publishes to Redis channels (`sse:stream:*`, `sse:user:*`).
+1. All API instances subscribe to matching channels.
+1. Each instance rebroadcasts to its own connected clients.
 
-**Key Features:**
-- Dashboard with stream overview
-- Incoming/outgoing stream lists
-- Real-time balance updates via SSE
-- Wallet connection and transaction signing
+Benefits:
 
-## Data Flow
+1. Real-time fanout works across replicas.
+1. Sticky sessions are not required for event delivery.
+1. API replicas can scale independently while preserving SSE correctness.
 
-### Creating a Stream
+## Operational Notes
 
-1. **User Action**: User fills out stream creation form in frontend
-2. **Frontend**: Prepares transaction and prompts wallet for signature
-3. **Stellar Network**: Transaction is submitted and processed
-4. **Contract**: `create_stream()` executes, emits `stream_created` event
-5. **Backend Indexer**: Detects event, stores in database
-6. **Backend SSE**: Broadcasts event to subscribed clients
-7. **Frontend**: Receives SSE update, UI updates automatically
-
-### Withdrawing from a Stream
-
-1. **User Action**: Recipient clicks withdraw in frontend
-2. **Frontend**: Prepares withdrawal transaction, prompts wallet
-3. **Stellar Network**: Transaction submitted
-4. **Contract**: `withdraw()` executes, emits `tokens_withdrawn` event
-5. **Backend Indexer**: Detects event, updates database
-6. **Backend SSE**: Broadcasts withdrawal event
-7. **Frontend**: Updates balance and stream state
-
-### Querying Stream State
-
-1. **User Action**: User navigates to stream details page
-2. **Frontend**: Makes REST API call to backend
-3. **Backend**: Queries indexed database (fast, no on-chain call needed)
-4. **Backend**: Returns stream data
-5. **Frontend**: Displays stream information
-
-For real-time accuracy, the frontend can also:
-- Subscribe to SSE events for that specific stream
-- Receive updates immediately when on-chain events occur
-
-## Technology Stack
-
-### Smart Contracts
-- **Language**: Rust
-- **Framework**: Soroban SDK
-- **Build Target**: `wasm32-unknown-unknown`
-
-### Backend
-- **Runtime**: Node.js
-- **Framework**: Express.js
-- **Language**: TypeScript
-- **Database**: PostgreSQL
-- **ORM**: Prisma
-- **Real-Time**: Server-Sent Events (SSE)
-
-### Frontend
-- **Framework**: Next.js 16
-- **Language**: TypeScript
-- **Styling**: Tailwind CSS
-- **State Management**: React Context
-- **Wallet Integration**: Stellar SDK
-
-## Development Workflow
-
-### Local Development
-
-1. **Start Infrastructure**: `docker compose up` (PostgreSQL)
-2. **Start Backend**: `cd backend && npm run dev`
-3. **Start Frontend**: `cd frontend && npm run dev`
-4. **Deploy Contracts**: Build and deploy to Stellar testnet
-
-### Testing
-
-- **Contracts**: Rust unit tests in contract source files
-- **Backend**: Vitest for API and service tests
-- **Frontend**: Next.js testing utilities
-
-## Security Considerations
-
-- **Rate Limiting**: Backend implements rate limiting on all endpoints
-- **Input Validation**: Zod schemas validate all API inputs
-- **Authentication**: Wallet-based authentication via Stellar signatures
-- **Event Verification**: Indexed events are verified against on-chain state
-
-## Future Enhancements
-
-Potential areas for improvement:
-
-- **Indexer Service**: Dedicated microservice for event indexing
-- **Caching Layer**: Redis for frequently accessed stream data
-- **WebSocket Support**: Alternative to SSE for bidirectional communication
-- **GraphQL API**: More flexible querying for complex frontend needs
-
-## Related Documentation
-
-- [SSE Architecture](backend/docs/SSE_ARCHITECTURE.md) - Detailed SSE implementation
-- [Backend README](backend/SSE_README.md) - Backend-specific documentation
-- [Contributing Guide](../CONTRIBUTING.md) - Development setup and workflows
+1. `/v1/events/stats` exposes active SSE connections and connection-capacity metrics.
+1. Admin metrics include SSE peak-per-IP visibility for abuse monitoring.
+1. User summary endpoint (`/v1/users/{address}/summary`) is cached for 30s to protect DB hot paths.

@@ -9,7 +9,7 @@
     "backend"
   ],
   "scripts": {
-    "prepare": "husky",
+    "prepare": "husky || true",
     "verify-security": "node scripts/verify-security-setup.js"
   },
   "devDependencies": {
@@ -22,6 +22,13 @@
     ]
   },
   "dependencies": {
+    "@rollup/rollup-linux-x64-gnu": "4.60.2",
     "react-hot-toast": "^2.6.0"
+  },
+  "optionalDependencies": {
+    "@tailwindcss/oxide-darwin-arm64": "^4.2.1",
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.2.1",
+    "lightningcss-darwin-arm64": "^1.31.1",
+    "lightningcss-linux-x64-gnu": "^1.31.1"
   }
 }

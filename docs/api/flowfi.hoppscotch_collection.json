@@ -36,6 +36,34 @@
           "auth": { "authType": "inherit", "authActive": true },
           "body": { "contentType": null, "body": null },
           "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "f6a7b8c9-d0e1-2345-fabc-345678901236",
+          "name": "Swagger UI",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/api-docs",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "f6a7b8c9-d0e1-2345-fabc-345678901237",
+          "name": "OpenAPI JSON spec",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/api-docs.json",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
         }
       ]
     },
@@ -50,7 +78,7 @@
           "id": "b8c9d0e1-f2a3-4567-bcde-567890123457",
           "name": "Create stream",
           "method": "POST",
-          "endpoint": "<<baseUrl>>/streams",
+          "endpoint": "<<baseUrl>>/v1/streams",
           "params": [],
           "headers": [
             { "key": "Content-Type", "value": "application/json", "active": true }
@@ -63,13 +91,145 @@
             "body": "{\n  \"sender\": \"<<senderPublicKey>>\",\n  \"recipient\": \"<<recipientPublicKey>>\",\n  \"amount\": 10000,\n  \"token\": \"<<tokenAddress>>\",\n  \"startTime\": 1708531200,\n  \"endTime\": 1711209600\n}"
           },
           "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "b8c9d0e1-f2a3-4567-bcde-567890123458",
+          "name": "List streams",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/streams",
+          "params": [
+            { "key": "sender", "value": "<<senderPublicKey>>", "active": true },
+            { "key": "recipient", "value": "<<recipientPublicKey>>", "active": false }
+          ],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "b8c9d0e1-f2a3-4567-bcde-567890123459",
+          "name": "Get stream by ID",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/streams/<<streamId>>",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "b8c9d0e1-f2a3-4567-bcde-567890123460",
+          "name": "Get stream events",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/streams/<<streamId>>/events",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "b8c9d0e1-f2a3-4567-bcde-567890123461",
+          "name": "Get claimable amount",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/streams/<<streamId>>/claimable",
+          "params": [
+            { "key": "at", "value": "", "active": false }
+          ],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        }
+      ]
+    },
+    {
+      "v": 1,
+      "id": "a7b8c9d0-e1f2-3456-abcd-456789012347",
+      "name": "Users",
+      "folders": [],
+      "requests": [
+        {
+          "v": "1",
+          "id": "c9d0e1f2-a3b4-5678-cdef-678901234570",
+          "name": "Register wallet",
+          "method": "POST",
+          "endpoint": "<<baseUrl>>/v1/users",
+          "params": [],
+          "headers": [
+            { "key": "Content-Type", "value": "application/json", "active": true }
+          ],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": {
+            "contentType": "application/json",
+            "body": "{\n  \"publicKey\": \"<<senderPublicKey>>\"\n}"
+          },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "c9d0e1f2-a3b4-5678-cdef-678901234571",
+          "name": "Get user by public key",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/users/<<senderPublicKey>>",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "c9d0e1f2-a3b4-5678-cdef-678901234572",
+          "name": "Get current user (authenticated)",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/users/me",
+          "params": [],
+          "headers": [
+            { "key": "Authorization", "value": "Bearer <<authToken>>", "active": true }
+          ],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
+        },
+        {
+          "v": "1",
+          "id": "c9d0e1f2-a3b4-5678-cdef-678901234573",
+          "name": "Get user activity events",
+          "method": "GET",
+          "endpoint": "<<baseUrl>>/v1/users/<<senderPublicKey>>/events",
+          "params": [],
+          "headers": [],
+          "preRequestScript": "",
+          "testScript": "",
+          "auth": { "authType": "inherit", "authActive": true },
+          "body": { "contentType": null, "body": null },
+          "requestVariables": []
         }
       ]
     },
     {
       "v": 1,
       "id": "c9d0e1f2-a3b4-5678-cdef-678901234568",
-      "name": "Events",
+      "name": "Events (SSE)",
       "folders": [],
       "requests": [
         {
@@ -77,9 +237,9 @@
           "id": "d0e1f2a3-b4c5-6789-defa-789012345679",
           "name": "Subscribe to stream events (SSE)",
           "method": "GET",
-          "endpoint": "<<baseUrl>>/events/subscribe",
+          "endpoint": "<<baseUrl>>/v1/events/subscribe",
           "params": [
-            { "key": "streams", "value": "123", "active": true },
+            { "key": "streams", "value": "<<streamId>>", "active": true },
             { "key": "users", "value": "<<senderPublicKey>>", "active": true },
             { "key": "all", "value": "false", "active": true }
           ],
@@ -98,7 +258,7 @@
           "id": "e1f2a3b4-c5d6-7890-efab-890123456780",
           "name": "Get SSE connection stats",
           "method": "GET",
-          "endpoint": "<<baseUrl>>/events/stats",
+          "endpoint": "<<baseUrl>>/v1/events/stats",
           "params": [],
           "headers": [],
           "preRequestScript": "",

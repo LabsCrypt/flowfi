@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { subscribe } from '../../controllers/sse.controller.js';
 import { sseService } from '../../services/sse.service.js';
+import { requireAuth } from '../../middleware/auth.js';
 
 const router = Router();
 
@@ -78,7 +79,7 @@ const router = Router();
  *       400:
  *         description: Invalid subscription parameters
  */
-router.get('/subscribe', subscribe);
+router.get('/subscribe', requireAuth, subscribe);
 
 /**
  * @openapi
@@ -99,6 +100,15 @@ router.get('/subscribe', subscribe);
  *                 activeConnections:
  *                   type: number
  *                   example: 42
+ *                 activeIps:
+ *                   type: number
+ *                   example: 8
+ *                 perIpPeakConnections:
+ *                   type: number
+ *                   example: 5
+ *                 maxConnections:
+ *                   type: number
+ *                   example: 10000
  *                 timestamp:
  *                   type: string
  *                   format: date-time
@@ -106,6 +116,9 @@ router.get('/subscribe', subscribe);
 router.get('/stats', (req: Request, res: Response) => {
   res.json({
     activeConnections: sseService.getClientCount(),
+    activeIps: sseService.getActiveIpCount(),
+    perIpPeakConnections: sseService.getPerIpPeakConnections(),
+    maxConnections: sseService.getMaxConnections(),
     timestamp: new Date().toISOString(),
   });
 });

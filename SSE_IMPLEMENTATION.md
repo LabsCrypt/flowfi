@@ -12,7 +12,7 @@ A production-ready **Server-Sent Events (SSE)** system for real-time payment str
 - **Full Implementation Guide**: [`backend/docs/SSE_IMPLEMENTATION.md`](backend/docs/SSE_IMPLEMENTATION.md)
 - **Architecture Diagrams**: [`backend/docs/SSE_ARCHITECTURE.md`](backend/docs/SSE_ARCHITECTURE.md)
 - **Production Checklist**: [`backend/PRODUCTION_CHECKLIST.md`](backend/PRODUCTION_CHECKLIST.md)
-- **Complete Summary**: [`ISSUE_134_SUMMARY.md`](ISSUE_134_SUMMARY.md)
+- **Complete Summary**: [`ISSUE_134_SUMMARY.md`](ISSUE_134_SUMMARY.md).
 
 ## Try It Now
 

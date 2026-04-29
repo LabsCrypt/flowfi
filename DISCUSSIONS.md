@@ -20,7 +20,7 @@ Welcome to FlowFi's GitHub Discussions! This is the place for community conversa
 
 ### Use **Issues** for:
 
-- 🐛 **Bug Reports** - Something isn't working as expected
+- 🐛 **Bug Reports** - Something isn't working as expected.
 - ✨ **Feature PRs** - Implementation work and code changes
 - 📝 **Documentation Tasks** - Concrete docs or examples that need writing
 - 🔧 **Refactoring Tasks** - Code improvements with clear objectives
