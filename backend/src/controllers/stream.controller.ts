@@ -2,7 +2,8 @@ import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
 import { claimableAmountService } from '../services/claimable.service.js';
-import { getStreamFromChain, getClaimableFromChain, isStale } from '../services/sorobanService.js';
+import { getStreamFromChain, getClaimableFromChain, isStale, pauseStream as sorobanPauseStream, resumeStream as sorobanResumeStream } from '../services/sorobanService.js';
+import type { AuthenticatedRequest } from '../types/auth.types.js';
 
 interface UserStreamSummary {
   address: string;
@@ -448,6 +449,210 @@ export const getUserStreamSummary = async (req: Request<{ address: string }>, re
     return res.status(200).json(summary);
   } catch (error) {
     logger.error('Error fetching user stream summary:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Pause a stream. Only the sender can pause their own stream.
+ * Validates the request, checks ownership, and updates the database.
+ */
+export const pauseStream = async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    
+    if (!authReq.user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Authentication required' });
+    }
+
+    const streamIdParam = Array.isArray(req.params.streamId)
+      ? req.params.streamId[0]
+      : req.params.streamId;
+    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
+
+    if (!Number.isFinite(parsedStreamId)) {
+      return res.status(400).json({ error: 'Invalid streamId parameter' });
+    }
+
+    // Fetch the stream from database
+    const stream = await prisma.stream.findUnique({
+      where: { streamId: parsedStreamId },
+    });
+
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+
+    // Verify the caller is the stream sender
+    if (stream.sender !== authReq.user.publicKey) {
+      return res.status(403).json({ 
+        error: 'Forbidden',
+        message: 'Only the stream sender can pause the stream'
+      });
+    }
+
+    // Check if stream is already paused
+    if (stream.isPaused) {
+      return res.status(409).json({
+        error: 'Conflict',
+        message: 'Stream is already paused'
+      });
+    }
+
+    // Check if stream is still active
+    if (!stream.isActive) {
+      return res.status(409).json({
+        error: 'Conflict',
+        message: 'Cannot pause an inactive stream'
+      });
+    }
+
+    try {
+      // Call Soroban service to verify the pause operation would succeed
+      const result = await sorobanPauseStream(authReq.user.publicKey, parsedStreamId);
+
+      // Update the database to mark stream as paused
+      const now = Math.floor(Date.now() / 1000);
+      const updatedStream = await prisma.stream.update({
+        where: { streamId: parsedStreamId },
+        data: {
+          isPaused: true,
+          pausedAt: now,
+          lastUpdateTime: now,
+        },
+      });
+
+      // Create a PAUSED event
+      await prisma.streamEvent.create({
+        data: {
+          streamId: parsedStreamId,
+          eventType: 'PAUSED',
+          txHash: result.txHash,
+          ledgerSequence: 0, // Will be updated by event indexer
+          timestamp: now,
+          metadata: JSON.stringify({ pausedBy: authReq.user.publicKey }),
+        },
+      });
+
+      logger.info(`Stream ${parsedStreamId} paused by ${authReq.user.publicKey}`);
+
+      return res.status(200).json({
+        success: true,
+        streamId: parsedStreamId,
+        txHash: result.txHash,
+        stream: updatedStream,
+      });
+    } catch (sorobanError) {
+      logger.error(`Soroban pause failed for stream ${parsedStreamId}:`, sorobanError);
+      return res.status(400).json({
+        error: 'Failed to pause stream on chain',
+        message: sorobanError instanceof Error ? sorobanError.message : 'Unknown error',
+      });
+    }
+  } catch (error) {
+    logger.error('Error pausing stream:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Resume a paused stream. Only the sender can resume their own stream.
+ * Validates the request, checks ownership, and updates the database.
+ */
+export const resumeStream = async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AuthenticatedRequest;
+    
+    if (!authReq.user) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Authentication required' });
+    }
+
+    const streamIdParam = Array.isArray(req.params.streamId)
+      ? req.params.streamId[0]
+      : req.params.streamId;
+    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
+
+    if (!Number.isFinite(parsedStreamId)) {
+      return res.status(400).json({ error: 'Invalid streamId parameter' });
+    }
+
+    // Fetch the stream from database
+    const stream = await prisma.stream.findUnique({
+      where: { streamId: parsedStreamId },
+    });
+
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+
+    // Verify the caller is the stream sender
+    if (stream.sender !== authReq.user.publicKey) {
+      return res.status(403).json({ 
+        error: 'Forbidden',
+        message: 'Only the stream sender can resume the stream'
+      });
+    }
+
+    // Check if stream is paused
+    if (!stream.isPaused) {
+      return res.status(409).json({
+        error: 'Conflict',
+        message: 'Stream is not paused'
+      });
+    }
+
+    try {
+      // Call Soroban service to verify the resume operation would succeed
+      const result = await sorobanResumeStream(authReq.user.publicKey, parsedStreamId);
+
+      // Calculate pause duration and update the database
+      const now = Math.floor(Date.now() / 1000);
+      const pausedAt = stream.pausedAt ?? now;
+      const pauseDuration = Math.max(0, now - pausedAt);
+      const totalPausedDuration = (stream.totalPausedDuration ?? 0) + pauseDuration;
+
+      const updatedStream = await prisma.stream.update({
+        where: { streamId: parsedStreamId },
+        data: {
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration,
+          lastUpdateTime: now,
+        },
+      });
+
+      // Create a RESUMED event
+      await prisma.streamEvent.create({
+        data: {
+          streamId: parsedStreamId,
+          eventType: 'RESUMED',
+          txHash: result.txHash,
+          ledgerSequence: 0, // Will be updated by event indexer
+          timestamp: now,
+          metadata: JSON.stringify({ 
+            resumedBy: authReq.user.publicKey,
+            pauseDuration,
+          }),
+        },
+      });
+
+      logger.info(`Stream ${parsedStreamId} resumed by ${authReq.user.publicKey}`);
+
+      return res.status(200).json({
+        success: true,
+        streamId: parsedStreamId,
+        txHash: result.txHash,
+        stream: updatedStream,
+      });
+    } catch (sorobanError) {
+      logger.error(`Soroban resume failed for stream ${parsedStreamId}:`, sorobanError);
+      return res.status(400).json({
+        error: 'Failed to resume stream on chain',
+        message: sorobanError instanceof Error ? sorobanError.message : 'Unknown error',
+      });
+    }
+  } catch (error) {
+    logger.error('Error resuming stream:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 };

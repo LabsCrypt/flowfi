@@ -128,3 +128,74 @@ export async function getClaimableFromChain(streamId: number): Promise<string | 
 export function isStale(updatedAt: Date): boolean {
   return Date.now() - updatedAt.getTime() > STALE_THRESHOLD_MS;
 }
+
+export interface PauseResumeResult {
+  txHash: string;
+}
+
+/**
+ * Pause a stream. Calls the Soroban contract's pause_stream function.
+ * Note: This is a read-only simulation to verify the operation would succeed.
+ * The actual pause transaction must be signed by the sender and submitted by the frontend.
+ */
+export async function pauseStream(
+  senderAddress: string,
+  streamId: number
+): Promise<PauseResumeResult> {
+  if (!CONTRACT_ID) {
+    throw new Error('Stream contract ID not configured');
+  }
+
+  try {
+    const { Address } = await import('@stellar/stellar-sdk');
+    
+    const senderAddr = new Address(senderAddress);
+    
+    const retval = await simulateContractCall('pause_stream', [
+      senderAddr.toScVal(),
+      nativeToScVal(streamId, { type: 'u64' }),
+    ]);
+
+    // Return a mock txHash for now - in production this would be the actual transaction hash
+    // The real transaction would be signed by the frontend and submitted separately
+    return {
+      txHash: 'simulated-pause-' + streamId,
+    };
+  } catch (err) {
+    logger.error(`[SorobanService] pauseStream(${streamId}) failed:`, err);
+    throw new Error(`Failed to pause stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Resume a paused stream. Calls the Soroban contract's resume_stream function.
+ * Note: This is a read-only simulation to verify the operation would succeed.
+ * The actual resume transaction must be signed by the sender and submitted by the frontend.
+ */
+export async function resumeStream(
+  senderAddress: string,
+  streamId: number
+): Promise<PauseResumeResult> {
+  if (!CONTRACT_ID) {
+    throw new Error('Stream contract ID not configured');
+  }
+
+  try {
+    const { Address } = await import('@stellar/stellar-sdk');
+    
+    const senderAddr = new Address(senderAddress);
+    
+    const retval = await simulateContractCall('resume_stream', [
+      senderAddr.toScVal(),
+      nativeToScVal(streamId, { type: 'u64' }),
+    ]);
+
+    // Return a mock txHash for now - in production this would be the actual transaction hash
+    return {
+      txHash: 'simulated-resume-' + streamId,
+    };
+  } catch (err) {
+    logger.error(`[SorobanService] resumeStream(${streamId}) failed:`, err);
+    throw new Error(`Failed to resume stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}

@@ -5,8 +5,11 @@ import {
   getStream, 
   getStreamEvents, 
   getStreamClaimableAmount,
-  getUserStreamSummary
+  getUserStreamSummary,
+  pauseStream,
+  resumeStream
 } from '../../controllers/stream.controller.js';
+import { authMiddleware } from '../../middleware/auth.middleware.js';
 
 const router = Router();
 
@@ -290,5 +293,97 @@ router.get('/:streamId/events', getStreamEvents);
  *         description: Stream not found
  */
 router.get('/:streamId/claimable', getStreamClaimableAmount);
+
+/**
+ * @openapi
+ * /v1/streams/{streamId}/pause:
+ *   post:
+ *     tags:
+ *       - Streams
+ *     summary: Pause a payment stream
+ *     description: Pause an active stream. Only the sender can pause their own stream.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Stream paused successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 streamId:
+ *                   type: integer
+ *                 txHash:
+ *                   type: string
+ *                 stream:
+ *                   $ref: '#/components/schemas/Stream'
+ *       400:
+ *         description: Invalid streamId or operation failed
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication
+ *       403:
+ *         description: Forbidden - caller is not the stream sender
+ *       404:
+ *         description: Stream not found
+ *       409:
+ *         description: Conflict - stream already paused or inactive
+ */
+router.post('/:streamId/pause', authMiddleware, pauseStream);
+
+/**
+ * @openapi
+ * /v1/streams/{streamId}/resume:
+ *   post:
+ *     tags:
+ *       - Streams
+ *     summary: Resume a paused payment stream
+ *     description: Resume a paused stream. Only the sender can resume their own stream.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Stream resumed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 streamId:
+ *                   type: integer
+ *                 txHash:
+ *                   type: string
+ *                 stream:
+ *                   $ref: '#/components/schemas/Stream'
+ *       400:
+ *         description: Invalid streamId or operation failed
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication
+ *       403:
+ *         description: Forbidden - caller is not the stream sender
+ *       404:
+ *         description: Stream not found
+ *       409:
+ *         description: Conflict - stream not paused or inactive
+ */
+router.post('/:streamId/resume', authMiddleware, resumeStream);
 
 export default router;
