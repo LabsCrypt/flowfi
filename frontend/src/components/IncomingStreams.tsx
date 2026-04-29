@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
-import { fromStroops } from '@/utils/amount';
+import { formatAmount } from '@/lib/amount';
 
 interface IncomingStreamsProps {
     streams: Stream[];
@@ -14,7 +14,7 @@ interface IncomingStreamsProps {
 
 function formatTokenAmount(value: number, decimals: number = 7): string {
     if (!Number.isFinite(value)) return '0.0000000';
-    return fromStroops(BigInt(Math.floor(value)), decimals);
+    return formatAmount(BigInt(Math.floor(value)), decimals);
 }
 
 const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {

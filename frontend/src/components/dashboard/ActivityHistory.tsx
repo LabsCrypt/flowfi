@@ -1,6 +1,6 @@
 import React from 'react';
 import { BackendStreamEvent } from '@/lib/api-types';
-import { fromStroops } from '@/utils/amount';
+import { formatAmount } from '@/lib/amount';
 import TransactionTracker from '@/components/TransactionTracker';
 import Link from 'next/link';
 
@@ -11,7 +11,7 @@ interface ActivityHistoryProps {
 
 export const ActivityHistory: React.FC<ActivityHistoryProps> = ({ events, isLoading }) => {
     const formatEventMessage = (event: BackendStreamEvent) => {
-        const amount = event.amount ? fromStroops(BigInt(event.amount), 7) : '0';
+        const amount = event.amount ? formatAmount(BigInt(event.amount), 7) : '0';
         const streamId = event.streamId;
 
         switch (event.eventType) {

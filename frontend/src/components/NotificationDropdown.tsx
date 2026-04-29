@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useStreamEvents } from '@/hooks/useStreamEvents';
-import { fromStroops } from '@/utils/amount';
+import { formatAmount } from '@/lib/amount';
 import { Button } from './ui/Button';
 
 interface NotificationDropdownProps {
@@ -31,7 +31,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     const formatEventMessage = useCallback((event: { type: string; data?: unknown }): string => {
         const data = event.data as { streamId?: number; amount?: string; tokenSymbol?: string };
         const streamId = data?.streamId || 0;
-        const amount = data?.amount ? fromStroops(BigInt(data.amount), 7) : '0';
+        const amount = data?.amount ? formatAmount(BigInt(data.amount), 7) : '0';
         const tokenSymbol = data?.tokenSymbol || 'USDC';
 
         switch (event.type) {

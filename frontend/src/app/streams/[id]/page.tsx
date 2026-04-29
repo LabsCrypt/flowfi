@@ -14,7 +14,7 @@ import {
   topUpStream,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
-import { fromStroops, toStroops, hasValidPrecision, formatStreamRate } from "@/utils/amount";
+import { formatAmount, parseAmount, hasValidPrecision, formatRate } from "@/lib/amount";
 import type { WalletSession } from "@/lib/wallet";
 
 interface StreamDetail {
@@ -196,8 +196,8 @@ export default function StreamDetailsPage() {
     );
   }
 
-  const deposited = parseFloat(fromStroops(BigInt(stream.depositedAmount), 7));
-  const withdrawn = parseFloat(fromStroops(BigInt(stream.withdrawnAmount), 7));
+  const deposited = parseFloat(formatAmount(BigInt(stream.depositedAmount), 7));
+  const withdrawn = parseFloat(formatAmount(BigInt(stream.withdrawnAmount), 7));
   const claimable = deposited - withdrawn;
   const percentage = Math.round((withdrawn / deposited) * 100);
 

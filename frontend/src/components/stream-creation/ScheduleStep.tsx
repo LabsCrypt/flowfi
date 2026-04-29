@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useRef, useEffect } from "react";
-import { hasValidPrecision } from "@/utils/amount";
+import { hasValidPrecision } from "@/lib/amount";
 
 interface ScheduleStepProps {
   duration: string;

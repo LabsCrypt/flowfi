@@ -6,7 +6,7 @@ import { BackendStreamEvent } from '@/lib/api-types';
 import { fetchUserEvents } from '@/lib/dashboard';
 import { ActivityHistory } from '@/components/dashboard/ActivityHistory';
 import { downloadCSV } from '@/utils/csvExport';
-import { fromStroops } from '@/utils/amount';
+import { formatAmount } from '@/lib/amount';
 
 type EventFilter = 'All' | 'CREATED' | 'TOPPED_UP' | 'WITHDRAWN' | 'CANCELLED' | 'COMPLETED';
 
@@ -49,7 +49,7 @@ export default function ActivityPage() {
         const csvData = filteredEvents.map(event => ({
             'Stream ID': event.streamId,
             'Event Type': event.eventType,
-            'Amount': event.amount ? fromStroops(BigInt(event.amount), 7) : '0',
+            'Amount': event.amount ? formatAmount(BigInt(event.amount), 7) : '0',
             'Timestamp': new Date(event.timestamp * 1000).toLocaleString(),
             'Transaction Hash': event.transactionHash,
             'Ledger': event.ledgerSequence,

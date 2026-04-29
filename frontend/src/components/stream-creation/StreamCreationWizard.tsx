@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useCallback } from "react";
-import { hasValidPrecision, toStroops } from "@/utils/amount";
+import { hasValidPrecision, toStroops } from "@/lib/amount";
 import { Stepper } from "../ui/Stepper";
 import { Button } from "../ui/Button";
 import { RecipientStep } from "./RecipientStep";

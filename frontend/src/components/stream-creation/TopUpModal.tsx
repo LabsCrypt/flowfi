@@ -10,7 +10,7 @@
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/Button";
-import { hasValidPrecision, toStroops } from "@/utils/amount";
+import { hasValidPrecision, toStroops } from "@/lib/amount";
 
 interface TopUpModalProps {
   streamId: string;
