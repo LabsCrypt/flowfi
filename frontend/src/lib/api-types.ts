@@ -19,7 +19,7 @@ export interface BackendStreamEvent {
   streamId: number;
   eventType: StreamEventType;
   amount: string | null;
-  txHash: string;
+  transactionHash: string;
   ledgerSequence: number;
   timestamp: number;
   metadata: string | null;
@@ -37,7 +37,11 @@ export interface BackendStream {
   withdrawnAmount: string;
   startTime: number;
   lastUpdateTime: number;
+  endTime?: number | null;
   isActive: boolean;
+  isPaused?: boolean;
+  pausedAt?: number | null;
+  totalPausedDuration?: number;
   createdAt: string;
   updatedAt: string;
   senderUser?: BackendUser;

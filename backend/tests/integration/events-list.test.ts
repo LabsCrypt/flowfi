@@ -98,7 +98,12 @@ describe('GET /v1/events', () => {
     expect(res.body.events).toHaveLength(2);
     expect(res.body).toMatchObject({ total: 5, limit: 2, offset: 0, hasMore: true });
 
-    const callArgs = mocks.prisma.streamEvent.findMany.mock.calls[0][0];
+    const callArgs = mocks.prisma.streamEvent.findMany.mock.calls[0]![0] as {
+      where: { stream: { OR: Array<{ sender?: string; recipient?: string }> } };
+      orderBy: { timestamp: string };
+      take: number;
+      skip: number;
+    };
     expect(callArgs.where.stream.OR).toEqual([{ sender: ADDR }, { recipient: ADDR }]);
     expect(callArgs.orderBy).toEqual({ timestamp: 'desc' });
     expect(callArgs.take).toBe(2);
@@ -114,8 +119,10 @@ describe('GET /v1/events', () => {
     );
     expect(res.status).toBe(200);
 
-    const where = mocks.prisma.streamEvent.findMany.mock.calls[0][0].where;
-    expect(where.eventType).toEqual({ in: ['PAUSED', 'RESUMED'] });
+    const callArgs = mocks.prisma.streamEvent.findMany.mock.calls[0]![0] as {
+      where: { eventType: { in: string[] } };
+    };
+    expect(callArgs.where.eventType).toEqual({ in: ['PAUSED', 'RESUMED'] });
   });
 
   it('rejects a type filter when no values are valid', async () => {
@@ -133,6 +140,10 @@ describe('GET /v1/events', () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.offset).toBe(30);
-    expect(mocks.prisma.streamEvent.findMany.mock.calls[0][0].skip).toBe(30);
+
+    const callArgs = mocks.prisma.streamEvent.findMany.mock.calls[0]![0] as {
+      skip: number;
+    };
+    expect(callArgs.skip).toBe(30);
   });
 });

@@ -2,7 +2,7 @@
  * Redis / In-Memory Cache Service
  * Used for horizontal SSE scaling and claimable amount caching (Issue #377)
  */
-import Redis from 'ioredis';
+import IORedis, { type Redis } from 'ioredis';
 import logger from '../logger.js';
 
 const REDIS_URL = process.env.REDIS_URL;
@@ -98,13 +98,13 @@ export function isRedisAvailable(): boolean {
 }
 
 function makeClient(url: string): Redis {
-  return new Redis(url, {
+  return new (IORedis as any)(url, {
     maxRetriesPerRequest: 3,
     retryStrategy: (times: number) =>
       times > 3 ? null : Math.min(times * 200, 2000),
     enableOfflineQueue: false,
     lazyConnect: true,
-  });
+  }) as Redis;
 }
 
 export async function connectRedis(): Promise<void> {

@@ -39,13 +39,7 @@ const Dashboard: React.FC = () => {
     const [isLoadingEvents, setIsLoadingEvents] = React.useState(false);
     const [topUpStream, setTopUpStream] = React.useState<StreamData | null>(null);
 
-    React.useEffect(() => {
-        if (activeTab === 'activity' && session?.publicKey) {
-            loadEvents();
-        }
-    }, [activeTab, session?.publicKey]);
-
-    const loadEvents = async () => {
+    const loadEvents = React.useCallback(async () => {
         if (!session?.publicKey) return;
         setIsLoadingEvents(true);
         try {
@@ -57,7 +51,13 @@ const Dashboard: React.FC = () => {
         } finally {
             setIsLoadingEvents(false);
         }
-    };
+    }, [session?.publicKey]);
+
+    React.useEffect(() => {
+        if (activeTab === 'activity' && session?.publicKey) {
+            loadEvents();
+        }
+    }, [activeTab, session?.publicKey, loadEvents]);
 
     const handleExport = () => {
         downloadCSV(mockStreams, 'flowfi-stream-history.csv');
