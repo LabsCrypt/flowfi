@@ -1806,3 +1806,84 @@ fn test_fuzz_large_amount_no_overflow() {
         assert!(claimable <= *amount);
     }
 }
+
+use proptest::prelude::*;
+
+proptest! {
+    #[test]
+    fn prop_create_stream_zero_amount_returns_error(amount in 0i128..=0i128, duration in 1u64..=1000u64) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token, _) = create_token(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let client = create_contract(&env);
+        
+        let result = client.try_create_stream(&sender, &recipient, &token, &amount, &duration);
+        assert_eq!(result, Err(Ok(StreamError::InvalidAmount)));
+    }
+    
+    #[test]
+    fn prop_create_stream_max_amount_no_overflow(duration in 1u64..=100_000u64) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token, _) = create_token(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let amount = i128::MAX;
+        mint(&env, &token, &sender, amount);
+        let client = create_contract(&env);
+        
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &duration);
+        let stream = client.get_stream(&id).unwrap();
+        assert_eq!(stream.deposited_amount, amount);
+        
+        env.ledger().with_mut(|l| l.timestamp += 1);
+        let claimable = client.get_claimable_amount(&id).unwrap();
+        assert!(claimable >= 0);
+    }
+    
+    #[test]
+    fn prop_single_ledger_stream(amount in 1i128..=1_000_000_000i128) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token, _) = create_token(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, amount);
+        let client = create_contract(&env);
+        
+        let duration = 1;
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &duration);
+        
+        env.ledger().with_mut(|l| l.timestamp += 1);
+        let claimable = client.get_claimable_amount(&id).unwrap();
+        assert_eq!(claimable, amount);
+    }
+    
+    #[test]
+    fn prop_amount_not_perfectly_divisible(amount in 10i128..=10_000i128, duration in 3u64..=1000u64) {
+        prop_assume!(amount % (duration as i128) != 0);
+        let env = Env::default();
+        env.mock_all_auths();
+        let (token, _) = create_token(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        mint(&env, &token, &sender, amount);
+        let client = create_contract(&env);
+        
+        let id = client.create_stream(&sender, &recipient, &token, &amount, &duration);
+        
+        env.ledger().with_mut(|l| l.timestamp += duration);
+        let claimable_at_duration = client.get_claimable_amount(&id).unwrap();
+        let rate = amount / (duration as i128);
+        assert_eq!(claimable_at_duration, rate * (duration as i128));
+        
+        let sender_balance_before = token::Client::new(&env, &token).balance(&sender);
+        client.cancel_stream(&sender, &id);
+        let sender_balance_after = token::Client::new(&env, &token).balance(&sender);
+        
+        let remainder = amount % (duration as i128);
+        assert_eq!(sender_balance_after - sender_balance_before, remainder);
+    }
+}
