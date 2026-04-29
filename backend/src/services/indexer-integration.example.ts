@@ -1,6 +1,7 @@
 // Example: How to integrate SSE with your blockchain indexer
 
 import { sseService } from '../services/sse.service.js';
+import { cache } from '../lib/redis.js';
 
 /**
  * Example indexer event handler
@@ -40,6 +41,9 @@ export function handleBlockchainEvent(event: any) {
       break;
 
     case 'WITHDRAWN':
+      // Invalidate claimable amount cache for this stream
+      cache.del(`claimable:${event.streamId}`);
+      
       sseService.broadcastToStream(
         event.streamId.toString(),
         'stream.withdrawn',

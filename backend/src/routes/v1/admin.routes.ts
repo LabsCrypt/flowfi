@@ -9,6 +9,7 @@ import {
 
 import { prisma } from '../../lib/prisma.js';
 import { sseService } from '../../services/sse.service.js';
+import { cache } from '../../lib/redis.js';
 import logger from '../../logger.js';
 
 const router = Router();
@@ -96,12 +97,14 @@ router.get('/metrics', async (_req: Request, res: Response) => {
         feesLast24h: feesLast24hByToken,
       },
       sse: { activeConnections: sseService.getClientCount() },
+      cache: cache.getStats(), // Added my cache metrics
       indexer: {
         lastLedger: indexerState?.lastLedger ?? 0,
         lagSeconds,
         lastUpdated: indexerState?.updatedAt ?? null,
       },
       uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
     });
   } catch (err) {
     logger.error('Error fetching admin metrics:', err);

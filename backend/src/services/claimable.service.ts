@@ -1,3 +1,5 @@
+import { cache } from '../lib/redis.js';
+
 const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
@@ -81,17 +83,16 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
  * - claimable = min(streamed, remaining)
  */
 export class ClaimableAmountService {
-  private readonly cache = new Map<string, ClaimableCacheEntry>();
   private readonly cacheTtlMs: number;
   private readonly nowMs: () => number;
 
   constructor(options: ClaimableServiceOptions = {}) {
-    this.cacheTtlMs = Math.max(0, options.cacheTtlMs ?? 1000);
+    this.cacheTtlMs = Math.max(0, options.cacheTtlMs ?? 5000); // Default to 5s as per Issue #377
     this.nowMs = options.nowMs ?? (() => Date.now());
   }
 
   clearCache(): void {
-    this.cache.clear();
+    // Internal cache is handled by redis/MemoryCache cleanup
   }
 
   getClaimableAmount(
@@ -103,15 +104,16 @@ export class ClaimableAmountService {
         ? Math.floor(requestedAt)
         : Math.floor(this.nowMs() / 1000);
 
-    const cacheKey = `${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
-    const nowMs = this.nowMs();
-    const cachedEntry = this.cache.get(cacheKey);
+    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
+    const cachedEntry = cache.get<Omit<ClaimableAmountResult, 'cached'>>(cacheKey);
 
-    if (cachedEntry && cachedEntry.expiresAtMs > nowMs) {
+    if (cachedEntry) {
+      const metadata = cache.getMetadata(cacheKey);
       return {
-        ...cachedEntry.value,
+        ...cachedEntry,
         cached: true,
-      };
+        cachedAt: metadata?.createdAt
+      } as any;
     }
 
     const streamStart = BigInt(Math.max(0, stream.startTime));
@@ -149,10 +151,7 @@ export class ClaimableAmountService {
       calculatedAt,
     };
 
-    this.cache.set(cacheKey, {
-      value,
-      expiresAtMs: nowMs + this.cacheTtlMs,
-    });
+    cache.set(cacheKey, value, this.cacheTtlMs / 1000);
 
     return {
       ...value,

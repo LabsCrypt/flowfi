@@ -630,10 +630,16 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const handleCreateStream = async (data: StreamFormData) => {
     const toastId = toast.loading("Creating stream…");
     try {
-      await sorobanCreateStream(session, { recipient: data.recipient, tokenAddress: getTokenAddress(data.token), amount: toBaseUnits(data.amount), durationSeconds: toDurationSeconds(data.duration, data.durationUnit) });
+      const result = await sorobanCreateStream(session, {
+        recipient: data.recipient,
+        tokenAddress: getTokenAddress(data.token),
+        amount: toBaseUnits(data.amount),
+        durationSeconds: toDurationSeconds(data.duration, data.durationUnit),
+      });
       addStreamLocally(data);
-      setShowWizard(false);
-      toast.success("Stream created successfully!", { id: toastId });
+      // We don't call setShowWizard(false) here anymore, the wizard handles its own flow
+      toast.success("Transaction confirmed on-chain!", { id: toastId });
+      return result;
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;

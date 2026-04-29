@@ -1,10 +1,11 @@
 import { Router } from 'express';
-import {
-  createStream,
-  listStreams,
-  getStream,
-  getStreamEvents,
+import { 
+  createStream, 
+  listStreams, 
+  getStream, 
+  getStreamEvents, 
   getStreamClaimableAmount,
+  getUserStreamSummary
 } from '../../controllers/stream.controller.js';
 
 const router = Router();
@@ -16,75 +17,12 @@ const router = Router();
  *     tags:
  *       - Streams
  *     summary: Create a new payment stream
- *     description: |
- *       Creates a new payment stream. This endpoint indexes the stream intention.
- *       The actual stream creation happens on-chain via Soroban smart contracts.
- *       
- *       **Sandbox Mode:**
- *       - Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`
- *       - Sandbox responses include `_sandbox` metadata
- *       - Sandbox data is stored in a separate database
- *     parameters:
- *       - in: header
- *         name: X-Sandbox-Mode
- *         schema:
- *           type: string
- *           enum: ["true", "1"]
- *         description: Enable sandbox mode for testing
- *         required: false
- *       - in: query
- *         name: sandbox
- *         schema:
- *           type: string
- *           enum: ["true", "1"]
- *         description: Enable sandbox mode via query parameter
- *         required: false
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - sender
- *               - recipient
- *               - tokenAddress
- *               - amount
- *               - duration
- *             properties:
- *               sender:
- *                 type: string
- *                 description: Sender's Stellar public key
- *                 example: "GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA"
- *               recipient:
- *                 type: string
- *                 description: Recipient's Stellar public key
- *                 example: "GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD"
- *               tokenAddress:
- *                 type: string
- *                 description: Token contract address
- *                 example: "CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE"
- *               amount:
- *                 type: string
- *                 description: Total amount to stream (i128 as string)
- *                 example: "10000"
- *               duration:
- *                 type: integer
- *                 description: Stream duration in seconds
- *                 example: 86400
+ *     description: Creates a new payment stream on the Stellar network.
  *     responses:
  *       201:
  *         description: Stream created successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Stream'
  *       400:
- *         description: Validation error
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Error'
+ *         description: Invalid input data
  */
 router.post('/', createStream);
 
@@ -94,8 +32,8 @@ router.post('/', createStream);
  *   get:
  *     tags:
  *       - Streams
- *     summary: List streams
- *     description: Retrieve a list of payment streams, optionally filtered by sender or recipient.
+ *     summary: List payment streams
+ *     description: Retrieve a list of payment streams with optional filtering.
  *     parameters:
  *       - in: query
  *         name: sender
@@ -107,17 +45,77 @@ router.post('/', createStream);
  *         schema:
  *           type: string
  *         description: Filter by recipient public key
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [active, cancelled, completed, paused]
+ *         description: Filter by stream status
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *         description: Maximum number of streams to return
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *         description: Number of streams to skip
+ *       - in: query
+ *         name: sort
+ *         schema:
+ *           type: string
+ *           enum: [createdAt, startTime, lastUpdateTime, depositedAmount, endTime]
+ *           default: createdAt
+ *         description: Field to sort by
+ *       - in: query
+ *         name: order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
+ *         description: Sort order
  *     responses:
  *       200:
- *         description: List of streams
+ *         description: A list of payment streams
  *         content:
  *           application/json:
  *             schema:
- *               type: array
- *               items:
- *                 $ref: '#/components/schemas/Stream'
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     $ref: '#/components/schemas/Stream'
+ *                 total:
+ *                   type: integer
+ *                 hasMore:
+ *                   type: boolean
  */
 router.get('/', listStreams);
+
+/**
+ * @openapi
+ * /v1/streams/summary/{address}:
+ *   get:
+ *     tags:
+ *       - Streams
+ *     summary: Get user stream summary
+ *     description: Returns aggregated stream data for a user (total created, streamed in/out, current claimable).
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key
+ *     responses:
+ *       200:
+ *         description: User stream summary
+ */
+router.get('/summary/:address', getUserStreamSummary);
 
 /**
  * @openapi
@@ -125,8 +123,8 @@ router.get('/', listStreams);
  *   get:
  *     tags:
  *       - Streams
- *     summary: Get a single stream
- *     description: Retrieve detailed information about a specific stream by its on-chain ID.
+ *     summary: Get stream details
+ *     description: Retrieve detailed information about a specific stream.
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -152,7 +150,7 @@ router.get('/:streamId', getStream);
  *   get:
  *     tags:
  *       - Streams
- *     summary: List stream events (paginated)
+ *     summary: Get stream events
  *     description: |
  *       Retrieve events for a specific stream with offset- or cursor-based pagination.
  *
