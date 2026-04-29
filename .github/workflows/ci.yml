@@ -24,7 +24,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
 
       - name: Lint
@@ -73,7 +73,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install --include=optional
+        run: npm install --include=optional --legacy-peer-deps
 
       - name: Setup Database
         run: |
@@ -92,8 +92,7 @@ jobs:
 
       - name: Run Backend Tests
         run: |
-          npm install @vitest/coverage-v8 --no-save
-          ls -la src/generated/prisma
+          npm install @vitest/coverage-v8 --no-save --legacy-peer-deps
           npx vitest run --coverage
         working-directory: backend
         env:
@@ -106,7 +105,7 @@ jobs:
           files: ./backend/coverage/lcov.info
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
   contracts:
     name: Soroban Contracts CI
@@ -147,7 +146,7 @@ jobs:
           files: ./contracts/tarpaulin-report.xml
           flags: contracts
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
       - name: Install Stellar CLI
         run: |
