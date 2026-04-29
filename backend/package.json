@@ -45,6 +45,7 @@
     "@types/supertest": "^7.2.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.6",
+    "eventsource": "^2.0.2",
     "nodemon": "^3.1.11",
     "prisma": "^7.4.1",
     "rollup": "^4.60.2",
