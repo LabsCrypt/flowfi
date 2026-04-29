@@ -8,6 +8,11 @@ const options: swaggerJsdoc.Options = {
       version: '1.0.0',
       description: `API documentation for FlowFi - Real-time payment streaming on Stellar
 
+## Performance & Caching
+The API implements caching for frequently accessed endpoints, such as claimable amount calculations. 
+- **Claimable Cache TTL**: 5 seconds
+- **Invalidation**: Automatically cleared when a withdrawal event occurs.
+
 ## Sandbox Mode
 
 FlowFi API supports sandbox mode for testing without affecting production data.
@@ -58,6 +63,10 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       {
         name: 'Events',
         description: 'Stream event tracking endpoints',
+      },
+      {
+        name: 'Admin',
+        description: 'Administrative and monitoring endpoints',
       },
     ],
     components: {

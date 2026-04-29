@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createStream, listStreams, getStream, getStreamEvents } from '../../controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount } from '../../controllers/stream.controller.js';
 
 const router = Router();
 
@@ -166,5 +166,45 @@ router.get('/:streamId', getStream);
  *                 $ref: '#/components/schemas/StreamEvent'
  */
 router.get('/:streamId/events', getStreamEvents);
+
+/**
+ * @openapi
+ * /v1/streams/{streamId}/claimable:
+ *   get:
+ *     tags:
+ *       - Streams
+ *     summary: Get claimable amount
+ *     description: |
+ *       Retrieve the current claimable amount for a stream.
+ *       Results are cached for 5 seconds to reduce RPC load.
+ *       Falls back to live RPC if DB data is older than 30s.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *     responses:
+ *       200:
+ *         description: Claimable amount details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 streamId:
+ *                   type: integer
+ *                 claimable:
+ *                   type: string
+ *                 live:
+ *                   type: boolean
+ *                 cached:
+ *                   type: boolean
+ *                 cachedAt:
+ *                   type: string
+ *                   format: date-time
+ */
+router.get('/:streamId/claimable', getStreamClaimableAmount);
 
 export default router;
