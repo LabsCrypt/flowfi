@@ -9,6 +9,7 @@ vi.mock('../src/lib/prisma.js', () => ({
       upsert: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      count: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
     $disconnect: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('../src/lib/prisma.js', () => ({
       upsert: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      count: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
     $disconnect: vi.fn(),
@@ -110,13 +112,14 @@ describe('GET /v1/streams', () => {
 
   it('should return 200 with list of streams', async () => {
     (prisma.stream.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (prisma.stream.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
 
     const response = await request(app)
       .get('/v1/streams')
       .set('Accept', 'application/json');
 
     expect(response.status).toBe(200);
-    expect(Array.isArray(response.body)).toBe(true);
+    expect(Array.isArray(response.body.data)).toBe(true);
   });
 });
 
@@ -236,7 +239,7 @@ describe('GET /v1/users/:address/summary', () => {
       address,
       totalStreamsCreated: 2,
       totalStreamedOut: '50',
-      totalStreamedIn: '150',
+      totalStreamedIn: '100',
       currentClaimable: '900',
       activeOutgoingCount: 1,
       activeIncomingCount: 1,

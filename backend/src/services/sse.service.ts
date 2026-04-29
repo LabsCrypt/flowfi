@@ -27,36 +27,10 @@ export class SSEService {
   private readonly ipConnectionCounts: Map<string, number> = new Map();
   private shuttingDown = false;
   private perIpPeakConnections = 0;
-  private heartbeatInterval?: NodeJS.Timeout;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.startHeartbeat();
-  }
-
-  private startHeartbeat(): void {
-    this.heartbeatInterval = setInterval(() => {
-      const now = Date.now();
-      const timeoutMs = 5 * 60 * 1000;
-
-      for (const [clientId, client] of this.clients.entries()) {
-        if (now - client.lastActivityAt > timeoutMs) {
-          logger.info(`[SSEService] Connection timed out: ${clientId}, ip: ${client.ip}`);
-          try {
-            client.res.end();
-          } catch (err) {
-            // ignore
-          }
-          continue;
-        }
-
-        try {
-          client.res.write(': keep-alive\n\n');
-          logger.debug(`[SSEService] Heartbeat sent: ${clientId}`);
-        } catch (err) {
-          // ignore
-        }
-      }
-    }, 30 * 1000);
   }
 
   private readonly maxConnections: number = (() => {
@@ -91,9 +65,9 @@ export class SSEService {
   }
 
   startHeartbeat(): void {
-    if (this.heartbeatTimer) return;
+    if (this.heartbeatInterval) return;
 
-    this.heartbeatTimer = setInterval(() => {
+    this.heartbeatInterval = setInterval(() => {
       this.sendHeartbeat();
       this.removeIdleConnections();
     }, HEARTBEAT_INTERVAL_MS);
@@ -102,9 +76,9 @@ export class SSEService {
   }
 
   stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
       logger.info('[SSEService] Heartbeat stopped');
     }
   }
@@ -220,6 +194,7 @@ export class SSEService {
     this.shuttingDown = true;
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
     }
     const message = 'event: reconnect\ndata: {}\n\n';
     for (const client of this.clients.values()) {

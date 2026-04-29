@@ -20,9 +20,6 @@ const startServer = async () => {
     // Connect Redis (graceful fallback to single-instance mode when absent)
     await connectRedis();
     await sseService.initRedisSubscription();
-    
-    // Start SSE heartbeat for connection management
-    sseService.startHeartbeat();
 
     const port = process.env.PORT || 3001;
     const server = app.listen(port, () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount } from "@/lib/amount";
 import TransactionTracker from "@/components/TransactionTracker";
@@ -29,7 +30,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
       event.eventType,
       event.amount ? formatAmount(BigInt(event.amount), 7) : "0",
       new Date(event.timestamp * 1000).toISOString(),
-      event.txHash || "",
+      event.transactionHash || "",
     ]);
 
     const csvContent = [headers, ...rows].map((e) => e.join(",")).join("\n");
@@ -47,27 +48,42 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
     document.body.removeChild(link);
   };
 
-  const formatEventMessage = (event: BackendStreamEvent) => {
+  const renderEventMessage = (event: BackendStreamEvent): React.ReactNode => {
     const amount = event.amount ? formatAmount(BigInt(event.amount), 7) : "0";
-    const streamId = event.streamId;
+    const link = (
+      <Link
+        href={`/streams/${event.streamId}`}
+        className="text-accent hover:underline font-mono"
+      >
+        #{event.streamId}
+      </Link>
+    );
 
     switch (event.eventType) {
       case "CREATED":
-        return `New stream created (#${streamId})`;
+        return <>New stream created ({link})</>;
       case "TOPPED_UP":
-        return `Topped up Stream #${streamId} with ${amount} tokens`;
+        return (
+          <>
+            Topped up Stream {link} with {amount} tokens
+          </>
+        );
       case "WITHDRAWN":
-        return `Withdrew ${amount} tokens from Stream #${streamId}`;
+        return (
+          <>
+            Withdrew {amount} tokens from Stream {link}
+          </>
+        );
       case "CANCELLED":
-        return `Stream #${streamId} was cancelled`;
+        return <>Stream {link} was cancelled</>;
       case "COMPLETED":
-        return `Stream #${streamId} was completed`;
+        return <>Stream {link} was completed</>;
       case "PAUSED":
-        return `Stream #${streamId} was paused`;
+        return <>Stream {link} was paused</>;
       case "RESUMED":
-        return `Stream #${streamId} was resumed`;
+        return <>Stream {link} was resumed</>;
       default:
-        return `Event on Stream #${streamId}`;
+        return <>Event on Stream {link}</>;
     }
   };
 
@@ -116,7 +132,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
               <div className="flex flex-col sm:flex-row justify-between items-start mb-2 gap-2">
                 <div>
                   <p className="text-white font-medium text-sm sm:text-base">
-                    {formatEventMessage(event)}
+                    {renderEventMessage(event)}
                   </p>
                   <time className="text-xs text-slate-400 flex items-center gap-1 mt-1">
                     {new Date(event.timestamp * 1000).toLocaleString()}
@@ -127,15 +143,15 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                 </span>
               </div>
 
-              {event.txHash && (
+              {event.transactionHash && (
                 <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
                   <TransactionTracker
                     status="confirmed"
-                    txHash={event.txHash}
+                    txHash={event.transactionHash}
                     streamId={event.streamId.toString()}
                   />
                   <a
-                    href={`https://stellar.expert/explorer/testnet/tx/${event.txHash}`}
+                    href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                     target="_blank"
                     className="text-slate-500 hover:text-white transition-colors"
                     title="View on Explorer"

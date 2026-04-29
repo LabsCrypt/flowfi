@@ -280,12 +280,6 @@ export class SorobanEventWorker {
       case 'fee_collected':
         await this.handleFeeCollected(event, topic1);
         break;
-      case 'stream_paused':
-        await this.handleStreamPaused(event, topic1);
-        break;
-      case 'stream_resumed':
-        await this.handleStreamResumed(event, topic1);
-        break;
       default:
         // Unrecognised event — ignore silently.
         break;
@@ -437,88 +431,6 @@ export class SorobanEventWorker {
       streamId,
       amount,
       newDepositedAmount,
-      transactionHash: event.txHash,
-      ledger: event.ledger,
-      timestamp,
-    });
-  }
-
-  private async handleStreamPaused(
-    event: rpc.Api.EventResponse,
-    streamIdTopic: xdr.ScVal,
-  ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    await prisma.$transaction(async (tx: any) => {
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          isPaused: true,
-          lastPausedAt: timestamp,
-        },
-      });
-
-      await tx.streamEvent.create({
-        data: {
-          streamId,
-          eventType: 'PAUSED',
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-        },
-      });
-    });
-
-    sseService.broadcastToStream(String(streamId), 'stream.paused', {
-      streamId,
-      isPaused: true,
-      transactionHash: event.txHash,
-      ledger: event.ledger,
-      timestamp,
-    });
-  }
-
-  private async handleStreamResumed(
-    event: rpc.Api.EventResponse,
-    streamIdTopic: xdr.ScVal,
-  ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    await prisma.$transaction(async (tx: any) => {
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: { totalPausedSeconds: true, lastPausedAt: true },
-      });
-
-      const lastPausedAt = stream.lastPausedAt ?? timestamp;
-      const pausedDuration = Math.max(0, timestamp - lastPausedAt);
-      const nextTotalPausedSeconds = stream.totalPausedSeconds + pausedDuration;
-
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          isPaused: false,
-          totalPausedSeconds: nextTotalPausedSeconds,
-          lastPausedAt: null,
-        },
-      });
-
-      await tx.streamEvent.create({
-        data: {
-          streamId,
-          eventType: 'RESUMED',
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-        },
-      });
-    });
-
-    sseService.broadcastToStream(String(streamId), 'stream.resumed', {
-      streamId,
-      isPaused: false,
       transactionHash: event.txHash,
       ledger: event.ledger,
       timestamp,
@@ -716,112 +628,6 @@ export class SorobanEventWorker {
       timestamp,
     });
   }
-
-  private async handleStreamPaused(
-    event: rpc.Api.EventResponse,
-    streamIdTopic: xdr.ScVal,
-  ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
-    const body = decodeMap(event.value);
-
-    if (!body['sender'] || !body['paused_at']) {
-      throw new Error(`StreamPaused #${streamId}: missing body fields`);
-    }
-
-    const sender = decodeAddress(body['sender']);
-    const pausedAt = Number(decodeU64(body['paused_at']));
-
-    await prisma.$transaction(async (tx: any) => {
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          isPaused: true,
-          pausedAt,
-          lastUpdateTime: pausedAt,
-        },
-      });
-
-      await tx.streamEvent.create({
-        data: {
-          streamId,
-          eventType: 'PAUSED',
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp: pausedAt,
-          metadata: JSON.stringify({ sender }),
-        },
-      });
-    });
-
-    sseService.broadcastToStream(String(streamId), 'stream.paused', {
-      streamId,
-      sender,
-      pausedAt,
-      transactionHash: event.txHash,
-      ledger: event.ledger,
-      timestamp: pausedAt,
-    });
-  }
-
-  private async handleStreamResumed(
-    event: rpc.Api.EventResponse,
-    streamIdTopic: xdr.ScVal,
-  ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
-    const body = decodeMap(event.value);
-
-    if (!body['sender'] || !body['new_end_time']) {
-      throw new Error(`StreamResumed #${streamId}: missing body fields`);
-    }
-
-    const sender = decodeAddress(body['sender']);
-    const newEndTime = Number(decodeU64(body['new_end_time']));
-    const timestamp = Math.floor(Date.now() / 1000);
-
-    await prisma.$transaction(async (tx: any) => {
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: { pausedAt: true, totalPausedDuration: true },
-      });
-
-      const pausedAt = stream.pausedAt || timestamp;
-      const pausedDuration = timestamp - pausedAt;
-
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          isPaused: false,
-          pausedAt: null,
-          endTime: newEndTime,
-          totalPausedDuration: {
-            increment: pausedDuration,
-          },
-          lastUpdateTime: timestamp,
-        },
-      });
-
-      await tx.streamEvent.create({
-        data: {
-          streamId,
-          eventType: 'RESUMED',
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ sender, newEndTime, pausedDuration }),
-        },
-      });
-    });
-
-    sseService.broadcastToStream(String(streamId), 'stream.resumed', {
-      streamId,
-      sender,
-      newEndTime,
-      transactionHash: event.txHash,
-      ledger: event.ledger,
-      timestamp,
-    });
-  }
-
   private async handleStreamPaused(
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
@@ -910,6 +716,7 @@ export class SorobanEventWorker {
         data: {
           isPaused: false,
           pausedAt: null,
+          endTime: newEndTime,
           totalPausedDuration: newTotalPausedDuration,
           lastUpdateTime: timestamp,
         },

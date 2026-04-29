@@ -5,8 +5,14 @@ import { useWallet } from "@/context/wallet-context";
 import { ActivityHistory } from "@/components/dashboard/ActivityHistory";
 import { BackendStreamEvent } from "@/lib/api-types";
 import { Button } from "@/components/ui/Button";
-import { Loader2 } from "lucide-react";
+import { Loader2, Download } from "lucide-react";
 import { formatAmount } from "@/lib/amount";
+import { downloadCSV } from "@/utils/csvExport";
+
+const PAGE_SIZE = 10;
+const API_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
+).replace(/\/+$/, "");
 
 const TABS = [
   { id: "ALL", label: "All" },
@@ -21,7 +27,7 @@ export default function ActivityPage() {
   const { session, status } = useWallet();
   const [events, setEvents] = useState<BackendStreamEvent[]>([]);
   const [activeTab, setActiveTab] = useState("ALL");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
@@ -31,23 +37,34 @@ export default function ActivityPage() {
       setLoading(true);
 
       try {
-        // Adjusting filter logic for the 'PAUSED' tab which includes RESUMED
         const typeFilter = tab === "PAUSED" ? "PAUSED,RESUMED" : tab;
-        const query = tab === "ALL" ? "" : `&type=${typeFilter}`;
+        const typeQuery = tab === "ALL" ? "" : `&type=${encodeURIComponent(typeFilter)}`;
+        const url =
+          `${API_BASE_URL}/v1/events?address=${encodeURIComponent(session.publicKey)}` +
+          `&page=${pageNum}&limit=${PAGE_SIZE}${typeQuery}`;
 
-        const response = await fetch(
-          `/v1/events?address=${session.publicKey}&page=${pageNum}&limit=10${query}`,
-        );
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch activity (${response.status})`);
+        }
         const data = await response.json();
 
-        if (data.events) {
-          setEvents((prev) =>
-            append ? [...prev, ...data.events] : data.events,
-          );
-          setHasMore(data.events.length === 10);
+        const next: BackendStreamEvent[] = Array.isArray(data?.events)
+          ? data.events
+          : [];
+
+        setEvents((prev) => (append ? [...prev, ...next] : next));
+
+        // Prefer the server-provided hasMore; fall back to a length heuristic.
+        if (typeof data?.hasMore === "boolean") {
+          setHasMore(data.hasMore);
+        } else {
+          setHasMore(next.length === PAGE_SIZE);
         }
       } catch (error) {
         console.error("Failed to fetch activity:", error);
+        if (!append) setEvents([]);
+        setHasMore(false);
       } finally {
         setLoading(false);
       }
@@ -56,7 +73,7 @@ export default function ActivityPage() {
   );
 
   useEffect(() => {
-    if (status === "connected" && !loading) {
+    if (status === "connected") {
       setPage(1);
       fetchActivity(1, activeTab, false);
     }
@@ -68,10 +85,22 @@ export default function ActivityPage() {
     fetchActivity(nextPage, activeTab, true);
   };
 
+  const handleExportCSV = () => {
+    const csvData = events.map(event => ({
+        'Stream ID': event.streamId,
+        'Event Type': event.eventType,
+        'Amount': event.amount ? formatAmount(BigInt(event.amount), 7) : '0',
+        'Timestamp': new Date(event.timestamp * 1000).toLocaleString(),
+        'Transaction Hash': event.transactionHash,
+        'Ledger': event.ledgerSequence,
+    }));
+    downloadCSV(csvData, `flowfi-activity-${Date.now()}.csv`);
+  };
+
   if (status !== "connected") {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+        <h1 className="text-2xl font-bold mb-2 text-white">Access Denied</h1>
         <p className="text-slate-400">
           Please connect your wallet to view your stream history.
         </p>
@@ -81,11 +110,23 @@ export default function ActivityPage() {
 
   return (
     <main className="max-w-4xl mx-auto py-8 px-4 sm:px-6">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2">Stream Activity</h1>
-        <p className="text-slate-400">
-          Track all your incoming and outgoing payment stream events.
-        </p>
+      <header className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2">Stream Activity</h1>
+          <p className="text-slate-400">
+            Track all your incoming and outgoing payment stream events.
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={handleExportCSV}
+          disabled={events.length === 0}
+          className="sm:w-auto w-full"
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Export CSV
+        </Button>
       </header>
 
       {/* Tabs */}
@@ -105,7 +146,7 @@ export default function ActivityPage() {
         ))}
       </div>
 
-      <ActivityHistory events={events} isLoading={loading} />
+      <ActivityHistory events={events} isLoading={loading && events.length === 0} />
 
       {hasMore && (
         <div className="mt-12 flex justify-center">

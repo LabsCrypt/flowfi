@@ -116,13 +116,12 @@ export class ClaimableAmountService {
       } as any;
     }
 
-    const streamStart = BigInt(Math.max(0, stream.startTime));
+    const anchorTime = BigInt(Math.max(0, stream.lastUpdateTime));
     const nowTs = BigInt(Math.max(0, calculatedAt));
-    let elapsed = nowTs > streamStart ? nowTs - streamStart : 0n;
+    let elapsed = nowTs > anchorTime ? nowTs - anchorTime : 0n;
 
-    const pastPausedDuration = BigInt(Math.max(0, stream.totalPausedDuration));
-    elapsed = elapsed > pastPausedDuration ? elapsed - pastPausedDuration : 0n;
-
+    // Paused duration is handled by the contract updating lastUpdateTime on resume,
+    // but we still account for it if it's currently paused.
     if (stream.isPaused && stream.pausedAt !== null) {
       const currentPauseStart = BigInt(Math.max(0, stream.pausedAt));
       if (nowTs > currentPauseStart) {
