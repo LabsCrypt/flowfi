@@ -25,6 +25,8 @@ pub enum DataKey {
     StreamCounter,
     /// Individual stream record, keyed by its unique u64 ID.
     Stream(u64),
+    /// Sender-owned stream ID list, keyed by sender address.
+    SenderStreams(Address),
     /// Protocol-level fee configuration (singleton).
     ProtocolConfig,
 }
