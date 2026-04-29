@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Account, Networks } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
@@ -77,6 +77,45 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
   return simSuccess.result!.retval;
 }
 
+async function submitContractCall(method: string, args: xdr.ScVal[], senderSecret: string): Promise<string> {
+  if (!CONTRACT_ID) throw new Error('CONTRACT_ID not set');
+
+  const keypair = Keypair.fromSecret(senderSecret);
+  const contract = new Contract(CONTRACT_ID);
+  const account = await server.getAccount(keypair.publicKey());
+
+  const op = contract.call(method, ...args);
+
+  const tx = new TransactionBuilder(account, {
+    fee: '1000',
+    networkPassphrase:
+      process.env.STELLAR_NETWORK === 'mainnet'
+        ? Networks.PUBLIC
+        : Networks.TESTNET,
+  })
+    .addOperation(op)
+    .setTimeout(30)
+    .build();
+
+  // Simulate first to get foot print and resource info
+  const simulation = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(simulation)) {
+    throw new Error(`Simulation failed: ${simulation.error}`);
+  }
+
+  // Assemble transaction with simulation results
+  const assembledTx = rpc.assembleTransaction(tx, simulation);
+  assembledTx.sign(keypair);
+
+  const response = await server.sendTransaction(assembledTx);
+
+  if (response.status === 'ERROR') {
+    throw new Error(`Transaction failed: ${JSON.stringify(response.errorResult)}`);
+  }
+
+  return response.hash;
+}
+
 export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
   if (!CONTRACT_ID) return null;
 
@@ -122,6 +161,12 @@ export async function getClaimableFromChain(streamId: number): Promise<string | 
     logger.error(`[SorobanService] getClaimableFromChain(${streamId}) failed:`, err);
     return null;
   }
+}
+
+export async function cancelStream(streamId: number, senderSecret: string): Promise<string> {
+  return submitContractCall('cancel_stream', [
+    nativeToScVal(streamId, { type: 'u64' }),
+  ], senderSecret);
 }
 
 /** Returns true when the DB record is older than STALE_THRESHOLD_MS. */
