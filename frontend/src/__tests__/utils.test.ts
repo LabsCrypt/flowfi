@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { convertArrayToCSV } from '../utils/csvExport';
 import { isValidStellarPublicKey } from '../lib/stellar';
+import {
+  fromStroops,
+  toStroops,
+  formatStreamRate,
+  hasValidPrecision,
+  getCachedTokenDecimals,
+  setCachedTokenDecimals,
+  clearTokenDecimalsCache,
+} from '../utils/amount';
 
 // ─── Amount / formatting utilities ───────────────────────────────────────────
 // The app stores raw i128 values (stroops) as strings; the dashboard divides
@@ -18,13 +28,6 @@ function parseAmount(tokenUnits: number): string {
 
 function formatRate(rawPerSecond: string): number {
   return parseFloat(rawPerSecond) / STROOPS_DIVISOR;
-}
-
-function hasValidPrecision(value: string, maxDecimals = 7): boolean {
-  if (!value || value.trim() === '') return false;
-  const parts = value.split('.');
-  if (parts.length === 1) return true;
-  return (parts[1]?.length ?? 0) <= maxDecimals;
 }
 
 describe('formatAmount', () => {
@@ -74,36 +77,9 @@ describe('formatRate', () => {
   });
 });
 
-describe('hasValidPrecision', () => {
-  it('accepts whole numbers', () => {
-    expect(hasValidPrecision('100')).toBe(true);
-    expect(hasValidPrecision('0')).toBe(true);
-  });
-
-  it('accepts values within the default 7-decimal limit', () => {
-    expect(hasValidPrecision('1.234')).toBe(true);
-    expect(hasValidPrecision('1.1234567')).toBe(true);
-  });
-
-  it('rejects values exceeding the 7-decimal limit', () => {
-    expect(hasValidPrecision('1.12345678')).toBe(false);
-  });
-
-  it('respects a custom maxDecimals argument', () => {
-    expect(hasValidPrecision('1.12', 2)).toBe(true);
-    expect(hasValidPrecision('1.123', 2)).toBe(false);
-  });
-
-  it('returns false for empty or whitespace strings', () => {
-    expect(hasValidPrecision('')).toBe(false);
-    expect(hasValidPrecision('   ')).toBe(false);
-  });
-});
-
 // ─── isValidStellarPublicKey ──────────────────────────────────────────────────
 
 describe('isValidStellarPublicKey (recipient validation)', () => {
-
   it('accepts a valid G-prefixed Ed25519 public key', () => {
     // Use a real randomly-generated testnet key
     const key = 'GDQERNIEDLE6SCKEAPO3ULKK5QQKFM3UIJMJQNBMKXPQR6HDYQTM2WO';
@@ -171,5 +147,126 @@ describe('convertArrayToCSV', () => {
   it('handles null and undefined cell values as empty strings', () => {
     const csv = convertArrayToCSV([{ a: null, b: undefined, c: 'ok' }]);
     expect(csv.split('\n')[1]).toBe(',,ok');
+  });
+});
+
+// ─── amount.ts ────────────────────────────────────────────────────────────────
+
+describe('fromStroops', () => {
+  it('converts 0 decimals — returns raw string', () => {
+    expect(fromStroops(42n, 0)).toBe('42');
+  });
+
+  it('converts to exact token units', () => {
+    expect(fromStroops(10_000_000n, 7)).toBe('1');
+    expect(fromStroops(50_000_000n, 7)).toBe('5');
+  });
+
+  it('produces fractional output', () => {
+    expect(fromStroops(5_000_000n, 7)).toBe('0.5');
+    expect(fromStroops(1n, 7)).toBe('0.0000001');
+  });
+
+  it('trims trailing zeros in fractional part', () => {
+    expect(fromStroops(12_300_000n, 7)).toBe('1.23');
+  });
+
+  it('handles zero', () => {
+    expect(fromStroops(0n, 7)).toBe('0');
+  });
+
+  it('handles large amounts', () => {
+    expect(fromStroops(1_000_000_000_000n, 7)).toBe('100000');
+  });
+
+  it('round-trips with toStroops', () => {
+    expect(fromStroops(toStroops('3.14', 7), 7)).toBe('3.14');
+  });
+});
+
+describe('toStroops', () => {
+  it('converts whole token units to stroops', () => {
+    expect(toStroops('1', 7)).toBe(10_000_000n);
+    expect(toStroops('5', 7)).toBe(50_000_000n);
+  });
+
+  it('converts fractional token units', () => {
+    expect(toStroops('0.5', 7)).toBe(5_000_000n);
+    expect(toStroops('0.0000001', 7)).toBe(1n);
+  });
+
+  it('returns 0n for empty/whitespace string', () => {
+    expect(toStroops('', 7)).toBe(0n);
+    expect(toStroops('   ', 7)).toBe(0n);
+  });
+
+  it('truncates fractional part exceeding decimals', () => {
+    expect(toStroops('1.12345678', 7)).toBe(toStroops('1.1234567', 7));
+  });
+
+  it('pads short fractional parts', () => {
+    expect(toStroops('1.5', 7)).toBe(15_000_000n);
+  });
+
+  it('handles 0 decimals', () => {
+    expect(toStroops('42', 0)).toBe(42n);
+  });
+});
+
+describe('formatStreamRate', () => {
+  it('includes per-second and per-month rates', () => {
+    const result = formatStreamRate(10_000_000n, 7, 'USDC');
+    expect(result).toContain('USDC/sec');
+    expect(result).toContain('USDC/month');
+  });
+
+  it('uses USDC as the default token symbol', () => {
+    expect(formatStreamRate(10_000_000n, 7)).toContain('USDC');
+  });
+
+  it('shows 0 rate as "0"', () => {
+    expect(formatStreamRate(0n, 7, 'XLM')).toMatch(/^0 XLM\/sec/);
+  });
+});
+
+describe('hasValidPrecision (amount.ts)', () => {
+  it('returns true for empty string', () => {
+    expect(hasValidPrecision('', 7)).toBe(true);
+  });
+
+  it('accepts whole numbers', () => {
+    expect(hasValidPrecision('100', 7)).toBe(true);
+  });
+
+  it('accepts fractional values within limit', () => {
+    expect(hasValidPrecision('1.1234567', 7)).toBe(true);
+  });
+
+  it('rejects values exceeding the decimal limit', () => {
+    expect(hasValidPrecision('1.12345678', 7)).toBe(false);
+  });
+
+  it('respects a custom decimal limit', () => {
+    expect(hasValidPrecision('1.12', 2)).toBe(true);
+    expect(hasValidPrecision('1.123', 2)).toBe(false);
+  });
+});
+
+describe('token decimals cache', () => {
+  beforeEach(() => { clearTokenDecimalsCache(); });
+
+  it('returns undefined for uncached address', () => {
+    expect(getCachedTokenDecimals('GABC')).toBeUndefined();
+  });
+
+  it('stores and retrieves decimals', () => {
+    setCachedTokenDecimals('GTOKEN', 7);
+    expect(getCachedTokenDecimals('GTOKEN')).toBe(7);
+  });
+
+  it('clearTokenDecimalsCache wipes all entries', () => {
+    setCachedTokenDecimals('GTOKEN', 7);
+    clearTokenDecimalsCache();
+    expect(getCachedTokenDecimals('GTOKEN')).toBeUndefined();
   });
 });

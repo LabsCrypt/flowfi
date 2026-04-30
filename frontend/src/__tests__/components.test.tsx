@@ -5,6 +5,9 @@ import React from 'react';
 // ─── LiveCounter ──────────────────────────────────────────────────────────────
 
 vi.mock('next/navigation', () => ({ useRouter: vi.fn() }));
+vi.mock('react-hot-toast', () => ({
+  default: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
+}));
 
 // Import after vi.mock registrations
 import LiveCounter from '../components/Livecounter';
@@ -41,7 +44,7 @@ describe('LiveCounter', () => {
     expect(label).not.toBeInTheDocument();
   });
 
-  it('resets to initial when isPaused switches to true', () => {
+  it('hides the streamed counter when isPaused becomes true', () => {
     const { rerender } = render(<LiveCounter initial={5} label="Streamed" />);
     act(() => { vi.advanceTimersByTime(3000); });
     rerender(<LiveCounter initial={5} label="Streamed" isPaused />);
