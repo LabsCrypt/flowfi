@@ -27,7 +27,7 @@ jobs:
         run: rm -rf node_modules frontend/node_modules backend/node_modules
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund --legacy-peer-deps
 
       - name: Lint
         run: npm run lint
@@ -72,7 +72,7 @@ jobs:
         run: rm -rf node_modules frontend/node_modules backend/node_modules
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund --legacy-peer-deps
 
       - name: Build frontend for E2E
         run: npm run build
@@ -126,7 +126,7 @@ jobs:
         run: rm -rf node_modules frontend/node_modules backend/node_modules
 
       - name: Install dependencies
-        run: npm ci --include=optional
+        run: npm install --no-audit --no-fund --legacy-peer-deps --include=optional
 
       - name: Setup Database
         run: |
