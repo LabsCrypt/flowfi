@@ -23,6 +23,9 @@ jobs:
         node-version: '20.19.0'
         cache: 'npm'
         
+    - name: Cleanup workspace
+      run: rm -rf node_modules frontend/node_modules backend/node_modules
+
     - name: Install dependencies
       env:
         HUSKY: 0
