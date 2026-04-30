@@ -4,9 +4,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 jobs:
   frontend:
@@ -29,7 +29,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-
       - name: Lint
         run: npm run lint
         working-directory: frontend
@@ -45,7 +44,6 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
-
 
   frontend-e2e:
     name: Frontend E2E
@@ -170,7 +168,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "contracts -> target"
+          workspaces: 'contracts -> target'
 
       - name: Build Contracts
         run: cargo build --target wasm32-unknown-unknown --release
