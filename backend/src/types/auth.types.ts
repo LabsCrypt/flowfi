@@ -12,10 +12,7 @@ export interface AuthUser {
  * Extended Express Request with authenticated user
  */
 export interface AuthenticatedRequest extends Request {
-  user: {
-    publicKey: string;
-    id?: string;
-  };
+  user: AuthUser
 }
 
 /**

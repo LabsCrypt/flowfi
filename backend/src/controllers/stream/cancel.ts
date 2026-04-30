@@ -47,24 +47,16 @@ import * as streamRepository from '../../repositories/stream.repository.js';
  */
 export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const rawStreamId = req.params.streamId;
+    const { streamId } = req.params;
     const callerAddress = req.user.publicKey;
 
-    
-    if (!rawStreamId) {
+    if (!streamId) {
       return res.status(400).json({ error: 'Missing streamId parameter' });
     }
 
-    const streamId = Array.isArray(rawStreamId)
-  ? rawStreamId[0]
-  : rawStreamId;
+  const parsedStreamId = parseInt(streamId, 10);
 
-  if (!streamId) {
-    return res.status(400).json({ error: 'Missing streamId parameter' });
-  }
-  const parsedStreamId = parseInt(streamId , 10);
-
-    // 1. Fetch stream from DB
+   // 1. Fetch stream from DB
     const stream = await prisma.stream.findUnique({
       where: { streamId: parsedStreamId }
     });
