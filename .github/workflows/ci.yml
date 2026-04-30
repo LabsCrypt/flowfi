@@ -4,9 +4,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [ main, develop ]
   pull_request:
-    branches: [main, develop]
+    branches: [ main, develop ]
 
 jobs:
   frontend:
@@ -23,11 +23,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      - name: Cleanup workspace
-        run: rm -rf node_modules frontend/node_modules backend/node_modules
-
       - name: Install dependencies
-        run: npm install --no-audit --no-fund --legacy-peer-deps
+        run: npm ci
+
 
       - name: Lint
         run: npm run lint
@@ -44,6 +42,7 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
+
 
   frontend-e2e:
     name: Frontend E2E
@@ -68,11 +67,8 @@ jobs:
           restore-keys: |
             playwright-browsers-${{ runner.os }}-
 
-      - name: Cleanup workspace
-        run: rm -rf node_modules frontend/node_modules backend/node_modules
-
       - name: Install dependencies
-        run: npm install --no-audit --no-fund --legacy-peer-deps
+        run: npm ci
 
       - name: Build frontend for E2E
         run: npm run build
@@ -122,11 +118,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      - name: Cleanup workspace
-        run: rm -rf node_modules frontend/node_modules backend/node_modules
-
       - name: Install dependencies
-        run: npm install --no-audit --no-fund --legacy-peer-deps --include=optional
+        run: npm ci --include=optional
 
       - name: Setup Database
         run: |
@@ -168,7 +161,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: 'contracts -> target'
+          workspaces: "contracts -> target"
 
       - name: Build Contracts
         run: cargo build --target wasm32-unknown-unknown --release
