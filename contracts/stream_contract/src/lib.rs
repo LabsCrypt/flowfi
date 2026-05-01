@@ -106,7 +106,11 @@ impl StreamContract {
     ///
     /// Transfers `amount` tokens from `sender` to the contract, deducts the
     /// protocol fee (if configured), and records the stream with a calculated
-    /// `rate_per_second = net_amount / duration`.
+    /// `rate_per_second = net_amount / duration`. Any remainder from the division
+    /// is truncated from `rate_per_second`. This means at exactly `start_time + duration`,
+    /// the claimable amount will be slightly less than `net_amount`. 
+    /// The remainder is only claimable if the stream runs past the initial duration,
+    /// or it is refunded to the sender if the stream is cancelled exactly at the end of the duration.
     ///
     /// Returns the new stream ID (starts at 1, increments monotonically).
     ///
