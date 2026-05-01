@@ -8,9 +8,9 @@
  */
 
 import React, { useRef, useEffect, useState } from "react";
-import toast from "react-hot-toast";
 import { Button } from "@/components/ui/Button";
-import { hasValidPrecision } from "@/lib/amount";
+import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
+import toast from "react-hot-toast";
 
 interface TopUpModalProps {
   streamId: string;
@@ -43,10 +43,13 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [onClose, isSubmitting]);
 
+  // Token decimals - using 7 as default (Stellar standard)
+  const TOKEN_DECIMALS = 7;
+
   const validate = (): boolean => {
-    const parsed = parseFloat(amount);
-    if (!amount.trim() || isNaN(parsed) || parsed <= 0) {
-      setError("Please enter a valid positive amount.");
+    const validationError = validateAmountInput(amount, TOKEN_DECIMALS);
+    if (validationError) {
+      setError(validationError);
       return false;
     }
     if (!hasValidPrecision(amount, 7)) {
@@ -117,13 +120,18 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
             <input
               ref={inputRef}
               id="topup-amount"
-              type="number"
-              step="any"
-              min="0"
+              type="text"
+              inputMode="decimal"
               value={amount}
               onChange={(e) => {
-                setAmount(e.target.value);
-                if (error) setError(null);
+                const newValue = e.target.value;
+                // Only allow valid number characters and check precision
+                if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
+                  if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
+                    setAmount(newValue);
+                    if (error) setError(null);
+                  }
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleConfirm();
