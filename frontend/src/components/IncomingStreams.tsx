@@ -4,7 +4,12 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
-import { formatAmount } from '@/lib/amount';
+import LiveCounter from '@/components/Livecounter';
+
+type ExtendedStream = Stream & {
+    isPaused?: boolean;
+    pausedAt?: number | string | Date;
+};
 
 interface IncomingStreamsProps {
     streams: ExtendedStream[];
@@ -26,7 +31,6 @@ const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
         isActive: stream.status === 'Active' && stream.isActive,
     });
 
-    // Fix: Removed 'as any' and used ExtendedStream properties
     const isPaused = stream.status === 'Paused' || stream.isPaused;
     const liveRate = stream.status === 'Active' && stream.ratePerSecond > 0;
 
@@ -34,10 +38,10 @@ const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
         <div className="flex flex-col">
             <span className={`font-bold tabular-nums ${liveRate ? 'text-emerald-600 dark:text-emerald-300' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
                 {isPaused ? (
-                    <LiveCounter 
-                        initial={claimable} 
-                        isPaused={!!isPaused} 
-                        pausedAt={stream.pausedAt} 
+                    <LiveCounter
+                        initial={claimable}
+                        isPaused={!!isPaused}
+                        pausedAt={stream.pausedAt}
                         label="Claimable"
                     />
                 ) : (
@@ -55,9 +59,6 @@ const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
     );
 };
 
-/**
- * Shown when the current filter returns no results.
- */
 const FilterEmptyState: React.FC<{ filter: string; onClearFilter: () => void }> = ({ filter, onClearFilter }) => (
     <div className="p-12 text-center">
         <div className="h-14 w-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
@@ -154,7 +155,6 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                         </thead>
                         <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredStreams.map((stream) => {
-                                // Fix: Replaced 'as any' with ExtendedStream logic
                                 const isPaused = stream.status === 'Paused' || stream.isPaused;
                                 return (
                                     <tr

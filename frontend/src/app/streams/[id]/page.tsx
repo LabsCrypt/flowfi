@@ -22,7 +22,6 @@ import {
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import { formatAmount, parseAmount, hasValidPrecision, formatRate } from "@/lib/amount";
-import type { WalletSession } from "@/lib/wallet";
 interface StreamDetail {
   id: string;
   sender: string;
