@@ -68,18 +68,12 @@ function buildSignedTransaction(keypair: StellarSdk.Keypair, nonce: string): str
 }
 
 async function getValidJwt(keypair: StellarSdk.Keypair): Promise<string> {
-  const challengeRes = await request(app)
-    .post('/v1/auth/challenge')
-    .send({ publicKey: keypair.publicKey() });
-
-  const { nonce } = challengeRes.body as { nonce: string };
-  const signedTransaction = buildSignedTransaction(keypair, nonce);
-
-  const verifyRes = await request(app)
-    .post('/v1/auth/verify')
-    .send({ publicKey: keypair.publicKey(), signedTransaction });
-
-  return (verifyRes.body as { token: string }).token;
+  // The pause/resume/withdraw routes are guarded by authMiddleware, which
+  // verifies a signed Stellar transaction envelope directly (not the JWT
+  // issued by /v1/auth/verify). Build a fresh signed envelope each call so
+  // the request supplies a valid bearer token.
+  const nonce = '00'.repeat(32);
+  return buildSignedTransaction(keypair, nonce);
 }
 
 describe('stream action routes', () => {

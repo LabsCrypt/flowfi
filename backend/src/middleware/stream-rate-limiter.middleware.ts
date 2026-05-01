@@ -1,4 +1,4 @@
-import { rateLimit } from 'express-rate-limit';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import { type Request, type Response, type NextFunction } from 'express';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import logger from '../logger.js';
@@ -28,7 +28,7 @@ export function createStreamRateLimiter(
     standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     message: {
-      error: 'Too many stream creation requests',
+      error: 'Too many stream creation requests - rate limit exceeded',
       message: 'You have exceeded the rate limit for stream creation. Please try again later.',
       status: 429,
     },
@@ -41,8 +41,9 @@ export function createStreamRateLimiter(
       if (authReq.user?.publicKey) {
         return authReq.user.publicKey; // Use wallet address as key
       }
-      // Fallback to IP if not authenticated (shouldn't happen for protected endpoints)
-      return req.ip || 'unknown';
+      // Fallback to IP if not authenticated (shouldn't happen for protected endpoints).
+      // Use ipKeyGenerator so IPv6 addresses are normalized correctly.
+      return req.ip ? ipKeyGenerator(req.ip) : 'unknown';
     },
     /**
      * Skip rate limiting for non-authenticated requests

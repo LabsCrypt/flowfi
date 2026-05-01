@@ -1,3 +1,7 @@
+import type { BackendStream } from "@/lib/api-types";
+import { TOKEN_ADDRESSES } from "@/lib/soroban";
+import { shortenPublicKey } from "@/lib/wallet";
+
 const DEFAULT_API_BASE_URL = "http://localhost:3001";
 
 function getApiBaseUrl(): string {
@@ -105,9 +109,7 @@ export async function withdrawStream(id: string): Promise<WithdrawStreamResponse
   }
 
   throw notFoundError ?? new Error("Failed to withdraw stream.");
-import type { BackendStream } from "@/lib/api-types";
-import { TOKEN_ADDRESSES } from "@/lib/soroban";
-import { shortenPublicKey } from "@/lib/wallet";
+}
 
 const STROOPS_DIVISOR = 1e7;
 

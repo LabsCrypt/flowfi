@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
 import LiveCounter from "@/components/Livecounter";
 import ProgressBar from "@/components/Progressbar";
 import { CancelStreamModal } from "@/components/streams/CancelStreamModal";
@@ -54,11 +52,8 @@ export default function StreamDetailsPage() {
   const [withdrawStatus, setWithdrawStatus] = useState<TransactionStatus>("idle");
   const [withdrawError, setWithdrawError] = useState<string | undefined>();
   const { cancel: cancelStream, isPending: cancelling } = useCancelStream<StreamDetail>();
-  const [cancelling, setCancelling] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [resuming, setResuming] = useState(false);
-  const [topUpAmount, setTopUpAmount] = useState("");
-  const [showTopUp, setShowTopUp] = useState(false);
   const [pauseResumeStatus, setPauseResumeStatus] =
     useState<TransactionStatus>("idle");
   const [pauseResumeTxHash, setPauseResumeTxHash] = useState<string | undefined>(
@@ -396,13 +391,12 @@ export default function StreamDetailsPage() {
           <div className="dashboard-panel__header">
             <h3>Claimable Balance</h3>
           </div>
-          <LiveCounter 
-            initial={claimable} 
-            label="Available to withdraw" 
-            isPaused={stream.isPaused} 
+          <LiveCounter
+            initial={displayedClaimable}
+            label="Available to withdraw"
+            isPaused={stream.isPaused}
             pausedAt={stream.pausedAt}
           />
-          <LiveCounter initial={displayedClaimable} label="Available to withdraw" />
         </div>
 
         {/* Actions */}
@@ -465,14 +459,6 @@ export default function StreamDetailsPage() {
                 {resuming ? "Resuming..." : "Resume Stream"}
               </Button>
             )}
-            <Button
-              onClick={handleCancel}
-              disabled={cancelling || !stream.isActive}
-              style={{ borderColor: "#ef4444", color: "#ef4444" }}
-              variant="outline"
-            >
-              {cancelling ? "Cancelling..." : "Cancel Stream"}
-            </Button>
           </div>
 
           {showTopUp && (
@@ -507,6 +493,10 @@ export default function StreamDetailsPage() {
                       : handlePause
                     : undefined
                 }
+              />
+            </div>
+          )}
+
           {withdrawStatus !== "idle" && (
             <div style={{ marginTop: "1rem" }}>
               <TransactionTracker
