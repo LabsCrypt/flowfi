@@ -4,20 +4,32 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
-import { formatAmount } from '@/lib/amount';
+import LiveCounter from '@/components/Livecounter';
+
+/**
+ * Local helper to format token amounts. 
+ * This replaces the deleted fromStroops utility to ensure the build passes.
+ */
+function formatTokenAmount(value: number, decimals: number = 7): string {
+    if (!Number.isFinite(value)) return '0.0000000';
+    // Converts stroops to a human-readable decimal string
+    const formatted = value / Math.pow(10, decimals);
+    return formatted.toFixed(decimals);
+}
+
+// Extended type to handle optional pause properties used in the visuals
+type ExtendedStream = Stream & {
+    isPaused?: boolean;
+    pausedAt?: number | string | Date;
+};
 
 interface IncomingStreamsProps {
-    streams: Stream[];
+    streams: ExtendedStream[];
     onWithdraw: (stream: Stream) => Promise<void>;
     withdrawingStreamId?: string | null;
 }
 
-function formatTokenAmount(value: number, decimals: number = 7): string {
-    if (!Number.isFinite(value)) return '0.0000000';
-    return formatAmount(BigInt(Math.floor(value)), decimals);
-}
-
-const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
+const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
     const claimable = useStreamingAmount({
         deposited: stream.deposited,
         withdrawn: stream.withdrawn,
@@ -26,17 +38,25 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
         isActive: stream.status === 'Active' && stream.isActive,
     });
 
-    const isPaused = stream.status === 'Paused';
+    const isPaused = stream.status === 'Paused' || stream.isPaused;
     const liveRate = stream.status === 'Active' && stream.ratePerSecond > 0;
 
     return (
         <div className="flex flex-col">
             <span className={`font-bold tabular-nums ${liveRate ? 'text-emerald-600 dark:text-emerald-300' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
-                {formatTokenAmount(claimable)} {stream.token}
+                {isPaused ? (
+                    <LiveCounter
+                        initial={claimable}
+                        isPaused={!!isPaused}
+                        pausedAt={stream.pausedAt?.toString()}                        label="Claimable"
+                    />
+                ) : (
+                    `${formatTokenAmount(claimable)} ${stream.token}`
+                )}
             </span>
             <span className={`text-xs tabular-nums ${liveRate ? 'text-emerald-500 dark:text-emerald-400' : isPaused ? 'text-gray-400 dark:text-gray-500' : 'text-gray-400 dark:text-gray-500'}`}>
                 {isPaused
-                    ? 'Stream paused'
+                    ? ''
                     : liveRate
                         ? `+${formatTokenAmount(stream.ratePerSecond)} ${stream.token}/sec`
                         : 'Stream inactive'}
@@ -45,11 +65,6 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
     );
 };
 
-/**
- * Shown when the current filter returns no results.
- * Distinguished from the global empty-state (no streams at all), which is
- * handled one level up in dashboard-view.tsx.
- */
 const FilterEmptyState: React.FC<{ filter: string; onClearFilter: () => void }> = ({ filter, onClearFilter }) => (
     <div className="p-12 text-center">
         <div className="h-14 w-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
@@ -89,7 +104,7 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
         setFilter(e.target.value as 'All' | 'Active' | 'Completed' | 'Paused');
     };
 
-    const handleWithdraw = async (stream: Stream) => {
+    const handleWithdraw = async (stream: ExtendedStream) => {
         try {
             await onWithdraw(stream);
             toast.success(`Successfully withdrew from stream #${stream.id}`);
@@ -125,7 +140,6 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                 </div>
             </div>
 
-            {/* Empty state when the filter matches nothing */}
             {filteredStreams.length === 0 ? (
                 <FilterEmptyState
                     filter={filter}
@@ -147,11 +161,11 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                         </thead>
                         <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredStreams.map((stream) => {
-                                const isPaused = stream.status === 'Paused';
+                                const isPaused = stream.status === 'Paused' || stream.isPaused;
                                 return (
                                     <tr
                                         key={stream.id}
-                                        className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${isPaused ? 'bg-gray-50/50 dark:bg-gray-800/50 opacity-75' : ''}`}
+                                        className={`hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${isPaused ? 'bg-gray-50/50 dark:bg-gray-800/50 grayscale opacity-75' : ''}`}
                                     >
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className={`text-sm font-mono ${isPaused ? 'text-gray-500 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100'}`}>
