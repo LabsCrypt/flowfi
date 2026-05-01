@@ -87,7 +87,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         }
     }, [publicKey, loadEvents]);
 
-    // Handle incoming SSE events
+    // Increment unread count for new events while dropdown is closed
     useEffect(() => {
         if (streamEvents.length > 0) {
             const newNotifications = streamEvents.map(event => ({

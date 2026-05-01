@@ -169,6 +169,15 @@ export async function cancelStream(streamId: number, senderSecret: string): Prom
   ], senderSecret);
 }
 
+export async function topUpStream(streamId: number, amount: bigint, callerAddress: string): Promise<string> {
+  if (!KEEPER_SECRET) throw new Error('KEEPER_SECRET_KEY not configured');
+  return submitContractCall('top_up_stream', [
+    nativeToScVal(streamId, { type: 'u64' }),
+    nativeToScVal(amount, { type: 'i128' }),
+    nativeToScVal(callerAddress, { type: 'address' }),
+  ], KEEPER_SECRET);
+}
+
 /** Returns true when the DB record is older than STALE_THRESHOLD_MS. */
 export function isStale(updatedAt: Date): boolean {
   return Date.now() - updatedAt.getTime() > STALE_THRESHOLD_MS;
