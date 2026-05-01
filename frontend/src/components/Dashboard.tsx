@@ -6,6 +6,12 @@ import { BackendStreamEvent } from '@/lib/api-types';
 import { downloadCSV } from '@/utils/csvExport';
 import toast from 'react-hot-toast';
 import { fromStroops } from '@/utils/amount';
+import { TopUpModal } from './stream-creation/TopUpModal';
+import {
+    topUpStream as sorobanTopUp,
+    toBaseUnits,
+    toSorobanErrorMessage,
+} from '@/lib/soroban';
 
 interface StreamData extends Record<string, unknown> {
     id: string;
@@ -31,14 +37,9 @@ const Dashboard: React.FC = () => {
     const [activeTab, setActiveTab] = React.useState<'streams' | 'activity'>('streams');
     const [events, setEvents] = React.useState<BackendStreamEvent[]>([]);
     const [isLoadingEvents, setIsLoadingEvents] = React.useState(false);
+    const [topUpStream, setTopUpStream] = React.useState<StreamData | null>(null);
 
-    React.useEffect(() => {
-        if (activeTab === 'activity' && session?.publicKey) {
-            loadEvents();
-        }
-    }, [activeTab, session?.publicKey]);
-
-    const loadEvents = async () => {
+    const loadEvents = React.useCallback(async () => {
         if (!session?.publicKey) return;
         setIsLoadingEvents(true);
         try {
@@ -50,19 +51,42 @@ const Dashboard: React.FC = () => {
         } finally {
             setIsLoadingEvents(false);
         }
-    };
+    }, [session?.publicKey]);
+
+    React.useEffect(() => {
+        if (activeTab === 'activity' && session?.publicKey) {
+            loadEvents();
+        }
+    }, [activeTab, session?.publicKey, loadEvents]);
 
     const handleExport = () => {
         downloadCSV(mockStreams, 'flowfi-stream-history.csv');
         toast.success('CSV exported successfully!');
     };
 
-    const handleTopUp = (streamId: string) => {
-        const amount = prompt(`Enter amount to add to stream ${streamId}:`);
-        if (amount && parseFloat(amount) > 0) {
-            console.log(`Adding ${amount} funds to stream ${streamId}`);
-            // TODO: Integrate with Soroban contract's top_up_stream function
-            toast.success(`Successfully added ${amount} to stream ${streamId}`);
+    const handleTopUp = (stream: StreamData) => {
+        if (!session) {
+            toast.error('Please connect your wallet first');
+            return;
+        }
+        setTopUpStream(stream);
+    };
+
+    const handleTopUpConfirm = async (streamId: string, amountStr: string) => {
+        if (!session) {
+            throw new Error('Wallet not connected');
+        }
+        const toastId = toast.loading('Topping up stream…');
+        try {
+            await sorobanTopUp(session, {
+                streamId: BigInt(streamId.replace(/\D/g, '') || '0'),
+                amount: toBaseUnits(amountStr),
+            });
+            toast.success('Stream topped up successfully!', { id: toastId });
+            setTopUpStream(null);
+        } catch (err) {
+            toast.error(toSorobanErrorMessage(err), { id: toastId });
+            throw err;
         }
     };
 
@@ -126,7 +150,7 @@ const Dashboard: React.FC = () => {
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         {stream.status === 'Active' && (
                                             <button
-                                                onClick={() => handleTopUp(stream.id)}
+                                                onClick={() => handleTopUp(stream)}
                                                 className="text-green-600 hover:text-green-900 dark:text-green-400 dark:hover:text-green-300 bg-green-50 dark:bg-green-900/20 px-3 py-1 rounded-md transition-colors font-semibold"
                                             >
                                                 Add Funds
@@ -154,6 +178,16 @@ const Dashboard: React.FC = () => {
                         <ActivityHistory events={events} isLoading={isLoadingEvents} />
                     )}
                 </>
+            )}
+
+            {topUpStream && (
+                <TopUpModal
+                    streamId={topUpStream.id}
+                    token={topUpStream.token}
+                    currentDeposited={topUpStream.deposited}
+                    onConfirm={handleTopUpConfirm}
+                    onClose={() => setTopUpStream(null)}
+                />
             )}
         </div>
     );

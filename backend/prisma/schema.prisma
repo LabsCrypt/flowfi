@@ -36,7 +36,11 @@ model Stream {
   withdrawnAmount   String    // Total withdrawn amount (i128)
   startTime         Int       // Unix timestamp when stream started
   lastUpdateTime    Int       // Unix timestamp of last update
+  endTime           Int?      // Unix timestamp when stream ends
   isActive          Boolean   @default(true)
+  isPaused          Boolean   @default(false)
+  pausedAt          Int?      // Unix timestamp when paused
+  totalPausedDuration Int     @default(0) // Accumulated paused duration in seconds
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -49,6 +53,7 @@ model Stream {
   @@index([recipient])
   @@index([streamId])
   @@index([isActive])
+  @@index([isPaused])
 }
 
 // IndexerState model - tracks the last processed ledger/cursor for the Soroban event worker
@@ -63,7 +68,7 @@ model IndexerState {
 model StreamEvent {
   id              String   @id @default(uuid())
   streamId        Int      // Reference to on-chain stream ID
-  eventType       String   // EventType: "CREATED", "TOPPED_UP", "WITHDRAWN", "CANCELLED", "COMPLETED"
+  eventType       String   // EventType: "CREATED", "TOPPED_UP", "WITHDRAWN", "CANCELLED", "COMPLETED", "PAUSED", "RESUMED"
   amount          String?  // Amount involved in the event (for top-ups, withdrawals)
   transactionHash String   // Stellar transaction hash
   ledgerSequence  Int      // Ledger sequence number

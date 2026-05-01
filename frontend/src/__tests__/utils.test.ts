@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { convertArrayToCSV, downloadCSV } from '../utils/csvExport';
+import { convertArrayToCSV } from '../utils/csvExport';
 import { isValidStellarPublicKey } from '../lib/stellar';
 
 // ─── Amount / formatting utilities ───────────────────────────────────────────
@@ -103,7 +103,6 @@ describe('hasValidPrecision', () => {
 // ─── isValidStellarPublicKey ──────────────────────────────────────────────────
 
 describe('isValidStellarPublicKey (recipient validation)', () => {
-  const VALID_KEY = 'GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA';
 
   it('accepts a valid G-prefixed Ed25519 public key', () => {
     // Use a real randomly-generated testnet key

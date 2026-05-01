@@ -1,10 +1,7 @@
 import { defineConfig } from 'vitest/config';
-import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  // Use only the React plugin — skip Next.js / PostCSS / Tailwind which break in test env
-  plugins: [react()],
   css: { postcss: { plugins: [] } },
   test: {
     environment: 'happy-dom',

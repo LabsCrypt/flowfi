@@ -27,7 +27,8 @@ flowfi/
 │   ├── stream_contract/  # Core streaming logic
 ├── frontend/             # Next.js + Tailwind CSS frontend
 ├── docs/                 # Documentation
-│   └── ARCHITECTURE.md   # Architecture overview
+│   ├── ARCHITECTURE.md   # Architecture overview
+│   └── DEVELOPMENT.md    # Local development guide
 ```
 
 ## Architecture
@@ -43,6 +44,8 @@ For a detailed explanation of how these components interact, where event indexin
 For full local setup and contributor onboarding, see the [Development Guide](docs/DEVELOPMENT.md).
 
 ## Getting Started
+
+For full step-by-step instructions, see our [Development Guide](docs/DEVELOPMENT.md).
 
 ### Prerequisites
 
@@ -98,11 +101,12 @@ npm install
 npm run dev
 ```
 
-### Smart Contracts
+### Deployment
+
+To build, optimize, and deploy the smart contract to a Stellar network, you can use the automated deployment script:
 
 ```bash
-cd contracts
-cargo build --target wasm32-unknown-unknown --release
+./scripts/deploy.sh --network testnet
 ```
 
 ## Deployment
@@ -280,7 +284,7 @@ Have questions? Want to share ideas or projects? Join the conversation!
 - **❓ [Ask Questions](https://github.com/flowfi/flowfi/discussions/categories/q-a)** - Get help in GitHub Discussions Q&A
 - **💡 [Share Ideas](https://github.com/flowfi/flowfi/discussions/categories/ideas)** - Propose features and discuss improvements
 - **🎪 [Show and Tell](https://github.com/flowfi/flowfi/discussions/categories/show-and-tell)** - Share projects and use cases built with FlowFi
-- **📖 [Discussions Guide](DISCUSSIONS.md)** - Learn when to use Discussions vs Issues
+- **📖 [Discussions Guide](DISCUSSIONS.md)** - Learn when to use Discussions vs Issues.
 
 ## Contributors
 
@@ -295,4 +299,4 @@ This project follows the [all-contributors](https://github.com/all-contributors/
 
 ## License
 
-MIT
+MIT.

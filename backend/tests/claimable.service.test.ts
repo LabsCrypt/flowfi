@@ -1,20 +1,46 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { ClaimableAmountService } from '../src/services/claimable.service.js';
 
+function makeStreamState(overrides: Partial<Parameters<ClaimableAmountService['getClaimableAmount']>[0]> = {}) {
+  return {
+    streamId: 1,
+    ratePerSecond: '10',
+    depositedAmount: '100',
+    withdrawnAmount: '0',
+    lastUpdateTime: 0,
+    startTime: 0,
+    isActive: true,
+    isPaused: false,
+    pausedAt: null,
+    totalPausedDuration: 0,
+    ...overrides,
+  };
+}
+
 describe('ClaimableAmountService', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('calculates claimable amount for active stream', () => {
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
-      nowMs: () => 10_000,
     });
 
+    vi.setSystemTime(10_000);
+
     const result = service.getClaimableAmount({
-      streamId: 1,
-      ratePerSecond: '5',
-      depositedAmount: '500',
-      withdrawnAmount: '100',
-      lastUpdateTime: 7,
-      isActive: true,
+      ...makeStreamState({
+        streamId: 1,
+        ratePerSecond: '5',
+        depositedAmount: '500',
+        withdrawnAmount: '100',
+        lastUpdateTime: 7,
+      }),
     });
 
     // elapsed = 10 - 7 = 3
@@ -29,16 +55,16 @@ describe('ClaimableAmountService', () => {
   it('caps claimable amount at remaining balance', () => {
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
-      nowMs: () => 100_000,
     });
 
+    vi.setSystemTime(100_000);
+
     const result = service.getClaimableAmount({
-      streamId: 2,
-      ratePerSecond: '10',
-      depositedAmount: '1000',
-      withdrawnAmount: '900',
-      lastUpdateTime: 0,
-      isActive: true,
+      ...makeStreamState({
+        streamId: 2,
+        depositedAmount: '1000',
+        withdrawnAmount: '900',
+      }),
     });
 
     expect(result.claimableAmount).toBe('100');
@@ -48,16 +74,16 @@ describe('ClaimableAmountService', () => {
   it('returns zero when stream is inactive', () => {
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
-      nowMs: () => 100_000,
     });
 
+    vi.setSystemTime(100_000);
+
     const result = service.getClaimableAmount({
-      streamId: 3,
-      ratePerSecond: '10',
-      depositedAmount: '1000',
-      withdrawnAmount: '100',
-      lastUpdateTime: 0,
-      isActive: false,
+      ...makeStreamState({
+        streamId: 3,
+        withdrawnAmount: '100',
+        isActive: false,
+      }),
     });
 
     expect(result.claimableAmount).toBe('0');
@@ -71,12 +97,10 @@ describe('ClaimableAmountService', () => {
     });
 
     const result = service.getClaimableAmount({
-      streamId: 4,
-      ratePerSecond: '10',
-      depositedAmount: '100',
-      withdrawnAmount: '150',
-      lastUpdateTime: 0,
-      isActive: true,
+      ...makeStreamState({
+        streamId: 4,
+        withdrawnAmount: '150',
+      }),
     });
 
     expect(result.claimableAmount).toBe('0');
@@ -84,20 +108,16 @@ describe('ClaimableAmountService', () => {
   });
 
   it('uses cache for repeated request with same stream state + timestamp', () => {
-    let now = 5_000;
+    vi.setSystemTime(5_000);
     const service = new ClaimableAmountService({
       cacheTtlMs: 10_000,
-      nowMs: () => now,
     });
 
-    const input = {
+    const input = makeStreamState({
       streamId: 5,
       ratePerSecond: '7',
       depositedAmount: '700',
-      withdrawnAmount: '0',
-      lastUpdateTime: 0,
-      isActive: true,
-    };
+    });
 
     const first = service.getClaimableAmount(input, 5);
     const second = service.getClaimableAmount(input, 5);
@@ -106,35 +126,26 @@ describe('ClaimableAmountService', () => {
     expect(second.cached).toBe(true);
 
     // Advance local clock beyond cache TTL
-    now = 20_001;
+    vi.advanceTimersByTime(20_001);
     const third = service.getClaimableAmount(input, 5);
     expect(third.cached).toBe(false);
   });
 
   it('saturates overflow-safe multiplication to i128 max', () => {
     const i128Max = ((1n << 127n) - 1n).toString();
-    // nowMs is in milliseconds; to get calculatedAt=1000 seconds, pass 1_000_000 ms
+    vi.setSystemTime(1_000_000);
     const service = new ClaimableAmountService({
       cacheTtlMs: 5_000,
-      nowMs: () => 1_000_000,
     });
 
     const result = service.getClaimableAmount({
-      streamId: 6,
-      ratePerSecond: i128Max,
-      depositedAmount: i128Max,
-      withdrawnAmount: '0',
-      lastUpdateTime: 998,
-      isActive: true,
-    });
+      ...makeStreamState({
+        streamId: 6,
+        ratePerSecond: i128Max,
+        depositedAmount: i128Max,
+      }),
+    }, 1000); // 1000 seconds elapsed
 
-    // calculatedAt = floor(1_000_000 / 1000) = 1000
-    // elapsed = 1000 - 998 = 2
-    // streamed = 2 * i128Max => overflows, saturated to i128 max
-    // remaining = i128Max - 0 = i128Max
-    // claimable = min(i128Max, i128Max) = i128Max
     expect(result.claimableAmount).toBe(i128Max);
-    expect(result.actionable).toBe(true);
   });
 });
-

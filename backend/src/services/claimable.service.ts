@@ -1,3 +1,5 @@
+import { cache } from '../lib/redis.js';
+
 const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
@@ -6,8 +8,12 @@ export interface ClaimableStreamState {
   ratePerSecond: string;
   depositedAmount: string;
   withdrawnAmount: string;
+  startTime: number;
   lastUpdateTime: number;
   isActive: boolean;
+  isPaused: boolean;
+  pausedAt: number | null;
+  totalPausedDuration: number;
   updatedAt?: Date;
 }
 
@@ -60,8 +66,12 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
     stream.ratePerSecond,
     stream.depositedAmount,
     stream.withdrawnAmount,
+    stream.startTime,
     stream.lastUpdateTime,
     stream.isActive ? '1' : '0',
+    stream.isPaused ? '1' : '0',
+    stream.pausedAt ?? 'null',
+    stream.totalPausedDuration,
   ].join(':');
 }
 
@@ -73,17 +83,16 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
  * - claimable = min(streamed, remaining)
  */
 export class ClaimableAmountService {
-  private readonly cache = new Map<string, ClaimableCacheEntry>();
   private readonly cacheTtlMs: number;
   private readonly nowMs: () => number;
 
   constructor(options: ClaimableServiceOptions = {}) {
-    this.cacheTtlMs = Math.max(0, options.cacheTtlMs ?? 1000);
+    this.cacheTtlMs = Math.max(0, options.cacheTtlMs ?? 5000); // Default to 5s as per Issue #377
     this.nowMs = options.nowMs ?? (() => Date.now());
   }
 
   clearCache(): void {
-    this.cache.clear();
+    // Internal cache is handled by redis/MemoryCache cleanup
   }
 
   getClaimableAmount(
@@ -95,20 +104,31 @@ export class ClaimableAmountService {
         ? Math.floor(requestedAt)
         : Math.floor(this.nowMs() / 1000);
 
-    const cacheKey = `${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
-    const nowMs = this.nowMs();
-    const cachedEntry = this.cache.get(cacheKey);
+    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
+    const cachedEntry = cache.get<Omit<ClaimableAmountResult, 'cached'>>(cacheKey);
 
-    if (cachedEntry && cachedEntry.expiresAtMs > nowMs) {
+    if (cachedEntry) {
+      const metadata = cache.getMetadata(cacheKey);
       return {
-        ...cachedEntry.value,
+        ...cachedEntry,
         cached: true,
-      };
+        cachedAt: metadata?.createdAt
+      } as any;
     }
 
-    const streamLastUpdate = BigInt(Math.max(0, stream.lastUpdateTime));
+    const anchorTime = BigInt(Math.max(0, stream.lastUpdateTime));
     const nowTs = BigInt(Math.max(0, calculatedAt));
-    const elapsed = nowTs > streamLastUpdate ? nowTs - streamLastUpdate : 0n;
+    let elapsed = nowTs > anchorTime ? nowTs - anchorTime : 0n;
+
+    // Paused duration is handled by the contract updating lastUpdateTime on resume,
+    // but we still account for it if it's currently paused.
+    if (stream.isPaused && stream.pausedAt !== null) {
+      const currentPauseStart = BigInt(Math.max(0, stream.pausedAt));
+      if (nowTs > currentPauseStart) {
+        const currentPauseDuration = nowTs - currentPauseStart;
+        elapsed = elapsed > currentPauseDuration ? elapsed - currentPauseDuration : 0n;
+      }
+    }
 
     const ratePerSecond = parseI128(stream.ratePerSecond, 'ratePerSecond');
     const depositedAmount = parseI128(stream.depositedAmount, 'depositedAmount');
@@ -130,10 +150,7 @@ export class ClaimableAmountService {
       calculatedAt,
     };
 
-    this.cache.set(cacheKey, {
-      value,
-      expiresAtMs: nowMs + this.cacheTtlMs,
-    });
+    cache.set(cacheKey, value, this.cacheTtlMs / 1000);
 
     return {
       ...value,

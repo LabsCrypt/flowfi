@@ -16,11 +16,16 @@ export default function LiveCounter({
   pausedAt,
 }: LiveCounterProps) {
   const [amount, setAmount] = useState(initial);
+  const [prevInitial, setPrevInitial] = useState(initial);
+  const [prevIsPaused, setPrevIsPaused] = useState(isPaused);
 
-  useEffect(() => {
-    // Reset amount when initial value changes
+  // Synchronously update state during render if props change
+  // This avoids cascading effects and satisfies the linter
+  if (initial !== prevInitial || isPaused !== prevIsPaused) {
+    setPrevInitial(initial);
+    setPrevIsPaused(isPaused);
     setAmount(initial);
-  }, [initial]);
+  }
 
   useEffect(() => {
     // Don't increment if paused
@@ -33,10 +38,10 @@ export default function LiveCounter({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [initial, isPaused]);
+  }, [isPaused]);
 
   const formatPausedTime = (pausedAtStr: string | undefined): string => {
-    if (!pausedAtStr) return "";
+    if (!pausedAtStr) return "Paused";
     try {
       const pausedDate = new Date(pausedAtStr);
       const now = new Date();
@@ -88,7 +93,10 @@ export default function LiveCounter({
 
       <p style={{ margin: 0, fontSize: "0.92rem", color: "var(--text-muted)" }}>
         {isPaused ? (
-          formatPausedTime(pausedAt)
+          <>
+            <span style={{ color: '#ef4444', fontWeight: 600 }}>{formatPausedTime(pausedAt)}</span>
+            <span style={{ marginLeft: '0.5rem' }}>({amount.toLocaleString()})</span>
+          </>
         ) : (
           <>
             {label}:{" "}

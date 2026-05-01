@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
-import { X, AlertCircle } from "lucide-react";
+import React, { useMemo } from "react";
+import { AlertCircle } from "lucide-react";
 
 interface SSEStatusIndicatorProps {
   connected: boolean;

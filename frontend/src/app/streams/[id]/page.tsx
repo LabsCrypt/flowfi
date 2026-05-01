@@ -1,21 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import LiveCounter from "@/components/Livecounter";
 import ProgressBar from "@/components/Progressbar";
+import { CancelStreamModal } from "@/components/streams/CancelStreamModal";
+import TransactionTracker, {
+  type TransactionStatus,
+} from "@/components/TransactionTracker";
 import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/wallet-context";
+import { useCancelStream } from "@/hooks/useCancelStream";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { useWithdrawStream } from "@/hooks/useWithdrawStream";
 import {
-  withdrawFromStream,
-  cancelStream,
   topUpStream,
+  pauseStream,
+  resumeStream,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
-import type { WalletSession } from "@/lib/wallet";
-
 interface StreamDetail {
   id: string;
   sender: string;
@@ -34,49 +39,61 @@ interface StreamDetail {
 
 export default function StreamDetailsPage() {
   const params = useParams();
-  const router = useRouter();
   const streamId = params.id as string;
   const { session, isHydrated } = useWallet();
   
   const [stream, setStream] = useState<StreamDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState("");
   const [showTopUp, setShowTopUp] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [withdrawTxHash, setWithdrawTxHash] = useState<string | undefined>();
+  const [withdrawStatus, setWithdrawStatus] = useState<TransactionStatus>("idle");
+  const [withdrawError, setWithdrawError] = useState<string | undefined>();
+  const { cancel: cancelStream, isPending: cancelling } = useCancelStream<StreamDetail>();
+  const [pausing, setPausing] = useState(false);
+  const [resuming, setResuming] = useState(false);
+  const [pauseResumeStatus, setPauseResumeStatus] =
+    useState<TransactionStatus>("idle");
+  const [pauseResumeTxHash, setPauseResumeTxHash] = useState<string | undefined>(
+    undefined,
+  );
+  const [pauseResumeError, setPauseResumeError] = useState<string | undefined>(
+    undefined,
+  );
+  const { withdraw: withdrawStream, isPending: withdrawing } = useWithdrawStream();
 
   // SSE integration for real-time stream updates
-  const { events: streamEvents, connected, reconnecting } = useStreamEvents({
+  const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],
     autoReconnect: true,
   });
 
+  const fetchStream = useCallback(async () => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const response = await fetch(`${baseUrl}/v1/streams/${streamId}`);
+      if (!response.ok) {
+        throw new Error("Stream not found");
+      }
+      const data = await response.json();
+      setStream(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch stream");
+    } finally {
+      setLoading(false);
+    }
+  }, [streamId]);
+
   useEffect(() => {
-    if (!isHydrated || !session) {
+    if (!isHydrated || !session || !streamId) {
       return;
     }
 
-    async function fetchStream() {
-      try {
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-        const response = await fetch(`${baseUrl}/v1/streams/${streamId}`);
-        if (!response.ok) {
-          throw new Error("Stream not found");
-        }
-        const data = await response.json();
-        setStream(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch stream");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    if (streamId) {
-      fetchStream();
-    }
-  }, [streamId, session, isHydrated]);
+    void fetchStream();
+  }, [fetchStream, isHydrated, session, streamId]);
 
   // Handle SSE events to update stream state in real-time
   useEffect(() => {
@@ -84,23 +101,9 @@ export default function StreamDetailsPage() {
       const latestEvent = streamEvents[0];
       console.log('Stream event received:', latestEvent);
       
-      // Re-fetch stream data to get the latest state from server
-      async function refetchStream() {
-        try {
-          const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-          const response = await fetch(`${baseUrl}/v1/streams/${streamId}`);
-          if (response.ok) {
-            const data = await response.json();
-            setStream(data);
-          }
-        } catch (err) {
-          console.error('Failed to refresh stream:', err);
-        }
-      }
-
-      refetchStream();
+      void fetchStream();
     }
-  }, [streamEvents, streamId]);
+  }, [fetchStream, streamEvents]);
 
   const handleWithdraw = async () => {
     if (!session) {
@@ -108,39 +111,51 @@ export default function StreamDetailsPage() {
       return;
     }
 
-    setWithdrawing(true);
+    setWithdrawStatus("idle");
+    setWithdrawError(undefined);
+
     try {
-      await withdrawFromStream(session, { streamId: BigInt(streamId) });
-      toast.success("Withdrawal successful!");
-      // Refresh stream data
-      window.location.reload();
+      const { txHash } = await withdrawStream(streamId);
+      setWithdrawTxHash(txHash);
+      setWithdrawStatus("submitted");
+      setStream((current) =>
+        current
+          ? {
+              ...current,
+              withdrawnAmount: current.depositedAmount,
+              lastUpdateTime: Math.floor(Date.now() / 1000),
+            }
+          : current,
+      );
+      toast.success("Withdraw transaction submitted.");
+      void fetchStream();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setWithdrawing(false);
+      const message = err instanceof Error ? err.message : "Failed to withdraw stream.";
+      setWithdrawError(message);
+      setWithdrawStatus("failed");
+      toast.error(message);
     }
   };
 
-  const handleCancel = async () => {
+  const handleConfirmCancel = async () => {
     if (!session) {
       toast.error("Please connect your wallet first");
       return;
     }
 
-    if (!confirm("Are you sure you want to cancel this stream?")) {
-      return;
-    }
-
-    setCancelling(true);
     try {
-      await cancelStream(session, { streamId: BigInt(streamId) });
-      toast.success("Stream cancelled successfully!");
-      // Refresh stream data
-      window.location.reload();
+      const cancelledStream = await cancelStream(streamId);
+      setStream((current) => ({
+        ...(current ?? cancelledStream),
+        ...cancelledStream,
+        status: "CANCELLED",
+        isActive: false,
+      }));
+      setShowCancelModal(false);
+      toast.success("Stream cancelled successfully.");
+      void fetchStream();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setCancelling(false);
+      toast.error(err instanceof Error ? err.message : "Failed to cancel stream.");
     }
   };
 
@@ -170,6 +185,77 @@ export default function StreamDetailsPage() {
     }
   };
 
+  const refetchStream = async () => {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      const response = await fetch(`${baseUrl}/v1/streams/${streamId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setStream(data);
+      }
+    } catch (err) {
+      console.error("Failed to refresh stream:", err);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!session) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    setPausing(true);
+    setPauseResumeError(undefined);
+    setPauseResumeTxHash(undefined);
+    setPauseResumeStatus("signing");
+    try {
+      const result = await pauseStream(session, {
+        streamId: BigInt(streamId),
+      });
+      setPauseResumeTxHash(result.txHash);
+      setPauseResumeStatus("submitted");
+      toast.success("Stream pause submitted!");
+      await refetchStream();
+      setPauseResumeStatus("confirmed");
+    } catch (err) {
+      const message = toSorobanErrorMessage(err);
+      setPauseResumeError(message);
+      setPauseResumeStatus("failed");
+      toast.error(message);
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!session) {
+      toast.error("Please connect your wallet first");
+      return;
+    }
+
+    setResuming(true);
+    setPauseResumeError(undefined);
+    setPauseResumeTxHash(undefined);
+    setPauseResumeStatus("signing");
+    try {
+      const result = await resumeStream(session, {
+        streamId: BigInt(streamId),
+      });
+      setPauseResumeTxHash(result.txHash);
+      setPauseResumeStatus("submitted");
+      toast.success("Stream resume submitted!");
+      await refetchStream();
+      setPauseResumeStatus("confirmed");
+    } catch (err) {
+      const message = toSorobanErrorMessage(err);
+      setPauseResumeError(message);
+      setPauseResumeStatus("failed");
+      toast.error(message);
+    } finally {
+      setResuming(false);
+    }
+  };
+
   if (loading) {
     return (
       <main style={{ minHeight: "100vh", padding: "clamp(1rem, 3vw, 2rem)" }}>
@@ -193,7 +279,24 @@ export default function StreamDetailsPage() {
   const deposited = parseFloat(stream.depositedAmount) / 1e7;
   const withdrawn = parseFloat(stream.withdrawnAmount) / 1e7;
   const claimable = deposited - withdrawn;
+  const displayedClaimable = withdrawStatus === "submitted" ? 0 : claimable;
   const percentage = Math.round((withdrawn / deposited) * 100);
+  const normalizedStatus = (
+    stream.status ||
+    (stream.isPaused ? "PAUSED" : stream.isActive ? "ACTIVE" : "COMPLETED")
+  ).toUpperCase();
+  const displayStatus =
+    stream.status || (stream.isPaused ? "PAUSED" : stream.isActive ? "ACTIVE" : "COMPLETED");
+  const isConnectedSender =
+    Boolean(session?.publicKey) &&
+    session?.publicKey.toLowerCase() === stream.sender.toLowerCase();
+  const isConnectedRecipient =
+    Boolean(session?.publicKey) &&
+    session?.publicKey.toLowerCase() === stream.recipient.toLowerCase();
+  const canCancelStream =
+    isConnectedSender && (normalizedStatus === "ACTIVE" || normalizedStatus === "PAUSED");
+  const hasClaimableAmount = displayedClaimable > 0;
+  const canWithdrawStream = isConnectedRecipient && hasClaimableAmount;
 
   return (
     <main style={{ minHeight: "100vh", padding: "clamp(1rem, 3vw, 2rem)" }}>
@@ -212,7 +315,7 @@ export default function StreamDetailsPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
               <h2 style={{ margin: "0 0 0.4rem", fontSize: "1.15rem" }}>
-                Status: {stream.status}
+                Status: {displayStatus}
               </h2>
               <p style={{ margin: "0.2rem 0", color: "var(--text-muted)" }}>
                 Sender:{" "}
@@ -257,6 +360,21 @@ export default function StreamDetailsPage() {
           </div>
         </div>
 
+        {/* Paused banner */}
+        {stream.isPaused && (
+          <div className="dashboard-panel" style={{ backgroundColor: "rgba(251, 191, 36, 0.1)", border: "1px solid rgba(251, 191, 36, 0.3)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span style={{ fontSize: "1.2rem" }}>⏸️</span>
+              <div>
+                <h4 style={{ margin: "0", color: "#f59e0b" }}>Stream Paused</h4>
+                <p style={{ margin: "0.2rem 0 0", fontSize: "0.9rem", color: "var(--text-muted)" }}>
+                  {stream.pausedAt ? `Paused at ${new Date(parseInt(stream.pausedAt) * 1000).toLocaleString()}` : 'Stream is currently paused'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Progress bar */}
         <div className="dashboard-panel">
           <div className="dashboard-panel__header">
@@ -273,7 +391,12 @@ export default function StreamDetailsPage() {
           <div className="dashboard-panel__header">
             <h3>Claimable Balance</h3>
           </div>
-          <LiveCounter initial={claimable} label="Available to withdraw" />
+          <LiveCounter
+            initial={displayedClaimable}
+            label="Available to withdraw"
+            isPaused={stream.isPaused}
+            pausedAt={stream.pausedAt}
+          />
         </div>
 
         {/* Actions */}
@@ -282,13 +405,22 @@ export default function StreamDetailsPage() {
             <h3>Actions</h3>
           </div>
           <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
-            <Button
-              onClick={handleWithdraw}
-              disabled={withdrawing || !stream.isActive || claimable <= 0}
-              glow
-            >
-              {withdrawing ? "Withdrawing..." : "Withdraw"}
-            </Button>
+            {canWithdrawStream && (
+              <Button
+                onClick={() => void handleWithdraw()}
+                disabled={withdrawing || withdrawStatus === "submitted"}
+                glow
+              >
+                {withdrawing ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Withdrawing...
+                  </>
+                ) : (
+                  "Withdraw"
+                )}
+              </Button>
+            )}
             <Button
               onClick={() => setShowTopUp(!showTopUp)}
               disabled={!stream.isActive}
@@ -296,14 +428,37 @@ export default function StreamDetailsPage() {
             >
               {showTopUp ? "Cancel Top-Up" : "Top Up"}
             </Button>
-            <Button
-              onClick={handleCancel}
-              disabled={cancelling || !stream.isActive}
-              style={{ borderColor: "#ef4444", color: "#ef4444" }}
-              variant="outline"
-            >
-              {cancelling ? "Cancelling..." : "Cancel Stream"}
-            </Button>
+            {canCancelStream && (
+              <Button
+                onClick={() => setShowCancelModal(true)}
+                disabled={cancelling}
+                style={{ borderColor: "#ef4444", color: "#ef4444" }}
+                variant="outline"
+              >
+                Cancel Stream
+              </Button>
+            )}
+            {/* Pause button - show for active streams owned by sender */}
+            {stream.isActive && !stream.isPaused && session?.publicKey === stream.sender && (
+              <Button
+                onClick={handlePause}
+                disabled={pausing}
+                style={{ borderColor: "#f59e0b", color: "#f59e0b" }}
+                variant="outline"
+              >
+                {pausing ? "Pausing..." : "Pause Stream"}
+              </Button>
+            )}
+            {/* Resume button - show for paused streams owned by sender */}
+            {stream.isActive && stream.isPaused && session?.publicKey === stream.sender && (
+              <Button
+                onClick={handleResume}
+                disabled={resuming}
+                glow
+              >
+                {resuming ? "Resuming..." : "Resume Stream"}
+              </Button>
+            )}
           </div>
 
           {showTopUp && (
@@ -324,6 +479,35 @@ export default function StreamDetailsPage() {
               <Button onClick={handleTopUp}>Add Funds</Button>
             </div>
           )}
+
+          {pauseResumeStatus !== "idle" && (
+            <div style={{ marginTop: "1rem" }}>
+              <TransactionTracker
+                status={pauseResumeStatus}
+                txHash={pauseResumeTxHash}
+                error={pauseResumeError}
+                onRetry={
+                  pauseResumeStatus === "failed"
+                    ? stream.isPaused
+                      ? handleResume
+                      : handlePause
+                    : undefined
+                }
+              />
+            </div>
+          )}
+
+          {withdrawStatus !== "idle" && (
+            <div style={{ marginTop: "1rem" }}>
+              <TransactionTracker
+                status={withdrawStatus}
+                txHash={withdrawTxHash}
+                error={withdrawError}
+                streamId={streamId}
+                onRetry={() => void handleWithdraw()}
+              />
+            </div>
+          )}
         </div>
 
         {/* Transaction history */}
@@ -338,6 +522,13 @@ export default function StreamDetailsPage() {
         </div>
 
       </div>
+      <CancelStreamModal
+        isOpen={showCancelModal}
+        isCancelling={cancelling}
+        streamId={streamId}
+        onClose={() => setShowCancelModal(false)}
+        onConfirm={() => void handleConfirmCancel()}
+      />
     </main>
   );
 }
