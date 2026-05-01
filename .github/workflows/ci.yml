@@ -24,7 +24,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
 
       - name: Lint
@@ -73,7 +73,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm ci --include=optional
+        run: npm install --include=optional
 
       - name: Setup Database
         run: |
@@ -92,12 +92,21 @@ jobs:
 
       - name: Run Backend Tests
         run: |
+          npm install @vitest/coverage-v8 --no-save
           ls -la src/generated/prisma
-          npx vitest run --reporter=basic
+          npx vitest run --coverage
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
           NODE_ENV: test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./backend/coverage/lcov.info
+          flags: backend
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
   contracts:
     name: Soroban Contracts CI
@@ -124,6 +133,21 @@ jobs:
       - name: Run Contract Tests
         run: cargo test
         working-directory: contracts
+
+      - name: Install cargo-tarpaulin
+        uses: taiki-e/install-action@cargo-tarpaulin
+
+      - name: Run Contract Coverage
+        run: cargo tarpaulin --out Xml --fail-under 50 --output-dir .
+        working-directory: contracts
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./contracts/tarpaulin-report.xml
+          flags: contracts
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
 
       - name: Install Stellar CLI
         run: |
