@@ -1,4 +1,4 @@
-import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
+import { rateLimit } from 'express-rate-limit';
 import { type Request, type Response, type NextFunction } from 'express';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import logger from '../logger.js';
@@ -42,8 +42,8 @@ export function createStreamRateLimiter(
         return authReq.user.publicKey; // Use wallet address as key
       }
       // Fallback to IP if not authenticated (shouldn't happen for protected endpoints).
-      // Use ipKeyGenerator so IPv6 addresses are normalized correctly.
-      return req.ip ? ipKeyGenerator(req.ip) : 'unknown';
+      // Normalize IPv6 addresses
+      return req.ip ? req.ip.replace(/^::ffff:/, '') : 'unknown';
     },
     /**
      * Skip rate limiting for non-authenticated requests
