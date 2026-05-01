@@ -4,9 +4,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 jobs:
   frontend:
@@ -19,13 +19,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci
-
 
       - name: Lint
         run: npm run lint
@@ -68,8 +67,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
@@ -90,14 +89,21 @@ jobs:
       - name: Install Rollup Native Binding
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
-      - name: Run Backend Tests
+      - name: Run Backend Tests with Coverage
         run: |
           ls -la src/generated/prisma
-          npx vitest run --reporter=basic
+          npx vitest run --coverage --reporter=basic
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
           NODE_ENV: test
+
+      - name: Upload Backend Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: backend/coverage/lcov.info
+          flags: backend
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   contracts:
     name: Soroban Contracts CI
@@ -117,6 +123,20 @@ jobs:
         with:
           workspaces: "contracts -> target"
 
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Run Contract Coverage
+        run: cargo tarpaulin --out Xml --output-dir target/coverage --fail-under 70
+        working-directory: contracts
+
+      - name: Upload Contract Coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: contracts/target/coverage/tarpaulin-report.xml
+          flags: contracts
+          token: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Build Contracts
         run: cargo build --target wasm32-unknown-unknown --release
         working-directory: contracts
@@ -124,30 +144,3 @@ jobs:
       - name: Run Contract Tests
         run: cargo test
         working-directory: contracts
-
-      - name: Install Stellar CLI
-        run: |
-          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
-        shell: bash
-
-      - name: Optimize WASM files
-        run: |
-          set -euo pipefail
-          WASMS=$(find contracts/target -type f -name "*.wasm" -print)
-          if [ -z "$WASMS" ]; then
-            echo "No wasm files found"
-            exit 1
-          fi
-          for w in $WASMS; do
-            out="${w%%.wasm}.optimized.wasm"
-            echo "Optimizing $w -> $out"
-            stellar contract optimize --wasm "$w" --wasm-out "$out"
-          done
-        shell: bash
-
-      - name: Upload optimized WASM artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: optimized-wasm
-          path: |
-            contracts/target/**/**/*.optimized.wasm
