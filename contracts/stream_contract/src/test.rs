@@ -222,6 +222,48 @@ fn test_create_multiple_streams_increments_id() {
 }
 
 #[test]
+fn test_get_all_streams_by_sender_returns_history() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient_a = Address::generate(&env);
+    let recipient_b = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let stream_a = client.create_stream(&sender, &recipient_a, &token, &500, &100);
+    let stream_b = client.create_stream(&sender, &recipient_b, &token, &700, &100);
+
+    client.cancel_stream(&sender, &stream_a);
+
+    let streams = client.get_all_streams_by_sender(&sender);
+    assert_eq!(streams.len(), 2);
+
+    let first = streams.get(0).unwrap();
+    let second = streams.get(1).unwrap();
+
+    assert_eq!(first.recipient, recipient_a);
+    assert_eq!(first.status, StreamStatus::Cancelled);
+    assert_eq!(second.recipient, recipient_b);
+    assert_eq!(second.status, StreamStatus::Active);
+    assert_eq!(first.sender, sender);
+    assert_eq!(second.sender, sender);
+    assert_eq!(stream_a, 1);
+    assert_eq!(stream_b, 2);
+}
+
+#[test]
+fn test_get_all_streams_by_sender_returns_empty_vec() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let streams = client.get_all_streams_by_sender(&Address::generate(&env));
+    assert_eq!(streams.len(), 0);
+}
+
+#[test]
 fn test_create_stream_rejects_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();

@@ -16,8 +16,9 @@ use events::{
     StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
-    config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
-    try_load_config, try_load_stream,
+    append_sender_stream_id, config_exists, load_config, load_sender_stream_ids, load_stream,
+    next_stream_id, save_config, save_sender_stream_ids, save_stream, try_load_config,
+    try_load_stream,
 };
 use types::{ProtocolConfig, Stream, StreamStatus};
 
@@ -162,6 +163,7 @@ impl StreamContract {
                 status: StreamStatus::Active,
             },
         );
+        append_sender_stream_id(&env, &sender, stream_id);
 
         env.events().publish(
             (Symbol::new(&env, "stream_created"), stream_id),
@@ -451,6 +453,8 @@ impl StreamContract {
         let amount_withdrawn = stream.withdrawn_amount;
 
         save_stream(&env, stream_id, &stream);
+        let sender_stream_ids = load_sender_stream_ids(&env, &stream.sender);
+        save_sender_stream_ids(&env, &stream.sender, &sender_stream_ids);
 
         // Emit cancellation event
         env.events().publish(
@@ -550,6 +554,25 @@ impl StreamContract {
     /// Returns the stream record for `stream_id`, or `None` if it does not exist.
     pub fn get_stream(env: Env, stream_id: u64) -> Option<Stream> {
         try_load_stream(&env, stream_id)
+    }
+
+    /// Returns every stream ever created by `sender`, including cancelled and completed ones.
+    pub fn get_all_streams_by_sender(env: Env, sender: Address) -> soroban_sdk::Vec<Stream> {
+        let stream_ids = load_sender_stream_ids(&env, &sender);
+        let mut streams = soroban_sdk::Vec::new(&env);
+
+        let count = stream_ids.len();
+        let mut index = 0;
+        while index < count {
+            if let Some(stream_id) = stream_ids.get(index) {
+                if let Some(stream) = try_load_stream(&env, stream_id) {
+                    streams.push_back(stream);
+                }
+            }
+            index += 1;
+        }
+
+        streams
     }
 
     /// Returns `true` if the stream exists and has status `Completed`.
