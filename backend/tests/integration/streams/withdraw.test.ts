@@ -5,6 +5,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 const {
   mockWithdraw,
   mockPrisma,
+  currentUser,
 } = vi.hoisted(() => ({
   mockWithdraw: vi.fn(),
   mockPrisma: {
@@ -16,6 +17,7 @@ const {
       create: vi.fn(),
     },
   },
+  currentUser: { publicKey: '' },
 }));
 
 vi.mock('../../../src/lib/prisma.js', () => ({
@@ -30,44 +32,22 @@ vi.mock('../../../src/services/sorobanService.js', () => ({
   isStale: vi.fn().mockReturnValue(false),
 }));
 
+vi.mock('../../../src/middleware/auth.middleware.js', () => ({
+  authMiddleware: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: currentUser.publicKey };
+    next();
+  },
+}));
+
 import app from '../../../src/app.js';
 
 function makeKeypair() {
   return StellarSdk.Keypair.random();
 }
 
-function buildSignedTransaction(keypair: StellarSdk.Keypair, nonce: string): string {
-  const account = new StellarSdk.Account(keypair.publicKey(), '0');
-  const tx = new StellarSdk.TransactionBuilder(account, {
-    fee: '100',
-    networkPassphrase: StellarSdk.Networks.TESTNET,
-  })
-    .addOperation(
-      StellarSdk.Operation.manageData({
-        name: 'auth',
-        value: Buffer.from(nonce, 'hex'),
-      }),
-    )
-    .setTimeout(60)
-    .build();
-
-  tx.sign(keypair);
-  return tx.toXDR();
-}
-
-async function getValidJwt(keypair: StellarSdk.Keypair): Promise<string> {
-  const challengeRes = await request(app)
-    .post('/v1/auth/challenge')
-    .send({ publicKey: keypair.publicKey() });
-
-  const { nonce } = challengeRes.body as { nonce: string };
-  const signedTransaction = buildSignedTransaction(keypair, nonce);
-
-  const verifyRes = await request(app)
-    .post('/v1/auth/verify')
-    .send({ publicKey: keypair.publicKey(), signedTransaction });
-
-  return (verifyRes.body as { token: string }).token;
+function setAuthAs(keypair: StellarSdk.Keypair): string {
+  currentUser.publicKey = keypair.publicKey();
+  return 'mock-token';
 }
 
 describe('POST /api/v1/streams/:streamId/withdraw', () => {
@@ -77,7 +57,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
 
   it('successfully withdraws claimable amount for the recipient', async () => {
     const recipient = makeKeypair();
-    const token = await getValidJwt(recipient);
+    const token = setAuthAs(recipient);
 
     const streamId = 123;
     const stream = {
@@ -141,7 +121,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
 
   it('returns 403 if the caller is not the recipient', async () => {
     const someoneElse = makeKeypair();
-    const token = await getValidJwt(someoneElse);
+    const token = setAuthAs(someoneElse);
 
     const streamId = 123;
     mockPrisma.stream.findUnique.mockResolvedValue({
@@ -166,7 +146,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
 
   it('returns 404 if stream not found', async () => {
     const user = makeKeypair();
-    const token = await getValidJwt(user);
+    const token = setAuthAs(user);
 
     mockPrisma.stream.findUnique.mockResolvedValue(null);
 
@@ -180,7 +160,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
 
   it('returns 409 if no claimable balance available', async () => {
     const recipient = makeKeypair();
-    const token = await getValidJwt(recipient);
+    const token = setAuthAs(recipient);
 
     const streamId = 123;
     const now = Math.floor(Date.now() / 1000);
