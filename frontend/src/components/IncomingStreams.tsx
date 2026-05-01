@@ -7,8 +7,15 @@ import toast from 'react-hot-toast';
 import { fromStroops } from '@/utils/amount';
 import LiveCounter from '@/components/Livecounter';
 
+// Create a local type that extends the base Stream with the specific properties 
+// causing the linting issues.
+type ExtendedStream = Stream & {
+    isPaused?: boolean;
+    pausedAt?: number | string | Date;
+};
+
 interface IncomingStreamsProps {
-    streams: Stream[];
+    streams: ExtendedStream[];
     onWithdraw: (stream: Stream) => Promise<void>;
     withdrawingStreamId?: string | null;
 }
@@ -18,7 +25,7 @@ function formatTokenAmount(value: number, decimals: number = 7): string {
     return fromStroops(BigInt(Math.floor(value)), decimals);
 }
 
-const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
+const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
     const claimable = useStreamingAmount({
         deposited: stream.deposited,
         withdrawn: stream.withdrawn,
@@ -27,7 +34,8 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
         isActive: stream.status === 'Active' && stream.isActive,
     });
 
-    const isPaused = stream.status === 'Paused' || (stream as any).isPaused;
+    // Fix: Removed 'as any' and used ExtendedStream properties
+    const isPaused = stream.status === 'Paused' || stream.isPaused;
     const liveRate = stream.status === 'Active' && stream.ratePerSecond > 0;
 
     return (
@@ -36,8 +44,8 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
                 {isPaused ? (
                     <LiveCounter 
                         initial={claimable} 
-                        isPaused={isPaused} 
-                        pausedAt={(stream as any).pausedAt} 
+                        isPaused={!!isPaused} 
+                        pausedAt={stream.pausedAt} 
                         label="Claimable"
                     />
                 ) : (
@@ -57,8 +65,6 @@ const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {
 
 /**
  * Shown when the current filter returns no results.
- * Distinguished from the global empty-state (no streams at all), which is
- * handled one level up in dashboard-view.tsx.
  */
 const FilterEmptyState: React.FC<{ filter: string; onClearFilter: () => void }> = ({ filter, onClearFilter }) => (
     <div className="p-12 text-center">
@@ -99,7 +105,7 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
         setFilter(e.target.value as 'All' | 'Active' | 'Completed' | 'Paused');
     };
 
-    const handleWithdraw = async (stream: Stream) => {
+    const handleWithdraw = async (stream: ExtendedStream) => {
         try {
             await onWithdraw(stream);
             toast.success(`Successfully withdrew from stream #${stream.id}`);
@@ -135,7 +141,6 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                 </div>
             </div>
 
-            {/* Empty state when the filter matches nothing */}
             {filteredStreams.length === 0 ? (
                 <FilterEmptyState
                     filter={filter}
@@ -157,7 +162,8 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
                         </thead>
                         <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                             {filteredStreams.map((stream) => {
-                                const isPaused = stream.status === 'Paused' || (stream as any).isPaused;
+                                // Fix: Replaced 'as any' with ExtendedStream logic
+                                const isPaused = stream.status === 'Paused' || stream.isPaused;
                                 return (
                                     <tr
                                         key={stream.id}

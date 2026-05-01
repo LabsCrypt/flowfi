@@ -94,6 +94,30 @@ interface StreamFormMessageState {
   tone: StreamFormMessageTone;
 }
 
+/** Extended stream type that includes pause-related fields from the API */
+interface PausedStream extends Stream {
+  isPaused?: boolean;
+  pausedAt?: number;
+}
+
+/** Raw stream shape returned by the /v1/streams API endpoint */
+interface RawApiStream {
+  streamId?: number;
+  id?: string;
+  recipient?: string;
+  sender?: string;
+  depositedAmount?: string;
+  amount?: number;
+  deposited?: number;
+  withdrawn?: number;
+  withdrawnAmount?: string;
+  startTime?: number;
+  date?: string;
+  ratePerSecond?: string;
+  lastUpdateTime?: number;
+  pausedAt?: number;
+}
+
 const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: "overview", label: "Overview" },
   { id: "incoming", label: "Incoming" },
@@ -476,7 +500,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
   const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
   const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
-  const [pausedStreamsData, setPausedStreamsData] = React.useState<Stream[]>([]);
+  const [pausedStreamsData, setPausedStreamsData] = React.useState<PausedStream[]>([]);
   const [isPausedLoading, setIsPausedLoading] = React.useState(false);
 
   React.useEffect(() => {
@@ -488,21 +512,21 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         `${baseUrl}/v1/streams?status=paused&recipient=${session.publicKey}`
       ];
       Promise.all(endpoints.map(ep => fetch(ep).then(res => res.ok ? res.json() : [])))
-        .then(([outPaused, inPaused]) => {
-          const allPaused = [...outPaused, ...inPaused].map((s: any) => ({
-             id: s.streamId?.toString() || s.id,
-             recipient: s.recipient || s.sender,
-             amount: s.depositedAmount ? parseFloat(s.depositedAmount)/1e7 : s.amount,
+        .then(([outPaused, inPaused]: [RawApiStream[], RawApiStream[]]) => {
+          const allPaused: PausedStream[] = [...outPaused, ...inPaused].map((s) => ({
+             id: s.streamId?.toString() ?? s.id ?? "",
+             recipient: s.recipient ?? s.sender ?? "",
+             amount: s.depositedAmount ? parseFloat(s.depositedAmount) / 1e7 : (s.amount ?? 0),
              token: "TOKEN",
              status: "Paused",
-             deposited: s.depositedAmount ? parseFloat(s.depositedAmount)/1e7 : s.deposited,
-             withdrawn: s.withdrawnAmount ? parseFloat(s.withdrawnAmount)/1e7 : s.withdrawn,
-             date: s.startTime ? new Date(s.startTime * 1000).toISOString().split("T")[0] : s.date,
-             ratePerSecond: s.ratePerSecond ? parseFloat(s.ratePerSecond)/1e7 : s.ratePerSecond,
-             lastUpdateTime: s.lastUpdateTime,
+             deposited: s.depositedAmount ? parseFloat(s.depositedAmount) / 1e7 : (s.deposited ?? 0),
+             withdrawn: s.withdrawnAmount ? parseFloat(s.withdrawnAmount) / 1e7 : (s.withdrawn ?? 0),
+             date: s.startTime ? new Date(s.startTime * 1000).toISOString().split("T")[0] : (s.date ?? ""),
+             ratePerSecond: s.ratePerSecond ? parseFloat(s.ratePerSecond) / 1e7 : 0,
+             lastUpdateTime: s.lastUpdateTime ?? Math.floor(Date.now() / 1000),
              isActive: false,
              isPaused: true,
-             pausedAt: s.pausedAt
+             pausedAt: s.pausedAt,
           }));
           setPausedStreamsData(allPaused);
         })
@@ -839,7 +863,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
     // ── Paused ────────────────────────────────────────────────────────────
     if (activeTab === "paused") {
-      const pausedStreams = pausedStreamsData.length > 0 ? pausedStreamsData : [
+      const pausedStreams: PausedStream[] = pausedStreamsData.length > 0 ? pausedStreamsData : [
         ...snapshot!.outgoingStreams.filter((s) => s.status === "Paused"),
         ...snapshot!.incomingStreams.filter((s) => s.status === "Paused"),
       ];
@@ -874,7 +898,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     <span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">
                       Paused
                     </span>
-                    <LiveCounter initial={0} isPaused={(s as any).isPaused || true} pausedAt={(s as any).pausedAt} />
+                    <LiveCounter initial={0} isPaused={s.isPaused ?? true} pausedAt={s.pausedAt} />
                   </td>
                 </tr>
               ))}
