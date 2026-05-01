@@ -4,15 +4,7 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
-import { fromStroops } from '@/utils/amount';
-import LiveCounter from '@/components/Livecounter';
-
-// Create a local type that extends the base Stream with the specific properties 
-// causing the linting issues.
-type ExtendedStream = Stream & {
-    isPaused?: boolean;
-    pausedAt?: number | string | Date;
-};
+import { formatAmount } from '@/lib/amount';
 
 interface IncomingStreamsProps {
     streams: ExtendedStream[];
@@ -22,7 +14,7 @@ interface IncomingStreamsProps {
 
 function formatTokenAmount(value: number, decimals: number = 7): string {
     if (!Number.isFinite(value)) return '0.0000000';
-    return fromStroops(BigInt(Math.floor(value)), decimals);
+    return formatAmount(BigInt(Math.floor(value)), decimals);
 }
 
 const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {

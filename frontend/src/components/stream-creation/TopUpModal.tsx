@@ -8,8 +8,9 @@
  */
 
 import React, { useRef, useEffect, useState } from "react";
-import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
+import { Button } from "@/components/ui/Button";
+import { hasValidPrecision } from "@/lib/amount";
 
 interface TopUpModalProps {
   streamId: string;
@@ -46,6 +47,10 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     const parsed = parseFloat(amount);
     if (!amount.trim() || isNaN(parsed) || parsed <= 0) {
       setError("Please enter a valid positive amount.");
+      return false;
+    }
+    if (!hasValidPrecision(amount, 7)) {
+      setError("Amount exceeds maximum precision (7 decimal places).");
       return false;
     }
     setError(null);

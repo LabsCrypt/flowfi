@@ -5,7 +5,7 @@ import { useWallet } from '@/context/wallet-context';
 import { BackendStreamEvent } from '@/lib/api-types';
 import { downloadCSV } from '@/utils/csvExport';
 import toast from 'react-hot-toast';
-import { fromStroops } from '@/utils/amount';
+import { formatAmount } from '@/lib/amount';
 import { TopUpModal } from './stream-creation/TopUpModal';
 import {
     topUpStream as sorobanTopUp,
@@ -136,8 +136,8 @@ const Dashboard: React.FC = () => {
                                 <tr key={stream.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">{stream.date}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400 font-mono">{stream.recipient}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-semibold">{fromStroops(BigInt(stream.deposited), 7)} {stream.token}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{fromStroops(BigInt(stream.withdrawn), 7)} {stream.token}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100 font-semibold">{formatAmount(BigInt(stream.deposited), 7)} {stream.token}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{formatAmount(BigInt(stream.withdrawn), 7)} {stream.token}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">{stream.token}</td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full

@@ -6,6 +6,7 @@ import {
   getStreamEvents,
   getStreamClaimableAmount,
   getUserStreamSummary,
+  topUpStreamHandler,
   pauseStream,
   resumeStream,
 } from '../../controllers/stream.controller.js';
@@ -192,6 +193,7 @@ router.post('/:streamId/withdraw', authMiddleware, withdrawHandler as any);
  *     security:
  *       - bearerAuth: []
  */
+router.post('/:streamId/top-up', authMiddleware, topUpStreamHandler);
 router.post('/:streamId/cancel', authMiddleware, cancelStreamHandler as any);
 
 export default router;

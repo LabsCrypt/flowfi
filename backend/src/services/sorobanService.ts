@@ -3,6 +3,7 @@ import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = process.env.STREAM_CONTRACT_ID ?? '';
+const KEEPER_SECRET = process.env.KEEPER_SECRET_KEY ?? '';
 /** DB data older than this is considered stale and triggers an RPC fallback. */
 const STALE_THRESHOLD_MS = 30_000;
 
@@ -167,6 +168,15 @@ export async function cancelStream(streamId: number, senderSecret: string): Prom
   return submitContractCall('cancel_stream', [
     nativeToScVal(streamId, { type: 'u64' }),
   ], senderSecret);
+}
+
+export async function topUpStream(streamId: number, amount: bigint, callerAddress: string): Promise<string> {
+  if (!KEEPER_SECRET) throw new Error('KEEPER_SECRET_KEY not configured');
+  return submitContractCall('top_up_stream', [
+    nativeToScVal(streamId, { type: 'u64' }),
+    nativeToScVal(amount, { type: 'i128' }),
+    nativeToScVal(callerAddress, { type: 'address' }),
+  ], KEEPER_SECRET);
 }
 
 /** Returns true when the DB record is older than STALE_THRESHOLD_MS. */

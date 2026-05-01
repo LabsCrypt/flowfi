@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
 import { claimableAmountService } from '../services/claimable.service.js';
@@ -6,6 +7,7 @@ import {
   getStreamFromChain,
   getClaimableFromChain,
   isStale,
+  topUpStream,
   pauseStream as sorobanPauseStream,
   resumeStream as sorobanResumeStream,
   withdraw as sorobanWithdraw,
@@ -474,6 +476,63 @@ export const getUserStreamSummary = async (req: Request<{ address: string }>, re
   } catch (error) {
     logger.error('Error fetching user stream summary:', error);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+const topUpBodySchema = z.object({
+  amount: z.string().regex(/^\d+$/, 'amount must be a positive integer string (XLM stroops)'),
+});
+
+/**
+ * POST /v1/streams/:streamId/top-up
+ * Adds tokens to a running stream. Only the stream sender may call this.
+ */
+export const topUpStreamHandler = async (req: Request, res: Response) => {
+  const streamId = parseInt(
+    Array.isArray(req.params.streamId) ? req.params.streamId[0]! : (req.params.streamId ?? ''),
+    10,
+  );
+  if (isNaN(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId' });
+  }
+
+  const parsed = topUpBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Validation error', details: parsed.error.issues });
+  }
+
+  const amount = BigInt(parsed.data.amount);
+  if (amount <= 0n) {
+    return res.status(400).json({ error: 'amount must be a positive integer' });
+  }
+
+  const callerAddress = (req as AuthenticatedRequest).user?.publicKey;
+  if (!callerAddress) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const stream = await prisma.stream.findUnique({ where: { streamId } });
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+    if (stream.sender !== callerAddress) {
+      return res.status(403).json({ error: 'Only the stream sender may top up this stream' });
+    }
+
+    const txHash = await topUpStream(streamId, amount, callerAddress);
+
+    const newDeposited = (BigInt(stream.depositedAmount) + amount).toString();
+    await prisma.stream.update({
+      where: { streamId },
+      data: { depositedAmount: newDeposited, lastUpdateTime: Math.floor(Date.now() / 1000) },
+    });
+
+    logger.info(`[topUp] stream=${streamId} amount=${amount} txHash=${txHash}`);
+    return res.status(200).json({ streamId, txHash, depositedAmount: newDeposited });
+  } catch (error: any) {
+    logger.error(`[topUp] stream=${streamId} error:`, error);
+    return res.status(500).json({ error: error.message ?? 'Internal server error' });
   }
 };
 

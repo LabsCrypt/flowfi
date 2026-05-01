@@ -21,6 +21,8 @@ import {
   resumeStream,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
+import { formatAmount, parseAmount, hasValidPrecision, formatRate } from "@/lib/amount";
+import type { WalletSession } from "@/lib/wallet";
 interface StreamDetail {
   id: string;
   sender: string;
@@ -170,10 +172,15 @@ export default function StreamDetailsPage() {
       return;
     }
 
+    if (!hasValidPrecision(topUpAmount, 7)) {
+      toast.error("Amount exceeds maximum precision (7 decimal places)");
+      return;
+    }
+
     try {
       await topUpStream(session, {
         streamId: BigInt(streamId),
-        amount: BigInt(parseFloat(topUpAmount) * 1e7), // Convert to stroops
+        amount: parseAmount(topUpAmount, 7),
       });
       toast.success("Stream topped up successfully!");
       setShowTopUp(false);
@@ -276,8 +283,8 @@ export default function StreamDetailsPage() {
     );
   }
 
-  const deposited = parseFloat(stream.depositedAmount) / 1e7;
-  const withdrawn = parseFloat(stream.withdrawnAmount) / 1e7;
+  const deposited = parseFloat(formatAmount(BigInt(stream.depositedAmount), 7));
+  const withdrawn = parseFloat(formatAmount(BigInt(stream.withdrawnAmount), 7));
   const claimable = deposited - withdrawn;
   const displayedClaimable = withdrawStatus === "submitted" ? 0 : claimable;
   const percentage = Math.round((withdrawn / deposited) * 100);
@@ -351,7 +358,7 @@ export default function StreamDetailsPage() {
             </div>
             <div style={{ textAlign: "right" }}>
               <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
-                Rate: {(parseFloat(stream.ratePerSecond) / 1e7).toFixed(7)} / sec
+                Rate: {formatRate(BigInt(stream.ratePerSecond), 7)}
               </p>
               <p style={{ margin: "0.2rem 0", fontSize: "0.9rem" }}>
                 Started: {new Date(stream.startTime * 1000).toLocaleDateString()}
@@ -459,6 +466,14 @@ export default function StreamDetailsPage() {
                 {resuming ? "Resuming..." : "Resume Stream"}
               </Button>
             )}
+            <Button
+              onClick={() => setShowCancelModal(true)}
+              disabled={cancelling || !stream.isActive}
+              style={{ borderColor: "#ef4444", color: "#ef4444" }}
+              variant="outline"
+            >
+              {cancelling ? "Cancelling..." : "Cancel Stream"}
+            </Button>
           </div>
 
           {showTopUp && (
@@ -496,7 +511,6 @@ export default function StreamDetailsPage() {
               />
             </div>
           )}
-
           {withdrawStatus !== "idle" && (
             <div style={{ marginTop: "1rem" }}>
               <TransactionTracker

@@ -1,5 +1,6 @@
 "use client";
 import React, { useMemo, useRef, useEffect } from "react";
+import { hasValidPrecision } from "@/lib/amount";
 
 interface ScheduleStepProps {
   duration: string;
@@ -68,6 +69,10 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
 
   const ratePerSecond = useMemo(() => {
     if (!amount || !duration || parseFloat(amount) <= 0 || parseFloat(duration) <= 0) {
+      // Optional: Add precision validation if needed
+      if (amount && !hasValidPrecision(amount, 7)) {
+        return null;
+      }
       return null;
     }
 
