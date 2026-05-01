@@ -46,9 +46,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: '20'
+          cache: 'npm'
           cache-dependency-path: package-lock.json
+
+      - name: Cleanup workspace
+        run: rm -rf node_modules frontend/node_modules backend/node_modules
 
       - name: Install dependencies
         run: npm ci --include=optional
