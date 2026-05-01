@@ -74,36 +74,22 @@ export const getUserEvents = async (req: Request, res: Response, next: NextFunct
             return res.status(400).json({ error: 'Invalid publicKey parameter' });
         }
 
-        const limit = Math.min(parseInt(req.query.limit as string ?? '50', 10) || 50, 500);
-        const offset = parseInt(req.query.offset as string ?? '0', 10) || 0;
-
-        const where = {
-            stream: {
-                OR: [
-                    { sender: publicKey },
-                    { recipient: publicKey }
-                ]
+        const events = await prisma.streamEvent.findMany({
+            where: {
+                stream: {
+                    OR: [
+                        { sender: publicKey },
+                        { recipient: publicKey }
+                    ]
+                }
+            },
+            orderBy: { timestamp: 'desc' },
+            include: {
+                stream: true
             }
-        };
-
-        const [events, total] = await Promise.all([
-            prisma.streamEvent.findMany({
-                where,
-                orderBy: { timestamp: 'desc' },
-                take: limit,
-                skip: offset,
-                include: { stream: true }
-            }),
-            prisma.streamEvent.count({ where }),
-        ]);
-
-        return res.status(200).json({
-            events,
-            total,
-            limit,
-            offset,
-            hasMore: offset + events.length < total,
         });
+
+        return res.status(200).json(events);
     } catch (error) {
         next(error);
     }
