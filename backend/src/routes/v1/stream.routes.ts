@@ -8,8 +8,8 @@ import {
   getUserStreamSummary,
   pauseStream,
   resumeStream,
-  withdrawStream,
 } from '../../controllers/stream.controller.js';
+import { requireAuth } from '../../middleware/auth.js';
 import { cancelStreamHandler } from '../../controllers/stream/cancel.js';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { streamCreationRateLimiter } from '../../middleware/stream-rate-limiter.middleware.js';

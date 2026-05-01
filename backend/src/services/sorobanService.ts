@@ -250,9 +250,9 @@ export async function resumeStream(
  * Note: This simulates the contract call and returns a placeholder tx hash,
  * matching the current pause/resume backend pattern.
  */
-export async function withdrawStream(
-  recipientAddress: string,
+export async function withdraw(
   streamId: number,
+  recipientAddress: string,
 ): Promise<PauseResumeResult> {
   if (!CONTRACT_ID) {
     throw new Error('Stream contract ID not configured');
@@ -272,7 +272,7 @@ export async function withdrawStream(
       txHash: 'simulated-withdraw-' + streamId,
     };
   } catch (err) {
-    logger.error(`[SorobanService] withdrawStream(${streamId}) failed:`, err);
+    logger.error(`[SorobanService] withdraw(${streamId}) failed:`, err);
     throw new Error(`Failed to withdraw from stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
   }
 }
