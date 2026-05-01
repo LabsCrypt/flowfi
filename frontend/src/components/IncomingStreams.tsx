@@ -6,6 +6,18 @@ import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
 import LiveCounter from '@/components/Livecounter';
 
+/**
+ * Local helper to format token amounts. 
+ * This replaces the deleted fromStroops utility to ensure the build passes.
+ */
+function formatTokenAmount(value: number, decimals: number = 7): string {
+    if (!Number.isFinite(value)) return '0.0000000';
+    // Converts stroops to a human-readable decimal string
+    const formatted = value / Math.pow(10, decimals);
+    return formatted.toFixed(decimals);
+}
+
+// Extended type to handle optional pause properties used in the visuals
 type ExtendedStream = Stream & {
     isPaused?: boolean;
     pausedAt?: number | string | Date;
@@ -15,11 +27,6 @@ interface IncomingStreamsProps {
     streams: ExtendedStream[];
     onWithdraw: (stream: Stream) => Promise<void>;
     withdrawingStreamId?: string | null;
-}
-
-function formatTokenAmount(value: number, decimals: number = 7): string {
-    if (!Number.isFinite(value)) return '0.0000000';
-    return formatAmount(BigInt(Math.floor(value)), decimals);
 }
 
 const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
@@ -41,8 +48,7 @@ const ClaimableAmount: React.FC<{ stream: ExtendedStream }> = ({ stream }) => {
                     <LiveCounter
                         initial={claimable}
                         isPaused={!!isPaused}
-                        pausedAt={stream.pausedAt}
-                        label="Claimable"
+                        pausedAt={stream.pausedAt?.toString()}                        label="Claimable"
                     />
                 ) : (
                     `${formatTokenAmount(claimable)} ${stream.token}`

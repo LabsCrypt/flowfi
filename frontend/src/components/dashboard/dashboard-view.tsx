@@ -512,7 +512,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         `${baseUrl}/v1/streams?status=paused&recipient=${session.publicKey}`
       ];
       Promise.all(endpoints.map(ep => fetch(ep).then(res => res.ok ? res.json() : [])))
-        .then(([outPaused, inPaused]: [RawApiStream[], RawApiStream[]]) => {
+        .then(([outPaused, inPaused]: any) => {
           const allPaused: PausedStream[] = [...outPaused, ...inPaused].map((s) => ({
              id: s.streamId?.toString() ?? s.id ?? "",
              recipient: s.recipient ?? s.sender ?? "",
@@ -898,7 +898,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     <span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">
                       Paused
                     </span>
-                    <LiveCounter initial={0} isPaused={s.isPaused ?? true} pausedAt={s.pausedAt} />
+                    <LiveCounter initial={0} isPaused={s.isPaused ?? true} pausedAt={s.pausedAt?.toString()} />
                   </td>
                 </tr>
               ))}
