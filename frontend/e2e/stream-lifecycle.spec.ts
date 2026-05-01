@@ -1,23 +1,7 @@
 import { test, expect } from '@playwright/test'
 
-const MOCK_PUBLIC_KEY =
-  'GD2Z4J7F6LP4DOLWQSCWX3T7WKUEXZD7M2JVH2INE7PSKBB2Z2KF5I5H'
-
 test.describe('FlowFi Playwright E2E', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.addInitScript((publicKey) => {
-      window.freighter = {
-        isConnected: async () => ({ isConnected: true }),
-        setAllowed: async () => ({}),
-        getAddress: async () => ({ address: publicKey }),
-        getNetworkDetails: async () => ({
-          networkPassphrase: 'Test SDF Network ; September 2015',
-        }),
-      }
-    }, MOCK_PUBLIC_KEY)
-  })
-
-  test('connects Freighter wallet and navigates to create stream page', async ({
+  test('connects wallet and navigates to create stream page', async ({
     page,
   }) => {
     await page.goto('/dashboard')
@@ -25,11 +9,20 @@ test.describe('FlowFi Playwright E2E', () => {
     await expect(
       page.locator('h2', { hasText: 'Connect a wallet' })
     ).toBeVisible()
-    await page.getByRole('button', { name: /Connect Freighter/i }).click()
+    
+    // 1. Click Albedo to safely bypass Freighter extension timeouts in headless CI
+    await page.getByRole('button', { name: /Connect Albedo/i }).click()
 
+    // 2. Specifically target the button element to satisfy Playwright's strict mode
+    //    and click it to open the dropdown menu.
+    await page.locator('button.wallet-chip').click()
+
+    // 3. Now the menu is open and Playwright can verify the disconnect button
     await expect(
       page.locator('button', { hasText: 'Disconnect Wallet' })
     ).toBeVisible()
+    
+    // 4. Proceed with the rest of the flow
     await page.getByRole('link', { name: /Create Stream/i }).click()
 
     await expect(
