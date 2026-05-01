@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Account, Networks } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Account, Networks, Transaction } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
@@ -104,7 +104,7 @@ async function submitContractCall(method: string, args: xdr.ScVal[], senderSecre
   }
 
   // Assemble transaction with simulation results
-  const assembledTx = rpc.assembleTransaction(tx, simulation);
+  const assembledTx = rpc.assembleTransaction(tx, simulation).build();
   assembledTx.sign(keypair);
 
   const response = await server.sendTransaction(assembledTx);
