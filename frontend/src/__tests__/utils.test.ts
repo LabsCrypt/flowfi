@@ -154,7 +154,7 @@ describe('validateAmountInput', () => {
 
   it('returns error for zero or negative amounts', () => {
     expect(validateAmountInput('0', 7)).toBe('Amount must be greater than 0');
-    expect(validateAmountInput('-1', 7)).toBe('Amount must be greater than 0');
+    expect(validateAmountInput('-1', 7)).toBe('Please enter a valid number');
   });
 });
 
