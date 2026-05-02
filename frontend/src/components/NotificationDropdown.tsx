@@ -1,9 +1,8 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
 import { useStreamEvents } from '@/hooks/useStreamEvents';
-import { formatAmount } from '@/lib/amount';
+import { formatAmount } from '@/utils/amount';
 import { Button } from './ui/Button';
-import { fetchUserEvents } from '@/lib/dashboard';
 
 interface NotificationDropdownProps {
     publicKey: string;
@@ -21,7 +20,6 @@ interface NotificationItem {
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publicKey }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
 
     // Subscribe to live stream events for the user
@@ -57,48 +55,21 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         }
     }, []);
 
-    const loadEvents = useCallback(async () => {
-        if (!publicKey) return;
-        setIsLoading(true);
-        try {
-            const data = await fetchUserEvents(publicKey);
-            const initialNotifications: NotificationItem[] = data.slice(0, 20).map(event => ({
-                id: `init-${event.id}`,
-                streamId: event.streamId,
-                type: event.eventType.toLowerCase(),
-                message: formatEventMessage({
-                    type: event.eventType.toLowerCase(),
-                    data: { streamId: event.streamId, amount: event.amount } as Record<string, unknown>
-                }),
-                timestamp: event.timestamp * 1000,
-                read: true
-            }));
-            setNotifications(initialNotifications);
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [publicKey, formatEventMessage]);
-
+    // Process live events into notifications
     useEffect(() => {
-        if (publicKey) {
-            loadEvents();
-        }
-    }, [publicKey, loadEvents]);
+        if (streamEvents.length === 0) return;
 
-    // Handle incoming SSE events
-    useEffect(() => {
-        if (streamEvents.length > 0) {
-            const newNotifications = streamEvents.map(event => ({
-                id: `sse-${event.type}-${event.timestamp}`,
-                streamId: (event.data as Record<string, unknown>)?.streamId as number || 0,
-                type: event.type,
-                message: formatEventMessage(event as { type: string; data?: Record<string, unknown> }),
-                timestamp: event.timestamp,
-                read: isOpen // Mark as read if dropdown is open
-            }));
+        const newNotifications = streamEvents.map(event => ({
+            id: `sse-${event.type}-${event.timestamp}`,
+            streamId: (event.data as Record<string, unknown>)?.streamId as number || 0,
+            type: event.type,
+            message: formatEventMessage(event as { type: string; data?: Record<string, unknown> }),
+            timestamp: event.timestamp,
+            read: isOpen // Mark as read if dropdown is open
+        }));
 
+        // Use queueMicrotask to avoid synchronous setState in effect
+        queueMicrotask(() => {
             setNotifications(prev => {
                 const combined = [...newNotifications, ...prev];
                 const unique = combined.filter((notif, index, self) =>
@@ -110,7 +81,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             if (!isOpen) {
                 setUnreadCount(prev => prev + newNotifications.length);
             }
-        }
+        });
     }, [streamEvents, isOpen, formatEventMessage]);
 
     const handleDropdownOpen = useCallback(() => {
@@ -136,8 +107,8 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                         {unreadCount > 9 ? '9+' : unreadCount}
                     </span>
                 )}
-                {!connected && (
-                    <span className="absolute bottom-0 right-0 h-2.5 w-2.5 bg-red-500 rounded-full border-2 border-background"></span>
+                {!connected && unreadCount === 0 && (
+                    <span className="absolute bottom-0 right-0 h-2 w-2 bg-red-500 rounded-full border-2 border-background"></span>
                 )}
             </button>
 
@@ -160,11 +131,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                         </div>
                     </div>
                     <div className="max-h-96 overflow-y-auto">
-                        {isLoading ? (
-                            <div className="p-8 text-center text-slate-400 text-sm">
-                                Loading notifications...
-                            </div>
-                        ) : notifications.length > 0 ? (
+                        {notifications.length > 0 ? (
                             <div className="divide-y divide-glass-border">
                                 {notifications.map((notification) => (
                                     <div

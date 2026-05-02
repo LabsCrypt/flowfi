@@ -189,6 +189,7 @@ export default function IncomingPage() {
           <section className="mt-8 rounded-[2rem] border border-slate-900/8 bg-slate-950 px-6 py-5 text-white shadow-[0_22px_45px_rgba(15,23,42,0.18)]">
             <TransactionTracker
               status={tracker.status}
+              action="withdraw"
               txHash={tracker.txHash}
               error={tracker.error}
               streamId={tracker.streamId}

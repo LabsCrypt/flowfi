@@ -58,11 +58,9 @@ function parseI128(value: string, fieldName: string): bigint {
 }
 
 function getStateFingerprint(stream: ClaimableStreamState): string {
-  if (stream.updatedAt) {
-    return String(stream.updatedAt.getTime());
-  }
-
-  return [
+  // Always include lastUpdateTime to prevent cache collisions between streams
+  // with different lastUpdateTime but same updatedAt (or no updatedAt)
+  const baseFingerprint = [
     stream.ratePerSecond,
     stream.depositedAmount,
     stream.withdrawnAmount,
@@ -73,6 +71,12 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
     stream.pausedAt ?? 'null',
     stream.totalPausedDuration,
   ].join(':');
+
+  if (stream.updatedAt) {
+    return `${baseFingerprint}:${stream.updatedAt.getTime()}`;
+  }
+
+  return baseFingerprint;
 }
 
 /**
