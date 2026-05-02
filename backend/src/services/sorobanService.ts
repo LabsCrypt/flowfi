@@ -105,7 +105,7 @@ async function submitContractCall(method: string, args: xdr.ScVal[], senderSecre
   }
 
   // Assemble transaction with simulation results
-  const assembledTx = rpc.assembleTransaction(tx, simulation);
+  const assembledTx = rpc.assembleTransaction(tx, simulation).build();
 
   assembledTx.sign(keypair);
 
