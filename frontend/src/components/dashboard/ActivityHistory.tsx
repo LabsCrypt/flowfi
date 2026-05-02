@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { BackendStreamEvent } from "@/lib/api-types";
-import { fromStroops } from "@/utils/amount";
+import { formatAmount } from "@/lib/amount";
 import TransactionTracker from "@/components/TransactionTracker";
 import { Download, ExternalLink, Clock } from "lucide-react";
 import { Button } from "../ui/Button";
@@ -28,7 +28,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
     const rows = events.map((event) => [
       event.streamId,
       event.eventType,
-      event.amount ? fromStroops(BigInt(event.amount), 7) : "0",
+      event.amount ? formatAmount(BigInt(event.amount), 7) : "0",
       new Date(event.timestamp * 1000).toISOString(),
       event.transactionHash || "",
     ]);
@@ -49,7 +49,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
   };
 
   const renderEventMessage = (event: BackendStreamEvent): React.ReactNode => {
-    const amount = event.amount ? fromStroops(BigInt(event.amount), 7) : "0";
+    const amount = event.amount ? formatAmount(BigInt(event.amount), 7) : "0";
     const link = (
       <Link
         href={`/streams/${event.streamId}`}

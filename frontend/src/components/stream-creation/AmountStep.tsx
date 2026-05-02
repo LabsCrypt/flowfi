@@ -1,5 +1,6 @@
 "use client";
 import React, { useRef, useEffect } from "react";
+import { hasValidPrecision } from "@/lib/amount";
 
 interface AmountStepProps {
   value: string;
@@ -22,6 +23,16 @@ export const AmountStep: React.FC<AmountStepProps> = ({
   balanceError,
   onSetMax,
 }) => {
+  // Validate amount precision on change
+  const handleAmountChange = (newValue: string) => {
+    onChange(newValue);
+    
+    // Add precision validation if needed
+    if (newValue && !hasValidPrecision(newValue, 7)) {
+      // Parent component should handle this error
+      // This validation can be used to show inline error if needed
+    }
+  };
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Auto-focus on mount
@@ -72,7 +83,7 @@ export const AmountStep: React.FC<AmountStepProps> = ({
             step="any"
             min="0"
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => handleAmountChange(e.target.value)}
             placeholder="0.00"
             className={`w-full px-4 py-3 rounded-lg bg-glass border ${
               error

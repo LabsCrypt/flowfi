@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
 import { claimableAmountService } from '../services/claimable.service.js';
@@ -6,9 +7,10 @@ import {
   getStreamFromChain,
   getClaimableFromChain,
   isStale,
+  topUpStream,
   pauseStream as sorobanPauseStream,
   resumeStream as sorobanResumeStream,
-  withdrawStream as sorobanWithdrawStream,
+  withdraw as sorobanWithdraw,
 } from '../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
@@ -477,6 +479,63 @@ export const getUserStreamSummary = async (req: Request<{ address: string }>, re
   }
 };
 
+const topUpBodySchema = z.object({
+  amount: z.string().regex(/^\d+$/, 'amount must be a positive integer string (XLM stroops)'),
+});
+
+/**
+ * POST /v1/streams/:streamId/top-up
+ * Adds tokens to a running stream. Only the stream sender may call this.
+ */
+export const topUpStreamHandler = async (req: Request, res: Response) => {
+  const streamId = parseInt(
+    Array.isArray(req.params.streamId) ? req.params.streamId[0]! : (req.params.streamId ?? ''),
+    10,
+  );
+  if (isNaN(streamId)) {
+    return res.status(400).json({ error: 'Invalid streamId' });
+  }
+
+  const parsed = topUpBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Validation error', details: parsed.error.issues });
+  }
+
+  const amount = BigInt(parsed.data.amount);
+  if (amount <= 0n) {
+    return res.status(400).json({ error: 'amount must be a positive integer' });
+  }
+
+  const callerAddress = (req as AuthenticatedRequest).user?.publicKey;
+  if (!callerAddress) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const stream = await prisma.stream.findUnique({ where: { streamId } });
+    if (!stream) {
+      return res.status(404).json({ error: 'Stream not found' });
+    }
+    if (stream.sender !== callerAddress) {
+      return res.status(403).json({ error: 'Only the stream sender may top up this stream' });
+    }
+
+    const txHash = await topUpStream(streamId, amount, callerAddress);
+
+    const newDeposited = (BigInt(stream.depositedAmount) + amount).toString();
+    await prisma.stream.update({
+      where: { streamId },
+      data: { depositedAmount: newDeposited, lastUpdateTime: Math.floor(Date.now() / 1000) },
+    });
+
+    logger.info(`[topUp] stream=${streamId} amount=${amount} txHash=${txHash}`);
+    return res.status(200).json({ streamId, txHash, depositedAmount: newDeposited });
+  } catch (error: any) {
+    logger.error(`[topUp] stream=${streamId} error:`, error);
+    return res.status(500).json({ error: error.message ?? 'Internal server error' });
+  }
+};
+
 /**
  * Pause a stream. Only the sender can pause their own stream.
  * Validates the request, checks ownership, and updates the database.
@@ -681,114 +740,3 @@ export const resumeStream = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Withdraw the current claimable amount from a stream.
- * Only the recipient can withdraw and only when a balance is actionable.
- */
-export const withdrawStream = async (req: Request, res: Response) => {
-  try {
-    const authReq = req as AuthenticatedRequest;
-
-    if (!authReq.user) {
-      return res.status(401).json({ error: 'Unauthorized', message: 'Authentication required' });
-    }
-
-    const streamIdParam = Array.isArray(req.params.streamId)
-      ? req.params.streamId[0]
-      : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
-
-    if (!Number.isFinite(parsedStreamId)) {
-      return res.status(400).json({ error: 'Invalid streamId parameter' });
-    }
-
-    const stream = await prisma.stream.findUnique({
-      where: { streamId: parsedStreamId },
-      select: {
-        streamId: true,
-        sender: true,
-        recipient: true,
-        ratePerSecond: true,
-        depositedAmount: true,
-        withdrawnAmount: true,
-        startTime: true,
-        lastUpdateTime: true,
-        isActive: true,
-        isPaused: true,
-        pausedAt: true,
-        totalPausedDuration: true,
-        updatedAt: true,
-      },
-    });
-
-    if (!stream) {
-      return res.status(404).json({ error: 'Stream not found' });
-    }
-
-    if (stream.recipient !== authReq.user.publicKey) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Only the stream recipient can withdraw from the stream',
-      });
-    }
-
-    const claimable = claimableAmountService.getClaimableAmount(stream);
-
-    if (!claimable.actionable) {
-      return res.status(409).json({
-        error: 'Conflict',
-        message: 'No claimable balance is currently available',
-      });
-    }
-
-    try {
-      const result = await sorobanWithdrawStream(authReq.user.publicKey, parsedStreamId);
-      const now = Math.floor(Date.now() / 1000);
-      const nextWithdrawnAmount = (
-        BigInt(stream.withdrawnAmount) + BigInt(claimable.claimableAmount)
-      ).toString();
-      const isCompleted =
-        BigInt(nextWithdrawnAmount) >= BigInt(stream.depositedAmount);
-
-      const updatedStream = await prisma.stream.update({
-        where: { streamId: parsedStreamId },
-        data: {
-          withdrawnAmount: nextWithdrawnAmount,
-          lastUpdateTime: now,
-          isActive: isCompleted ? false : stream.isActive,
-        },
-      });
-
-      await prisma.streamEvent.create({
-        data: {
-          streamId: parsedStreamId,
-          eventType: 'WITHDRAWN',
-          amount: claimable.claimableAmount,
-          transactionHash: result.txHash,
-          ledgerSequence: 0,
-          timestamp: now,
-          metadata: JSON.stringify({ withdrawnBy: authReq.user.publicKey }),
-        },
-      });
-
-      logger.info(`Stream ${parsedStreamId} withdrawn by ${authReq.user.publicKey}`);
-
-      return res.status(200).json({
-        success: true,
-        streamId: parsedStreamId,
-        txHash: result.txHash,
-        amount: claimable.claimableAmount,
-        stream: updatedStream,
-      });
-    } catch (sorobanError) {
-      logger.error(`Soroban withdraw failed for stream ${parsedStreamId}:`, sorobanError);
-      return res.status(400).json({
-        error: 'Failed to withdraw from stream on chain',
-        message: sorobanError instanceof Error ? sorobanError.message : 'Unknown error',
-      });
-    }
-  } catch (error) {
-    logger.error('Error withdrawing from stream:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-};

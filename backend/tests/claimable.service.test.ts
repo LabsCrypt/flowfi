@@ -43,7 +43,7 @@ describe('ClaimableAmountService', () => {
       }),
     });
 
-    // elapsed = 10 - 7 = 3
+    // elapsed = now(10s) - lastUpdateTime(7s) = 3s
     // streamed = 3 * 5 = 15
     // remaining = 500 - 100 = 400
     // claimable = min(15, 400) = 15

@@ -47,9 +47,10 @@ import * as streamRepository from '../../repositories/stream.repository.js';
  */
 export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { streamId } = req.params;
+    const streamIdParam = req.params.streamId;
     const callerAddress = req.user.publicKey;
 
+    const streamId = Array.isArray(streamIdParam) ? streamIdParam[0] : streamIdParam;
     if (!streamId) {
       return res.status(400).json({ error: 'Missing streamId parameter' });
     }

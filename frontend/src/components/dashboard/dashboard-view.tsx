@@ -27,7 +27,6 @@ import {
   isExpectedNetwork,
   type WalletSession,
 } from "@/lib/wallet";
-import { isValidStellarPublicKey } from "@/lib/stellar";
 import {
   createStream as sorobanCreateStream,
   topUpStream as sorobanTopUp,
@@ -38,6 +37,7 @@ import {
   getTokenAddress,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
+import { isValidStellarPublicKey } from "@/lib/stellar";
 import IncomingStreams from "../IncomingStreams";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { SSEStatusIndicator } from "./SSEStatusIndicator";

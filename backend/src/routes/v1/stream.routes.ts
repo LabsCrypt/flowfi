@@ -1,16 +1,17 @@
 import { Router } from 'express';
-import { 
-  createStream, 
-  listStreams, 
-  getStream, 
-  getStreamEvents, 
+import {
+  createStream,
+  listStreams,
+  getStream,
+  getStreamEvents,
   getStreamClaimableAmount,
   getUserStreamSummary,
+  topUpStreamHandler,
   pauseStream,
   resumeStream,
-  withdrawStream,
 } from '../../controllers/stream.controller.js';
 import { cancelStreamHandler } from '../../controllers/stream/cancel.js';
+import { withdrawHandler } from './streams/withdraw.js';
 import { authMiddleware } from '../../middleware/auth.middleware.js';
 import { streamCreationRateLimiter } from '../../middleware/stream-rate-limiter.middleware.js';
 
@@ -180,7 +181,7 @@ router.post('/:streamId/resume', authMiddleware, resumeStream);
  *       409:
  *         description: Conflict - no claimable balance available
  */
-router.post('/:streamId/withdraw', authMiddleware, withdrawStream);
+router.post('/:streamId/withdraw', authMiddleware, withdrawHandler as any);
 
 /**
  * @openapi
@@ -192,6 +193,7 @@ router.post('/:streamId/withdraw', authMiddleware, withdrawStream);
  *     security:
  *       - bearerAuth: []
  */
+router.post('/:streamId/top-up', authMiddleware, topUpStreamHandler);
 router.post('/:streamId/cancel', authMiddleware, cancelStreamHandler as any);
 
 export default router;

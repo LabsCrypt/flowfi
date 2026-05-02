@@ -3,6 +3,7 @@ import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = process.env.STREAM_CONTRACT_ID ?? '';
+const KEEPER_SECRET = process.env.KEEPER_SECRET_KEY ?? '';
 /** DB data older than this is considered stale and triggers an RPC fallback. */
 const STALE_THRESHOLD_MS = 30_000;
 
@@ -170,6 +171,15 @@ export async function cancelStream(streamId: number, senderSecret: string): Prom
   ], senderSecret);
 }
 
+export async function topUpStream(streamId: number, amount: bigint, callerAddress: string): Promise<string> {
+  if (!KEEPER_SECRET) throw new Error('KEEPER_SECRET_KEY not configured');
+  return submitContractCall('top_up_stream', [
+    nativeToScVal(streamId, { type: 'u64' }),
+    nativeToScVal(amount, { type: 'i128' }),
+    nativeToScVal(callerAddress, { type: 'address' }),
+  ], KEEPER_SECRET);
+}
+
 /** Returns true when the DB record is older than STALE_THRESHOLD_MS. */
 export function isStale(updatedAt: Date): boolean {
   return Date.now() - updatedAt.getTime() > STALE_THRESHOLD_MS;
@@ -251,9 +261,9 @@ export async function resumeStream(
  * Note: This simulates the contract call and returns a placeholder tx hash,
  * matching the current pause/resume backend pattern.
  */
-export async function withdrawStream(
-  recipientAddress: string,
+export async function withdraw(
   streamId: number,
+  recipientAddress: string,
 ): Promise<PauseResumeResult> {
   if (!CONTRACT_ID) {
     throw new Error('Stream contract ID not configured');
@@ -273,7 +283,7 @@ export async function withdrawStream(
       txHash: 'simulated-withdraw-' + streamId,
     };
   } catch (err) {
-    logger.error(`[SorobanService] withdrawStream(${streamId}) failed:`, err);
+    logger.error(`[SorobanService] withdraw(${streamId}) failed:`, err);
     throw new Error(`Failed to withdraw from stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
   }
 }

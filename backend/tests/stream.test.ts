@@ -1,19 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 
-// Bypass Stellar signature verification on POST /v1/streams. The route exists
-// to be called by the indexer worker, but the rate-limit middleware in front
-// of it requires an authenticated user, so we stub the middleware to inject
-// a fake wallet on every request.
 vi.mock('../src/middleware/auth.middleware.js', () => ({
   authMiddleware: (req: any, _res: any, next: any) => {
     req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
     next();
   },
-  optionalAuthMiddleware: (req: any, _res: any, next: any) => {
-    req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
-    next();
-  },
+  optionalAuthMiddleware: (_req: any, _res: any, next: any) => next(),
+}));
+
+vi.mock('../src/middleware/stream-rate-limiter.middleware.js', () => ({
+  streamCreationRateLimiter: (_req: any, _res: any, next: any) => next(),
 }));
 
 import app from '../src/app.js';

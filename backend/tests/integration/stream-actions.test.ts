@@ -5,12 +5,12 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 const {
   mockPauseStream,
   mockResumeStream,
-  mockWithdrawStream,
+  mockWithdraw,
   mockPrisma,
 } = vi.hoisted(() => ({
   mockPauseStream: vi.fn(),
   mockResumeStream: vi.fn(),
-  mockWithdrawStream: vi.fn(),
+  mockWithdraw: vi.fn(),
   mockPrisma: {
     stream: {
       findUnique: vi.fn(),
@@ -39,7 +39,7 @@ vi.mock('../../src/services/sorobanService.js', () => ({
   isStale: vi.fn().mockReturnValue(false),
   pauseStream: mockPauseStream,
   resumeStream: mockResumeStream,
-  withdrawStream: mockWithdrawStream,
+  withdraw: mockWithdraw,
 }));
 
 import app from '../../src/app.js';
@@ -206,7 +206,7 @@ describe('stream action routes', () => {
       totalPausedDuration: 0,
       updatedAt: new Date(),
     });
-    mockWithdrawStream.mockResolvedValue({ txHash: 'withdraw-tx-hash' });
+    mockWithdraw.mockResolvedValue({ txHash: 'withdraw-tx-hash' });
     mockPrisma.stream.update.mockResolvedValue({
       streamId: 11,
       withdrawnAmount: '600',
@@ -224,7 +224,7 @@ describe('stream action routes', () => {
       txHash: 'withdraw-tx-hash',
       amount: '100',
     });
-    expect(mockWithdrawStream).toHaveBeenCalledWith(recipient.publicKey(), 11);
+    expect(mockWithdraw).toHaveBeenCalledWith(11, recipient.publicKey());
     expect(mockPrisma.streamEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
