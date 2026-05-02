@@ -44,16 +44,18 @@ export function useSettings() {
     ) as AmountFormat | null;
     const savedDecimals = localStorage.getItem(STORAGE_KEYS.decimalPlaces);
 
-    setSettings({
-      theme: savedTheme || DEFAULT_SETTINGS.theme,
-      displayCurrency: savedCurrency || DEFAULT_SETTINGS.displayCurrency,
-      amountFormat: savedFormat || DEFAULT_SETTINGS.amountFormat,
-      decimalPlaces: savedDecimals
-        ? (parseInt(savedDecimals, 10) as DecimalPlaces)
-        : DEFAULT_SETTINGS.decimalPlaces,
+    // Use queueMicrotask to avoid synchronous setState in effect
+    queueMicrotask(() => {
+      setSettings({
+        theme: savedTheme || DEFAULT_SETTINGS.theme,
+        displayCurrency: savedCurrency || DEFAULT_SETTINGS.displayCurrency,
+        amountFormat: savedFormat || DEFAULT_SETTINGS.amountFormat,
+        decimalPlaces: savedDecimals
+          ? (parseInt(savedDecimals, 10) as DecimalPlaces)
+          : DEFAULT_SETTINGS.decimalPlaces,
+      });
+      setIsHydrated(true);
     });
-
-    setIsHydrated(true);
   }, []);
 
   const setTheme = useCallback((theme: Theme) => {

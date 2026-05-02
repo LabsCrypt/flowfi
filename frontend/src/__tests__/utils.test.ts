@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { convertArrayToCSV, downloadCSV } from '../utils/csvExport';
+import { convertArrayToCSV } from '../utils/csvExport';
 import { isValidStellarPublicKey } from '../lib/stellar';
 import {
   formatAmount,

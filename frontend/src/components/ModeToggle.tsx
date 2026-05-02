@@ -1,35 +1,43 @@
 "use client";
 
 import { Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+
+function getInitialTheme(): "light" | "dark" {
+  if (typeof window === "undefined") return "dark";
+  const saved = localStorage.getItem("flowfi-theme") as "light" | "dark" | "system" | null;
+  if (saved === "light" || saved === "dark") {
+    return saved;
+  }
+  if (saved === "system") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return "dark";
+}
 
 export function ModeToggle() {
-  const [theme, setThemeState] = useState<"light" | "dark">("dark");
-  const [mounted, setMounted] = useState(false);
+  const [theme, setThemeState] = useState<"light" | "dark">(() => getInitialTheme());
+  const mountedRef = useRef(false);
+  const [isMounted, setIsMounted] = useState(false);
 
+  // Use requestAnimationFrame to avoid synchronous setState in effect
   useEffect(() => {
-    setMounted(true);
-    // Read from localStorage directly to sync with settings page
-    const saved = localStorage.getItem("flowfi-theme") as "light" | "dark" | "system" | null;
-    if (saved === "light" || saved === "dark") {
-      setThemeState(saved);
-    } else if (saved === "system") {
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      setThemeState(prefersDark ? "dark" : "light");
-    }
+    const rafId = requestAnimationFrame(() => {
+      mountedRef.current = true;
+      setIsMounted(true);
+    });
+    return () => cancelAnimationFrame(rafId);
   }, []);
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     const newTheme = theme === "light" ? "dark" : "light";
     setThemeState(newTheme);
-    // Save to localStorage with the same key as settings page
     localStorage.setItem("flowfi-theme", newTheme);
-    // Apply theme immediately
     document.documentElement.classList.toggle("dark", newTheme === "dark");
-  };
+  }, [theme]);
 
   // Prevent hydration mismatch
-  if (!mounted) {
+  if (!isMounted) {
     return (
       <button className="inline-flex items-center justify-center w-8 h-8">
         <span className="sr-only">Toggle theme</span>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Pause, Play, X, Plus, Download, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -16,10 +16,8 @@ import {
   resumeStream,
   toBaseUnits,
   toSorobanErrorMessage,
-  fromBaseUnits,
 } from "@/lib/soroban";
 import { CancelConfirmModal } from "@/components/stream-creation/CancelConfirmModal";
-import type { WalletSession } from "@/lib/wallet";
 import type { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount } from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
@@ -69,7 +67,6 @@ const EVENT_STYLES: Record<string, { color: string; icon: string; label: string 
 
 export default function StreamDetailsPage() {
   const params = useParams();
-  const router = useRouter();
   const streamId = params.id as string;
   const { session, isHydrated } = useWallet();
 

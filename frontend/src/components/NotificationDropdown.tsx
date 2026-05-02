@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useStreamEvents } from '@/hooks/useStreamEvents';
 import { formatAmount } from '@/utils/amount';
 import { Button } from './ui/Button';
@@ -60,37 +60,16 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         if (streamEvents.length === 0) return;
 
         const newNotifications = streamEvents.map(event => ({
-            id: `${event.type}-${event.timestamp}`,
-            streamId: (event.data as { streamId?: number })?.streamId || 0,
-            type: event.type as NotificationItem['type'],
-            message: formatEventMessage(event),
+            id: `sse-${event.type}-${event.timestamp}`,
+            streamId: (event.data as Record<string, unknown>)?.streamId as number || 0,
+            type: event.type,
+            message: formatEventMessage(event as { type: string; data?: Record<string, unknown> }),
             timestamp: event.timestamp,
-            read: false
+            read: isOpen // Mark as read if dropdown is open
         }));
 
-        if (newNotifications.length > 0) {
-            setNotifications(prev => {
-                const combined = [...newNotifications, ...prev];
-                const unique = combined.filter((notif, index, self) => 
-                    index === self.findIndex(n => n.id === notif.id)
-                );
-                return unique.slice(0, 20);
-            });
-        }
-    }, [streamEvents, formatEventMessage]);
-
-    // Handle incoming SSE events
-    useEffect(() => {
-        if (streamEvents.length > 0) {
-            const newNotifications = streamEvents.map(event => ({
-                id: `sse-${event.type}-${event.timestamp}`,
-                streamId: (event.data as Record<string, unknown>)?.streamId as number || 0,
-                type: event.type,
-                message: formatEventMessage(event as { type: string; data?: Record<string, unknown> }),
-                timestamp: event.timestamp,
-                read: isOpen // Mark as read if dropdown is open
-            }));
-
+        // Use queueMicrotask to avoid synchronous setState in effect
+        queueMicrotask(() => {
             setNotifications(prev => {
                 const combined = [...newNotifications, ...prev];
                 const unique = combined.filter((notif, index, self) =>
@@ -102,7 +81,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             if (!isOpen) {
                 setUnreadCount(prev => prev + newNotifications.length);
             }
-        }
+        });
     }, [streamEvents, isOpen, formatEventMessage]);
 
     const handleDropdownOpen = useCallback(() => {
