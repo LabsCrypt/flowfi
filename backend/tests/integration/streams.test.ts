@@ -74,7 +74,6 @@ vi.mock('../../src/lib/redis.js', () => ({
 }));
 
 vi.mock('../../src/lib/prisma.js', () => ({
-  default: mockPrisma,
   prisma: mockPrisma,
 }));
 

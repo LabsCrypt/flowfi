@@ -147,6 +147,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                 <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
                   <TransactionTracker
                     status="confirmed"
+                    action="withdraw"
                     txHash={event.transactionHash}
                     streamId={event.streamId.toString()}
                   />
