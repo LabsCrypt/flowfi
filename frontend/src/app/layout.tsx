@@ -34,10 +34,29 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                const theme = localStorage.getItem('flowfi-theme') || 'dark';
+                if (theme === 'system') {
+                  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  document.documentElement.classList.toggle('dark', prefersDark);
+                } else {
+                  document.documentElement.classList.toggle('dark', theme === 'dark');
+                }
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
         <ThemeProvider
           attribute="class"
-          enableSystem={false}
+          defaultTheme="dark"
+          enableSystem={true}
+          storageKey="flowfi-theme"
           disableTransitionOnChange
         >
           <QueryProvider>

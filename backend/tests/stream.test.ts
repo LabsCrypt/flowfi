@@ -132,6 +132,7 @@ describe('GET /v1/streams', () => {
       .set('Accept', 'application/json');
 
     expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('data');
     expect(Array.isArray(response.body.data)).toBe(true);
   });
 });
