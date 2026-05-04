@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import streamRoutes from './stream.routes.js';
+import streamRoutes from './streams/index.js';
 import eventsRoutes from './events.routes.js';
 import userRoutes from './user.routes.js';
 import authRoutes from './auth.routes.js';

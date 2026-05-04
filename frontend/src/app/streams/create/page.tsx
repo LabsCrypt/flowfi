@@ -1,18 +1,21 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  createStream, 
-  toBaseUnits, 
-  toDurationSeconds, 
-  getTokenAddress, 
-  toSorobanErrorMessage 
+import {
+  createStream,
+  toBaseUnits,
+  toDurationSeconds,
+  getTokenAddress,
+  toSorobanErrorMessage
 } from "@/lib/soroban";
+import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
 import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
+
+const TOKEN_DECIMALS = 7;
 
 export default function CreateStreamPage() {
   const { status, session } = useWallet();
@@ -30,6 +33,13 @@ export default function CreateStreamPage() {
     e.preventDefault();
     if (status !== "connected" || !session) {
       toast.error("Please connect your wallet first.");
+      return;
+    }
+
+    // Validate amount
+    const validationError = validateAmountInput(formData.amount, TOKEN_DECIMALS);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
 
@@ -126,13 +136,27 @@ export default function CreateStreamPage() {
                 Total Amount
               </label>
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 placeholder="0.00"
                 className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
                 value={formData.amount}
-                onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                onChange={(e) => {
+                  const newValue = e.target.value;
+                  // Only allow valid number characters and check precision
+                  if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
+                    if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
+                      setFormData({ ...formData, amount: newValue });
+                    }
+                  }
+                }}
                 required
               />
+              {formData.amount && !validateAmountInput(formData.amount, TOKEN_DECIMALS) && (
+                <p className="text-xs text-red-400 mt-1">
+                  Amount must be greater than 0 with max {TOKEN_DECIMALS} decimals
+                </p>
+              )}
             </div>
           </div>
 

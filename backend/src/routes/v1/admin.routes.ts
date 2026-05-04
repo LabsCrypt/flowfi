@@ -9,6 +9,7 @@ import {
 
 import { prisma } from '../../lib/prisma.js';
 import { sseService } from '../../services/sse.service.js';
+import { cache } from '../../lib/redis.js';
 import logger from '../../logger.js';
 
 const router = Router();
@@ -27,82 +28,133 @@ router.use(requireAdmin);
  *       200:
  *         description: Protocol health metrics
  */
+const ADMIN_METRICS_CACHE_KEY = 'admin:metrics';
+const ADMIN_METRICS_CACHE_TTL_SECONDS = 60;
+
+async function buildAdminMetrics() {
+  const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  const [
+    activeCount,
+    pausedCount,
+    totalCount,
+    cancelledCount,
+    completedCount,
+    eventsLast24h,
+    indexerState,
+    feeEvents,
+    feesLast24h,
+    withdrawnSums,
+  ] = await Promise.all([
+    prisma.stream.count({ where: { isActive: true } }),
+    prisma.stream.count({ where: { isPaused: true } }),
+    prisma.stream.count(),
+    prisma.stream.count({
+      where: { isActive: false, events: { some: { eventType: 'CANCELLED' } } },
+    }),
+    prisma.stream.count({
+      where: { isActive: false, events: { some: { eventType: 'COMPLETED' } } },
+    }),
+    prisma.streamEvent.count({ where: { createdAt: { gte: since24h } } }),
+    prisma.indexerState.findUnique({ where: { id: 'singleton' } }),
+    prisma.streamEvent.findMany({
+      where: { eventType: 'FEE_COLLECTED' },
+      select: { amount: true, metadata: true },
+    }),
+    prisma.streamEvent.findMany({
+      where: { eventType: 'FEE_COLLECTED', createdAt: { gte: since24h } },
+      select: { amount: true, metadata: true },
+    }),
+    prisma.stream.findMany({ select: { withdrawnAmount: true } }),
+  ]);
+
+  // Aggregate fees by token
+  const totalFeesCollectedByToken: Record<string, string> = {};
+  const feesLast24hByToken: Record<string, string> = {};
+
+  for (const event of feeEvents) {
+    const metadata = event.metadata ? JSON.parse(event.metadata) : {};
+    const token = metadata.token || 'unknown';
+    const amount = BigInt(event.amount || '0');
+    totalFeesCollectedByToken[token] = (
+      BigInt(totalFeesCollectedByToken[token] || '0') + amount
+    ).toString();
+  }
+
+  for (const event of feesLast24h) {
+    const metadata = event.metadata ? JSON.parse(event.metadata) : {};
+    const token = metadata.token || 'unknown';
+    const amount = BigInt(event.amount || '0');
+    feesLast24hByToken[token] = (
+      BigInt(feesLast24hByToken[token] || '0') + amount
+    ).toString();
+  }
+
+  // Sum total volume streamed (sum of withdrawn amounts) as BigInt to preserve i128 precision.
+  let totalVolumeStreamed = BigInt(0);
+  for (const row of withdrawnSums) {
+    totalVolumeStreamed += BigInt(row.withdrawnAmount || '0');
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const lagSeconds = indexerState
+    ? nowSec - Math.floor(indexerState.updatedAt.getTime() / 1000)
+    : null;
+
+  return {
+    // Snake_case summary requested by issue #426. Exposed at the top level so
+    // operators (and future dashboards) can read aggregate counts without
+    // walking the nested protocol-health tree below.
+    total_streams: totalCount,
+    active_streams: activeCount,
+    paused_streams: pausedCount,
+    completed_streams: completedCount,
+    cancelled_streams: cancelledCount,
+    total_volume_streamed: totalVolumeStreamed.toString(),
+
+    streams: {
+      active: activeCount,
+      paused: pausedCount,
+      total: totalCount,
+      byStatus: {
+        active: activeCount,
+        paused: pausedCount,
+        cancelled: cancelledCount,
+        completed: completedCount,
+      },
+    },
+    events: { last24h: eventsLast24h },
+    fees: {
+      totalFeesCollectedByToken,
+      feesLast24h: feesLast24hByToken,
+    },
+    sse: { activeConnections: sseService.getClientCount() },
+    cache: cache.getStats(),
+    indexer: {
+      lastLedger: indexerState?.lastLedger ?? 0,
+      lagSeconds,
+      lastUpdated: indexerState?.updatedAt ?? null,
+    },
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  };
+}
+
 router.get('/metrics', async (_req: Request, res: Response) => {
   try {
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    const [activeCount, totalCount, cancelledCount, completedCount, eventsLast24h, indexerState, feeEvents, feesLast24h] =
-      await Promise.all([
-        prisma.stream.count({ where: { isActive: true } }),
-        prisma.stream.count(),
-        prisma.stream.count({
-          where: { isActive: false, events: { some: { eventType: 'CANCELLED' } } },
-        }),
-        prisma.stream.count({
-          where: { isActive: false, events: { some: { eventType: 'COMPLETED' } } },
-        }),
-        prisma.streamEvent.count({ where: { createdAt: { gte: since24h } } }),
-        prisma.indexerState.findUnique({ where: { id: 'singleton' } }),
-        prisma.streamEvent.findMany({
-          where: { eventType: 'FEE_COLLECTED' },
-          select: { amount: true, metadata: true },
-        }),
-        prisma.streamEvent.findMany({
-          where: { eventType: 'FEE_COLLECTED', createdAt: { gte: since24h } },
-          select: { amount: true, metadata: true },
-        }),
-      ]);
-
-    // Aggregate fees by token
-    const totalFeesCollectedByToken: Record<string, string> = {};
-    const feesLast24hByToken: Record<string, string> = {};
-
-    for (const event of feeEvents) {
-      const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-      const token = metadata.token || 'unknown';
-      const amount = BigInt(event.amount || '0');
-      totalFeesCollectedByToken[token] = (
-        BigInt(totalFeesCollectedByToken[token] || '0') + amount
-      ).toString();
+    const cached = cache.get<Awaited<ReturnType<typeof buildAdminMetrics>>>(
+      ADMIN_METRICS_CACHE_KEY,
+    );
+    if (cached) {
+      res.set('X-Cache', 'HIT');
+      res.json(cached);
+      return;
     }
 
-    for (const event of feesLast24h) {
-      const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-      const token = metadata.token || 'unknown';
-      const amount = BigInt(event.amount || '0');
-      feesLast24hByToken[token] = (
-        BigInt(feesLast24hByToken[token] || '0') + amount
-      ).toString();
-    }
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    const lagSeconds = indexerState
-      ? nowSec - Math.floor(indexerState.updatedAt.getTime() / 1000)
-      : null;
-
-    res.json({
-      streams: {
-        active: activeCount,
-        total: totalCount,
-        byStatus: {
-          active: activeCount,
-          cancelled: cancelledCount,
-          completed: completedCount,
-        },
-      },
-      events: { last24h: eventsLast24h },
-      fees: {
-        totalFeesCollectedByToken,
-        feesLast24h: feesLast24hByToken,
-      },
-      sse: { activeConnections: sseService.getClientCount() },
-      indexer: {
-        lastLedger: indexerState?.lastLedger ?? 0,
-        lagSeconds,
-        lastUpdated: indexerState?.updatedAt ?? null,
-      },
-      uptime: process.uptime(),
-    });
+    const payload = await buildAdminMetrics();
+    cache.set(ADMIN_METRICS_CACHE_KEY, payload, ADMIN_METRICS_CACHE_TTL_SECONDS);
+    res.set('X-Cache', 'MISS');
+    res.json(payload);
   } catch (err) {
     logger.error('Error fetching admin metrics:', err);
     res.status(500).json({ error: 'Internal server error' });

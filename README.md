@@ -23,7 +23,8 @@ flowfi/
 │   ├── stream_contract/  # Core streaming logic
 ├── frontend/             # Next.js + Tailwind CSS frontend
 ├── docs/                 # Documentation
-│   └── ARCHITECTURE.md   # Architecture overview
+│   ├── ARCHITECTURE.md   # Architecture overview
+│   └── DEVELOPMENT.md    # Local development guide
 ```
 
 ## Architecture
@@ -39,6 +40,8 @@ For a detailed explanation of how these components interact, where event indexin
 For full local setup and contributor onboarding, see the [Development Guide](docs/DEVELOPMENT.md).
 
 ## Getting Started
+
+For full step-by-step instructions, see our [Development Guide](docs/DEVELOPMENT.md).
 
 ### Prerequisites
 
@@ -94,13 +97,6 @@ npm install
 npm run dev
 ```
 
-### Smart Contracts
-
-```bash
-cd contracts
-cargo build --target wasm32-unknown-unknown --release
-```
-
 ## Deployment
 
 ### Contract Deployment
@@ -118,7 +114,7 @@ The FlowFi smart contracts can be deployed to both testnet and mainnet using the
 Before deploying, set the following environment variables:
 
 ```bash
-export STELLAR_SECRET_KEY="your_secret_key_here"
+export DEPLOYER_SECRET="your_secret_key_here"
 export ADMIN_ADDRESS="your_admin_address_here"
 export TREASURY_ADDRESS="your_treasury_address_here"
 export FEE_RATE_BPS="25"  # 0.25% fee rate
@@ -127,13 +123,15 @@ export FEE_RATE_BPS="25"  # 0.25% fee rate
 #### Deploy to Testnet
 
 ```bash
-npx tsx scripts/deploy.ts --network testnet
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh --network testnet
 ```
 
 #### Deploy to Mainnet
 
 ```bash
-npx tsx scripts/deploy.ts --network mainnet
+chmod +x scripts/deploy.sh
+./scripts/deploy.sh --network mainnet
 ```
 
 #### Deployment Process
@@ -274,7 +272,7 @@ Have questions? Want to share ideas or projects? Join the conversation!
 - **❓ [Ask Questions](https://github.com/flowfi/flowfi/discussions/categories/q-a)** - Get help in GitHub Discussions Q&A
 - **💡 [Share Ideas](https://github.com/flowfi/flowfi/discussions/categories/ideas)** - Propose features and discuss improvements
 - **🎪 [Show and Tell](https://github.com/flowfi/flowfi/discussions/categories/show-and-tell)** - Share projects and use cases built with FlowFi
-- **📖 [Discussions Guide](DISCUSSIONS.md)** - Learn when to use Discussions vs Issues
+- **📖 [Discussions Guide](DISCUSSIONS.md)** - Learn when to use Discussions vs Issues.
 
 ## Contributors
 
@@ -289,4 +287,4 @@ This project follows the [all-contributors](https://github.com/all-contributors/
 
 ## License
 
-MIT
+MIT.

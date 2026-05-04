@@ -6,10 +6,8 @@ import "./globals.css";
 import { WalletProvider } from "@/context/wallet-context";
 import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/context/theme-provider";
-import { Banner } from "@/components/ui/Banner";
-import bannerConfig from "@/lib/banner.config";
-import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
+import { QueryProvider } from "@/components/providers/query-provider";
 
 const sora = Sora({
   variable: "--font-display",
@@ -36,28 +34,49 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                const theme = localStorage.getItem('flowfi-theme') || 'dark';
+                if (theme === 'system') {
+                  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                  document.documentElement.classList.toggle('dark', prefersDark);
+                } else {
+                  document.documentElement.classList.toggle('dark', theme === 'dark');
+                }
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
         <ThemeProvider
           attribute="class"
-          enableSystem={false}
+          defaultTheme="dark"
+          enableSystem={true}
+          storageKey="flowfi-theme"
           disableTransitionOnChange
         >
-          <WalletProvider>
-            <Navbar />
-  <Toaster
-    position="top-right"
-    toastOptions={{
-      duration: 4000,
-      style: {
-        background: "#111",
-        color: "#fff",
-        border: "1px solid #333",
-        borderRadius: "12px",
-      },
-    }}
-  />
-  {children}
-</WalletProvider>
+          <QueryProvider>
+            <WalletProvider>
+              <Navbar />
+              <Toaster
+                position="top-right"
+                toastOptions={{
+                  duration: 4000,
+                  style: {
+                    background: "#111",
+                    color: "#fff",
+                    border: "1px solid #333",
+                    borderRadius: "12px",
+                  },
+                }}
+              />
+              {children}
+            </WalletProvider>
+          </QueryProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -5,25 +5,56 @@
  * a real Postgres or Redis instance. They verify that the indexer worker, stream
  * controller, SSE broadcast, and RPC fallback all wire up correctly end-to-end.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
-import { EventEmitter } from 'node:events';
 
-// ─── Mocks (must be hoisted before real imports) ──────────────────────────────
+// Bypass Stellar signature verification on POST /v1/streams. The route is
+// exercised here as a stand-in for the indexer worker, so we replace the auth
+// middleware with a stub that injects a deterministic wallet.
+vi.mock('../../src/middleware/auth.middleware.js', () => ({
+  authMiddleware: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
+    next();
+  },
+  optionalAuthMiddleware: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
+    next();
+  },
+}));
 
-const mockSseService = {
-  broadcastToStream: vi.fn(),
-  broadcastToUser: vi.fn(),
-  addClient: vi.fn(),
-  removeClient: vi.fn(),
-  getClientCount: vi.fn().mockReturnValue(0),
-  getActiveIpCount: vi.fn().mockReturnValue(0),
-  getPerIpPeakConnections: vi.fn().mockReturnValue(0),
-  getMaxConnections: vi.fn().mockReturnValue(10000),
-  checkCapacity: vi.fn().mockReturnValue({ allowed: true }),
-  isShuttingDown: vi.fn().mockReturnValue(false),
-  initRedisSubscription: vi.fn().mockResolvedValue(undefined),
-};
+// ─── Mocks (using vi.hoisted to ensure they are available to vi.mock) ─────────
+
+const { mockSseService, mockPrisma } = vi.hoisted(() => ({
+  mockSseService: {
+    broadcastToStream: vi.fn(),
+    broadcastToUser: vi.fn(),
+    addClient: vi.fn(),
+    removeClient: vi.fn(),
+    getClientCount: vi.fn().mockReturnValue(0),
+    getActiveIpCount: vi.fn().mockReturnValue(0),
+    getPerIpPeakConnections: vi.fn().mockReturnValue(0),
+    getMaxConnections: vi.fn().mockReturnValue(10000),
+    checkCapacity: vi.fn().mockReturnValue({ allowed: true }),
+    isShuttingDown: vi.fn().mockReturnValue(false),
+    initRedisSubscription: vi.fn().mockResolvedValue(undefined),
+  },
+  mockPrisma: {
+    stream: {
+      upsert: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+      update: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
+    },
+    streamEvent: {
+      create: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+    },
+    $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
+    $disconnect: vi.fn(),
+  },
+}));
 
 vi.mock('../../src/services/sse.service.js', () => ({
   sseService: mockSseService,
@@ -34,27 +65,15 @@ vi.mock('../../src/lib/redis.js', () => ({
   isRedisAvailable: vi.fn().mockReturnValue(false),
   getPublisher: vi.fn().mockReturnValue(null),
   getSubscriber: vi.fn().mockReturnValue(null),
+  cache: {
+    get: vi.fn().mockReturnValue(null),
+    set: vi.fn(),
+    del: vi.fn(),
+    getMetadata: vi.fn().mockReturnValue(null),
+  },
 }));
 
-// Prisma mock – set up base shape; individual tests will override per-method
-const mockPrisma = {
-  stream: {
-    upsert: vi.fn(),
-    findMany: vi.fn().mockResolvedValue([]),
-    findUnique: vi.fn().mockResolvedValue(null),
-    update: vi.fn(),
-  },
-  streamEvent: {
-    create: vi.fn(),
-    findMany: vi.fn().mockResolvedValue([]),
-    count: vi.fn().mockResolvedValue(0),
-  },
-  $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
-  $disconnect: vi.fn(),
-};
-
 vi.mock('../../src/lib/prisma.js', () => ({
-  default: mockPrisma,
   prisma: mockPrisma,
 }));
 
@@ -82,6 +101,8 @@ function makeStream(overrides: Partial<Record<string, unknown>> = {}) {
     lastUpdateTime: 1700000000,
     isActive: true,
     isPaused: false,
+    pausedAt: null,
+    totalPausedDuration: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
     senderUser: null,
@@ -370,7 +391,7 @@ describe('GET /v1/streams/:id/events — pagination and eventType filter', () =>
     const res = await request(app).get('/v1/streams/1/events?eventType=CANCELLED');
     expect(res.status).toBe(200);
     const call = mockPrisma.streamEvent.findMany.mock.calls[0]?.[0] as { where?: Record<string, unknown> } | undefined;
-    expect(call?.where).toMatchObject({ type: 'CANCELLED' });
+    expect(call?.where).toMatchObject({ eventType: 'CANCELLED' });
   });
 
   it('rejects invalid eventType with 400', async () => {

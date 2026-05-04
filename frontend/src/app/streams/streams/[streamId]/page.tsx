@@ -14,9 +14,10 @@ import {
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import { shortenPublicKey } from "@/lib/wallet";
+import { formatAmount } from "@/utils/amount";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
-const TOKEN_DECIMALS = 1e7;
+const TOKEN_DECIMALS = 7;
 
 interface StreamDetailsPageProps {
   params: {
@@ -27,7 +28,7 @@ interface StreamDetailsPageProps {
 function toDisplayAmount(baseUnits: string): number {
   const parsed = Number(baseUnits);
   if (!Number.isFinite(parsed)) return 0;
-  return parsed / TOKEN_DECIMALS;
+  return Number(formatAmount(BigInt(parsed), TOKEN_DECIMALS));
 }
 
 function formatUnixTimestamp(timestamp: number): string {

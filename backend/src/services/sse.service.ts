@@ -7,10 +7,13 @@ interface SSEClient {
   res: Response;
   subscriptions: Set<string>;
   ip: string;
+  lastActivityAt: number;
 }
 
 const MAX_CONNECTIONS_PER_IP = 5;
 const RETRY_AFTER_SECONDS = 60;
+const HEARTBEAT_INTERVAL_MS = 30000; // 30 seconds
+const IDLE_TIMEOUT_MS = 300000; // 5 minutes
 
 interface SSECapacityCheckResult {
   allowed: boolean;
@@ -19,11 +22,16 @@ interface SSECapacityCheckResult {
   message?: string;
 }
 
-class SSEService {
+export class SSEService {
   private clients: Map<string, SSEClient> = new Map();
   private readonly ipConnectionCounts: Map<string, number> = new Map();
   private shuttingDown = false;
   private perIpPeakConnections = 0;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+
+  constructor() {
+    this.startHeartbeat();
+  }
 
   private readonly maxConnections: number = (() => {
     const parsed = Number.parseInt(process.env.MAX_SSE_CONNECTIONS ?? '10000', 10);
@@ -54,6 +62,71 @@ class SSEService {
     });
 
     logger.info('[SSEService] Redis pub/sub subscription active.');
+  }
+
+  startHeartbeat(): void {
+    if (this.heartbeatInterval) return;
+
+    this.heartbeatInterval = setInterval(() => {
+      this.sendHeartbeat();
+      this.removeIdleConnections();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    logger.info('[SSEService] Heartbeat started');
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+      logger.info('[SSEService] Heartbeat stopped');
+    }
+  }
+
+  private sendHeartbeat(): void {
+    const heartbeatMessage = ': keep-alive\n\n';
+    let sentCount = 0;
+
+    for (const client of this.clients.values()) {
+      try {
+        client.res.write(heartbeatMessage);
+        sentCount++;
+      } catch (err) {
+        logger.warn(`[SSEService] Failed to send heartbeat to client ${client.id}:`, err);
+        // Remove client on write failure
+        this.removeClient(client.id);
+      }
+    }
+
+    if (sentCount > 0) {
+      logger.debug(`[SSEService] Sent heartbeat to ${sentCount} clients`);
+    }
+  }
+
+  private removeIdleConnections(): void {
+    const now = Date.now();
+    const idleClients: string[] = [];
+
+    for (const [clientId, client] of this.clients.entries()) {
+      if (now - client.lastActivityAt > IDLE_TIMEOUT_MS) {
+        idleClients.push(clientId);
+      }
+    }
+
+    if (idleClients.length > 0) {
+      logger.info(`[SSEService] Removing ${idleClients.length} idle connections`);
+      for (const clientId of idleClients) {
+        try {
+          const client = this.clients.get(clientId);
+          if (client) {
+            client.res.end();
+          }
+        } catch (err) {
+          logger.warn(`[SSEService] Error closing idle client ${clientId}:`, err);
+        }
+        this.removeClient(clientId);
+      }
+    }
   }
 
   checkCapacity(ip: string): SSECapacityCheckResult {
@@ -88,11 +161,12 @@ class SSEService {
       res,
       subscriptions: new Set(subscriptions),
       ip,
+      lastActivityAt: Date.now(),
     };
 
     this.clients.set(clientId, client);
     logger.info(
-      `SSE client connected: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
+      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
@@ -113,15 +187,20 @@ class SSEService {
       this.ipConnectionCounts.set(client.ip, currentIpCount - 1);
     }
 
-    logger.info(`SSE client disconnected: ${clientId}, ip: ${client.ip}`);
+    logger.info(`[SSEService] Connection closed: ${clientId}, ip: ${client.ip}`);
   }
 
   sendReconnectToAll(): void {
     this.shuttingDown = true;
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
     const message = 'event: reconnect\ndata: {}\n\n';
     for (const client of this.clients.values()) {
       try {
         client.res.write(message);
+        client.lastActivityAt = Date.now();
       } catch {
         // ignore write errors during shutdown
       }
@@ -133,7 +212,12 @@ class SSEService {
     const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of this.clients.values()) {
       if (!filter || filter(client)) {
-        client.res.write(message);
+        try {
+          client.res.write(message);
+          client.lastActivityAt = Date.now();
+        } catch (err) {
+          // ignore write errors
+        }
       }
     }
   }
@@ -151,6 +235,13 @@ class SSEService {
       getPublisher()?.publish(`sse:user:${publicKey}`, JSON.stringify({ event, data }));
     } else {
       this._localBroadcastToUser(publicKey, event, data);
+    }
+  }
+
+  broadcastToAdmin(event: string, data: unknown): void {
+    const adminKey = process.env.ADMIN_PUBLIC_KEY;
+    if (adminKey) {
+      this.broadcastToUser(adminKey, event, data);
     }
   }
 
@@ -183,5 +274,4 @@ class SSEService {
   }
 }
 
-export { SSEService };
 export const sseService = new SSEService();

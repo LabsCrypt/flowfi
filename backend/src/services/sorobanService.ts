@@ -1,8 +1,9 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Account, Networks } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = process.env.STREAM_CONTRACT_ID ?? '';
+const KEEPER_SECRET = process.env.KEEPER_SECRET_KEY ?? '';
 /** DB data older than this is considered stale and triggers an RPC fallback. */
 const STALE_THRESHOLD_MS = 30_000;
 
@@ -77,6 +78,45 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
   return simSuccess.result!.retval;
 }
 
+async function submitContractCall(method: string, args: xdr.ScVal[], senderSecret: string): Promise<string> {
+  if (!CONTRACT_ID) throw new Error('CONTRACT_ID not set');
+
+  const keypair = Keypair.fromSecret(senderSecret);
+  const contract = new Contract(CONTRACT_ID);
+  const account = await server.getAccount(keypair.publicKey());
+
+  const op = contract.call(method, ...args);
+
+  const tx = new TransactionBuilder(account, {
+    fee: '1000',
+    networkPassphrase:
+      process.env.STELLAR_NETWORK === 'mainnet'
+        ? Networks.PUBLIC
+        : Networks.TESTNET,
+  })
+    .addOperation(op)
+    .setTimeout(30)
+    .build();
+
+  // Simulate first to get foot print and resource info
+  const simulation = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(simulation)) {
+    throw new Error(`Simulation failed: ${simulation.error}`);
+  }
+
+  // Assemble transaction with simulation results
+  const assembledTx = rpc.assembleTransaction(tx, simulation).build();
+  assembledTx.sign(keypair);
+
+  const response = await server.sendTransaction(assembledTx);
+
+  if (response.status === 'ERROR') {
+    throw new Error(`Transaction failed: ${JSON.stringify(response.errorResult)}`);
+  }
+
+  return response.hash;
+}
+
 export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
   if (!CONTRACT_ID) return null;
 
@@ -124,7 +164,125 @@ export async function getClaimableFromChain(streamId: number): Promise<string | 
   }
 }
 
+export async function cancelStream(streamId: number, senderSecret: string): Promise<string> {
+  return submitContractCall('cancel_stream', [
+    nativeToScVal(streamId, { type: 'u64' }),
+  ], senderSecret);
+}
+
+export async function topUpStream(streamId: number, amount: bigint, callerAddress: string): Promise<string> {
+  if (!KEEPER_SECRET) throw new Error('KEEPER_SECRET_KEY not configured');
+  return submitContractCall('top_up_stream', [
+    nativeToScVal(streamId, { type: 'u64' }),
+    nativeToScVal(amount, { type: 'i128' }),
+    nativeToScVal(callerAddress, { type: 'address' }),
+  ], KEEPER_SECRET);
+}
+
 /** Returns true when the DB record is older than STALE_THRESHOLD_MS. */
 export function isStale(updatedAt: Date): boolean {
   return Date.now() - updatedAt.getTime() > STALE_THRESHOLD_MS;
+}
+
+export interface PauseResumeResult {
+  txHash: string;
+}
+
+/**
+ * Pause a stream. Calls the Soroban contract's pause_stream function.
+ * Note: This is a read-only simulation to verify the operation would succeed.
+ * The actual pause transaction must be signed by the sender and submitted by the frontend.
+ */
+export async function pauseStream(
+  senderAddress: string,
+  streamId: number
+): Promise<PauseResumeResult> {
+  if (!CONTRACT_ID) {
+    throw new Error('Stream contract ID not configured');
+  }
+
+  try {
+    const { Address } = await import('@stellar/stellar-sdk');
+    
+    const senderAddr = new Address(senderAddress);
+    
+    const retval = await simulateContractCall('pause_stream', [
+      senderAddr.toScVal(),
+      nativeToScVal(streamId, { type: 'u64' }),
+    ]);
+
+    // Return a mock txHash for now - in production this would be the actual transaction hash
+    // The real transaction would be signed by the frontend and submitted separately
+    return {
+      txHash: 'simulated-pause-' + streamId,
+    };
+  } catch (err) {
+    logger.error(`[SorobanService] pauseStream(${streamId}) failed:`, err);
+    throw new Error(`Failed to pause stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Resume a paused stream. Calls the Soroban contract's resume_stream function.
+ * Note: This is a read-only simulation to verify the operation would succeed.
+ * The actual resume transaction must be signed by the sender and submitted by the frontend.
+ */
+export async function resumeStream(
+  senderAddress: string,
+  streamId: number
+): Promise<PauseResumeResult> {
+  if (!CONTRACT_ID) {
+    throw new Error('Stream contract ID not configured');
+  }
+
+  try {
+    const { Address } = await import('@stellar/stellar-sdk');
+    
+    const senderAddr = new Address(senderAddress);
+    
+    const retval = await simulateContractCall('resume_stream', [
+      senderAddr.toScVal(),
+      nativeToScVal(streamId, { type: 'u64' }),
+    ]);
+
+    // Return a mock txHash for now - in production this would be the actual transaction hash
+    return {
+      txHash: 'simulated-resume-' + streamId,
+    };
+  } catch (err) {
+    logger.error(`[SorobanService] resumeStream(${streamId}) failed:`, err);
+    throw new Error(`Failed to resume stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+}
+
+/**
+ * Withdraw from a stream. Calls the Soroban contract's withdraw function.
+ * Note: This simulates the contract call and returns a placeholder tx hash,
+ * matching the current pause/resume backend pattern.
+ */
+export async function withdraw(
+  streamId: number,
+  recipientAddress: string,
+): Promise<PauseResumeResult> {
+  if (!CONTRACT_ID) {
+    throw new Error('Stream contract ID not configured');
+  }
+
+  try {
+    const { Address } = await import('@stellar/stellar-sdk');
+
+    const recipient = new Address(recipientAddress);
+
+    await simulateContractCall('withdraw', [
+      recipient.toScVal(),
+      nativeToScVal(streamId, { type: 'u64' }),
+    ]);
+
+    return {
+      txHash: 'simulated-withdraw-' + streamId,
+    };
+  } catch (err) {
+    logger.error(`[SorobanService] withdraw(${streamId}) failed:`, err);
+    throw new Error(`Failed to withdraw from stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
 }

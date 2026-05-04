@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+
+vi.mock('../src/middleware/auth.middleware.js', () => ({
+  authMiddleware: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
+    next();
+  },
+  optionalAuthMiddleware: (_req: any, _res: any, next: any) => next(),
+}));
+
+vi.mock('../src/middleware/stream-rate-limiter.middleware.js', () => ({
+  streamCreationRateLimiter: (_req: any, _res: any, next: any) => next(),
+}));
+
 import app from '../src/app.js';
 
 // Mock Prisma so tests don't require a real DB connection
@@ -9,6 +22,7 @@ vi.mock('../src/lib/prisma.js', () => ({
       upsert: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      count: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
     $disconnect: vi.fn(),
@@ -18,6 +32,7 @@ vi.mock('../src/lib/prisma.js', () => ({
       upsert: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      count: vi.fn(),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
     $disconnect: vi.fn(),
@@ -43,7 +58,11 @@ describe('POST /v1/streams', () => {
       withdrawnAmount: '0',
       startTime: 1700000000,
       lastUpdateTime: 1700000000,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
       isActive: true,
+      endTime: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -106,13 +125,15 @@ describe('GET /v1/streams', () => {
 
   it('should return 200 with list of streams', async () => {
     (prisma.stream.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (prisma.stream.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
 
     const response = await request(app)
       .get('/v1/streams')
       .set('Accept', 'application/json');
 
     expect(response.status).toBe(200);
-    expect(Array.isArray(response.body)).toBe(true);
+    expect(response.body).toHaveProperty('data');
+    expect(Array.isArray(response.body.data)).toBe(true);
   });
 });
 
@@ -157,7 +178,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '30', 
           startTime: 1000,
           lastUpdateTime: 2000,
-          isActive: true 
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: true 
         },
         { 
           id: '2', 
@@ -172,7 +197,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '20', 
           startTime: 1000,
           lastUpdateTime: 2000,
-          isActive: false 
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: false 
         },
       ])
       .mockResolvedValueOnce([
@@ -189,7 +218,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '100',
           startTime: 1000,
           lastUpdateTime: 0,
-          isActive: true,
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: true,
         },
         {
           id: '4',
@@ -204,7 +237,11 @@ describe('GET /v1/users/:address/summary', () => {
           withdrawnAmount: '0',
           startTime: 1000,
           lastUpdateTime: 0,
-          isActive: false,
+          isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: false,
         },
       ]);
 
@@ -216,7 +253,7 @@ describe('GET /v1/users/:address/summary', () => {
       address,
       totalStreamsCreated: 2,
       totalStreamedOut: '50',
-      totalStreamedIn: '150',
+      totalStreamedIn: '100',
       currentClaimable: '900',
       activeOutgoingCount: 1,
       activeIncomingCount: 1,
@@ -238,7 +275,11 @@ describe('GET /v1/users/:address/summary', () => {
         withdrawnAmount: '1',
         startTime: 1000,
         lastUpdateTime: 2000,
-        isActive: true 
+        isPaused: false,
+      endTime: null,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      isActive: true 
       }])
       .mockResolvedValueOnce([]);
 

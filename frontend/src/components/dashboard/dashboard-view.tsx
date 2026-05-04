@@ -27,7 +27,6 @@ import {
   isExpectedNetwork,
   type WalletSession,
 } from "@/lib/wallet";
-import { isValidStellarPublicKey } from "@/lib/stellar";
 import {
   createStream as sorobanCreateStream,
   topUpStream as sorobanTopUp,
@@ -38,6 +37,7 @@ import {
   getTokenAddress,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
+import { isValidStellarPublicKey } from "@/lib/stellar";
 import IncomingStreams from "../IncomingStreams";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { SSEStatusIndicator } from "./SSEStatusIndicator";
@@ -630,10 +630,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const handleCreateStream = async (data: StreamFormData) => {
     const toastId = toast.loading("Creating stream…");
     try {
-      await sorobanCreateStream(session, { recipient: data.recipient, tokenAddress: getTokenAddress(data.token), amount: toBaseUnits(data.amount), durationSeconds: toDurationSeconds(data.duration, data.durationUnit) });
+      await sorobanCreateStream(session, {
+        recipient: data.recipient,
+        tokenAddress: getTokenAddress(data.token),
+        amount: toBaseUnits(data.amount),
+        durationSeconds: toDurationSeconds(data.duration, data.durationUnit),
+      });
       addStreamLocally(data);
-      setShowWizard(false);
-      toast.success("Stream created successfully!", { id: toastId });
+      // We don't call setShowWizard(false) here anymore, the wizard handles its own flow
+      toast.success("Transaction confirmed on-chain!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;
@@ -740,6 +745,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
     // ── Overview ──────────────────────────────────────────────────────────
     if (activeTab === "overview") {
+
       return (
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * TopUpModal.tsx
+ * TopUpModal.tsx 
  *
  * Replaces the prompt() / alert() in dashboard-view.tsx handleTopUp.
  * Collects an amount, shows a confirmation summary, and calls onConfirm.
@@ -9,6 +9,7 @@
 
 import React, { useRef, useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
 import toast from "react-hot-toast";
 
 interface TopUpModalProps {
@@ -42,10 +43,17 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [onClose, isSubmitting]);
 
+  // Token decimals - using 7 as default (Stellar standard)
+  const TOKEN_DECIMALS = 7;
+
   const validate = (): boolean => {
-    const parsed = parseFloat(amount);
-    if (!amount.trim() || isNaN(parsed) || parsed <= 0) {
-      setError("Please enter a valid positive amount.");
+    const validationError = validateAmountInput(amount, TOKEN_DECIMALS);
+    if (validationError) {
+      setError(validationError);
+      return false;
+    }
+    if (!hasValidPrecision(amount, 7)) {
+      setError("Amount exceeds maximum precision (7 decimal places).");
       return false;
     }
     setError(null);
@@ -112,13 +120,18 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
             <input
               ref={inputRef}
               id="topup-amount"
-              type="number"
-              step="any"
-              min="0"
+              type="text"
+              inputMode="decimal"
               value={amount}
               onChange={(e) => {
-                setAmount(e.target.value);
-                if (error) setError(null);
+                const newValue = e.target.value;
+                // Only allow valid number characters and check precision
+                if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
+                  if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
+                    setAmount(newValue);
+                    if (error) setError(null);
+                  }
+                }
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleConfirm();
@@ -165,18 +178,8 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
           <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button onClick={() => void handleConfirm()} disabled={isSubmitting} glow>
-            {isSubmitting ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Topping up…
-              </>
-            ) : (
-              "Confirm Top Up"
-            )}
+          <Button onClick={() => void handleConfirm()} loading={isSubmitting} glow>
+            {isSubmitting ? "Topping up…" : "Confirm Top Up"}
           </Button>
         </div>
       </div>
