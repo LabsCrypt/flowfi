@@ -19,7 +19,7 @@ use storage::{
     config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
     try_load_config, try_load_stream,
 };
-use types::{ProtocolConfig, Stream, StreamStatus};
+use types::{DataKey, ProtocolConfig, Stream, StreamStatus};
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
 const MAX_FEE_RATE_BPS: u32 = 1_000;
@@ -98,6 +98,14 @@ impl StreamContract {
     /// Returns the current protocol fee configuration, or `None` if not yet initialized.
     pub fn get_fee_config(env: Env) -> Option<ProtocolConfig> {
         try_load_config(&env)
+    }
+
+    /// Returns the total number of streams ever created (i.e., the stream ID counter).
+    pub fn stream_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&DataKey::StreamCounter)
+            .unwrap_or(0)
     }
 
     // ─── Stream Operations ────────────────────────────────────────────────────

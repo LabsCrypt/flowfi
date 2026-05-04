@@ -22,6 +22,7 @@
     ]
   },
   "dependencies": {
+    "esbuild": "0.25.12",
     "react-hot-toast": "^2.6.0"
   },
   "optionalDependencies": {
