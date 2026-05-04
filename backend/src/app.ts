@@ -5,6 +5,7 @@ import { swaggerSpec } from './config/swagger.js';
 import { apiVersionMiddleware, type VersionedRequest } from './middleware/api-version.middleware.js';
 import { sandboxMiddleware } from './middleware/sandbox.middleware.js';
 import { globalRateLimiter } from './middleware/rate-limiter.middleware.js';
+import { requestIdMiddleware } from './middleware/requestId.js';
 import v1Routes from './routes/v1/index.js';
 
 import healthRoutes from './routes/health.routes.js';
@@ -24,6 +25,9 @@ if (!process.env.CORS_ALLOWED_ORIGINS && !isProduction) {
 
 // Apply global rate limiter first
 app.use(globalRateLimiter);
+
+// Request ID tracing
+app.use(requestIdMiddleware);
 
 app.disable('x-powered-by');
 
