@@ -7,7 +7,13 @@ export default defineConfig({
         setupFiles: [],
         include: ['tests/**/*.{test,spec}.ts', 'src/__tests__/**/*.{test,spec}.ts'],
         coverage: {
-            reporter: ['text', 'json', 'html'],
+            reporter: ['text', 'json', 'html', 'lcov'],
+            thresholds: {
+                lines: 60,
+                functions: 60,
+                branches: 60,
+                statements: 60,
+            }
         },
         testTimeout: 30000,
         hookTimeout: 30000,

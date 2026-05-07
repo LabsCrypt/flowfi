@@ -1,5 +1,7 @@
 # FlowFi
 
+[![codecov](https://codecov.io/gh/LabsCrypt/flowfi/branch/main/graph/badge.svg?token=)](https://codecov.io/gh/LabsCrypt/flowfi)
+
 **DeFi Payment Streaming on Stellar**
 
 _Programmable, real-time payment streams and recurring subscriptions._
