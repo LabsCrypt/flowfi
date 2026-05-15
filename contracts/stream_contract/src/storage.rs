@@ -1,4 +1,4 @@
-use soroban_sdk::Env;
+use soroban_sdk::{Address, Env, Vec};
 
 use crate::errors::StreamError;
 use crate::types::{DataKey, ProtocolConfig, Stream};
@@ -41,6 +41,28 @@ pub fn save_stream(env: &Env, stream_id: u64, stream: &Stream) {
     env.storage()
         .persistent()
         .set(&DataKey::Stream(stream_id), stream);
+}
+
+/// Loads the stream IDs owned by `sender` from persistent storage.
+pub fn load_sender_stream_ids(env: &Env, sender: &Address) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::SenderStreams(sender.clone()))
+        .unwrap_or(Vec::new(env))
+}
+
+/// Persists the stream IDs owned by `sender`.
+pub fn save_sender_stream_ids(env: &Env, sender: &Address, stream_ids: &Vec<u64>) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::SenderStreams(sender.clone()), stream_ids);
+}
+
+/// Appends a stream ID to the sender-owned history list.
+pub fn append_sender_stream_id(env: &Env, sender: &Address, stream_id: u64) {
+    let mut stream_ids = load_sender_stream_ids(env, sender);
+    stream_ids.push_back(stream_id);
+    save_sender_stream_ids(env, sender, &stream_ids);
 }
 
 /// Returns the stream if it exists, `None` otherwise (used by read-only queries).
