@@ -1070,8 +1070,7 @@ fn test_create_stream_self_stream() {
 
 #[test]
 fn test_create_stream_zero_rate() {
-    // amount < duration → rate_per_second rounds to 0 via integer division.
-    // The stream is created but will never accrue anything.
+    // amount < duration → rate_per_second rounds to 0; must now be rejected.
     let env = Env::default();
     env.mock_all_auths();
     let (token, _) = create_token(&env);
@@ -1079,13 +1078,30 @@ fn test_create_stream_zero_rate() {
     mint(&env, &token, &sender, 1);
 
     let client = create_contract(&env);
-    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1, &1_000);
-    let s = client.get_stream(&id).unwrap();
-    assert_eq!(s.rate_per_second, 0);
+    let result = client.try_create_stream(
+        &sender,
+        &Address::generate(&env),
+        &token,
+        &1,
+        &1_000,
+    );
+    assert_eq!(result, Err(Ok(StreamError::InvalidRate)));
+}
 
-    // Advance time — nothing should be claimable.
-    env.ledger().with_mut(|l| l.timestamp += 500);
-    assert_eq!(client.get_claimable_amount(&id), Some(0));
+#[test]
+fn test_create_stream_rate_exactly_one_succeeds() {
+    // amount == duration → rate = 1, which is the smallest valid rate.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 100);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &100, &100);
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(s.rate_per_second, 1);
+    assert!(s.is_active);
 }
 
 #[test]

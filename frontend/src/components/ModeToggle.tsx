@@ -39,7 +39,7 @@ export function ModeToggle() {
   // Prevent hydration mismatch
   if (!isMounted) {
     return (
-      <button className="inline-flex items-center justify-center w-8 h-8">
+      <button className="inline-flex items-center justify-center w-8 h-8" aria-label="Toggle theme">
         <span className="sr-only">Toggle theme</span>
       </button>
     );

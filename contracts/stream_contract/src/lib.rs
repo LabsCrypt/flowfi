@@ -144,6 +144,16 @@ impl StreamContract {
         let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
         let rate_per_second = net_amount / (duration as i128);
 
+        // Reject streams where integer division rounds the rate to zero.
+        // Such a stream would lock the sender's tokens in the contract while
+        // never accruing anything to the recipient — almost always a caller
+        // mistake (wrong decimals or an excessively long duration).
+        // Soroban rolls back the entire transaction on Err, so the token
+        // transfer above is unwound automatically.
+        if rate_per_second == 0 {
+            return Err(StreamError::InvalidRate);
+        }
+
         save_stream(
             &env,
             stream_id,

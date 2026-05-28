@@ -174,6 +174,8 @@ export default function SettingsPage() {
 
             <button
               onClick={handleBrowserPushToggle}
+              aria-label="Toggle browser notifications"
+              aria-pressed={browserPush}
               className={`relative w-14 h-7 rounded-full transition-all duration-300 ${
                 browserPush
                   ? "bg-gradient-to-r from-purple-500 to-blue-500"
@@ -326,6 +328,7 @@ export default function SettingsPage() {
 
                 <button
                   onClick={copyAddress}
+                  aria-label={copied ? "Address copied" : "Copy wallet address"}
                   className="ml-3 opacity-70 hover:opacity-100 transition flex-shrink-0"
                 >
                   {copied ? (
@@ -386,6 +389,7 @@ export default function SettingsPage() {
                       navigator.clipboard.writeText(CONTRACT_ADDRESS);
                       toast.success("Contract address copied");
                     }}
+                    aria-label="Copy contract address"
                     className="opacity-60 hover:opacity-100 transition"
                   >
                     <Copy size={14} />

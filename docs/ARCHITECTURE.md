@@ -2,19 +2,7 @@
 
 This document explains how FlowFi moves data from on-chain contract events into API responses and real-time frontend updates.
 
-# FlowFi Architecture
-
-This document explains how FlowFi moves data from on-chain contract events into API responses and real-time frontend updates.
-
 ## High-Level Overview
-
-```mermaid
-flowchart LR
-    Contract[Stream Contract (Soroban WASM)] --> Indexer[Soroban Event Indexer]
-    Indexer --> DB[(Postgres DB)]
-    DB --> API[Backend API (Express + SSE)]
-    API --> UI[Frontend (Next.js)]
-    UI --> API
 
 ```mermaid
 flowchart LR
@@ -155,3 +143,95 @@ Benefits:
 1. `/v1/events/stats` exposes active SSE connections and connection-capacity metrics.
 1. Admin metrics include SSE peak-per-IP visibility for abuse monitoring.
 1. User summary endpoint (`/v1/users/{address}/summary`) is cached for 30s to protect DB hot paths.
+
+---
+
+## Event Indexing & Real-Time Updates
+
+### Data-Flow Overview
+
+```
+Soroban RPC
+    │  poll for new contract events
+    ▼
+SorobanEventWorker  (backend/src/workers/soroban-event-worker.ts)
+    │  normalize payload, upsert Stream row, insert StreamEvent row
+    ▼
+PostgreSQL  (via Prisma)
+    │  StreamEvent table / Stream table updated
+    ▼
+SSE broadcast  (backend/src/services/sseService.ts)
+    │  pushes typed event to sse:stream:<id> and sse:user:<address> channels
+    ▼
+Frontend useStreamEvents hook  (frontend/src/hooks/useStreamEvents.ts)
+    │  receives event over long-lived SSE connection
+    ▼
+Dashboard / NotificationDropdown  re-render with live data
+```
+
+### Deduplication
+
+`StreamEvent` rows carry a compound unique constraint:
+
+```
+@@unique([transactionHash, eventType])
+```
+
+This means replaying the same on-chain transaction (e.g. during a re-index or worker restart) will produce an `upsert` conflict rather than a duplicate row. The worker uses Prisma's `createOrUpdate` (upsert) path on `Stream` and a `createMany … skipDuplicates` path on `StreamEvent`.
+
+### Indexer Cursor — `IndexerState`
+
+The worker persists its progress in the `IndexerState` table (a single-row ledger-sequence cursor). On each poll cycle:
+
+1. Read the stored `lastIndexedLedger` value.
+2. Query the Soroban RPC for events emitted in `(lastIndexedLedger, latestLedger]`.
+3. Process and persist events.
+4. Update `IndexerState.lastIndexedLedger` to `latestLedger`.
+
+On a cold start (no `IndexerState` row) the worker begins from a configured genesis ledger so historical streams are backfilled.
+
+### Stale-Read Fallback
+
+When the DB row for a stream was last updated more than a configurable threshold ago (`isStale` check in `backend/src/services/sorobanService.ts`), the API falls back to a live Soroban RPC call instead of serving the cached DB value. This keeps claimable-balance figures accurate even if the indexer lags.
+
+---
+
+## Action Signing Model
+
+FlowFi actions split into two categories based on who holds the signing key:
+
+| Action | Signer | How |
+|---|---|---|
+| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. |
+| **Withdraw** | Wallet (non-custodial) | Frontend builds and signs the transaction via the connected wallet (Freighter). The backend currently only simulates server-side; the real transaction is signed and submitted by the frontend. |
+| **Pause / Resume** | Wallet (non-custodial) | Same as withdraw — frontend-signed. The backend simulate endpoints exist for fee estimation but do not submit. |
+| **Create stream** | Wallet (non-custodial) | Frontend signs via wallet and submits directly to the RPC. |
+
+> **Important for contributors:** Do not wire pause/resume/withdraw to a server-side submit path. Only `top-up` is intentionally custodial. All other mutating actions must be wallet-signed by the user.
+
+---
+
+## Required Environment Variables
+
+To run the full stack end-to-end, set the following secrets. See [`backend/.env.example`](../backend/.env.example) for the canonical list.
+
+### Backend
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string (Prisma) |
+| `SOROBAN_RPC_URL` | Soroban RPC endpoint (e.g. Testnet: `https://soroban-testnet.stellar.org`) |
+| `STREAMING_CONTRACT_ADDRESS` | Deployed FlowFi stream contract ID |
+| `KEEPER_SECRET_KEY` | Server wallet secret key used to sign custodial top-up transactions |
+| `JWT_SECRET` | Secret used to sign and verify auth JWTs |
+| `REDIS_URL` | Redis connection string (only needed for multi-instance SSE fanout) |
+| `STELLAR_NETWORK` | `TESTNET` or `MAINNET` |
+
+### Frontend
+
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | Base URL of the backend API (e.g. `http://localhost:3001/v1`) |
+| `NEXT_PUBLIC_STREAMING_CONTRACT` | Contract address displayed in the Settings page |
+| `NEXT_PUBLIC_STELLAR_NETWORK` | `TESTNET` or `MAINNET` — must match the backend value |
+| `NEXT_PUBLIC_APP_VERSION` | Displayed in Settings; optional, defaults to `1.0.0` |
