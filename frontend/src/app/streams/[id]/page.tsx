@@ -96,24 +96,26 @@ export default function StreamDetailsPage() {
   });
 
   // Fetch stream data
-  const fetchStream = useCallback(async () => {
+  const fetchStream = useCallback(async (signal?: AbortSignal) => {
     if (!streamId) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/streams/${streamId}`);
+      const response = await fetch(`${API_BASE_URL}/streams/${streamId}`, { signal });
       if (!response.ok) throw new Error("Stream not found");
       const data = await response.json();
       setStream(data);
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       setError(err instanceof Error ? err.message : "Failed to fetch stream");
     }
   }, [streamId]);
 
   // Fetch events
-  const fetchEvents = useCallback(async (page: number) => {
+  const fetchEvents = useCallback(async (page: number, signal?: AbortSignal) => {
     if (!streamId) return;
     try {
       const response = await fetch(
-        `${API_BASE_URL}/streams/${streamId}/events?page=${page}&limit=${EVENTS_PER_PAGE}`
+        `${API_BASE_URL}/streams/${streamId}/events?page=${page}&limit=${EVENTS_PER_PAGE}`,
+        { signal }
       );
       if (response.ok) {
         const data = await response.json();
@@ -121,6 +123,7 @@ export default function StreamDetailsPage() {
         setEventsTotal(data.total || 0);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       console.error("Failed to fetch events:", err);
     }
   }, [streamId]);
@@ -129,20 +132,26 @@ export default function StreamDetailsPage() {
   useEffect(() => {
     if (!isHydrated) return;
 
+    const controller = new AbortController();
+
     const loadData = async () => {
       setLoading(true);
-      await Promise.all([fetchStream(), fetchEvents(1)]);
+      await Promise.all([fetchStream(controller.signal), fetchEvents(1, controller.signal)]);
       setLoading(false);
     };
 
     loadData();
+
+    return () => controller.abort();
   }, [isHydrated, fetchStream, fetchEvents]);
 
   // Handle SSE events
   useEffect(() => {
     if (streamEvents.length > 0) {
-      fetchStream();
-      fetchEvents(eventsPage);
+      const controller = new AbortController();
+      fetchStream(controller.signal);
+      fetchEvents(eventsPage, controller.signal);
+      return () => controller.abort();
     }
   }, [streamEvents, fetchStream, fetchEvents, eventsPage]);
 
