@@ -250,6 +250,7 @@ export const getStreamEvents = async (req: Request, res: Response) => {
 
     const rawLimit = req.query['limit'];
     const rawOffset = req.query['offset'];
+    const rawPage = req.query['page'];
     const cursor = typeof req.query['cursor'] === 'string' ? req.query['cursor'] : undefined;
     const direction = req.query['direction'] === 'asc' ? 'asc' as const : 'desc' as const;
     const order = req.query['order'] === 'asc' ? 'asc' as const : 'desc' as const;
@@ -259,8 +260,14 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
       500,
     );
-    const offset =
-      rawOffset && typeof rawOffset === 'string' ? (Number.parseInt(rawOffset, 10) || 0) : 0;
+
+    let offset = 0;
+    if (rawOffset && typeof rawOffset === 'string') {
+      offset = Number.parseInt(rawOffset, 10) || 0;
+    } else if (rawPage && typeof rawPage === 'string' && !cursor) {
+      const page = Number.parseInt(rawPage, 10) || 1;
+      offset = Math.max(0, (page - 1) * limit);
+    }
 
     const whereClause: any = { streamId: parsedStreamId };
     if (eventType) {
