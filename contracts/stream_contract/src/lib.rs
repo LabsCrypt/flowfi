@@ -433,9 +433,6 @@ impl StreamContract {
         if stream.paused {
             return Err(StreamError::StreamInactive);
         }
-        if stream.paused {
-            return Err(StreamError::StreamInactive);
-        }
 
         let now = env.ledger().timestamp();
         let claimable = Self::calculate_claimable(&stream, now);
