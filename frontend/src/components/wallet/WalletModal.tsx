@@ -3,12 +3,13 @@
 /**
  * components/wallet/WalletModal.tsx
  *
- * Wallet selection modal. Shows three wallet cards (Freighter, Albedo, xBull)
- * and handles all connecting states and error display.
+ * Wallet selection modal. Shows the production-ready Freighter connector and
+ * handles all connecting states and error display.
+ *
+ * Albedo and xBull are intentionally hidden until real connectors are
+ * implemented; the production picker must never create mock sessions.
  *
  * - Freighter: shows "Install Freighter" link when extension is absent.
- * - Albedo: note that a popup window will open.
- * - xBull: note for mobile / extension users.
  * - Dismiss via Escape key or backdrop click.
  */
 
@@ -22,14 +23,15 @@ interface WalletModalProps {
   onClose: () => void;
 }
 
-const WALLET_NOTES: Partial<Record<WalletId, string>> = {
-  albedo: "A popup window will open for authentication.",
-  xbull: "Available as browser extension or mobile app.",
-};
-
 export function WalletModal({ onClose }: WalletModalProps) {
-  const { wallets, status, selectedWalletId, errorMessage, connect, clearError } =
-    useWallet();
+  const {
+    wallets,
+    status,
+    selectedWalletId,
+    errorMessage,
+    connect,
+    clearError,
+  } = useWallet();
 
   const isConnecting = status === "connecting";
   const [freighterInstalled, setFreighterInstalled] = React.useState(true);
@@ -123,11 +125,7 @@ export function WalletModal({ onClose }: WalletModalProps) {
         {errorMessage && (
           <div className="wallet-error" role="alert">
             <span>{errorMessage}</span>
-            <button
-              type="button"
-              className="inline-link"
-              onClick={clearError}
-            >
+            <button type="button" className="inline-link" onClick={clearError}>
               Dismiss
             </button>
           </div>
@@ -140,8 +138,6 @@ export function WalletModal({ onClose }: WalletModalProps) {
             const isConnectingThis = isConnecting && isActiveWallet;
             const isFreighter = wallet.id === "freighter";
             const notInstalled = isFreighter && !freighterInstalled;
-            const note = WALLET_NOTES[wallet.id];
-
             return (
               <article
                 key={wallet.id}
@@ -155,10 +151,6 @@ export function WalletModal({ onClose }: WalletModalProps) {
                   <span>{wallet.badge}</span>
                 </header>
                 <p>{wallet.description}</p>
-                {note && !notInstalled && (
-                  <p className="wallet-card__note">{note}</p>
-                )}
-
                 {notInstalled ? (
                   <a
                     href="https://freighter.app"
@@ -196,7 +188,7 @@ export function WalletModal({ onClose }: WalletModalProps) {
         >
           {isConnecting
             ? "Waiting for wallet approval…"
-            : "Supported wallets: Freighter, Albedo, xBull"}
+            : `Supported wallets: ${wallets.map((wallet) => wallet.name).join(", ")}`}
         </p>
       </div>
     </div>
