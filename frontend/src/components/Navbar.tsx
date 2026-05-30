@@ -52,9 +52,6 @@ export const Navbar = () => {
         {status === "connected" && session?.publicKey && (
           <NotificationDropdown publicKey={session.publicKey} />
         )}
-        <Button variant="ghost" className="hidden sm:inline-flex">
-          Log In
-        </Button>
         <WalletButton />
       </div>
     </nav>
