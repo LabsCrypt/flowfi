@@ -9,6 +9,7 @@ const { mockPrisma, mockSseService } = vi.hoisted(() => ({
     addClient: vi.fn(),
     broadcastToStream: vi.fn(),
     broadcastToUser: vi.fn(),
+    broadcastToAdmin: vi.fn(),
   },
   mockPrisma: {
     stream: {
@@ -243,4 +244,127 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
     expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body.data.length).toBe(1);
   });
+
+  it('Indexer processes fee_config_updated -> persists FEE_CONFIG_UPDATED record and broadcasts SSE', async () => {
+    const adminKey = Keypair.random().publicKey();
+    const oldTreasury = Keypair.random().publicKey();
+    const newTreasury = Keypair.random().publicKey();
+
+    const event = {
+      id: 'fee-config-event-1',
+      txHash: 'hash-fee-config',
+      ledger: 105,
+      inSuccessfulContractCall: true,
+      topic: [
+        xdr.ScVal.scvSymbol('fee_config_updated'),
+      ],
+      value: xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('admin'),
+          val: nativeToScVal(adminKey, { type: 'address' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('old_treasury'),
+          val: nativeToScVal(oldTreasury, { type: 'address' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('new_treasury'),
+          val: nativeToScVal(newTreasury, { type: 'address' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('old_fee_rate_bps'),
+          val: nativeToScVal(100, { type: 'u32' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('new_fee_rate_bps'),
+          val: nativeToScVal(200, { type: 'u32' }),
+        }),
+      ]),
+    } as any;
+
+    await sorobanEventWorker.processEvent(event);
+
+    expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { publicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' },
+      })
+    );
+
+    expect(mockPrisma.stream.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { streamId: 0 },
+      })
+    );
+
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { transactionHash_eventType: { transactionHash: 'hash-fee-config', eventType: 'FEE_CONFIG_UPDATED' } },
+        create: expect.objectContaining({
+          streamId: 0,
+          eventType: 'FEE_CONFIG_UPDATED',
+          transactionHash: 'hash-fee-config',
+          ledgerSequence: 105,
+        }),
+      })
+    );
+
+    expect(mockSseService.broadcastToAdmin).toHaveBeenCalledWith(
+      'stream.fee_config_updated',
+      expect.objectContaining({
+        admin: adminKey,
+        oldTreasury,
+        newTreasury,
+        oldFeeRateBps: 100,
+        newFeeRateBps: 200,
+      })
+    );
+  });
+
+  it('Indexer processes admin_transferred -> persists ADMIN_TRANSFERRED record and broadcasts SSE', async () => {
+    const previousAdmin = Keypair.random().publicKey();
+    const newAdmin = Keypair.random().publicKey();
+
+    const event = {
+      id: 'admin-transfer-event-1',
+      txHash: 'hash-admin-transfer',
+      ledger: 106,
+      inSuccessfulContractCall: true,
+      topic: [
+        xdr.ScVal.scvSymbol('admin_transferred'),
+      ],
+      value: xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('previous_admin'),
+          val: nativeToScVal(previousAdmin, { type: 'address' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('new_admin'),
+          val: nativeToScVal(newAdmin, { type: 'address' }),
+        }),
+      ]),
+    } as any;
+
+    await sorobanEventWorker.processEvent(event);
+
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { transactionHash_eventType: { transactionHash: 'hash-admin-transfer', eventType: 'ADMIN_TRANSFERRED' } },
+        create: expect.objectContaining({
+          streamId: 0,
+          eventType: 'ADMIN_TRANSFERRED',
+          transactionHash: 'hash-admin-transfer',
+          ledgerSequence: 106,
+        }),
+      })
+    );
+
+    expect(mockSseService.broadcastToAdmin).toHaveBeenCalledWith(
+      'stream.admin_transferred',
+      expect.objectContaining({
+        previousAdmin,
+        newAdmin,
+      })
+    );
+  });
 });
+

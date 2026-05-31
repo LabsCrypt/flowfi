@@ -278,5 +278,114 @@ describe('SorobanEventWorker', () => {
         expect.stringContaining('Duplicate StreamEvent skipped')
       );
     });
+
+    it('should process fee_config_updated events successfully', async () => {
+      const txHash = 'fee-config-tx-hash';
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'fee-config-event-1',
+        type: 'contract',
+        ledger: 1005,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'fee_config_updated' } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'old_treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'new_treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'old_fee_rate_bps' }), val: () => ({ u32: () => 100 }) },
+            { key: () => ({ sym: () => 'new_fee_rate_bps' }), val: () => ({ u32: () => 200 }) },
+          ] as any,
+        } as any,
+      };
+
+      const mockTx = {
+        user: { upsert: vi.fn().mockResolvedValue({}) },
+        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0, isActive: false }) },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({ id: 'event-fee-config' }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // Handle processEvent which will dispatch to handleFeeConfigUpdated
+      await worker.processEvent(mockEvent);
+
+      expect(mockTx.user.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.stream.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            streamId: 0,
+            eventType: 'FEE_CONFIG_UPDATED',
+            transactionHash: txHash,
+            ledgerSequence: 1005,
+          }),
+        })
+      );
+    });
+
+    it('should process admin_transferred events successfully', async () => {
+      const txHash = 'admin-transferred-tx-hash';
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'admin-transferred-event-1',
+        type: 'contract',
+        ledger: 1006,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'admin_transferred' } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'previous_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'new_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+          ] as any,
+        } as any,
+      };
+
+      const mockTx = {
+        user: { upsert: vi.fn().mockResolvedValue({}) },
+        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0, isActive: false }) },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({ id: 'event-admin-transferred' }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // Handle processEvent which will dispatch to handleAdminTransferred
+      await worker.processEvent(mockEvent);
+
+      expect(mockTx.user.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.stream.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            streamId: 0,
+            eventType: 'ADMIN_TRANSFERRED',
+            transactionHash: txHash,
+            ledgerSequence: 1006,
+          }),
+        })
+      );
+    });
   });
 });
