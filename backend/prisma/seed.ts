@@ -7,23 +7,29 @@ const pool = new pg.Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
+// Use stable, checksum-valid Stellar testnet/demo addresses so seeded rows
+// render correctly in the frontend and resolve against TOKEN_ADDRESSES.
+const DEMO_SENDER_PUBLIC_KEY = 'GCM5WPR4DDR24FSAX5LIEM4J7AI3KOWJYANSXEPKYXCSZOTAYXE75AFN';
+const DEMO_RECIPIENT_PUBLIC_KEY = 'GBJCHUKZMTFSLOMNC7P4TS4VJJBTCYL3XKSOLXAUJSD56C4LHND5TWUC';
+const DEMO_TOKEN_ADDRESS = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
+
 async function main() {
     console.log('Seeding database...');
 
     // Create example users
     const user1 = await prisma.user.upsert({
-        where: { publicKey: 'GBRPYH6QC6WGLH473XI3CL4B3I754SFSULN5K3X7G3X4I6SGRH3V3U12' },
+        where: { publicKey: DEMO_SENDER_PUBLIC_KEY },
         update: {},
         create: {
-            publicKey: 'GBRPYH6QC6WGLH473XI3CL4B3I754SFSULN5K3X7G3X4I6SGRH3V3U12',
+            publicKey: DEMO_SENDER_PUBLIC_KEY,
         },
     });
 
     const user2 = await prisma.user.upsert({
-        where: { publicKey: 'GDRS6N3K7DQ6GKH47O6E5K5G7B7H7I7J7K7L7M7N7O7P7Q7R7S7T7U7V' },
+        where: { publicKey: DEMO_RECIPIENT_PUBLIC_KEY },
         update: {},
         create: {
-            publicKey: 'GDRS6N3K7DQ6GKH47O6E5K5G7B7H7I7J7K7L7M7N7O7P7Q7R7S7T7U7V',
+            publicKey: DEMO_RECIPIENT_PUBLIC_KEY,
         },
     });
 
@@ -37,7 +43,7 @@ async function main() {
             streamId: 101,
             sender: user1.publicKey,
             recipient: user2.publicKey,
-            tokenAddress: 'CBTM5D262F6VQY4A6E4F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X',
+            tokenAddress: DEMO_TOKEN_ADDRESS,
             ratePerSecond: '100000000', // 10 XLM/sec if decimals=7
             depositedAmount: '1000000000000',
             withdrawnAmount: '0',
