@@ -65,9 +65,8 @@ export function createStreamRateLimiter(
 
 /**
  * Pre-configured rate limiter for stream creation endpoint
- * 10 requests per minute per wallet
+ * Default: 10 requests per minute per wallet (override via STREAM_CREATE_RATE_LIMIT)
  */
 export const streamCreationRateLimiter = createStreamRateLimiter({
   windowMs: 60 * 1000, // 1 minute
-  max: 10, // 10 requests per minute
 });
