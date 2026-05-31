@@ -8,8 +8,9 @@
  * already-withdrawn funds) before the user commits.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useModalDialog } from "@/hooks/useModalDialog";
 import toast from "react-hot-toast";
 
 interface CancelConfirmModalProps {
@@ -33,14 +34,7 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Escape key support
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isSubmitting) onClose();
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [onClose, isSubmitting]);
+  const dialogRef = useModalDialog({ onClose, isCloseDisabled: isSubmitting });
 
   const remaining = deposited - withdrawn;
 
@@ -58,11 +52,17 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cancel-confirm-modal-title"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) onClose();
       }}
     >
-      <div className="glass-card relative w-full max-w-md mx-4 rounded-2xl border border-red-500/30 p-8">
+      <div
+        ref={dialogRef}
+        className="glass-card relative w-full max-w-md mx-4 rounded-2xl border border-red-500/30 p-8"
+      >
         {/* Header */}
         <div className="flex items-start gap-4 mb-6">
           {/* Warning icon */}
@@ -73,7 +73,7 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
             </svg>
           </div>
           <div>
-            <h2 className="text-xl font-bold">Cancel Stream?</h2>
+            <h2 id="cancel-confirm-modal-title" className="text-xl font-bold">Cancel Stream?</h2>
             <p className="text-sm text-slate-400 mt-1">
               This action is permanent and cannot be undone.
             </p>

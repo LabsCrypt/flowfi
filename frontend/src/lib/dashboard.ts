@@ -1,4 +1,5 @@
-import type { BackendStream } from "./api-types";
+import type { BackendStream, BackendStreamEvent } from "./api-types";
+import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
 
 export interface ActivityItem {
   id: string;
@@ -42,32 +43,11 @@ export interface DashboardAnalyticsMetric {
   unavailableText: string;
 }
 
-const STROOPS_DIVISOR = 1e7;
-
-function toTokenAmount(raw: string): number {
-  return parseFloat(raw) / STROOPS_DIVISOR;
-}
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 
 function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function getStreamsEndpointCandidates(): string[] {
-  const baseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001").replace(/\/+$/, "");
-  const candidates = new Set<string>();
-
-  if (baseUrl.endsWith("/api/v1") || baseUrl.endsWith("/v1")) {
-    candidates.add(`${baseUrl}/streams`);
-  } else if (baseUrl.endsWith("/api")) {
-    candidates.add(`${baseUrl}/v1/streams`);
-    candidates.add(`${baseUrl.replace(/\/api$/, "")}/v1/streams`);
-  } else {
-    candidates.add(`${baseUrl}/api/v1/streams`);
-    candidates.add(`${baseUrl}/v1/streams`);
-  }
-
-  return [...candidates];
 }
 
 async function fetchStreams(
