@@ -157,7 +157,7 @@ describe('stream action routes', () => {
     });
   });
 
-  it('POST /v1/streams/:streamId/resume resumes a paused sender-owned stream', async () =>
+  it('POST /v1/streams/:streamId/resume resumes a paused sender-owned stream', async () => {
     const sender = makeKeypair();
     const token = await getValidJwt(sender);
 
