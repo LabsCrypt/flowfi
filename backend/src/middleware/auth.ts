@@ -14,6 +14,44 @@ const STELLAR_NETWORK =
 
 // In-memory challenge store: publicKey -> { nonce, expiresAt }
 const challenges = new Map<string, { nonce: string; expiresAt: number }>();
+const DEFAULT_CHALLENGE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let challengeSweepTimer: NodeJS.Timeout | undefined;
+
+function resolveChallengeSweepIntervalMs(): number {
+  const raw = process.env.AUTH_CHALLENGE_SWEEP_INTERVAL_MS;
+  if (!raw) return DEFAULT_CHALLENGE_SWEEP_INTERVAL_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_CHALLENGE_SWEEP_INTERVAL_MS;
+}
+
+export function sweepExpiredChallenges(now = Date.now()): number {
+  let deleted = 0;
+  for (const [publicKey, challenge] of challenges.entries()) {
+    if (challenge.expiresAt < now) {
+      challenges.delete(publicKey);
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+export function startChallengeSweep(intervalMs = resolveChallengeSweepIntervalMs()): void {
+  if (challengeSweepTimer) return;
+  challengeSweepTimer = setInterval(() => {
+    sweepExpiredChallenges();
+  }, intervalMs);
+  challengeSweepTimer.unref?.();
+}
+
+export function stopChallengeSweep(): void {
+  if (!challengeSweepTimer) return;
+  clearInterval(challengeSweepTimer);
+  challengeSweepTimer = undefined;
+}
+
+startChallengeSweep();
 
 // ─── Minimal JWT (no external dep) ──────────────────────────────────────────
 
@@ -61,6 +99,13 @@ export function issueChallenge(req: Request, res: Response): void {
   challenges.set(publicKey, { nonce, expiresAt: Date.now() + 60_000 }); // 60s to sign
   res.json({ nonce, expiresAt: Date.now() + 60_000 });
 }
+
+export const __authChallengeTestUtils = {
+  challenges,
+  startChallengeSweep,
+  stopChallengeSweep,
+  sweepExpiredChallenges,
+};
 
 export function verifyChallenge(req: Request, res: Response): void {
   const { publicKey, signedTransaction } = req.body as {
