@@ -106,8 +106,8 @@ describe('Indexer Service', () => {
       update: { lastLedger: 55, lastCursor: null },
     });
     expect(mockedWorker.triggerPoll).toHaveBeenCalled();
-    expect(
-      mockedPrisma.indexerState.upsert.mock.invocationCallOrder[0]
-    ).toBeLessThan(mockedWorker.triggerPoll.mock.invocationCallOrder[0]);
+    const upsertOrder = mockedPrisma.indexerState.upsert.mock.invocationCallOrder?.[0] ?? -1;
+    const triggerOrder = mockedWorker.triggerPoll.mock.invocationCallOrder?.[0] ?? -1;
+    expect(upsertOrder).toBeLessThan(triggerOrder);
   });
 });
