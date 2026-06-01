@@ -47,27 +47,33 @@ export const subscribe = async (req: Request, res: Response) => {
     // Scope: only streams where the authenticated user is sender or recipient
     const ownedStreams = await prisma.stream.findMany({
       where: { OR: [{ sender: publicKey }, { recipient: publicKey }] },
-      select: { streamId: true },
+      select: { streamId: true, sender: true, recipient: true },
     });
-    const ownedIds = new Set(ownedStreams.map((s: { streamId: number }) => String(s.streamId)));
+    const ownedIds = new Set(ownedStreams.map((s) => String(s.streamId)));
+    const allowedUserKeys = new Set<string>([publicKey]);
+    for (const stream of ownedStreams) {
+      allowedUserKeys.add(stream.sender);
+      allowedUserKeys.add(stream.recipient);
+    }
 
     let subscriptions: string[];
     if (all) {
       // "all" still scoped to the user's own streams
-      subscriptions = [...ownedIds] as string[];
+      subscriptions = [...ownedIds];
     } else if (streams.length > 0) {
       // Only allow subscribing to streams the user owns
       subscriptions = streams.filter((id) => ownedIds.has(id));
     } else {
-      subscriptions = [...ownedIds] as string[];
+      subscriptions = [...ownedIds];
     }
 
-    subscriptions.push(...users.map((userKey) => `user:${userKey}`));
+    const userSubscriptions = new Set<string>([`user:${publicKey}`]);
+    for (const key of users.filter((k) => allowedUserKeys.has(k))) {
+      userSubscriptions.add(`user:${key}`);
+    }
+    subscriptions.push(...userSubscriptions);
 
-    // Always add user-scoped subscription key
-    subscriptions.push(`user:${publicKey}`);
-
-    const clientId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const clientId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -80,7 +86,7 @@ export const subscribe = async (req: Request, res: Response) => {
     res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
 
     sseService.addClient(clientId, res, subscriptions, sourceIp);
-    return;
+
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({
