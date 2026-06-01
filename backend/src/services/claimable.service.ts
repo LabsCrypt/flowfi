@@ -168,11 +168,11 @@ export class ClaimableAmountService {
 }
 
 const configuredCacheTtlMs = Number.parseInt(
-  process.env.CLAIMABLE_CACHE_TTL_MS ?? '1000',
+  process.env.CLAIMABLE_CACHE_TTL_MS ?? '5000',
   10,
 );
 
 export const claimableAmountService = new ClaimableAmountService({
-  cacheTtlMs: Number.isFinite(configuredCacheTtlMs) ? configuredCacheTtlMs : 1000,
+  cacheTtlMs: Number.isFinite(configuredCacheTtlMs) ? configuredCacheTtlMs : 5000,
 });
 
