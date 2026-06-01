@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { sseService } from '../services/sse.service.js';
 import { prisma } from '../lib/prisma.js';
+import { requestContext } from '../logger.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import { z } from 'zod';
 
@@ -72,7 +73,8 @@ export const subscribe = async (req: Request, res: Response) => {
       'X-Accel-Buffering': 'no',
     });
 
-    res.write(`data: ${JSON.stringify({ type: 'connected', clientId })}\n\n`);
+    const requestId = requestContext.getStore()?.requestId;
+    res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
 
     sseService.addClient(clientId, res, subscriptions, sourceIp);
   } catch (error: any) {

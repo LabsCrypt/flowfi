@@ -2,6 +2,7 @@ services:
   - type: web
     name: flowfi-backend
     env: node
+    entrypoint: npm run start
     rootDir: backend
     autoDeploy: true
     buildCommand: npm install && npm run prisma:generate && npm run build
@@ -23,6 +24,46 @@ services:
       - key: LOG_LEVEL
         value: info
 
+      # ─── Required Infrastructure ──────────────────────────────────────────
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://app.flowfi.xyz,https://flowfi.xyz" # Replace with your deployed frontend origin(s)
+      
+      - key: JWT_SECRET
+        sync: false # Sensitive: Generate with `openssl rand -hex 32` and set in dashboard
+
+      # ─── Stellar / Soroban (Required for core features) ───────────────────
+      - key: STELLAR_NETWORK
+        value: testnet # testnet or mainnet
+      
+      - key: SOROBAN_RPC_URL
+        value: https://soroban-testnet.stellar.org
+
+      - key: STREAM_CONTRACT_ID
+        value: "" # REQUIRED: Set to your deployed contract ID (starts with C...)
+      
+      - key: KEEPER_SECRET_KEY
+        sync: false # Sensitive: Stellar secret key (S...) for signing on-chain top-ups
+      
+      - key: SOROBAN_SECRET_KEY
+        sync: false # Sensitive: Stellar secret key (S...) for signing on-chain cancel actions
+
+      # ─── Admin & Security (Required for admin endpoints) ──────────────────
+      - key: ADMIN_PUBLIC_KEY
+        value: "" # REQUIRED: Stellar public key (G...) of the authorized admin
+      
+      - key: ADMIN_SECRET
+        sync: false # Sensitive: Bearer token for admin metrics/actions
+
+      # ─── Optional Configuration ───────────────────────────────────────────
+      - key: REDIS_URL
+        value: "" # Optional: Enable horizontal scaling for SSE via Redis
+      
+      - key: INDEXER_POLL_INTERVAL_MS
+        value: "5000"
+      
+      - key: INDEXER_START_LEDGER
+        value: "0" # 0 = start from latest ledger
+      
 databases:
   - name: flowfi-postgres
     databaseName: flowfi

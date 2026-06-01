@@ -17,6 +17,8 @@ const EVENT_TYPES = new Set([
   'PAUSED',
   'RESUMED',
   'FEE_COLLECTED',
+  'FEE_CONFIG_UPDATED',
+  'ADMIN_TRANSFERRED',
 ]);
 
 const MAX_EVENT_LIMIT = 200;

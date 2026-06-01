@@ -45,8 +45,10 @@ function saturatingSubI128(a: bigint, b: bigint): bigint {
   return clampI128(a - b);
 }
 
-function saturatingMulI128(a: bigint, b: bigint): bigint {
-  return clampI128(a * b);
+function checkedMulI128(a: bigint, b: bigint): bigint | null {
+  const value = a * b;
+  if (value > I128_MAX || value < I128_MIN) return null;
+  return value;
 }
 
 function parseI128(value: string, fieldName: string): bigint {
@@ -82,9 +84,9 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
 /**
  * Mirrors Soroban's overflow-safe claimable calculation:
  * - elapsed = now.saturating_sub(last_update_time)
- * - streamed = (elapsed * rate_per_second) with i128 saturation
+ * - streamed = (elapsed * rate_per_second) with i128 overflow detection
  * - remaining = deposited_amount.saturating_sub(withdrawn_amount)
- * - claimable = min(streamed, remaining)
+ * - claimable = remaining on multiplication overflow, otherwise min(streamed, remaining)
  */
 export class ClaimableAmountService {
   private readonly cacheTtlMs: number;
@@ -138,10 +140,12 @@ export class ClaimableAmountService {
     const depositedAmount = parseI128(stream.depositedAmount, 'depositedAmount');
     const withdrawnAmount = parseI128(stream.withdrawnAmount, 'withdrawnAmount');
 
-    const streamedAmount = saturatingMulI128(elapsed, ratePerSecond);
     const remainingAmount = saturatingSubI128(depositedAmount, withdrawnAmount);
+    const streamedAmount = checkedMulI128(elapsed, ratePerSecond);
     const rawClaimable =
-      streamedAmount > remainingAmount ? remainingAmount : streamedAmount;
+      streamedAmount === null || streamedAmount > remainingAmount
+        ? remainingAmount
+        : streamedAmount;
 
     // "Actionable" mirrors what a client can withdraw right now.
     const actionableAmount =

@@ -1,6 +1,5 @@
 "use client";
 import React, { useRef, useEffect } from "react";
-import { hasValidPrecision } from "@/lib/amount";
 
 interface AmountStepProps {
   value: string;
@@ -23,15 +22,8 @@ export const AmountStep: React.FC<AmountStepProps> = ({
   balanceError,
   onSetMax,
 }) => {
-  // Validate amount precision on change
   const handleAmountChange = (newValue: string) => {
     onChange(newValue);
-    
-    // Add precision validation if needed
-    if (newValue && !hasValidPrecision(newValue, 7)) {
-      // Parent component should handle this error
-      // This validation can be used to show inline error if needed
-    }
   };
   const inputRef = useRef<HTMLInputElement>(null);
 

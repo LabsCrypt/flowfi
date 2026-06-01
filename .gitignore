@@ -8,3 +8,4 @@ coverage
 
 # Soroban test runner — auto-generated, never commit
 **/test_snapshots/
+fix.md

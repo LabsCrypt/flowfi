@@ -10,7 +10,6 @@ import {
   topUpStream,
   pauseStream as sorobanPauseStream,
   resumeStream as sorobanResumeStream,
-  withdraw as sorobanWithdraw,
 } from '../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
@@ -56,34 +55,58 @@ function sumStringI128(values: string[]): string {
  * Create a new stream (stub for on-chain indexing)
  */
 export const createStream = async (req: Request, res: Response) => {
-  // This would typically involve validating the stream already exists on-chain
-  // or preparing metadata for the frontend to submit the transaction.
-  // For now, let's allow "registering" a stream if it doesn't exist.
   try {
     const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
 
+    const parsedStreamId = Number.parseInt(streamId, 10);
+    const parsedStartTime = Number.parseInt(startTime, 10);
+    const parsedRatePerSecond = BigInt(ratePerSecond);
+    const parsedDepositedAmount = BigInt(depositedAmount);
+
+    if (!Number.isFinite(parsedStreamId)) {
+      return res.status(400).json({ error: 'Invalid streamId: must be a valid integer' });
+    }
+
+    if (!Number.isFinite(parsedStartTime) || parsedStartTime < 0) {
+      return res.status(400).json({ error: 'Invalid startTime: must be a non-negative integer' });
+    }
+
+    if (parsedRatePerSecond <= 0n) {
+      return res.status(400).json({ error: 'Invalid ratePerSecond: must be greater than zero' });
+    }
+
+    if (parsedDepositedAmount <= 0n) {
+      return res.status(400).json({ error: 'Invalid depositedAmount: must be greater than zero' });
+    }
+
+    const endTime = parsedStartTime + Number(parsedDepositedAmount / parsedRatePerSecond);
+
     const stream = await prisma.stream.upsert({
-      where: { streamId: parseInt(streamId) },
+      where: { streamId: parsedStreamId },
       update: {
         isActive: true,
         lastUpdateTime: Math.floor(Date.now() / 1000)
       },
       create: {
-        streamId: parseInt(streamId),
+        streamId: parsedStreamId,
         sender,
         recipient,
         tokenAddress,
         ratePerSecond,
         depositedAmount,
         withdrawnAmount: "0",
-        startTime: parseInt(startTime),
-        endTime: parseInt(startTime) + Number(BigInt(depositedAmount) / BigInt(ratePerSecond)),
-        lastUpdateTime: parseInt(startTime)
+        startTime: parsedStartTime,
+        endTime,
+        lastUpdateTime: parsedStartTime
       }
     });
 
     return res.status(201).json(stream);
   } catch (error) {
+    if (error instanceof RangeError) {
+      logger.error('Range error in createStream:', error);
+      return res.status(400).json({ error: 'Invalid numeric values in request body' });
+    }
     logger.error('Error creating/upserting stream:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -250,6 +273,7 @@ export const getStreamEvents = async (req: Request, res: Response) => {
 
     const rawLimit = req.query['limit'];
     const rawOffset = req.query['offset'];
+    const rawPage = req.query['page'];
     const cursor = typeof req.query['cursor'] === 'string' ? req.query['cursor'] : undefined;
     const direction = req.query['direction'] === 'asc' ? 'asc' as const : 'desc' as const;
     const order = req.query['order'] === 'asc' ? 'asc' as const : 'desc' as const;
@@ -259,12 +283,18 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
       500,
     );
-    const offset =
-      rawOffset && typeof rawOffset === 'string' ? (Number.parseInt(rawOffset, 10) || 0) : 0;
+
+    let offset = 0;
+    if (rawOffset && typeof rawOffset === 'string') {
+      offset = Number.parseInt(rawOffset, 10) || 0;
+    } else if (rawPage && typeof rawPage === 'string' && !cursor) {
+      const page = Number.parseInt(rawPage, 10) || 1;
+      offset = Math.max(0, (page - 1) * limit);
+    }
 
     const whereClause: any = { streamId: parsedStreamId };
     if (eventType) {
-      const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED'];
+      const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED', 'FEE_CONFIG_UPDATED', 'ADMIN_TRANSFERRED'];
       if (!validEventTypes.includes(eventType)) {
         return res.status(400).json({
           error: 'Invalid eventType parameter',
@@ -277,7 +307,7 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const [events, total] = await Promise.all([
       prisma.streamEvent.findMany({
         where: whereClause,
-        orderBy: { createdAt: order },
+        orderBy: { timestamp: order },
         take: limit,
         ...(cursor
           ? { cursor: { id: cursor }, skip: 1 }
@@ -441,13 +471,6 @@ export const getUserStreamSummary = async (req: Request<{ address: string }>, re
     for (const stream of incomingStreams) {
       const claimable = claimableAmountService.getClaimableAmount(stream, calculatedAt);
       claimableInTotal += BigInt(claimable.claimableAmount);
-    }
-
-    let claimableOutTotal = 0n;
-    for (const stream of outgoingStreams) {
-      // Outgoing streams also need to account for what the recipient can currently claim
-      const claimable = claimableAmountService.getClaimableAmount(stream as any, calculatedAt);
-      claimableOutTotal += BigInt(claimable.claimableAmount);
     }
 
     const totalStreamsCreated = outgoingStreams.length;

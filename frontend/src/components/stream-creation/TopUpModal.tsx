@@ -7,9 +7,10 @@
  * Collects an amount, shows a confirmation summary, and calls onConfirm.
  */
 
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
+import { useModalDialog } from "@/hooks/useModalDialog";
 import toast from "react-hot-toast";
 
 interface TopUpModalProps {
@@ -32,16 +33,11 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-focus and Escape key support
-  useEffect(() => {
-    inputRef.current?.focus();
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !isSubmitting) onClose();
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [onClose, isSubmitting]);
+  const dialogRef = useModalDialog({
+    onClose,
+    isCloseDisabled: isSubmitting,
+    initialFocusRef: inputRef,
+  });
 
   // Token decimals - using 7 as default (Stellar standard)
   const TOKEN_DECIMALS = 7;
@@ -80,14 +76,20 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="topup-modal-title"
       onClick={(e) => {
         if (e.target === e.currentTarget && !isSubmitting) onClose();
       }}
     >
-      <div className="glass-card relative w-full max-w-md mx-4 rounded-2xl border border-glass-border p-8">
+      <div
+        ref={dialogRef}
+        className="glass-card relative w-full max-w-md mx-4 rounded-2xl border border-glass-border p-8"
+      >
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold">Top Up Stream</h2>
+          <h2 id="topup-modal-title" className="text-xl font-bold">Top Up Stream</h2>
           <button
             type="button"
             onClick={onClose}

@@ -70,6 +70,42 @@ pub struct FeeCollectedEvent {
     pub token: Address,
 }
 
+/// Emitted once during one-time protocol initialization.
+///
+/// Topic: `("initialized",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitializedEvent {
+    pub admin: Address,
+    pub treasury: Address,
+    pub fee_rate_bps: u32,
+}
+
+/// Emitted when the fee configuration (treasury address or fee rate) is updated.
+///
+/// Topic: `("fee_config_updated",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfigUpdatedEvent {
+    pub admin: Address,
+    pub old_treasury: Address,
+    pub new_treasury: Address,
+    pub old_fee_rate_bps: u32,
+    pub new_fee_rate_bps: u32,
+}
+
+/// Emitted when the protocol admin is transferred to a new address.
+///
+/// Topic: `("admin_transferred",)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferredEvent {
+    /// The previous admin address that initiated the transfer.
+    pub previous_admin: Address,
+    /// The new admin address that now controls the protocol.
+    pub new_admin: Address,
+}
+
 /// Emitted when a sender pauses an active stream.
 ///
 /// Topic: `("stream_paused", stream_id)`
@@ -78,6 +114,7 @@ pub struct FeeCollectedEvent {
 pub struct StreamPausedEvent {
     pub stream_id: u64,
     pub sender: Address,
+    /// Ledger timestamp at which accrual was frozen.
     pub paused_at: u64,
 }
 
@@ -89,6 +126,7 @@ pub struct StreamPausedEvent {
 pub struct StreamResumedEvent {
     pub stream_id: u64,
     pub sender: Address,
+    /// Recomputed ledger timestamp at which the stream will fully drain.
     pub new_end_time: u64,
 }
 

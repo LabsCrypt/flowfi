@@ -131,7 +131,7 @@ describe('ClaimableAmountService', () => {
     expect(third.cached).toBe(false);
   });
 
-  it('saturates overflow-safe multiplication to i128 max', () => {
+  it('caps multiplication overflow at the remaining balance', () => {
     const i128Max = ((1n << 127n) - 1n).toString();
     vi.setSystemTime(1_000_000);
     const service = new ClaimableAmountService({
@@ -143,9 +143,57 @@ describe('ClaimableAmountService', () => {
         streamId: 6,
         ratePerSecond: i128Max,
         depositedAmount: i128Max,
+        withdrawnAmount: '42',
       }),
     }, 1000); // 1000 seconds elapsed
 
-    expect(result.claimableAmount).toBe(i128Max);
+    expect(result.claimableAmount).toBe(((1n << 127n) - 1n - 42n).toString());
+  });
+
+  it('fuzzes claimable invariants for random amounts, durations, and pauses', () => {
+    const service = new ClaimableAmountService({
+      cacheTtlMs: 0,
+    });
+    let seed = 0x4f1bbcdcn;
+
+    const next = () => {
+      seed = (seed * 6364136223846793005n + 1442695040888963407n) & ((1n << 64n) - 1n);
+      return seed;
+    };
+
+    for (let iteration = 0; iteration < 10_000; iteration += 1) {
+      const deposited = 1n + (next() % 1_000_000_000_000n);
+      const withdrawn = next() % (deposited + 1n);
+      const duration = 1n + (next() % 1_000_000n);
+      const elapsed = next() % (duration * 4n);
+      const rate =
+        iteration % 97 === 0
+          ? (1n << 127n) - 1n
+          : 1n + (deposited / duration) + (next() % 100_000n);
+      const pauseStart = next() % (elapsed + 1n);
+      const paused = (next() & 1n) === 1n;
+      const now = Number(elapsed);
+      const remaining = deposited - withdrawn;
+
+      const result = service.getClaimableAmount({
+        ...makeStreamState({
+          streamId: 10_000 + iteration,
+          ratePerSecond: rate.toString(),
+          depositedAmount: deposited.toString(),
+          withdrawnAmount: withdrawn.toString(),
+          lastUpdateTime: 0,
+          isPaused: paused,
+          pausedAt: paused ? Number(pauseStart) : null,
+          totalPausedDuration: paused ? Number(elapsed - pauseStart) : 0,
+        }),
+      }, now);
+
+      const claimable = BigInt(result.claimableAmount);
+      const cancelRefund = deposited - withdrawn - claimable;
+
+      expect(withdrawn <= deposited, `iteration ${iteration}: withdrawn exceeded deposited`).toBe(true);
+      expect(claimable <= remaining, `iteration ${iteration}: claimable exceeded remaining`).toBe(true);
+      expect(cancelRefund + withdrawn + claimable <= deposited, `iteration ${iteration}: cancel settlement exceeded deposit`).toBe(true);
+    }
   });
 });

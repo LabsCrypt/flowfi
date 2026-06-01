@@ -93,11 +93,23 @@ jobs:
       - name: Run Backend Tests
         run: |
           ls -la src/generated/prisma
-          npx vitest run --reporter=basic
+          npm install @vitest/coverage-v8@2.1.9 --no-save
+          npx vitest run --coverage --reporter=basic
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
           NODE_ENV: test
+
+      - name: Upload backend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: backend/coverage/lcov.info
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   contracts:
     name: Soroban Contracts CI
@@ -111,11 +123,20 @@ jobs:
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "contracts -> target"
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+        working-directory: contracts
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: contracts
 
       - name: Build Contracts
         run: cargo build --target wasm32-unknown-unknown --release
@@ -124,6 +145,24 @@ jobs:
       - name: Run Contract Tests
         run: cargo test
         working-directory: contracts
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Run Contract Coverage
+        run: cargo tarpaulin --workspace --out Xml --output-dir coverage --fail-under 70
+        working-directory: contracts
+
+      - name: Upload contract coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: contracts/coverage/cobertura.xml
+          flags: contracts
+          name: contracts-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Install Stellar CLI
         run: |

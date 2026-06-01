@@ -26,7 +26,7 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
         return () => window.removeEventListener("keydown", handleEscape);
     }, [onClose]);
 
-    const progress = (stream.withdrawn / stream.deposited) * 100;
+    const progress = stream.deposited > 0 ? Math.min(100, Math.max(0, (stream.withdrawn / stream.deposited) * 100)) : 0;
     const remaining = stream.deposited - stream.withdrawn;
 
     return (
@@ -45,6 +45,7 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
                     </div>
                     <button
                         onClick={onClose}
+                        aria-label="Close"
                         className="p-2 rounded-full hover:bg-white/10 text-slate-400 transition-colors"
                     >
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

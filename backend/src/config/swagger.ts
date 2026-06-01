@@ -74,8 +74,8 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         BearerAuth: {
           type: 'http',
           scheme: 'bearer',
-          bearerFormat: 'Stellar Signed Transaction (XDR)',
-          description: 'Stellar SEP-10 authentication. Provide a signed transaction envelope in XDR format.'
+          bearerFormat: 'JWT',
+          description: 'JSON Web Token issued by /v1/auth/verify after completing the SEP-10 challenge flow.'
         }
       },
       schemas: {

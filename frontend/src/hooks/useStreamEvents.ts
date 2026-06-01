@@ -47,12 +47,11 @@ export function useStreamEvents(
 
   const buildUrl = useCallback(() => {
     const params = new URLSearchParams();
-    
+
     if (subscribeToAll) {
       params.append('all', 'true');
     } else {
       streamIds.forEach(id => params.append('streams', id));
-      userPublicKeys.forEach(key => params.append('users', key));
     }
 
     // Add JWT token to query string for authentication
@@ -63,7 +62,7 @@ export function useStreamEvents(
 
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     return `${baseUrl}/v1/events/subscribe?${params}`;
-  }, [streamIds, userPublicKeys, subscribeToAll, jwtToken]);
+  }, [streamIds, subscribeToAll, jwtToken]);
 
   const clearEvents = useCallback(() => {
     setEvents([]);
@@ -81,16 +80,6 @@ export function useStreamEvents(
       retryDelayRef.current = 1000; // Reset retry delay
     };
 
-    eventSource.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === 'connected') {
-          console.log('SSE connected:', data.clientId);
-        }
-      } catch (err) {
-        console.error('Failed to parse SSE message:', err);
-      }
-    };
 
     const handleEvent = (type: StreamEvent['type']) => (e: MessageEvent) => {
       try {
@@ -99,8 +88,8 @@ export function useStreamEvents(
           { type, data, timestamp: Date.now() },
           ...prev.slice(0, 99), // Keep last 100 events
         ]);
-      } catch (err) {
-        console.error(`Failed to parse ${type} event:`, err);
+      } catch {
+        // Silently ignore malformed event messages
       }
     };
 
@@ -120,7 +109,6 @@ export function useStreamEvents(
       if (autoReconnect) {
         setReconnecting(true);
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log(`Reconnecting in ${retryDelayRef.current}ms...`);
           connectRef.current();
           retryDelayRef.current = Math.min(
             retryDelayRef.current * 2,

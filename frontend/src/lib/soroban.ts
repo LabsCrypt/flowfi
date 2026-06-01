@@ -65,9 +65,9 @@ export class SorobanCallError extends Error {
   }
 }
 
-type DurationUnit = "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
+export type DurationUnit = "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
 
-const SECONDS_PER_UNIT: Record<DurationUnit, bigint> = {
+export const SECONDS_PER_UNIT: Record<DurationUnit, bigint> = {
   seconds: BigInt(1),
   minutes: BigInt(60),
   hours:   BigInt(3600),

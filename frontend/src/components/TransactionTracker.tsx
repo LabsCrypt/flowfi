@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Loader2, CheckCircle, XCircle, ExternalLink, RefreshCw, Clock, Ban, FileSearch } from "lucide-react";
 import toast from "react-hot-toast";
 import type { BackendStream } from "@/lib/api-types";
+import { formatAmount } from "@/utils/amount";
 
 /**
  * TransactionTracker - Shared component for tracking on-chain transaction lifecycle
@@ -424,14 +425,6 @@ function renderChanges(prev: BackendStream, current: BackendStream) {
   }
 
   return changes;
-}
-
-// Helper to format amounts
-function formatAmount(raw: bigint, decimals: number): string {
-  const divisor = BigInt(10 ** decimals);
-  const whole = raw / divisor;
-  const fraction = (raw % divisor).toString().padStart(decimals, "0").replace(/0+$/, "");
-  return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
 // Hook for using transaction tracker in components

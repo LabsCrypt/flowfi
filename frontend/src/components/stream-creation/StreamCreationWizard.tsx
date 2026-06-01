@@ -1,6 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { hasValidPrecision } from "@/lib/amount";
+import { useModalDialog } from "@/hooks/useModalDialog";
 import { Stepper } from "../ui/Stepper";
 import { Button } from "../ui/Button";
 import { RecipientStep } from "./RecipientStep";
@@ -112,9 +113,11 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   // Tracking & Polling state (Issue #378)
   const [txHash, setTxHash] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-  const [timeout, setTimeoutError] = useState(false);
+  const [timeoutError, setTimeoutError] = useState(false);
   
   const router = useRouter();
+
+  const dialogRef = useModalDialog({ onClose });
 
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -440,20 +443,12 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     }
   };
 
-  // Handle Escape key to close
-  React.useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleEscape);
-    return () => window.removeEventListener('keydown', handleEscape);
-  }, [onClose]);
-
   return (
     <div 
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="stream-creation-wizard-title"
       onClick={(e) => {
         // Close on backdrop click
         if (e.target === e.currentTarget) {
@@ -461,9 +456,12 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         }
       }}
     >
-      <div className="glass-card relative z-10 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto rounded-2xl border border-glass-border p-8">
+      <div
+        ref={dialogRef}
+        className="glass-card relative z-10 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto rounded-2xl border border-glass-border p-8"
+      >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold">Create Payment Stream</h2>
+          <h2 id="stream-creation-wizard-title" className="text-2xl font-bold">Create Payment Stream</h2>
           <button
             type="button"
             onClick={onClose}
@@ -492,10 +490,10 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           {isPolling ? (
             <div className="flex flex-col items-center justify-center py-10">
               <h3 className="text-xl font-bold mb-8">
-                {timeout ? "Confirmation Timeout" : "Waiting for confirmation..."}
+                {timeoutError ? "Confirmation Timeout" : "Waiting for confirmation..."}
               </h3>
               
-              {!timeout ? (
+              {!timeoutError ? (
                 <>
                   <TransactionTracker 
                     steps={[

@@ -32,7 +32,7 @@ function signJwt(payload: object): string {
   return `${header}.${body}.${b64url(sig)}`;
 }
 
-function verifyJwt(token: string): { publicKey: string } | null {
+export function verifyJwt(token: string): { publicKey: string } | null {
   try {
     const [header, body, sig] = token.split('.');
     if (!header || !body || !sig) return null;

@@ -1,0 +1,19 @@
+coverage:
+  status:
+    project:
+      backend:
+        target: 60%
+        flags:
+          - backend
+      contracts:
+        target: 70%
+        flags:
+          - contracts
+    patch:
+      default:
+        target: 60%
+
+comment:
+  layout: "diff, flags, files"
+  behavior: default
+  require_changes: false

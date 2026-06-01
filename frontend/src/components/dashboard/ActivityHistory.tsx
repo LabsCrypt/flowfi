@@ -154,6 +154,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                   <a
                     href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                     target="_blank"
+                    rel="noopener noreferrer"
                     className="text-slate-500 hover:text-white transition-colors"
                     title="View on Explorer"
                   >

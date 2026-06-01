@@ -22,14 +22,19 @@ services:
       dockerfile: Dockerfile
     container_name: flowfi-backend
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3001
       DATABASE_URL: postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      # Uncomment and set values for Soroban integration
+      # SOROBAN_RPC_URL: https://rpc.testnet.stellar.org
+      # STREAM_CONTRACT_ID: CB...YOUR_CONTRACT_ID...
     ports:
       - "3001:3001"
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:

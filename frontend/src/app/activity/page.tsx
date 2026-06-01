@@ -32,7 +32,7 @@ export default function ActivityPage() {
   const [hasMore, setHasMore] = useState(true);
 
   const fetchActivity = useCallback(
-    async (pageNum: number, tab: string, append: boolean = false) => {
+    async (pageNum: number, tab: string, append: boolean = false, signal?: AbortSignal) => {
       if (!session?.publicKey) return;
       setLoading(true);
 
@@ -43,7 +43,7 @@ export default function ActivityPage() {
           `${API_BASE_URL}/v1/events?address=${encodeURIComponent(session.publicKey)}` +
           `&page=${pageNum}&limit=${PAGE_SIZE}${typeQuery}`;
 
-        const response = await fetch(url);
+        const response = await fetch(url, { signal });
         if (!response.ok) {
           throw new Error(`Failed to fetch activity (${response.status})`);
         }
@@ -62,6 +62,7 @@ export default function ActivityPage() {
           setHasMore(next.length === PAGE_SIZE);
         }
       } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
         console.error("Failed to fetch activity:", error);
         if (!append) setEvents([]);
         setHasMore(false);
@@ -73,10 +74,11 @@ export default function ActivityPage() {
   );
 
   useEffect(() => {
-    if (status === "connected") {
-      setPage(1);
-      fetchActivity(1, activeTab, false);
-    }
+    if (status !== "connected") return;
+    const controller = new AbortController();
+    setPage(1);
+    fetchActivity(1, activeTab, false, controller.signal);
+    return () => controller.abort();
   }, [activeTab, status, fetchActivity]);
 
   const loadMore = () => {

@@ -1,4 +1,5 @@
 import type { BackendStream, BackendStreamEvent } from "./api-types";
+import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
 
 export interface ActivityItem {
   id: string;
@@ -44,32 +45,9 @@ export interface DashboardAnalyticsMetric {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 
-const STROOPS_DIVISOR = 1e7;
-
-function toTokenAmount(raw: string): number {
-  return parseFloat(raw) / STROOPS_DIVISOR;
-}
-
 function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function getStreamsEndpointCandidates(): string[] {
-  const baseUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001").replace(/\/+$/, "");
-  const candidates = new Set<string>();
-
-  if (baseUrl.endsWith("/api/v1") || baseUrl.endsWith("/v1")) {
-    candidates.add(`${baseUrl}/streams`);
-  } else if (baseUrl.endsWith("/api")) {
-    candidates.add(`${baseUrl}/v1/streams`);
-    candidates.add(`${baseUrl.replace(/\/api$/, "")}/v1/streams`);
-  } else {
-    candidates.add(`${baseUrl}/api/v1/streams`);
-    candidates.add(`${baseUrl}/v1/streams`);
-  }
-
-  return [...candidates];
 }
 
 async function fetchStreams(
@@ -192,22 +170,6 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
     };
   } catch (error) {
     console.error("Dashboard data fetch error:", error);
-    throw error;
-  }
-}
-
-/**
- * Fetches activity history for a given public key.
- */
-export async function fetchUserEvents(publicKey: string): Promise<BackendStreamEvent[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/users/${publicKey}/events`);
-    if (!res.ok) {
-      throw new Error("Failed to fetch user events from backend.");
-    }
-    return await res.json();
-  } catch (error) {
-    console.error("User events fetch error:", error);
     throw error;
   }
 }

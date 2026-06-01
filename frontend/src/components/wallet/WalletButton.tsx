@@ -78,7 +78,7 @@ export function WalletButton() {
   }
 
   if (status === "connected" && session) {
-    // const networkLabel = formatNetwork(session.network);
+
     const networkOk = isExpectedNetwork(session.network);
 
     return (
@@ -91,14 +91,7 @@ export function WalletButton() {
           title={session.publicKey}
           onClick={() => setDropdownOpen((o) => !o)}
         >
-          {/* <span className="wallet-chip__name">{session.walletName}</span> */}
-          {/* <span
-            className="wallet-chip__network"
-            data-mainnet={networkLabel === "Mainnet" ? "true" : undefined}
-            data-mismatch={!networkOk ? "true" : undefined}
-          >
-            {networkLabel}
-          </span> */}
+
           <strong className="wallet-chip__key">
             {shortenPublicKey(session.publicKey)}
           </strong>

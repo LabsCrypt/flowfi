@@ -12,7 +12,7 @@ import {
 } from '../../controllers/stream.controller.js';
 import { cancelStreamHandler } from '../../controllers/stream/cancel.js';
 import { withdrawHandler } from './streams/withdraw.js';
-import { authMiddleware } from '../../middleware/auth.middleware.js';
+import { requireAuth } from '../../middleware/auth.js';
 import { streamCreationRateLimiter } from '../../middleware/stream-rate-limiter.middleware.js';
 
 const router = Router();
@@ -37,7 +37,7 @@ const router = Router();
  *       429:
  *         description: Too Many Requests - rate limit exceeded (10 requests per minute)
  */
-router.post('/', authMiddleware, streamCreationRateLimiter, createStream);
+router.post('/', requireAuth, streamCreationRateLimiter, createStream);
 
 /**
  * @openapi
@@ -77,6 +77,84 @@ router.get('/:streamId', getStream);
  *     tags:
  *       - Streams
  *     summary: Get stream events
+ *     description: Retrieve events for a specific stream with pagination, filtering, and sorting.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 50
+ *           minimum: 1
+ *           maximum: 500
+ *         description: Number of events to return per page (default: 50, max: 500)
+ *       - in: query
+ *         name: offset
+ *         schema:
+ *           type: integer
+ *           default: 0
+ *           minimum: 0
+ *         description: Number of events to skip (default: 0)
+ *       - in: query
+ *         name: eventType
+ *         schema:
+ *           type: string
+ *           enum: [CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED, PAUSED, RESUMED, FEE_COLLECTED]
+ *         description: Filter events by type
+ *       - in: query
+ *         name: order
+ *         schema:
+ *           type: string
+ *           enum: [asc, desc]
+ *           default: desc
+ *         description: Sort order by timestamp (default: desc)
+ *     responses:
+ *       200:
+ *         description: Stream events retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: integer
+ *                       streamId:
+ *                         type: integer
+ *                       eventType:
+ *                         type: string
+ *                       transactionHash:
+ *                         type: string
+ *                       ledgerSequence:
+ *                         type: integer
+ *                       timestamp:
+ *                         type: integer
+ *                       metadata:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *                         format: date-time
+ *                 total:
+ *                   type: integer
+ *                   description: Total number of events matching the filter
+ *                 hasMore:
+ *                   type: boolean
+ *                   description: Whether there are more events available
+ *       400:
+ *         description: Invalid request parameters
+ *       404:
+ *         description: Stream not found
+ *       500:
+ *         description: Internal server error
  */
 router.get('/:streamId/events', getStreamEvents);
 
@@ -119,7 +197,7 @@ router.get('/:streamId/claimable', getStreamClaimableAmount);
  *       409:
  *         description: Conflict - stream already paused or inactive
  */
-router.post('/:streamId/pause', authMiddleware, pauseStream);
+router.post('/:streamId/pause', requireAuth, pauseStream);
 
 /**
  * @openapi
@@ -150,7 +228,7 @@ router.post('/:streamId/pause', authMiddleware, pauseStream);
  *       409:
  *         description: Conflict - stream not paused or inactive
  */
-router.post('/:streamId/resume', authMiddleware, resumeStream);
+router.post('/:streamId/resume', requireAuth, resumeStream);
 
 /**
  * @openapi
@@ -181,7 +259,7 @@ router.post('/:streamId/resume', authMiddleware, resumeStream);
  *       409:
  *         description: Conflict - no claimable balance available
  */
-router.post('/:streamId/withdraw', authMiddleware, withdrawHandler as any);
+router.post('/:streamId/withdraw', requireAuth, withdrawHandler as any);
 
 /**
  * @openapi
@@ -193,7 +271,7 @@ router.post('/:streamId/withdraw', authMiddleware, withdrawHandler as any);
  *     security:
  *       - bearerAuth: []
  */
-router.post('/:streamId/top-up', authMiddleware, topUpStreamHandler);
-router.post('/:streamId/cancel', authMiddleware, cancelStreamHandler as any);
+router.post('/:streamId/top-up', requireAuth, topUpStreamHandler);
+router.post('/:streamId/cancel', requireAuth, cancelStreamHandler as any);
 
 export default router;

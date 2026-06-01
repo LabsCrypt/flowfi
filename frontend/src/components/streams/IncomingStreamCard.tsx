@@ -53,7 +53,10 @@ export function IncomingStreamCard({
     stream.status === "Active" && claimable > 0 && !withdrawing;
 
   return (
-    <article className="rounded-[1.75rem] border border-white/55 bg-white/80 p-5 shadow-[0_20px_45px_rgba(15,23,42,0.08)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1">
+    <article
+      className="rounded-[1.75rem] border border-white/55 bg-white/80 p-5 shadow-[0_20px_45px_rgba(15,23,42,0.08)] backdrop-blur-sm transition-transform duration-300 hover:-translate-y-1"
+      aria-label={`Incoming stream #${stream.streamId} from ${stream.senderDisplay} — ${stream.status}`}
+    >
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-800/70">

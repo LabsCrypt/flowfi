@@ -1,12 +1,13 @@
 "use client";
 import React, { useMemo, useRef, useEffect } from "react";
 import { hasValidPrecision } from "@/lib/amount";
+import { SECONDS_PER_UNIT, DurationUnit } from "@/lib/soroban";
 
 interface ScheduleStepProps {
   duration: string;
-  durationUnit: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
+  durationUnit: DurationUnit;
   onDurationChange: (value: string) => void;
-  onUnitChange: (value: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months") => void;
+  onUnitChange: (value: DurationUnit) => void;
   error?: string;
   amount?: string;
   token?: string;
@@ -42,29 +43,10 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
       return null;
     }
 
-    let seconds = parseFloat(duration);
+    const seconds = parseFloat(duration);
+    const multiplier = Number(SECONDS_PER_UNIT[durationUnit]);
 
-    switch (durationUnit) {
-      case "seconds":
-        break;
-      case "minutes":
-        seconds *= 60;
-        break;
-      case "hours":
-        seconds *= 3600;
-        break;
-      case "days":
-        seconds *= 86400;
-        break;
-      case "weeks":
-        seconds *= 604800;
-        break;
-      case "months":
-        seconds *= 2592000; // 30 days
-        break;
-    }
-
-    return seconds;
+    return seconds * multiplier;
   }, [duration, durationUnit]);
 
   const ratePerSecond = useMemo(() => {
@@ -154,7 +136,7 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
             value={durationUnit}
             onChange={(e) =>
               onUnitChange(
-                e.target.value as "seconds" | "minutes" | "hours" | "days" | "weeks" | "months"
+                e.target.value as DurationUnit
               )
             }
             className="w-full px-4 py-3 rounded-lg bg-glass border border-glass-border focus:border-accent focus:ring-accent focus:outline-none focus:ring-2 focus:ring-opacity-50 transition-colors text-foreground"

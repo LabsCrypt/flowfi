@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useStreamEvents } from '@/hooks/useStreamEvents';
 import { formatAmount } from '@/utils/amount';
 import { Button } from './ui/Button';
@@ -18,6 +19,7 @@ interface NotificationItem {
 }
 
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publicKey }) => {
+    const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
@@ -96,6 +98,9 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         <div className="relative">
             <button
                 onClick={handleDropdownOpen}
+                aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
+                aria-expanded={isOpen}
+                aria-haspopup="dialog"
                 className="relative p-2 text-slate-400 hover:text-accent transition-colors"
                 disabled={!connected}
             >
@@ -113,7 +118,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 mt-2 w-80 bg-background/95 backdrop-blur-md border border-glass-border rounded-2xl shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2">
+                <div
+                    role="dialog"
+                    aria-label="Notifications"
+                    className="absolute right-0 mt-2 w-80 bg-background/95 backdrop-blur-md border border-glass-border rounded-2xl shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2"
+                >
                     <div className="p-4 border-b border-glass-border flex justify-between items-center">
                         <h3 className="font-bold text-white">Notifications</h3>
                         <div className="flex items-center gap-2">
@@ -122,6 +131,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                             )}
                             <button
                                 onClick={() => setIsOpen(false)}
+                                aria-label="Close notifications"
                                 className="text-slate-400 hover:text-white"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -157,7 +167,8 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                             size="sm"
                             className="w-full text-xs"
                             onClick={() => {
-                                window.location.href = '/activity';
+                                setIsOpen(false);
+                                router.push('/activity');
                             }}
                         >
                             View All Activity

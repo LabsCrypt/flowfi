@@ -1,31 +1,32 @@
-# Authentication Middleware (SEP-10)
+# Authentication Middleware (SEP-10 + JWT)
 
-FlowFi API uses Stellar signed transactions for authentication, following the SEP-10 (Stellar Web Authentication) pattern.
+FlowFi API uses the Stellar SEP-10 challenge flow to authenticate wallets, then issues a JWT for subsequent API requests.
 
 ## Overview
 
-The authentication middleware verifies that requests come from legitimate Stellar wallet owners by validating signed transactions. This provides secure, wallet-based authentication without traditional username/password schemes.
+Authentication is performed in two phases:
 
-## How It Works
+1. Client requests a challenge from `/v1/auth/challenge`
+2. Client signs the challenge transaction and submits it to `/v1/auth/verify`
+3. Server verifies the nonce and returns a JWT
+4. Client uses `Authorization: Bearer <JWT>` for authenticated endpoints
 
-1. **Client Side**: The client creates a Stellar transaction, signs it with their private key, and encodes it as XDR
-2. **Server Side**: The middleware extracts the Bearer token, decodes the XDR, and verifies the signature
-3. **User Attachment**: If valid, the user's public key is attached to `req.user`
+This simplifies clients and standardizes authentication across all protected routes.
 
 ## Using the Middleware
 
 ### Protected Routes
 
-Apply `authMiddleware` to any route that requires authentication:
+Apply `requireAuth` to any route that requires authentication:
 
 ```typescript
-import { authMiddleware } from '../middleware/auth.middleware.js';
+import { requireAuth } from '../middleware/auth.js';
 import { Router } from 'express';
 
 const router = Router();
 
 // Protected endpoint
-router.get('/me', authMiddleware, getCurrentUser);
+router.get('/me', requireAuth, getCurrentUser);
 ```
 
 ### Optional Authentication
@@ -43,7 +44,7 @@ router.get('/streams', optionalAuthMiddleware, getStreams);
 ### Authorization Header
 
 ```
-Authorization: Bearer <signed_transaction_xdr>
+Authorization: Bearer <jwt>
 ```
 
 ### Example

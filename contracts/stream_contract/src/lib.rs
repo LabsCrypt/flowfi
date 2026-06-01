@@ -12,8 +12,9 @@ use soroban_sdk::{contract, contractimpl, token, vec, Address, Env, InvokeError,
 
 use errors::StreamError;
 use events::{
-    FeeCollectedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
+    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
@@ -54,11 +55,21 @@ impl StreamContract {
         save_config(
             &env,
             &ProtocolConfig {
+                admin: admin.clone(),
+                treasury: treasury.clone(),
+                fee_rate_bps,
+            },
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "initialized"),),
+            InitializedEvent {
                 admin,
                 treasury,
                 fee_rate_bps,
             },
         );
+
         Ok(())
     }
 
@@ -87,11 +98,63 @@ impl StreamContract {
         save_config(
             &env,
             &ProtocolConfig {
-                admin: config.admin,
-                treasury,
+                admin: config.admin.clone(),
+                treasury: treasury.clone(),
                 fee_rate_bps,
             },
         );
+
+        env.events().publish(
+            (Symbol::new(&env, "fee_config_updated"),),
+            FeeConfigUpdatedEvent {
+                admin,
+                old_treasury: config.treasury,
+                new_treasury: treasury,
+                old_fee_rate_bps: config.fee_rate_bps,
+                new_fee_rate_bps: fee_rate_bps,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Transfer the protocol admin role to a new address.
+    ///
+    /// The current admin must authenticate. After this call the new address
+    /// becomes the sole admin and the previous admin loses all admin privileges.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — `initialize` has not been called.
+    /// - `NotAdmin`       — caller is not the current admin.
+    pub fn transfer_admin(
+        env: Env,
+        current_admin: Address,
+        new_admin: Address,
+    ) -> Result<(), StreamError> {
+        current_admin.require_auth();
+
+        let config = load_config(&env)?;
+        if config.admin != current_admin {
+            return Err(StreamError::NotAdmin);
+        }
+
+        save_config(
+            &env,
+            &ProtocolConfig {
+                admin: new_admin.clone(),
+                treasury: config.treasury,
+                fee_rate_bps: config.fee_rate_bps,
+            },
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "admin_transferred"),),
+            AdminTransferredEvent {
+                previous_admin: current_admin,
+                new_admin,
+            },
+        );
+
         Ok(())
     }
 
@@ -151,6 +214,16 @@ impl StreamContract {
         // Deduct protocol fee; returns net amount (== amount when no fee config).
         let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
         let rate_per_second = net_amount / (duration as i128);
+
+        // Reject streams where integer division rounds the rate to zero.
+        // Such a stream would lock the sender's tokens in the contract while
+        // never accruing anything to the recipient — almost always a caller
+        // mistake (wrong decimals or an excessively long duration).
+        // Soroban rolls back the entire transaction on Err, so the token
+        // transfer above is unwound automatically.
+        if rate_per_second == 0 {
+            return Err(StreamError::InvalidRate);
+        }
 
         save_stream(
             &env,
@@ -264,31 +337,31 @@ impl StreamContract {
     ///
     /// # Overflow Protection
     /// - Uses `checked_mul` for rate_per_second * elapsed_seconds multiplication
-    /// - Caps at stream.deposited_amount if overflow would occur
+    /// - Caps at remaining deposited balance if overflow would occur
     /// - Uses `checked_sub` for deposited - already_withdrawn calculation
     /// - Overflow boundary: i128::MAX (~1.7e19) for both rate and duration
     fn calculate_claimable(stream: &Stream, now: u64) -> i128 {
+        // When the stream is paused, accrue only up to the moment it was paused.
         let effective_now = if stream.paused {
             stream.paused_at.unwrap_or(stream.last_update_time)
         } else {
             now
         };
+
         let elapsed = effective_now.saturating_sub(stream.last_update_time);
 
-        // Use checked_mul to prevent overflow when multiplying rate * elapsed
-        // If overflow would occur, cap at deposited_amount (full deposit)
-        let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
-            Some(result) => result,
-            None => return stream.deposited_amount, // Overflow: cap at full deposit
-        };
-
         // Use checked_sub for deposited - withdrawn calculation
-        let remaining = match stream
+        // Underflow (withdrawn > deposited) falls back to 0.
+        let remaining = stream
             .deposited_amount
             .checked_sub(stream.withdrawn_amount)
-        {
+            .unwrap_or_default();
+
+        // Use checked_mul to prevent overflow when multiplying rate * elapsed.
+        // If overflow would occur, cap at the remaining balance.
+        let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
             Some(result) => result,
-            None => 0, // Underflow: already withdrawn more than deposited
+            None => return remaining,
         };
 
         streamed.min(remaining)
@@ -299,10 +372,7 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound` — no stream exists with `stream_id`.
     /// - `Unauthorized` — caller is not the stream's sender.
-    fn validate_stream_ownership(
-        stream: &Stream,
-        caller: &Address,
-    ) -> Result<(), StreamError> {
+    fn validate_stream_ownership(stream: &Stream, caller: &Address) -> Result<(), StreamError> {
         if stream.sender != *caller {
             return Err(StreamError::Unauthorized);
         }
@@ -365,9 +435,12 @@ impl StreamContract {
         if stream.recipient != recipient {
             return Err(StreamError::Unauthorized);
         }
-        
+
         // Validate stream is active and not paused
         Self::validate_stream_active(&stream)?;
+        if stream.paused {
+            return Err(StreamError::StreamInactive);
+        }
         if stream.paused {
             return Err(StreamError::StreamInactive);
         }
@@ -500,7 +573,11 @@ impl StreamContract {
 
         env.events().publish(
             (Symbol::new(&env, "stream_paused"), stream_id),
-            StreamPausedEvent { stream_id, sender, paused_at: now },
+            StreamPausedEvent {
+                stream_id,
+                sender,
+                paused_at: now,
+            },
         );
 
         Ok(())
@@ -533,7 +610,9 @@ impl StreamContract {
         // Advance last_update_time by pause duration so accrual resumes from now.
         stream.last_update_time = stream.last_update_time.saturating_add(pause_duration);
         // new_end_time represents when the stream will fully drain from now.
-        let remaining = stream.deposited_amount.saturating_sub(stream.withdrawn_amount);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
         let new_end_time = if stream.rate_per_second > 0 {
             now + (remaining / stream.rate_per_second) as u64
         } else {
@@ -547,7 +626,11 @@ impl StreamContract {
 
         env.events().publish(
             (Symbol::new(&env, "stream_resumed"), stream_id),
-            StreamResumedEvent { stream_id, sender, new_end_time },
+            StreamResumedEvent {
+                stream_id,
+                sender,
+                new_end_time,
+            },
         );
 
         Ok(new_end_time)

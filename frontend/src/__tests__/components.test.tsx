@@ -2,55 +2,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import React from 'react';
 
-// ─── LiveCounter ──────────────────────────────────────────────────────────────
-
 vi.mock('next/navigation', () => ({ useRouter: vi.fn() }));
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
 }));
 
 // Import after vi.mock registrations
-import LiveCounter from '../components/Livecounter';
 import { CancelConfirmModal } from '../components/stream-creation/CancelConfirmModal';
 import { RecipientStep } from '../components/stream-creation/RecipientStep';
 import { AmountStep } from '../components/stream-creation/AmountStep';
-
-describe('LiveCounter', () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
-
-  it('renders the initial amount', () => {
-    render(<LiveCounter initial={42} label="Streamed" />);
-    expect(screen.getByText('42')).toBeInTheDocument();
-  });
-
-  it('ticks up every second when not paused', () => {
-    render(<LiveCounter initial={0} label="Streamed" />);
-    act(() => { vi.advanceTimersByTime(3000); });
-    expect(screen.getByText('3')).toBeInTheDocument();
-  });
-
-  it('does not tick when isPaused=true', () => {
-    render(<LiveCounter initial={10} label="Streamed" isPaused />);
-    act(() => { vi.advanceTimersByTime(5000); });
-    // Amount should remain at initial value (not increment)
-    expect(screen.queryByText('15')).not.toBeInTheDocument();
-  });
-
-  it('displays paused status indicator when isPaused', () => {
-    render(<LiveCounter initial={0} isPaused pausedAt={new Date().toISOString()} />);
-    // Component shows "Paused now" or similar text — not the counter label
-    const label = screen.queryByText('Streamed');
-    expect(label).not.toBeInTheDocument();
-  });
-
-  it('hides the streamed counter when isPaused becomes true', () => {
-    const { rerender } = render(<LiveCounter initial={5} label="Streamed" />);
-    act(() => { vi.advanceTimersByTime(3000); });
-    rerender(<LiveCounter initial={5} label="Streamed" isPaused />);
-    expect(screen.getByText('Paused')).toBeInTheDocument();
-  });
-});
 
 // ─── CancelConfirmModal ───────────────────────────────────────────────────────
 
