@@ -5,6 +5,12 @@ export default defineConfig({
         environment: 'node',
         globals: true,
         setupFiles: [],
+        // Provide a stable JWT_SECRET so verifyJwt is deterministic in tests.
+        // The integration test mocks replace requireAuth entirely, but a known
+        // secret means the real middleware also works if a mock is not applied.
+        env: {
+          JWT_SECRET: 'flowfi-test-secret-do-not-use-in-production',
+        },
         include: ['tests/**/*.{test,spec}.ts', 'src/__tests__/**/*.{test,spec}.ts'],
         coverage: {
             enabled: true,

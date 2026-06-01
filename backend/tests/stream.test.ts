@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 
-vi.mock('../src/middleware/auth.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/middleware/auth.js')>();
-  return {
-    ...actual,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
-      next();
-    },
-  };
-});
+// Simple factory — no importOriginal — reliable with pool:forks.
+vi.mock('../src/middleware/auth.js', () => ({
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
+    next();
+  },
+  requireAdmin: (_req: any, res: any, _next: any) => {
+    res.status(403).json({ error: 'Forbidden' });
+  },
+}));
 
 vi.mock('../src/middleware/stream-rate-limiter.middleware.js', () => ({
   streamCreationRateLimiter: (_req: any, _res: any, next: any) => next(),

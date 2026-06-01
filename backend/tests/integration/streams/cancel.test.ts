@@ -37,17 +37,17 @@ vi.mock('../../../src/lib/prisma.js', () => {
   };
 });
 
-// Mock auth middleware to bypass real Stellar signature verification
-vi.mock('../../../src/middleware/auth.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../src/middleware/auth.js')>();
-  return {
-    ...actual,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.user = { publicKey: 'G_SENDER_123' };
-      next();
-    },
-  };
-});
+// Mock auth middleware to bypass real Stellar signature verification.
+// Uses a simple factory (no importOriginal) so it is reliable with pool:forks.
+vi.mock('../../../src/middleware/auth.js', () => ({
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: 'G_SENDER_123' };
+    next();
+  },
+  requireAdmin: (_req: any, res: any, _next: any) => {
+    res.status(403).json({ error: 'Forbidden' });
+  },
+}));
 
 // ─── App import (after mocks) ───────────────────────────────────────────────
 

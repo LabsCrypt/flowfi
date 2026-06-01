@@ -76,6 +76,18 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
           scheme: 'bearer',
           bearerFormat: 'JWT',
           description: 'JSON Web Token issued by /v1/auth/verify after completing the SEP-10 challenge flow.'
+        },
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'Alias for BearerAuth — used by route-level security annotations.'
+        },
+        adminAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          description: 'Admin JWT — the token subject must match ADMIN_PUBLIC_KEY.'
         }
       },
       schemas: {
@@ -165,6 +177,28 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               description: 'Stream active status',
               example: true,
             },
+            isPaused: {
+              type: 'boolean',
+              description: 'Whether the stream is currently paused',
+              example: false,
+            },
+            pausedAt: {
+              type: 'integer',
+              nullable: true,
+              description: 'Ledger timestamp when the stream was last paused (Unix), null if not paused',
+              example: null,
+            },
+            totalPausedDuration: {
+              type: 'integer',
+              description: 'Cumulative seconds the stream has spent paused',
+              example: 0,
+            },
+            endTime: {
+              type: 'integer',
+              nullable: true,
+              description: 'Ledger timestamp when the stream ended (Unix), null if still active',
+              example: null,
+            },
             createdAt: {
               type: 'string',
               format: 'date-time',
@@ -189,7 +223,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             },
             eventType: {
               type: 'string',
-              enum: ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED'],
+              enum: ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED'],
               description: 'Type of stream event',
               example: 'TOPPED_UP',
             },

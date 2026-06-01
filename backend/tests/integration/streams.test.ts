@@ -11,16 +11,16 @@ import request from 'supertest';
 // Bypass Stellar signature verification on POST /v1/streams. The route is
 // exercised here as a stand-in for the indexer worker, so we replace the auth
 // middleware with a stub that injects a deterministic wallet.
-vi.mock('../../src/middleware/auth.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/middleware/auth.js')>();
-  return {
-    ...actual,
-    requireAuth: (req: any, _res: any, next: any) => {
-      req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
-      next();
-    },
-  };
-});
+// Simple factory — no importOriginal — reliable with pool:forks.
+vi.mock('../../src/middleware/auth.js', () => ({
+  requireAuth: (req: any, _res: any, next: any) => {
+    req.user = { publicKey: 'GTEST_USER_PUBLIC_KEY' };
+    next();
+  },
+  requireAdmin: (_req: any, res: any, _next: any) => {
+    res.status(403).json({ error: 'Forbidden' });
+  },
+}));
 
 // ─── Mocks (using vi.hoisted to ensure they are available to vi.mock) ─────────
 
