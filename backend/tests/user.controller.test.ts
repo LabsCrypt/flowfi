@@ -97,8 +97,32 @@ describe('User Controller', () => {
   });
 
   describe('getUserEvents', () => {
+    it('should return 400 if publicKey is missing', async () => {
+      req.params = {};
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid publicKey parameter' });
+    });
+
+    it('should return 400 if publicKey is malformed', async () => {
+      req.params = { publicKey: 'invalid-key' };
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar public key format' });
+    });
+
+    it('should return 400 if publicKey has wrong format (too short)', async () => {
+      req.params = { publicKey: 'GTOOSHORT' };
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar public key format' });
+    });
+
     it('should return paginated events', async () => {
-      req.params = { publicKey: 'GUSER1' };
+      req.params = { publicKey: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ' };
       req.query = { limit: '10', offset: '0' };
       (prisma.streamEvent.findMany as any).mockResolvedValue([]);
       (prisma.streamEvent.count as any).mockResolvedValue(0);

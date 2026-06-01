@@ -73,6 +73,9 @@ export const getUserEvents = async (req: Request, res: Response, next: NextFunct
         if (typeof publicKey !== 'string') {
             return res.status(400).json({ error: 'Invalid publicKey parameter' });
         }
+        if (!/^G[A-Z2-7]{55}$/.test(publicKey)) {
+            return res.status(400).json({ error: 'Invalid Stellar public key format' });
+        }
 
         const rawLimit = req.query['limit'];
         const rawOffset = req.query['offset'];
