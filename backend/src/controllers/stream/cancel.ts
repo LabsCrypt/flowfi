@@ -55,9 +55,9 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json({ error: 'Missing streamId parameter' });
     }
 
-    const parsedStreamId = parseInt(streamId, 10);
+  const parsedStreamId = parseInt(streamId, 10);
 
-    // 1. Fetch stream from DB
+   // 1. Fetch stream from DB
     const stream = await prisma.stream.findUnique({
       where: { streamId: parsedStreamId }
     });
