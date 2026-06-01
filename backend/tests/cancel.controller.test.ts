@@ -36,7 +36,7 @@ describe('Cancel Stream Controller', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.SOROBAN_SECRET_KEY = 'SABC123';
+    process.env.KEEPER_SECRET_KEY = 'SABC123';
     req = {
       params: { streamId: '123' },
       user: { publicKey: 'GSENDER1' } as any,
@@ -83,8 +83,8 @@ describe('Cancel Stream Controller', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED', txHash: 'tx_hash_123' }));
   });
 
-  it('should return 500 if SOROBAN_SECRET_KEY is missing', async () => {
-    delete process.env.SOROBAN_SECRET_KEY;
+  it('should return 500 if KEEPER_SECRET_KEY is missing', async () => {
+    delete process.env.KEEPER_SECRET_KEY;
     (prisma.stream.findUnique as any).mockResolvedValue({ sender: 'GSENDER1', isActive: true });
 
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
