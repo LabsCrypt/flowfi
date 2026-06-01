@@ -269,11 +269,8 @@ If you discover a security vulnerability, please see our [Security Policy](SECUR
 
 ## Community & Support
 
-Have questions? Want to share ideas or projects? Join the conversation!
+Review the discussions guide before opening an issue or looking for community support.
 
-- **❓ [Ask Questions](https://github.com/flowfi/flowfi/discussions/categories/q-a)** - Get help in GitHub Discussions Q&A
-- **💡 [Share Ideas](https://github.com/flowfi/flowfi/discussions/categories/ideas)** - Propose features and discuss improvements
-- **🎪 [Show and Tell](https://github.com/flowfi/flowfi/discussions/categories/show-and-tell)** - Share projects and use cases built with FlowFi
 - **📖 [Discussions Guide](DISCUSSIONS.md)** - Learn when to use Discussions vs Issues.
 
 ## Contributors

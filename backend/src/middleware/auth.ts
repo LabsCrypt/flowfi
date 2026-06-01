@@ -4,7 +4,31 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import logger from '../logger.js';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? crypto.randomBytes(32).toString('hex');
+const isProduction = process.env.NODE_ENV === 'production';
+const rawJwtSecret = process.env.JWT_SECRET;
+
+let JWT_SECRET: string;
+
+if (isProduction) {
+  if (!rawJwtSecret) {
+    throw new Error('JWT_SECRET environment variable is required in production');
+  }
+  if (Buffer.from(rawJwtSecret).length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 bytes long in production');
+  }
+  JWT_SECRET = rawJwtSecret;
+} else {
+  if (!rawJwtSecret) {
+    logger.warn('[Auth] JWT_SECRET not set — using random secret; tokens will NOT survive server restart');
+    JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  } else {
+    if (Buffer.from(rawJwtSecret).length < 32) {
+      logger.warn('[Auth] JWT_SECRET is less than 32 bytes long; consider using a stronger secret');
+    }
+    JWT_SECRET = rawJwtSecret;
+  }
+}
+
 const JWT_EXPIRY_SECONDS = 3600; // 1 hour max per spec
 
 const STELLAR_NETWORK =

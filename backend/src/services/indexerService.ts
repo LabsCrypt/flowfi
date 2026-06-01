@@ -1,8 +1,7 @@
 import { prisma } from '../lib/prisma.js';
+import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { sorobanEventWorker } from '../workers/soroban-event-worker.js';
 import logger from '../logger.js';
-
-const INDEXER_STATE_ID = 'singleton';
 
 export interface IndexerStatus {
   lastLedger: number;

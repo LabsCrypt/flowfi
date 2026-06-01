@@ -49,7 +49,7 @@ export const subscribe = async (req: Request, res: Response) => {
       where: { OR: [{ sender: publicKey }, { recipient: publicKey }] },
       select: { streamId: true },
     });
-    const ownedIds = new Set(ownedStreams.map((s: any) => String(s.streamId)));
+    const ownedIds = new Set(ownedStreams.map((s: { streamId: number }) => String(s.streamId)));
 
     let subscriptions: string[];
     if (all) {

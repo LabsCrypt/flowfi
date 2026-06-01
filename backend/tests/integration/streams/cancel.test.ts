@@ -62,7 +62,7 @@ import { prisma } from '../../../src/lib/prisma.js';
 describe('POST /v1/streams/:streamId/cancel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.SOROBAN_SECRET_KEY = 'S_SECRET_123';
+    process.env.KEEPER_SECRET_KEY = 'S_SECRET_123';
   });
 
   it('successfully cancels an active stream when called by the sender', async () => {

@@ -8,6 +8,7 @@ import {
 } from '../../services/indexerService.js';
 
 import { prisma } from '../../lib/prisma.js';
+import { INDEXER_STATE_ID } from '../../lib/indexer-state.js';
 import { sseService } from '../../services/sse.service.js';
 import { cache } from '../../lib/redis.js';
 import logger from '../../logger.js';
@@ -23,7 +24,7 @@ router.use(requireAdmin);
  *   get:
  *     tags: [Admin]
  *     summary: Protocol health metrics
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     responses:
  *       200:
  *         description: Protocol health metrics
@@ -56,7 +57,7 @@ async function buildAdminMetrics() {
       where: { isActive: false, events: { some: { eventType: 'COMPLETED' } } },
     }),
     prisma.streamEvent.count({ where: { createdAt: { gte: since24h } } }),
-    prisma.indexerState.findUnique({ where: { id: 'singleton' } }),
+    prisma.indexerState.findUnique({ where: { id: INDEXER_STATE_ID } }),
     prisma.streamEvent.findMany({
       where: { eventType: 'FEE_COLLECTED' },
       select: { amount: true, metadata: true },
@@ -167,7 +168,7 @@ router.get('/metrics', async (_req: Request, res: Response) => {
  *   get:
  *     tags: [Admin]
  *     summary: Get indexer status
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     responses:
  *       200:
  *         description: Indexer status
@@ -187,7 +188,7 @@ router.get('/indexer/status', async (req: Request, res: Response) => {
  *   post:
  *     tags: [Admin]
  *     summary: Reset indexer lastProcessedLedger
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     requestBody:
  *       required: true
  *       content:
@@ -222,7 +223,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
  *   post:
  *     tags: [Admin]
  *     summary: Replay events from a given ledger (idempotent)
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     parameters:
  *       - in: query
  *         name: from_ledger
