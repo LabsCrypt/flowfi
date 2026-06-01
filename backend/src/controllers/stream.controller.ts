@@ -39,6 +39,11 @@ function pruneUserSummaryCache(nowMs: number): void {
   }
 }
 
+// Issue #682: Periodic prune to prevent memory drift when no requests come in
+setInterval(() => {
+  pruneUserSummaryCache(Date.now());
+}, 60_000); // Run every 60 seconds
+
 function sumStringI128(values: string[]): string {
   let total = 0n;
   for (const value of values) {

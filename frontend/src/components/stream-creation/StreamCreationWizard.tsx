@@ -30,7 +30,8 @@ interface StreamCreationWizardProps {
   walletPublicKey?: string;
 }
 
-const CUSTOM_TEMPLATE_STORAGE_KEY = "flowfi.stream.wizard.custom-templates.v1";
+// Unified storage key shared with dashboard form (Issue #699)
+const CUSTOM_TEMPLATE_STORAGE_KEY = "flowfi.stream.templates.v1";
 
 const BUILT_IN_TEMPLATES: StreamTemplate[] = [
   {
