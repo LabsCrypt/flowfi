@@ -60,7 +60,7 @@ function b64url(buf: Buffer | string): string {
   return b.toString('base64url');
 }
 
-function signJwt(payload: object): string {
+export function signJwt(payload: object): string {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const body = b64url(JSON.stringify(payload));
   const sig = crypto
