@@ -8,6 +8,7 @@ import {
 } from '../../services/indexerService.js';
 
 import { prisma } from '../../lib/prisma.js';
+import { INDEXER_STATE_ID } from '../../lib/indexer-state.js';
 import { sseService } from '../../services/sse.service.js';
 import { cache } from '../../lib/redis.js';
 import logger from '../../logger.js';
@@ -56,7 +57,7 @@ async function buildAdminMetrics() {
       where: { isActive: false, events: { some: { eventType: 'COMPLETED' } } },
     }),
     prisma.streamEvent.count({ where: { createdAt: { gte: since24h } } }),
-    prisma.indexerState.findUnique({ where: { id: 'singleton' } }),
+    prisma.indexerState.findUnique({ where: { id: INDEXER_STATE_ID } }),
     prisma.streamEvent.findMany({
       where: { eventType: 'FEE_COLLECTED' },
       select: { amount: true, metadata: true },

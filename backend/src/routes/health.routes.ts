@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 
 const router = Router();
 
@@ -62,7 +63,7 @@ router.get('/', async (_req: Request, res: Response) => {
 
   let indexerLag = -1;
   try {
-    const state = await prisma.indexerState.findUnique({ where: { id: 'singleton' } });
+    const state = await prisma.indexerState.findUnique({ where: { id: INDEXER_STATE_ID } });
     if (state) {
       const now = Math.floor(Date.now() / 1000);
       const updatedAt = Math.floor(state.updatedAt.getTime() / 1000);

@@ -1,11 +1,10 @@
 import { rpc, xdr, StrKey } from '@stellar/stellar-sdk';
 import { prisma } from '../lib/prisma.js';
+import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { sseService } from '../services/sse.service.js';
 import logger from '../logger.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-
-const INDEXER_STATE_ID = 'singleton';
 
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
