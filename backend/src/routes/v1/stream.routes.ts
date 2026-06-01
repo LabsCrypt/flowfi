@@ -92,14 +92,14 @@ router.get('/:streamId', getStream);
  *           default: 50
  *           minimum: 1
  *           maximum: 500
- *         description: Number of events to return per page (default: 50, max: 500)
+ *         description: "Number of events to return per page (default: 50, max: 500)"
  *       - in: query
  *         name: offset
  *         schema:
  *           type: integer
  *           default: 0
  *           minimum: 0
- *         description: Number of events to skip (default: 0)
+ *         description: "Number of events to skip (default: 0)"
  *       - in: query
  *         name: eventType
  *         schema:
@@ -112,7 +112,7 @@ router.get('/:streamId', getStream);
  *           type: string
  *           enum: [asc, desc]
  *           default: desc
- *         description: Sort order by timestamp (default: desc)
+ *         description: "Sort order by timestamp (default: desc)"
  *     responses:
  *       200:
  *         description: Stream events retrieved successfully
