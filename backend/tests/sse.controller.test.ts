@@ -71,6 +71,23 @@ describe('SSE Controller', () => {
     expect(sseService.addClient).toHaveBeenCalled();
   });
 
+  it('should include user subscriptions when users query params are provided', async () => {
+    (sseService.isShuttingDown as any).mockReturnValue(false);
+    (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
+    (req as any).user = { publicKey: 'GUSER1' };
+    (prisma.stream.findMany as any).mockResolvedValue([{ streamId: 'stream-1' }]);
+    req.query = { users: ['GUSER2', 'GUSER3'] };
+
+    await subscribe(req as Request, res as Response);
+
+    expect(sseService.addClient).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Object),
+      expect.arrayContaining(['stream-1', 'user:GUSER2', 'user:GUSER3', 'user:GUSER1']),
+      expect.any(String),
+    );
+  });
+
   it('should handle zod validation error for query params', async () => {
     (sseService.isShuttingDown as any).mockReturnValue(false);
     (sseService.checkCapacity as any).mockReturnValue({ allowed: true });

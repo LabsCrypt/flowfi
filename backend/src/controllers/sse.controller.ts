@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 const subscribeSchema = z.object({
   streams: z.array(z.string()).optional().default([]),
+  users: z.array(z.string()).optional().default([]),
   all: z.boolean().optional().default(false),
 });
 
@@ -41,7 +42,7 @@ export const subscribe = async (req: Request, res: Response) => {
     }
 
     const { publicKey } = (req as AuthenticatedRequest).user;
-    const { streams, all } = subscribeSchema.parse(req.query);
+    const { streams, users, all } = subscribeSchema.parse(req.query);
 
     // Scope: only streams where the authenticated user is sender or recipient
     const ownedStreams = await prisma.stream.findMany({
@@ -61,6 +62,8 @@ export const subscribe = async (req: Request, res: Response) => {
       subscriptions = [...ownedIds] as string[];
     }
 
+    subscriptions.push(...users.map((userKey) => `user:${userKey}`));
+
     // Always add user-scoped subscription key
     subscriptions.push(`user:${publicKey}`);
 
@@ -77,11 +80,11 @@ export const subscribe = async (req: Request, res: Response) => {
     res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
 
     sseService.addClient(clientId, res, subscriptions, sourceIp);
-  } catch (error: any) {
-    if (error.name === 'ZodError') {
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
       return res.status(400).json({
         message: 'Invalid subscription parameters',
-        errors: error.errors,
+        errors: error.issues,
       });
     }
     return res.status(500).json({ message: 'Internal server error' });

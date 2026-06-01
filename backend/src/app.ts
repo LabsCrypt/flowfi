@@ -65,8 +65,8 @@ app.use(cors({
 }));
 
 // Convert CORS errors into 403 responses so callers get a clear status code
-app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-    if (err && err.message === 'CORS origin not allowed') {
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof Error && err.message === 'CORS origin not allowed') {
         res.status(403).json({ error: 'CORS origin not allowed' });
         return;
     }

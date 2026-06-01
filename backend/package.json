@@ -5,6 +5,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "prebuild": "prisma generate",
     "test": "vitest run",
     "dev": "nodemon",
     "build": "tsc",
