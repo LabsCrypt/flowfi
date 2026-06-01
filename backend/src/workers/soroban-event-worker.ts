@@ -854,12 +854,6 @@ export class SorobanEventWorker {
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: any) => {
-      // Get current stream to preserve totalPausedDuration
-      const currentStream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: { totalPausedDuration: true },
-      });
-
       await tx.stream.update({
         where: { streamId },
         data: {
@@ -869,16 +863,26 @@ export class SorobanEventWorker {
         },
       });
 
-      await tx.streamEvent.create({
-        data: {
-          streamId,
-          eventType: 'PAUSED',
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ sender, pausedAt }),
-        },
+      const existingEvent = await tx.streamEvent.findUnique({
+        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'PAUSED' } },
+        select: { id: true },
       });
+      if (existingEvent) {
+        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=PAUSED`);
+      } else {
+        await tx.streamEvent.upsert({
+          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'PAUSED' } },
+          create: {
+            streamId,
+            eventType: 'PAUSED',
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({ sender, pausedAt }),
+          },
+          update: {},
+        });
+      }
     });
 
     sseService.broadcastToStream(String(streamId), 'stream.paused', {
@@ -932,21 +936,31 @@ export class SorobanEventWorker {
         },
       });
 
-      await tx.streamEvent.create({
-        data: {
-          streamId,
-          eventType: 'RESUMED',
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ 
-            sender, 
-            newEndTime, 
-            pausedDuration: additionalPausedDuration,
-            totalPausedDuration: newTotalPausedDuration 
-          }),
-        },
+      const existingEvent = await tx.streamEvent.findUnique({
+        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'RESUMED' } },
+        select: { id: true },
       });
+      if (existingEvent) {
+        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=RESUMED`);
+      } else {
+        await tx.streamEvent.upsert({
+          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'RESUMED' } },
+          create: {
+            streamId,
+            eventType: 'RESUMED',
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({
+              sender,
+              newEndTime,
+              pausedDuration: additionalPausedDuration,
+              totalPausedDuration: newTotalPausedDuration,
+            }),
+          },
+          update: {},
+        });
+      }
     });
 
     sseService.broadcastToStream(String(streamId), 'stream.resumed', {
