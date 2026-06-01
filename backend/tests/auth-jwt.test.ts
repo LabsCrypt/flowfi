@@ -9,7 +9,7 @@ describe('JWT helpers', () => {
     vi.resetModules();
     vi.stubEnv('JWT_SECRET', JWT_SECRET);
 
-    const auth = await import('../src/middleware/auth.ts');
+    const auth = await import('../src/middleware/auth.js');
     signJwt = auth.signJwt;
     verifyJwt = auth.verifyJwt;
   });
@@ -24,7 +24,7 @@ describe('JWT helpers', () => {
   it('returns null for a tampered header', async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
-    const parts = token.split('.');
+    const parts = token.split('.') as [string, string, string];
     parts[0] = parts[0].slice(0, -1) + (parts[0].slice(-1) === 'A' ? 'B' : 'A');
 
     expect(verifyJwt(parts.join('.'))).toBeNull();
@@ -33,7 +33,7 @@ describe('JWT helpers', () => {
   it('returns null for a tampered body', async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
-    const parts = token.split('.');
+    const parts = token.split('.') as [string, string, string];
     parts[1] = parts[1].slice(0, -1) + (parts[1].slice(-1) === 'A' ? 'B' : 'A');
 
     expect(verifyJwt(parts.join('.'))).toBeNull();
@@ -42,7 +42,7 @@ describe('JWT helpers', () => {
   it('returns null for a tampered signature', async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
-    const parts = token.split('.');
+    const parts = token.split('.') as [string, string, string];
     parts[2] = parts[2].slice(0, -1) + (parts[2].slice(-1) === 'A' ? 'B' : 'A');
 
     expect(verifyJwt(parts.join('.'))).toBeNull();
