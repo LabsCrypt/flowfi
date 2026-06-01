@@ -23,7 +23,7 @@ router.use(requireAdmin);
  *   get:
  *     tags: [Admin]
  *     summary: Protocol health metrics
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     responses:
  *       200:
  *         description: Protocol health metrics
@@ -167,7 +167,7 @@ router.get('/metrics', async (_req: Request, res: Response) => {
  *   get:
  *     tags: [Admin]
  *     summary: Get indexer status
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     responses:
  *       200:
  *         description: Indexer status
@@ -187,7 +187,7 @@ router.get('/indexer/status', async (req: Request, res: Response) => {
  *   post:
  *     tags: [Admin]
  *     summary: Reset indexer lastProcessedLedger
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     requestBody:
  *       required: true
  *       content:
@@ -222,7 +222,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
  *   post:
  *     tags: [Admin]
  *     summary: Replay events from a given ledger (idempotent)
- *     security: [{ bearerAuth: [] }]
+ *     security: [{ adminAuth: [] }]
  *     parameters:
  *       - in: query
  *         name: from_ledger
