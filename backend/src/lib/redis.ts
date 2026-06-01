@@ -85,7 +85,39 @@ class MemoryCache {
 }
 
 export const cache = new MemoryCache();
-setInterval(() => cache.cleanup(), 60000);
+
+let sweepInterval: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Starts the memory cache cleanup sweep interval.
+ * Uses process.env.MEMORY_CACHE_SWEEP_MS (default 60,000ms) unless overridden.
+ */
+export function startMemoryCacheSweep(intervalMs?: number): void {
+  if (sweepInterval) {
+    clearInterval(sweepInterval);
+  }
+  
+  const configuredMs = Number.parseInt(
+    process.env.MEMORY_CACHE_SWEEP_MS ?? '60000',
+    10
+  );
+  const ms = intervalMs ?? (Number.isFinite(configuredMs) ? configuredMs : 60000);
+  
+  sweepInterval = setInterval(() => cache.cleanup(), ms);
+}
+
+/**
+ * Stops the active memory cache cleanup sweep interval to prevent timer leaks.
+ */
+export function stopMemoryCacheSweep(): void {
+  if (sweepInterval) {
+    clearInterval(sweepInterval);
+    sweepInterval = undefined;
+  }
+}
+
+// Start memory cache sweep automatically on module load
+startMemoryCacheSweep();
 
 // --- Redis Pub/Sub Logic ---
 
@@ -142,6 +174,7 @@ export async function connectRedis(): Promise<void> {
 }
 
 export async function disconnectRedis(): Promise<void> {
+  stopMemoryCacheSweep();
   await Promise.all([_publisher?.quit(), _subscriber?.quit()]);
   _publisher = null;
   _subscriber = null;
