@@ -209,6 +209,7 @@ export default function StreamDetailsPage() {
       toast.error("Please connect your wallet");
       return;
     }
+    Token:
     setWithdrawing(true);
     try {
       await withdrawFromStream(session, { streamId: BigInt(streamId) });
