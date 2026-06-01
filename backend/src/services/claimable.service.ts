@@ -23,6 +23,7 @@ export interface ClaimableAmountResult {
   actionable: boolean;
   calculatedAt: number;
   cached: boolean;
+  cachedAt?: string;
 }
 
 interface ClaimableServiceOptions {
@@ -92,10 +93,6 @@ export class ClaimableAmountService {
     this.nowMs = options.nowMs ?? (() => Date.now());
   }
 
-  clearCache(): void {
-    // Internal cache is handled by redis/MemoryCache cleanup
-  }
-
   getClaimableAmount(
     stream: ClaimableStreamState,
     requestedAt?: number,
@@ -113,8 +110,8 @@ export class ClaimableAmountService {
       return {
         ...cachedEntry,
         cached: true,
-        cachedAt: metadata?.createdAt
-      } as any;
+        ...(metadata?.createdAt !== undefined && { cachedAt: metadata.createdAt }),
+      };
     }
 
     const anchorTime = BigInt(Math.max(0, stream.lastUpdateTime));
