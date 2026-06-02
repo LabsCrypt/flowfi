@@ -4,7 +4,7 @@ const steps = [
     {
         number: '01',
         title: 'Connect & Configure',
-        description: 'Link your treasury wallet and select the assets you want to stream. We support ETH, USDC, and 100+ ERC-20s.',
+        description: 'Link your treasury wallet and select the assets you want to stream. We support XLM, USDC, EURC, and other Stellar token contracts.',
     },
     {
         number: '02',
