@@ -82,6 +82,31 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
         return <>Stream {link} was paused</>;
       case "RESUMED":
         return <>Stream {link} was resumed</>;
+      case "FEE_COLLECTED": {
+        const metadata = event.metadata ? JSON.parse(event.metadata) : {};
+        const feeLink = event.streamId ? (
+          <Link
+            href={`/streams/${event.streamId}`}
+            className="text-accent hover:underline font-mono"
+          >
+            #{event.streamId}
+          </Link>
+        ) : null;
+        return (
+          <>
+            Collected {amount} fee from Stream {feeLink || `#${event.streamId}`}
+          </>
+        );
+      }
+      case "FEE_CONFIG_UPDATED": {
+        const metadata = event.metadata ? JSON.parse(event.metadata) : {};
+        const oldRate = (metadata.old_fee_rate_bps ?? 0) / 100;
+        const newRate = (metadata.new_fee_rate_bps ?? 0) / 100;
+        return <>Fee configuration updated: {oldRate}% → {newRate}%</>;
+      }
+      case "ADMIN_TRANSFERRED": {
+        return <>Admin transferred</>;
+      }
       default:
         return <>Event on Stream {link}</>;
     }

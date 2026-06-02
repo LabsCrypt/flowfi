@@ -12,7 +12,10 @@ export type StreamEventType =
   | "CANCELLED"
   | "COMPLETED"
   | "PAUSED"
-  | "RESUMED";
+  | "RESUMED"
+  | "FEE_COLLECTED"
+  | "FEE_CONFIG_UPDATED"
+  | "ADMIN_TRANSFERRED";
 
 export interface BackendStreamEvent {
   id: string;
