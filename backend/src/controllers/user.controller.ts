@@ -30,7 +30,7 @@ export const registerUser = async (req: Request, res: Response, next: NextFuncti
         logger.info(`User registered: ${publicKey}`);
         return res.status(201).json(user);
     } catch (error) {
-        next(error);
+        return next(error);
     }
 };
 
@@ -61,7 +61,7 @@ export const getUser = async (req: Request, res: Response, next: NextFunction) =
 
         return res.status(200).json(user);
     } catch (error) {
-        next(error);
+        return next(error);
     }
 };
 
@@ -119,7 +119,7 @@ export const getUserEvents = async (req: Request, res: Response, next: NextFunct
             offset
         });
     } catch (error) {
-        next(error);
+        return next(error);
     }
 };
 
@@ -160,6 +160,6 @@ export const getCurrentUser = async (req: Request, res: Response, next: NextFunc
 
         return res.status(200).json(user);
     } catch (error) {
-        next(error);
+        return next(error);
     }
 };

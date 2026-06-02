@@ -1,32 +1,10 @@
 import { PrismaClient } from '../generated/prisma/index.js';
-import { getSandboxConfig } from '../config/sandbox.js';
-
-/**
- * Sandbox Prisma Client
- * 
- * Uses a separate database connection for sandbox mode to ensure
- * complete isolation from production data.
- */
 
 const globalForSandboxPrisma = globalThis as unknown as {
   sandboxPrisma: PrismaClient | undefined;
 };
 
-/**
- * Get sandbox Prisma client instance
- * 
- * If SANDBOX_DATABASE_URL is set, uses that database.
- * Otherwise, uses the default DATABASE_URL with a sandbox suffix.
- */
 export function getSandboxPrisma(): PrismaClient {
-  const config = getSandboxConfig();
-  
-  // Use sandbox-specific database URL if provided
-  const databaseUrl = config.databaseUrl || 
-    (process.env.DATABASE_URL 
-      ? `${process.env.DATABASE_URL}_sandbox` 
-      : 'file:./sandbox.db');
-
   if (globalForSandboxPrisma.sandboxPrisma) {
     return globalForSandboxPrisma.sandboxPrisma;
   }

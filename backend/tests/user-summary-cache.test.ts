@@ -23,7 +23,6 @@ describe('User Summary Cache Pruning (Issue #682)', () => {
     }
 
     const cache = new Map<string, UserSummaryCacheEntry>();
-    const TTL_MS = 30_000;
 
     const pruneCache = (nowMs: number): void => {
       for (const [key, entry] of cache.entries()) {

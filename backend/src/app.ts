@@ -102,7 +102,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         // This was a versioned request, route to v1 handlers
         return v1Routes(req, res, next);
     }
-    next(); // Not versioned, continue to deprecated handlers
+    return next(); // Not versioned, continue to deprecated handlers
 });
 
 // Legacy routes (deprecated - redirect to v1)

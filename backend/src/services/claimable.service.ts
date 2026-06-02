@@ -25,11 +25,6 @@ export interface ClaimableAmountResult {
   cached: boolean;
 }
 
-interface ClaimableCacheEntry {
-  value: Omit<ClaimableAmountResult, 'cached'>;
-  expiresAtMs: number;
-}
-
 interface ClaimableServiceOptions {
   cacheTtlMs?: number;
   nowMs?: () => number;

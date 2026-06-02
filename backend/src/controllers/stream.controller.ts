@@ -284,7 +284,6 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const rawOffset = req.query['offset'];
     const rawPage = req.query['page'];
     const cursor = typeof req.query['cursor'] === 'string' ? req.query['cursor'] : undefined;
-    const direction = req.query['direction'] === 'asc' ? 'asc' as const : 'desc' as const;
     const order = req.query['order'] === 'asc' ? 'asc' as const : 'desc' as const;
     const eventType = typeof req.query['eventType'] === 'string' ? req.query['eventType'] : undefined;
 

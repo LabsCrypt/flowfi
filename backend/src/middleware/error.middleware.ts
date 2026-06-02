@@ -49,7 +49,7 @@ export const errorHandler = (
     const statusCode = (err instanceof Error && (err as any).status) || (err instanceof Error && (err as any).statusCode) || 500;
     const message = err instanceof Error ? err.message : 'Internal Server Error';
 
-    res.status(statusCode).json({
+    return res.status(statusCode).json({
         error: statusCode === 500 ? 'Internal Server Error' : 'Error',
         message: statusCode === 500 ? 'A technical error occurred. Please try again later.' : message
     });

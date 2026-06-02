@@ -77,7 +77,6 @@ vi.mock('../../src/middleware/auth.js', async (importOriginal) => {
 
 // App import after mocks
 import app from '../../src/app.js';
-import { prisma } from '../../src/lib/prisma.js';
 import { topUpStream } from '../../src/services/sorobanService.js';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
