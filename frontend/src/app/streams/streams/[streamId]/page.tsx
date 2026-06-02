@@ -101,7 +101,10 @@ export default function StreamDetailsPage({ params }: StreamDetailsPageProps) {
   }, [isValidStreamId, streamId]);
 
   React.useEffect(() => {
-    void loadStream();
+    const initLoad = async () => {
+      await loadStream();
+    };
+    void initLoad();
   }, [loadStream]);
 
   const depositedAmount = stream ? toDisplayAmount(stream.depositedAmount) : 0;

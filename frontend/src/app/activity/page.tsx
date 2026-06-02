@@ -70,14 +70,16 @@ export default function ActivityPage() {
         setLoading(false);
       }
     },
-    [session?.publicKey],
+    [session],
   );
 
   useEffect(() => {
     if (status !== "connected") return;
     const controller = new AbortController();
-    setPage(1);
-    fetchActivity(1, activeTab, false, controller.signal);
+    const initLoad = async () => {
+      await fetchActivity(1, activeTab, false, controller.signal);
+    };
+    void initLoad();
     return () => controller.abort();
   }, [activeTab, status, fetchActivity]);
 
@@ -136,7 +138,10 @@ export default function ActivityPage() {
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id);
+              setPage(1);
+            }}
             className={`px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap border ${
               activeTab === tab.id
                 ? "bg-accent text-white border-accent"

@@ -44,7 +44,6 @@ export interface DashboardAnalyticsMetric {
   unavailableText: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 
 function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;

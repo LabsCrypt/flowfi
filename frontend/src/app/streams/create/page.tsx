@@ -21,6 +21,7 @@ const TOKEN_DECIMALS = 7;
 export default function CreateStreamPage() {
   const { status, session } = useWallet();
   const router = useRouter();
+  const [nowTimestamp] = useState(() => Date.now());
   const [loading, setLoading] = useState(false);
   const [txState, setTxState] = useState<"idle" | "signing" | "submitted" | "confirming">("idle");
   const [formData, setFormData] = useState({
@@ -194,7 +195,7 @@ export default function CreateStreamPage() {
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-400">Estimated End Date</span>
               <span className="font-medium">
-                {new Date(Date.now() + Number(formData.duration || 0) * 86400000).toLocaleDateString()}
+                {new Date(nowTimestamp + Number(formData.duration || 0) * 86400000).toLocaleDateString()}
               </span>
             </div>
           </div>

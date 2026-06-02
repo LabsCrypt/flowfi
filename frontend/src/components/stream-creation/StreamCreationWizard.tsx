@@ -125,23 +125,33 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
 
   React.useEffect(() => {
+    let timer: NodeJS.Timeout;
     try {
       const stored = localStorage.getItem(CUSTOM_TEMPLATE_STORAGE_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!Array.isArray(parsed)) return;
-      const sanitized = parsed
-        .filter((item) => item && typeof item.id === "string" && typeof item.name === "string")
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          description: item.description || "Saved custom template",
-          values: item.values || {},
-        } as StreamTemplate));
-      setCustomTemplates(sanitized);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const sanitized = parsed
+            .filter((item) => item && typeof item.id === "string" && typeof item.name === "string")
+            .map((item) => ({
+              id: item.id,
+              name: item.name,
+              description: item.description || "Saved custom template",
+              values: item.values || {},
+            } as StreamTemplate));
+          timer = setTimeout(() => {
+            setCustomTemplates(sanitized);
+          }, 0);
+        }
+      }
     } catch {
-      setCustomTemplates([]);
+      timer = setTimeout(() => {
+        setCustomTemplates([]);
+      }, 0);
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -153,16 +163,22 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   }, [customTemplates]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    let timer: NodeJS.Timeout;
+
     if (!walletPublicKey || !formData.token) {
-      setWalletBalance(null);
-      setWalletBalanceError(null);
-      setWalletBalanceLoading(false);
-      return;
+      timer = setTimeout(() => {
+        setWalletBalance(null);
+        setWalletBalanceError(null);
+        setWalletBalanceLoading(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
-    let cancelled = false;
-    setWalletBalanceLoading(true);
-    setWalletBalanceError(null);
+    timer = setTimeout(() => {
+      setWalletBalanceLoading(true);
+      setWalletBalanceError(null);
+    }, 0);
 
     fetchTokenBalanceDisplay(walletPublicKey, formData.token)
       .then((balance) => {
@@ -181,6 +197,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [walletPublicKey, formData.token]);
 

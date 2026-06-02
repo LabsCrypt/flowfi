@@ -151,9 +151,12 @@ export default function TransactionTracker({
   // Reset state when returning to idle
   useEffect(() => {
     if (status === "idle") {
-      setPollCount(0);
-      setStreamData(null);
-      setPreviousStreamData(null);
+      const timer = setTimeout(() => {
+        setPollCount(0);
+        setStreamData(null);
+        setPreviousStreamData(null);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [status]);
 

@@ -442,6 +442,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [showWizard, setShowWizard] = React.useState(false);
   const [modal, setModal] = React.useState<ModalState>(null);
 
+  const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
+  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
+  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+
   const { events: streamEvents, connected, reconnecting, error } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
@@ -472,9 +476,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] = React.useState<string | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = React.useState(false);
 
-  const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
-  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
-  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+
 
   const safeLoadTemplates = (): StreamTemplate[] => {
     try {
@@ -506,8 +508,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   };
 
   React.useEffect(() => {
-    setTemplates(safeLoadTemplates());
-    setTemplatesHydrated(true);
+    const timer = setTimeout(() => {
+      setTemplates(safeLoadTemplates());
+      setTemplatesHydrated(true);
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   React.useEffect(() => {
@@ -529,7 +534,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     } finally {
       setIsSnapshotLoading(false);
     }
-  }, [session.publicKey]);
+  }, [session.publicKey, setIsSnapshotLoading, setSnapshotError, setSnapshot]);
 
   React.useEffect(() => {
     let cancelled = false;
