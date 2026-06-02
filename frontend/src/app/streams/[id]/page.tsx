@@ -150,10 +150,8 @@ export default function StreamDetailsPage() {
     const controller = new AbortController();
 
     if (streamEvents.length > 0) {
-      const controller = new AbortController();
       fetchStream(controller.signal);
       fetchEvents(eventsPage, controller.signal);
-      return () => controller.abort();
     }
 
     return () => controller.abort();
