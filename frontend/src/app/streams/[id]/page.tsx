@@ -149,10 +149,13 @@ export default function StreamDetailsPage() {
   useEffect(() => {
     const controller = new AbortController();
 
-    if (streamEvents.length > 0) {
-      fetchStream(controller.signal);
-      fetchEvents(eventsPage, controller.signal);
-    }
+    const refreshStreamData = async () => {
+      if (streamEvents.length > 0) {
+        await Promise.all([fetchStream(controller.signal), fetchEvents(eventsPage, controller.signal)]);
+      }
+    };
+
+    refreshStreamData();
 
     return () => controller.abort();
   }, [streamEvents, fetchStream, fetchEvents, eventsPage]);
