@@ -50,8 +50,9 @@ export function decodeAddress(val: xdr.ScVal): string {
   ) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
-  // addr.contractId() returns a Hash (Opaque[]), convert to Buffer for encodeContract
-  return StrKey.encodeContract(Buffer.from(addr.contractId() as any));
+  // addr.contractId() returns a Hash (Opaque[]); cast to Uint8Array for encodeContract
+  const hash = addr.contractId();
+  return StrKey.encodeContract(Buffer.from(hash as Uint8Array));
 }
 
 /**
@@ -555,14 +556,14 @@ export class SorobanEventWorker {
         where: { streamId },
         select: { ratePerSecond: true, startTime: true, totalPausedDuration: true }
       });
-      
+
       const ratePerSecondBigInt = BigInt(stream.ratePerSecond);
       const newEndTime =
         ratePerSecondBigInt === 0n
           ? null
           : stream.startTime +
-            Number(BigInt(newDepositedAmount) / ratePerSecondBigInt) +
-            stream.totalPausedDuration;
+          Number(BigInt(newDepositedAmount) / ratePerSecondBigInt) +
+          stream.totalPausedDuration;
 
       await tx.stream.update({
         where: { streamId },
