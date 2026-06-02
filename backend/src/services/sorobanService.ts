@@ -50,8 +50,6 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
 
   const op = contract.call(method, ...args);
 
-  const { TransactionBuilder, Account, Networks } = await import('@stellar/stellar-sdk');
-
   const tx = new TransactionBuilder(
     new Account(
       'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
