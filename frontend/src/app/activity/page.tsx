@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useWallet } from "@/context/wallet-context";
 import { ActivityHistory } from "@/components/dashboard/ActivityHistory";
 import { BackendStreamEvent } from "@/lib/api-types";

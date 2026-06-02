@@ -454,13 +454,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   React.useEffect(() => {
     if (streamEvents.length > 0) {
       const latestEvent = streamEvents[0];
-      const relevantTypes = ["created", "topped_up", "withdrawn", "cancelled", "completed", "paused", "resumed"];
-      if (relevantTypes.includes(latestEvent.type)) {
-        fetchDashboardData(session.publicKey)
-          .then(setSnapshot)
-          .catch((err) => {
-            setSnapshotError(err instanceof Error ? err.message : "Failed to refresh dashboard");
-          });
+      if (latestEvent) {
+        const relevantTypes = ["created", "topped_up", "withdrawn", "cancelled", "completed", "paused", "resumed"];
+        if (relevantTypes.includes(latestEvent.type)) {
+          fetchDashboardData(session.publicKey)
+            .then(setSnapshot)
+            .catch((err) => {
+              setSnapshotError(err instanceof Error ? err.message : "Failed to refresh dashboard");
+            });
+        }
       }
     }
   }, [streamEvents, session.publicKey]);
@@ -626,7 +628,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   };
 
   const addStreamLocally = (data: StreamFormData) => {
-    const newStream: Stream = { id: `stream-${Date.now()}`, date: new Date().toISOString().split("T")[0], recipient: shortenPublicKey(data.recipient), amount: parseFloat(data.amount), token: data.token, status: "Active", deposited: parseFloat(data.amount), withdrawn: 0, ratePerSecond: 0, lastUpdateTime: Math.floor(Date.now() / 1000), isActive: true };
+    const newStream: Stream = { id: `stream-${Date.now()}`, date: new Date().toISOString().split("T")[0] ?? "", recipient: shortenPublicKey(data.recipient), amount: parseFloat(data.amount), token: data.token, status: "Active", deposited: parseFloat(data.amount), withdrawn: 0, ratePerSecond: 0, lastUpdateTime: Math.floor(Date.now() / 1000), isActive: true };
     setSnapshot((prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: [newStream, ...prev.outgoingStreams], activeStreamsCount: prev.activeStreamsCount + 1 }; });
   };
 

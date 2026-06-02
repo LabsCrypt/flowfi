@@ -101,14 +101,14 @@ export function fromBaseUnits(value: bigint | string, decimals = 7): string {
   return fraction.length > 0 ? `${whole}.${fraction}` : whole.toString();
 }
 
-export const TOKEN_ADDRESSES: Record<string, string> = {
+export const TOKEN_ADDRESSES = {
   USDC: process.env.NEXT_PUBLIC_USDC_ADDRESS  ?? "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
   XLM:  process.env.NEXT_PUBLIC_XLM_ADDRESS   ?? "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN",
   EURC: process.env.NEXT_PUBLIC_EURC_ADDRESS  ?? "CCWAMYJME4YOIUNAKVYEBYOG5I65QMKEX2NMN4OJAPXRPIF24ONPSHY",
-};
+} as const;
 
 export function getTokenAddress(symbol: string): string {
-  const address = TOKEN_ADDRESSES[symbol.toUpperCase()];
+  const address = (TOKEN_ADDRESSES as Record<string, string>)[symbol.toUpperCase()];
   if (!address) {
     throw new SorobanCallError(`Unsupported token: ${symbol}`, "Unknown");
   }
