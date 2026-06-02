@@ -12,6 +12,10 @@ import {
   resumeStream as sorobanResumeStream,
 } from '../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import { DEFAULT_EVENTS_PAGE_SIZE, MAX_EVENTS_PAGE_SIZE } from '../routes/v1/events.routes.js';
+
+const DEFAULT_STREAM_PAGE_SIZE = 20;
+const MAX_STREAM_PAGE_SIZE = 100;
 
 interface UserStreamSummary {
   address: string;
@@ -170,8 +174,8 @@ export const listStreams = async (req: Request, res: Response) => {
 
     // Validate and parse pagination parameters
     const parsedLimit = Math.min(
-      typeof limit === 'string' ? (Number.parseInt(limit, 10) || 20) : 20,
-      100
+      typeof limit === 'string' ? (Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE) : DEFAULT_STREAM_PAGE_SIZE,
+      MAX_STREAM_PAGE_SIZE
     );
     const parsedOffset = typeof offset === 'string' ? (Number.parseInt(offset, 10) || 0) : 0;
 
@@ -285,8 +289,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const eventType = typeof req.query['eventType'] === 'string' ? req.query['eventType'] : undefined;
 
     const limit = Math.min(
-      rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
-      500,
+      rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || DEFAULT_EVENTS_PAGE_SIZE) : DEFAULT_EVENTS_PAGE_SIZE,
+      MAX_EVENTS_PAGE_SIZE,
     );
 
     let offset = 0;

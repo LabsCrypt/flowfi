@@ -21,8 +21,8 @@ const EVENT_TYPES = new Set([
   'ADMIN_TRANSFERRED',
 ]);
 
-const MAX_EVENT_LIMIT = 200;
-const DEFAULT_EVENT_LIMIT = 50;
+export const MAX_EVENTS_PAGE_SIZE = 200;
+export const DEFAULT_EVENTS_PAGE_SIZE = 50;
 
 /**
  * @openapi
@@ -86,8 +86,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const parsedLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
-      ? Math.min(parsedLimit, MAX_EVENT_LIMIT)
-      : DEFAULT_EVENT_LIMIT;
+      ? Math.min(parsedLimit, MAX_EVENTS_PAGE_SIZE)
+      : DEFAULT_EVENTS_PAGE_SIZE;
 
     const hasOffset = req.query.offset !== undefined;
     const parsedOffset = Number.parseInt(String(req.query.offset ?? ''), 10);
