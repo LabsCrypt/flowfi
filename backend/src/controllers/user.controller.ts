@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
 import { registerUserSchema } from '../validators/user.validator.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import { DEFAULT_EVENTS_PAGE_SIZE, MAX_EVENTS_PAGE_SIZE } from '../routes/v1/events.routes.js';
 
 /**
  * Register a new wallet public key
@@ -81,8 +82,8 @@ export const getUserEvents = async (req: Request, res: Response, next: NextFunct
         const rawOffset = req.query['offset'];
 
         const limit = Math.min(
-            rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
-            200
+            rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || DEFAULT_EVENTS_PAGE_SIZE) : DEFAULT_EVENTS_PAGE_SIZE,
+            MAX_EVENTS_PAGE_SIZE
         );
         const offset = rawOffset && typeof rawOffset === 'string' ? (Number.parseInt(rawOffset, 10) || 0) : 0;
 
