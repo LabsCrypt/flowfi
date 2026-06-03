@@ -63,6 +63,8 @@ const EVENT_STYLES: Record<string, { color: string; icon: string; label: string 
   PAUSED: { color: "#f59e0b", icon: "⏸", label: "Paused" },
   RESUMED: { color: "#06b6d4", icon: "▶", label: "Resumed" },
   FEE_COLLECTED: { color: "#6b7280", icon: "$", label: "Fee" },
+  FEE_CONFIG_UPDATED: { color: "#475569", icon: "⚙", label: "Fee Config" },
+  ADMIN_TRANSFERRED: { color: "#475569", icon: "👤", label: "Admin Transfer" },
 };
 
 export default function StreamDetailsPage() {
