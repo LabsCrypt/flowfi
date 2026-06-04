@@ -20,6 +20,22 @@ export function formatAmount(raw: bigint, decimals: number): string {
 }
 
 /**
+ * Compute stream withdrawal progress as a percentage (0–100).
+ *
+ * Guards against a BigInt divide-by-zero when nothing was deposited (e.g. a
+ * freshly indexed stream, or a fee that consumed the full deposit). When
+ * `deposited` is 0 the bar reads 100% if anything was withdrawn, otherwise 0%.
+ *
+ * @param withdrawn - Amount withdrawn so far (smallest unit)
+ * @param deposited - Total amount deposited (smallest unit)
+ * @returns Progress percentage clamped to the range [0, 100]
+ */
+export function streamProgressPercent(withdrawn: bigint, deposited: bigint): number {
+  if (deposited === 0n) return withdrawn > 0n ? 100 : 0;
+  return Math.min(100, Number((withdrawn * 100n) / deposited));
+}
+
+/**
  * Alias for formatAmount - convert raw on-chain amount to human-readable string
  * @deprecated Use formatAmount instead
  */

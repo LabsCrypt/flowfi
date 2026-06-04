@@ -1,13 +1,13 @@
 import type { Request, Response, NextFunction } from 'express';
 import { Prisma } from '../generated/prisma/index.js';
-import { ZodError } from 'zod';
+import { ZodError, type ZodIssue } from 'zod';
 import logger from '../logger.js';
 
 /**
  * Global error handler middleware
  */
 export const errorHandler = (
-    err: any,
+    err: unknown,
     req: Request,
     res: Response,
     next: NextFunction
@@ -18,7 +18,7 @@ export const errorHandler = (
     if (err instanceof ZodError) {
         return res.status(400).json({
             error: 'Validation Error',
-            details: err.issues.map((e: any) => ({
+            details: err.issues.map((e: ZodIssue) => ({
                 path: e.path.join('.'),
                 message: e.message
             }))
@@ -28,8 +28,8 @@ export const errorHandler = (
     // Handle Prisma Errors
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
         // Unique constraint violation
-        if (err.code === 'P2002') {
-            const target = (err.meta?.target as string[])?.join(', ') || 'field';
+        if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
+            const target = ((err as Prisma.PrismaClientKnownRequestError).meta?.target as string[])?.join(', ') || 'field';
             return res.status(409).json({
                 error: 'Conflict Error',
                 message: `Record with this ${target} already exists.`
@@ -37,19 +37,19 @@ export const errorHandler = (
         }
 
         // Record not found
-        if (err.code === 'P2025') {
+        if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
             return res.status(404).json({
                 error: 'Not Found',
-                message: err.message || 'The requested record was not found.'
+                message: (err as Prisma.PrismaClientKnownRequestError).message || 'The requested record was not found.'
             });
         }
     }
 
     // Default Error
-    const statusCode = err.status || err.statusCode || 500;
-    const message = err.message || 'Internal Server Error';
+    const statusCode = (err instanceof Error && (err as any).status) || (err instanceof Error && (err as any).statusCode) || 500;
+    const message = err instanceof Error ? err.message : 'Internal Server Error';
 
-    res.status(statusCode).json({
+    return res.status(statusCode).json({
         error: statusCode === 500 ? 'Internal Server Error' : 'Error',
         message: statusCode === 500 ? 'A technical error occurred. Please try again later.' : message
     });

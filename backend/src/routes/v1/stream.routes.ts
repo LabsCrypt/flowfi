@@ -92,14 +92,14 @@ router.get('/:streamId', getStream);
  *           default: 50
  *           minimum: 1
  *           maximum: 500
- *         description: Number of events to return per page (default: 50, max: 500)
+ *         description: "Number of events to return per page (default: 50, max: 500)"
  *       - in: query
  *         name: offset
  *         schema:
  *           type: integer
  *           default: 0
  *           minimum: 0
- *         description: Number of events to skip (default: 0)
+ *         description: "Number of events to skip (default: 0)"
  *       - in: query
  *         name: eventType
  *         schema:
@@ -112,7 +112,7 @@ router.get('/:streamId', getStream);
  *           type: string
  *           enum: [asc, desc]
  *           default: desc
- *         description: Sort order by timestamp (default: desc)
+ *         description: "Sort order by timestamp (default: desc)"
  *     responses:
  *       200:
  *         description: Stream events retrieved successfully
@@ -263,13 +263,56 @@ router.post('/:streamId/withdraw', requireAuth, withdrawHandler as any);
 
 /**
  * @openapi
- * /v1/streams/{streamId}/cancel:
+ * /v1/streams/{streamId}/top-up:
  *   post:
  *     tags:
  *       - Streams
- *     summary: Cancel an active payment stream
+ *     summary: Top up a payment stream
+ *     description: Adds additional funds to an existing active stream. Only the original sender can top up.
+ *     parameters:
+ *       - in: path
+ *         name: streamId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: On-chain stream ID
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - amount
+ *             properties:
+ *               amount:
+ *                 type: string
+ *                 description: Amount to add to the stream deposit (i128 as string)
+ *                 example: '5000'
+ *     responses:
+ *       200:
+ *         description: Stream topped up successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 txHash:
+ *                   type: string
+ *                 streamId:
+ *                   type: integer
+ *                 newDepositedAmount:
+ *                   type: string
+ *       400:
+ *         description: Invalid request — amount missing or not a positive integer string
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *       403:
+ *         description: Forbidden - caller is not the stream sender
+ *       404:
+ *         description: Stream not found
  */
 router.post('/:streamId/top-up', requireAuth, topUpStreamHandler);
 router.post('/:streamId/cancel', requireAuth, cancelStreamHandler as any);

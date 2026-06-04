@@ -4,7 +4,31 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import logger from '../logger.js';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? crypto.randomBytes(32).toString('hex');
+const isProduction = process.env.NODE_ENV === 'production';
+const rawJwtSecret = process.env.JWT_SECRET;
+
+let JWT_SECRET: string;
+
+if (isProduction) {
+  if (!rawJwtSecret) {
+    throw new Error('JWT_SECRET environment variable is required in production');
+  }
+  if (Buffer.from(rawJwtSecret).length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 bytes long in production');
+  }
+  JWT_SECRET = rawJwtSecret;
+} else {
+  if (!rawJwtSecret) {
+    logger.warn('[Auth] JWT_SECRET not set — using random secret; tokens will NOT survive server restart');
+    JWT_SECRET = crypto.randomBytes(32).toString('hex');
+  } else {
+    if (Buffer.from(rawJwtSecret).length < 32) {
+      logger.warn('[Auth] JWT_SECRET is less than 32 bytes long; consider using a stronger secret');
+    }
+    JWT_SECRET = rawJwtSecret;
+  }
+}
+
 const JWT_EXPIRY_SECONDS = 3600; // 1 hour max per spec
 
 const STELLAR_NETWORK =
@@ -14,6 +38,44 @@ const STELLAR_NETWORK =
 
 // In-memory challenge store: publicKey -> { nonce, expiresAt }
 const challenges = new Map<string, { nonce: string; expiresAt: number }>();
+const DEFAULT_CHALLENGE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+let challengeSweepTimer: NodeJS.Timeout | undefined;
+
+function resolveChallengeSweepIntervalMs(): number {
+  const raw = process.env.AUTH_CHALLENGE_SWEEP_INTERVAL_MS;
+  if (!raw) return DEFAULT_CHALLENGE_SWEEP_INTERVAL_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_CHALLENGE_SWEEP_INTERVAL_MS;
+}
+
+export function sweepExpiredChallenges(now = Date.now()): number {
+  let deleted = 0;
+  for (const [publicKey, challenge] of challenges.entries()) {
+    if (challenge.expiresAt < now) {
+      challenges.delete(publicKey);
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+export function startChallengeSweep(intervalMs = resolveChallengeSweepIntervalMs()): void {
+  if (challengeSweepTimer) return;
+  challengeSweepTimer = setInterval(() => {
+    sweepExpiredChallenges();
+  }, intervalMs);
+  challengeSweepTimer.unref?.();
+}
+
+export function stopChallengeSweep(): void {
+  if (!challengeSweepTimer) return;
+  clearInterval(challengeSweepTimer);
+  challengeSweepTimer = undefined;
+}
+
+startChallengeSweep();
 
 // ─── Minimal JWT (no external dep) ──────────────────────────────────────────
 
@@ -22,7 +84,7 @@ function b64url(buf: Buffer | string): string {
   return b.toString('base64url');
 }
 
-function signJwt(payload: object): string {
+export function signJwt(payload: object): string {
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const body = b64url(JSON.stringify(payload));
   const sig = crypto
@@ -61,6 +123,13 @@ export function issueChallenge(req: Request, res: Response): void {
   challenges.set(publicKey, { nonce, expiresAt: Date.now() + 60_000 }); // 60s to sign
   res.json({ nonce, expiresAt: Date.now() + 60_000 });
 }
+
+export const __authChallengeTestUtils = {
+  challenges,
+  startChallengeSweep,
+  stopChallengeSweep,
+  sweepExpiredChallenges,
+};
 
 export function verifyChallenge(req: Request, res: Response): void {
   const { publicKey, signedTransaction } = req.body as {

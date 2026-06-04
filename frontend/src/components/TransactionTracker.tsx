@@ -150,11 +150,19 @@ export default function TransactionTracker({
 
   // Reset state when returning to idle
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     if (status === "idle") {
-      setPollCount(0);
-      setStreamData(null);
-      setPreviousStreamData(null);
+      timer = setTimeout(() => {
+        setPollCount(0);
+        setStreamData(null);
+        setPreviousStreamData(null);
+      }, 0);
     }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [status]);
 
   // Render based on status

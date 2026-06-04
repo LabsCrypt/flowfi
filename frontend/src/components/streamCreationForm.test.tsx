@@ -1,7 +1,12 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { test, expect, vi } from "vitest";
+
+vi.mock("next/navigation", () => ({
+  useRouter: vi.fn(() => ({ push: vi.fn() })),
+}));
+
 import { StreamCreationWizard } from "./stream-creation/StreamCreationWizard";
-import React from "react";
+
 
 test("StreamCreationWizard — validation errors shown", () => {
   const mockOnClose = vi.fn();
@@ -16,9 +21,9 @@ test("StreamCreationWizard — validation errors shown", () => {
   );
 
   // The wizard starts at Template step. We need to go to Recipient step to test validation.
-  // Actually, let's just click 'Next' and see if it goes to next step or shows errors if any.
-  fireEvent.click(screen.getByText(/next/i));
+  // Click the Next button explicitly instead of matching incidental text.
+  fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
   // It should move to Recipient step.
-  expect(screen.getByText(/recipient/i)).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /recipient address/i })).toBeInTheDocument();
 });

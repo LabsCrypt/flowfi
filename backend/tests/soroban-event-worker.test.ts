@@ -335,6 +335,114 @@ describe('SorobanEventWorker', () => {
       );
     });
 
+    it('should replay a stream_paused event without duplicate rows or error', async () => {
+      const txHash = 'pause-tx-hash';
+      const streamId = 10;
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'pause-event-1',
+        type: 'contract',
+        ledger: 3000,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'stream_paused' } as any,
+          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'paused_at' }), val: () => ({ u64: () => ({ toString: () => '1700001000' }) }) },
+          ] as any,
+        } as any,
+      };
+
+      const mockTx = {
+        stream: { update: vi.fn().mockResolvedValue({}) },
+        streamEvent: {
+          findUnique: vi.fn(),
+          upsert: vi.fn().mockResolvedValue({ id: 'pause-event-row' }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // First replay: no existing event → should upsert
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce(null);
+      await expect((worker as any).handleStreamPaused(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // Second replay: event already exists → should skip with warning, no upsert
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'pause-event-row' });
+      await expect((worker as any).handleStreamPaused(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
+      expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Duplicate StreamEvent skipped'));
+    });
+
+    it('should replay a stream_resumed event without duplicate rows or error', async () => {
+      const txHash = 'resume-tx-hash';
+      const streamId = 11;
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'resume-event-1',
+        type: 'contract',
+        ledger: 3001,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'stream_resumed' } as any,
+          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'new_end_time' }), val: () => ({ u64: () => ({ toString: () => '1700090000' }) }) },
+          ] as any,
+        } as any,
+      };
+
+      const mockTx = {
+        stream: {
+          findUniqueOrThrow: vi.fn().mockResolvedValue({ pausedAt: 1700001000, totalPausedDuration: 0 }),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        streamEvent: {
+          findUnique: vi.fn(),
+          upsert: vi.fn().mockResolvedValue({ id: 'resume-event-row' }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // First replay: no existing event → should upsert
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce(null);
+      await expect((worker as any).handleStreamResumed(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      mockTx.stream.findUniqueOrThrow.mockResolvedValue({ pausedAt: 1700001000, totalPausedDuration: 0 });
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // Second replay: event already exists → should skip with warning, no upsert
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'resume-event-row' });
+      await expect((worker as any).handleStreamResumed(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
+      expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Duplicate StreamEvent skipped'));
+    });
+
     it('should process admin_transferred events successfully', async () => {
       const txHash = 'admin-transferred-tx-hash';
 

@@ -38,20 +38,22 @@ function formatUnixTimestamp(timestamp: number): string {
 }
 
 function inferTokenSymbol(tokenAddress: string): string {
-  const known: Record<string, string | undefined> = {
-    USDC: process.env.NEXT_PUBLIC_USDC_ADDRESS,
-    XLM: process.env.NEXT_PUBLIC_XLM_ADDRESS,
-    EURC: process.env.NEXT_PUBLIC_EURC_ADDRESS,
-  };
+  if (!tokenAddress) return "UNKNOWN";
 
   const normalized = tokenAddress.toUpperCase();
-  for (const [symbol, address] of Object.entries(known)) {
-    if (address && address.toUpperCase() === normalized) {
-      return symbol;
-    }
-  }
 
-  return "TOKEN";
+  // Improved mapping with FLOW added
+  if (normalized.includes("FLOW")) return "FLOW";
+  if (normalized.includes("USDC")) return "USDC";
+  if (normalized.includes("USDT")) return "USDT";
+  if (normalized.includes("XLM")) return "XLM";
+  if (normalized.includes("YUSDC")) return "yUSDC";
+  if (normalized.includes("YXLM")) return "yXLM";
+
+  // Fallback: return original if known, else shorten
+  return tokenAddress.length > 10 
+    ? tokenAddress.slice(0, 6) + "..." + tokenAddress.slice(-4)
+    : tokenAddress;
 }
 
 export default function StreamDetailsPage({ params }: StreamDetailsPageProps) {
@@ -99,7 +101,10 @@ export default function StreamDetailsPage({ params }: StreamDetailsPageProps) {
   }, [isValidStreamId, streamId]);
 
   React.useEffect(() => {
-    void loadStream();
+    const initLoad = async () => {
+      await loadStream();
+    };
+    void initLoad();
   }, [loadStream]);
 
   const depositedAmount = stream ? toDisplayAmount(stream.depositedAmount) : 0;

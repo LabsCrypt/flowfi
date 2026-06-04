@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createStreamRateLimiter } from '../src/middleware/stream-rate-limiter.middleware.js';
@@ -246,7 +246,7 @@ describe('Stream Creation Rate Limiter Middleware', () => {
       const originalEnv = process.env.STREAM_CREATE_RATE_LIMIT;
       process.env.STREAM_CREATE_RATE_LIMIT = '5';
 
-      const limiter = createStreamRateLimiter({ windowMs: 10000 });
+      createStreamRateLimiter({ windowMs: 10000 });
       // The limiter should be created with max: 5 from env
 
       // Clean up
@@ -262,7 +262,7 @@ describe('Stream Creation Rate Limiter Middleware', () => {
       delete process.env.STREAM_CREATE_RATE_LIMIT;
 
       // The limiter should be created with max: 10 by default
-      const limiter = createStreamRateLimiter({ windowMs: 10000 });
+      createStreamRateLimiter({ windowMs: 10000 });
 
       // Clean up
       if (originalEnv) {

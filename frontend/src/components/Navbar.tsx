@@ -2,7 +2,6 @@
 import { NotificationDropdown } from "./NotificationDropdown";
 import Link from "next/link";
 import { useWallet } from "@/context/wallet-context";
-import { Button } from "./ui/Button";
 import { ModeToggle } from "./ModeToggle";
 import { WalletButton } from "./wallet/WalletButton";
 

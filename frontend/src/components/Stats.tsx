@@ -1,4 +1,4 @@
-import React from 'react';
+
 
 const stats = [
     { label: 'Total Value Locked', value: '$240M+', gradient: 'text-gradient' },

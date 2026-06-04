@@ -3,6 +3,7 @@ import request from 'supertest';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import app from '../src/app.js';
+import { __authChallengeTestUtils } from '../src/middleware/auth.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ function buildSignedTransaction(keypair: StellarSdk.Keypair, nonce: string): str
 describe('Authentication & Middleware Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    __authChallengeTestUtils.challenges.clear();
   });
 
   describe('POST /v1/auth/challenge', () => {
@@ -55,6 +57,25 @@ describe('Authentication & Middleware Tests', () => {
       expect(res.body.nonce).toHaveLength(64); // 32 bytes hex
       expect(res.body).toHaveProperty('expiresAt');
       expect(res.body.expiresAt).toBeGreaterThan(Date.now());
+    });
+
+    it('test_challenge_sweep_removes_expired_entries', () => {
+      const expiredKey = makeKeypair().publicKey();
+      const activeKey = makeKeypair().publicKey();
+      const now = Date.now();
+
+      __authChallengeTestUtils.challenges.set(expiredKey, {
+        nonce: crypto.randomBytes(32).toString('hex'),
+        expiresAt: now - 1,
+      });
+      __authChallengeTestUtils.challenges.set(activeKey, {
+        nonce: crypto.randomBytes(32).toString('hex'),
+        expiresAt: now + 60_000,
+      });
+
+      expect(__authChallengeTestUtils.sweepExpiredChallenges(now)).toBe(1);
+      expect(__authChallengeTestUtils.challenges.has(expiredKey)).toBe(false);
+      expect(__authChallengeTestUtils.challenges.has(activeKey)).toBe(true);
     });
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { sandboxMiddleware, isSandboxRequest, requireSandbox } from '../src/middleware/sandbox.middleware.js';
+import { sandboxMiddleware, requireSandbox } from '../src/middleware/sandbox.middleware.js';
 import * as sandboxConfig from '../src/config/sandbox.js';
 import type { Response, NextFunction } from 'express';
 import type { SandboxRequest } from '../src/middleware/sandbox.middleware.js';

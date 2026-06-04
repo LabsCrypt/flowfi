@@ -2,7 +2,7 @@
 
 type CsvRow = Record<string, unknown>;
 
-const escapeCsvCell = (value: unknown): string => {
+export const escapeCsvCell = (value: unknown): string => {
     if (value === null || value === undefined) {
         return '';
     }
@@ -19,7 +19,9 @@ export const convertArrayToCSV = <T extends CsvRow>(
     if (!arr || arr.length === 0) return '';
 
     const separator = ',';
-    const keys = Object.keys(arr[0]);
+    const firstRow = arr[0];
+    if (!firstRow) return '';
+    const keys = Object.keys(firstRow);
 
     return [
         keys.join(separator),

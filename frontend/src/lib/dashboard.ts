@@ -1,5 +1,6 @@
-import type { BackendStream, BackendStreamEvent } from "./api-types";
+import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
+import { TOKEN_ADDRESSES } from "./soroban";
 
 export interface ActivityItem {
   id: string;
@@ -43,11 +44,35 @@ export interface DashboardAnalyticsMetric {
   unavailableText: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
 
 function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+/**
+ * Resolves a token contract address to its symbol (XLM/USDC/EURC), falling
+ * back to a shortened address when the token is unknown.
+ */
+function resolveTokenLabel(tokenAddress: string): string {
+  const entry = Object.entries(TOKEN_ADDRESSES).find(
+    ([, address]) => address === tokenAddress,
+  );
+
+  return entry?.[0] ?? shortenAddress(tokenAddress);
+}
+
+/**
+ * Derives the display status from the backend flags. A paused stream reads
+ * "Paused"; an active one "Active". An inactive stream is "Cancelled" when a
+ * CANCELLED event is present, otherwise it ran to completion ("Completed").
+ */
+function mapStreamStatus(s: BackendStream): Stream["status"] {
+  if (s.isPaused) return "Paused";
+  if (s.isActive) return "Active";
+
+  const wasCancelled = s.events?.some((e) => e.eventType === "CANCELLED") ?? false;
+  return wasCancelled ? "Cancelled" : "Completed";
 }
 
 async function fetchStreams(
@@ -81,7 +106,7 @@ async function fetchStreams(
 /**
  * Maps a backend stream object to the frontend Stream interface.
  */
-function mapBackendStreamToFrontend(s: BackendStream, counterparty: string): Stream {
+export function mapBackendStreamToFrontend(s: BackendStream, counterparty: string): Stream {
   const deposited = toTokenAmount(s.depositedAmount);
   const withdrawn = toTokenAmount(s.withdrawnAmount);
   const ratePerSecond = toTokenAmount(s.ratePerSecond);
@@ -90,11 +115,11 @@ function mapBackendStreamToFrontend(s: BackendStream, counterparty: string): Str
     id: s.streamId.toString(),
     recipient: shortenAddress(counterparty),
     amount: deposited,
-    token: "TOKEN",
-    status: s.isActive ? "Active" : "Completed",
+    token: resolveTokenLabel(s.tokenAddress),
+    status: mapStreamStatus(s),
     deposited,
     withdrawn,
-    date: new Date(s.startTime * 1000).toISOString().split("T")[0],
+    date: new Date(s.startTime * 1000).toISOString().split("T")[0] ?? "",
     ratePerSecond,
     lastUpdateTime: s.lastUpdateTime,
     isActive: s.isActive,

@@ -3,6 +3,7 @@ import { convertArrayToCSV } from '../utils/csvExport';
 import { isValidStellarPublicKey } from '../lib/stellar';
 import {
   formatAmount,
+  streamProgressPercent,
   parseAmount,
   formatRate,
   hasValidPrecision,
@@ -38,6 +39,29 @@ describe('formatAmount', () => {
   it('removes trailing zeros from fractional part', () => {
     expect(formatAmount(10000000n, 7)).toBe('1'); // Not 1.0000000
     expect(formatAmount(15000000n, 7)).toBe('1.5'); // Not 1.5000000
+  });
+});
+
+describe('streamProgressPercent', () => {
+  it('computes percentage withdrawn of the deposit', () => {
+    expect(streamProgressPercent(0n, 100n)).toBe(0);
+    expect(streamProgressPercent(25n, 100n)).toBe(25);
+    expect(streamProgressPercent(100n, 100n)).toBe(100);
+  });
+
+  it('does not throw and returns 0 when nothing was deposited', () => {
+    // Regression: BigInt division by zero used to throw RangeError and crash
+    // the stream-detail page render (issue #550).
+    expect(() => streamProgressPercent(0n, 0n)).not.toThrow();
+    expect(streamProgressPercent(0n, 0n)).toBe(0);
+  });
+
+  it('returns 100 when withdrawn but deposit is zero', () => {
+    expect(streamProgressPercent(50n, 0n)).toBe(100);
+  });
+
+  it('clamps to 100 when withdrawn exceeds deposited', () => {
+    expect(streamProgressPercent(150n, 100n)).toBe(100);
   });
 });
 

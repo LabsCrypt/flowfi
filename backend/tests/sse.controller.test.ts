@@ -71,6 +71,24 @@ describe('SSE Controller', () => {
     expect(sseService.addClient).toHaveBeenCalled();
   });
 
+  it('should include user subscriptions when users query params are provided', async () => {
+    (sseService.isShuttingDown as any).mockReturnValue(false);
+    (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
+    (req as any).user = { publicKey: 'GUSER1' };
+    (prisma.stream.findMany as any).mockResolvedValue([
+      { streamId: 'stream-1', sender: 'GUSER1', recipient: 'GUSER2' },
+    ]);
+    req.query = { users: ['GUSER2', 'GUSER3'] };
+
+    await subscribe(req as Request, res as Response);
+
+    const subscriptions = (sseService.addClient as any).mock.calls[0][2] as string[];
+    expect(subscriptions).toContain('stream-1');
+    expect(subscriptions).toContain('user:GUSER1');
+    expect(subscriptions).toContain('user:GUSER2');
+    expect(subscriptions).not.toContain('user:GUSER3');
+  });
+
   it('should handle zod validation error for query params', async () => {
     (sseService.isShuttingDown as any).mockReturnValue(false);
     (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
@@ -80,5 +98,28 @@ describe('SSE Controller', () => {
     await subscribe(req as Request, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Invalid subscription parameters',
+        errors: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+      }),
+    );
+  });
+
+  it('should include allowed users query subscriptions', async () => {
+    (sseService.isShuttingDown as any).mockReturnValue(false);
+    (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
+    (req as any).user = { publicKey: 'GUSER1' };
+    req.query = { users: ['GCOUNTER', 'GOTHER'] };
+    (prisma.stream.findMany as any).mockResolvedValue([
+      { streamId: 1, sender: 'GUSER1', recipient: 'GCOUNTER' },
+    ]);
+
+    await subscribe(req as Request, res as Response);
+
+    const subscriptions = (sseService.addClient as any).mock.calls[0][2] as string[];
+    expect(subscriptions).toContain('user:GUSER1');
+    expect(subscriptions).toContain('user:GCOUNTER');
+    expect(subscriptions).not.toContain('user:GOTHER');
   });
 });

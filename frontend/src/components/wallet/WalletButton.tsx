@@ -13,7 +13,7 @@
  *     - "Disconnect" button
  */
 
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useWallet } from "@/context/wallet-context";
 import {
   shortenPublicKey,

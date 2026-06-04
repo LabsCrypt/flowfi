@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Account, Networks } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
@@ -206,7 +206,7 @@ export async function pauseStream(
     
     const senderAddr = new Address(senderAddress);
     
-    const retval = await simulateContractCall('pause_stream', [
+    await simulateContractCall('pause_stream', [
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
@@ -240,7 +240,7 @@ export async function resumeStream(
     
     const senderAddr = new Address(senderAddress);
     
-    const retval = await simulateContractCall('resume_stream', [
+    await simulateContractCall('resume_stream', [
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
     ]);

@@ -1,6 +1,5 @@
 "use client";
 
-import React from "react";
 import { Button } from "@/components/ui/Button";
 import { useStreamingAmount } from "@/hooks/useStreamingAmount";
 import type {
