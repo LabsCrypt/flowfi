@@ -52,7 +52,7 @@ export function decodeAddress(val: xdr.ScVal): string {
   }
   // addr.contractId() returns a Hash (Opaque[]); cast to Uint8Array for encodeContract
   const hash = addr.contractId();
-  return StrKey.encodeContract(Buffer.from(hash as Uint8Array));
+  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
 }
 
 /**
