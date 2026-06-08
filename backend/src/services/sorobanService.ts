@@ -1,11 +1,31 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks, Account } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = process.env.STREAM_CONTRACT_ID ?? '';
 const KEEPER_SECRET = process.env.KEEPER_SECRET_KEY ?? '';
-/** DB data older than this is considered stale and triggers an RPC fallback. */
+/**
+ * DB data older than this is considered stale and triggers an RPC fallback.
+ * 30 s ≈ avg Stellar ledger close time (~5 s) × 6 ledgers — a reasonable
+ * window to tolerate indexer lag without hammering the RPC on every request.
+ */
 const STALE_THRESHOLD_MS = 30_000;
+
+/** Stroops charged on read-only simulation transactions (no real resource cost). */
+const SIMULATION_FEE = '100';
+
+/** Stroops charged on real contract-invocation transactions submitted to the network. */
+const SUBMIT_FEE = '1000';
+
+/** Transaction validity window in seconds (applied via setTimeout). */
+const TX_TIMEOUT_SECONDS = 30;
+
+/**
+ * Throw-away source account used when building simulation-only transactions.
+ * Any valid Ed25519 public key works here; the account never needs to exist on-chain
+ * because simulation transactions are never submitted.
+ */
+const SIMULATION_PLACEHOLDER_ACCOUNT = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN';
 
 const server = new rpc.Server(RPC_URL, { allowHttp: true });
 
@@ -33,7 +53,9 @@ function decodeAddress(val: xdr.ScVal): string {
   if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
-  return StrKey.encodeContract(Buffer.from(addr.contractId() as any));
+  const hash = addr.contractId();
+  // Convert Hash (Opaque[]) to Buffer before passing to encodeContract
+  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
 }
 
 function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
@@ -49,15 +71,10 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
 
   const op = contract.call(method, ...args);
 
-  const { TransactionBuilder, Account, Networks } = await import('@stellar/stellar-sdk');
-
   const tx = new TransactionBuilder(
-    new Account(
-      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
-      '0'
-    ),
+    new Account(SIMULATION_PLACEHOLDER_ACCOUNT, '0'),
     {
-      fee: '100',
+      fee: SIMULATION_FEE,
       networkPassphrase:
         process.env.STELLAR_NETWORK === 'mainnet'
           ? Networks.PUBLIC
@@ -65,7 +82,7 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
     }
   )
     .addOperation(op)
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
 
   const result = await server.simulateTransaction(tx);
@@ -88,14 +105,14 @@ async function submitContractCall(method: string, args: xdr.ScVal[], senderSecre
   const op = contract.call(method, ...args);
 
   const tx = new TransactionBuilder(account, {
-    fee: '1000',
+    fee: SUBMIT_FEE,
     networkPassphrase:
       process.env.STELLAR_NETWORK === 'mainnet'
         ? Networks.PUBLIC
         : Networks.TESTNET,
   })
     .addOperation(op)
-    .setTimeout(30)
+    .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
 
   // Simulate first to get foot print and resource info
@@ -203,7 +220,7 @@ export async function pauseStream(
 
   try {
     const { Address } = await import('@stellar/stellar-sdk');
-    
+
     const senderAddr = new Address(senderAddress);
     
     await simulateContractCall('pause_stream', [
@@ -237,7 +254,7 @@ export async function resumeStream(
 
   try {
     const { Address } = await import('@stellar/stellar-sdk');
-    
+
     const senderAddr = new Address(senderAddress);
     
     await simulateContractCall('resume_stream', [
