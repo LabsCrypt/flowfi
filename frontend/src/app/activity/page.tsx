@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Loader2, Download } from "lucide-react";
 import { formatAmount } from "@/lib/amount";
 import { downloadCSV } from "@/utils/csvExport";
+import { logger } from "@/lib/logger";
 
 const PAGE_SIZE = 10;
 const API_BASE_URL = (
@@ -63,7 +64,7 @@ export default function ActivityPage() {
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        console.error("Failed to fetch activity:", error);
+        logger.error("Failed to fetch activity:", error);
         if (!append) setEvents([]);
         setHasMore(false);
       } finally {

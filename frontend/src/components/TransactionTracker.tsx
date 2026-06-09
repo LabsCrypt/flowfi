@@ -5,6 +5,7 @@ import { Loader2, CheckCircle, XCircle, ExternalLink, RefreshCw, Clock, Ban, Fil
 import toast from "react-hot-toast";
 import type { BackendStream } from "@/lib/api-types";
 import { formatAmount } from "@/utils/amount";
+import { logger } from "@/lib/logger";
 
 /**
  * TransactionTracker - Shared component for tracking on-chain transaction lifecycle
@@ -94,7 +95,7 @@ export default function TransactionTracker({
         .then(data => {
           if (data) setPreviousStreamData(data);
         })
-        .catch(console.error);
+        .catch((error) => logger.error(error));
     }
   }, [status, streamId, previousStreamData]);
 
@@ -132,7 +133,7 @@ export default function TransactionTracker({
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Polling error:", err);
+          logger.error("Polling error:", err);
         }
       }
 
