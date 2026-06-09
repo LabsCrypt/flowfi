@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
+import { Prisma } from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
 import { claimableAmountService } from '../services/claimable.service.js';
@@ -137,7 +138,7 @@ export const listStreams = async (req: Request, res: Response) => {
       offset = '0'
     } = req.query;
 
-    const where: any = {};
+    const where: Prisma.StreamWhereInput = {};
     if (typeof sender === 'string') where.sender = sender;
     if (typeof recipient === 'string') where.recipient = recipient;
     if (typeof token === 'string') where.tokenAddress = token;
@@ -300,7 +301,7 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       offset = Math.max(0, (page - 1) * limit);
     }
 
-    const whereClause: any = { streamId: parsedStreamId };
+    const whereClause: Prisma.StreamEventWhereInput = { streamId: parsedStreamId, };
     if (eventType) {
       const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED', 'FEE_CONFIG_UPDATED', 'ADMIN_TRANSFERRED'];
       if (!validEventTypes.includes(eventType)) {
@@ -482,11 +483,11 @@ export const getUserStreamSummary = async (req: Request<{ address: string }>, re
     }
 
     const totalStreamsCreated = outgoingStreams.length;
-    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream: any) => stream.withdrawnAmount));
-    const totalStreamedIn = sumStringI128(incomingStreams.map((stream: any) => stream.withdrawnAmount));
+    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream) => stream.withdrawnAmount));
+    const totalStreamedIn = sumStringI128(incomingStreams.map((stream) => stream.withdrawnAmount));
 
-    const activeOutgoingCount = outgoingStreams.filter((stream: any) => stream.isActive).length;
-    const activeIncomingCount = incomingStreams.filter((stream: any) => stream.isActive).length;
+    const activeOutgoingCount = outgoingStreams.filter((stream) => stream.isActive).length;
+    const activeIncomingCount = incomingStreams.filter((stream) => stream.isActive).length;
 
     const summary: UserStreamSummary = {
       address,
@@ -770,4 +771,3 @@ export const resumeStream = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
-
