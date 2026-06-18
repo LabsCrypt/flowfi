@@ -21,6 +21,7 @@ import { CancelConfirmModal } from "@/components/stream-creation/CancelConfirmMo
 import type { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount, streamProgressPercent } from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
+import { logger } from "@/lib/logger";
 
 interface StreamDetail {
   id: string;
@@ -126,7 +127,7 @@ export default function StreamDetailsPage() {
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
-      console.error("Failed to fetch events:", err);
+      logger.error("Failed to fetch events:", err);
     }
   }, [streamId]);
 

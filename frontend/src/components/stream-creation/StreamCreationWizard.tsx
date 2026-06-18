@@ -14,6 +14,7 @@ import { isValidStellarPublicKey } from "@/lib/stellar";
 import { TransactionTracker } from "../ui/TransactionTracker";
 import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
+import { logger } from "@/lib/logger";
 
 export interface StreamFormData {
   recipient: string;
@@ -110,12 +111,12 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     descriptionTag: "salary",
   });
   const [errors, setErrors] = useState<Partial<Record<keyof StreamFormData, string>>>({});
-  
+
   // Tracking & Polling state (Issue #378)
   const [txHash, setTxHash] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [timeoutError, setTimeoutError] = useState(false);
-  
+
   const router = useRouter();
 
   const dialogRef = useModalDialog({ onClose });
@@ -352,7 +353,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       try {
         const response = await fetch(`/v1/streams?sender=${senderAddress}`);
         const streams = await response.json();
-        
+
         // Assuming the latest stream is what we want
         if (streams && streams.length > 0) {
           // Found!
@@ -362,7 +363,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           return;
         }
       } catch (e) {
-        console.warn("Polling error:", e);
+        logger.warn("Polling error:", e);
       }
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
     }
@@ -379,13 +380,13 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         const result = (await onSubmit(formData)) as unknown as { txHash: string };
         const hash = result?.txHash;
         setTxHash(hash);
-        
+
         // Step 2: Start Polling for Indexer
         setIsPolling(true);
         await startPolling(formData.recipient);
-        
+
       } catch (error) {
-        console.error("Failed to create stream:", error);
+        logger.error("Failed to create stream:", error);
         setIsSubmitting(false);
       }
     } else {
@@ -462,7 +463,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   };
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
@@ -510,10 +511,10 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
               <h3 className="text-xl font-bold mb-8">
                 {timeoutError ? "Confirmation Timeout" : "Waiting for confirmation..."}
               </h3>
-              
+
               {!timeoutError ? (
                 <>
-                  <TransactionTracker 
+                  <TransactionTracker
                     steps={[
                       { id: "1", label: "Sign Transaction", status: "completed" },
                       { id: "2", label: "Network Confirmation", status: "completed" },
@@ -540,7 +541,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
                   <div className="flex flex-col gap-4 items-center">
                     <p className="text-sm text-slate-300">Transaction Hash:</p>
                     <code className="text-xs p-2 bg-slate-800 rounded break-all max-w-xs">{txHash}</code>
-                    <a 
+                    <a
                       href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -552,8 +553,8 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
                       </svg>
                     </a>
                   </div>
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     className="mt-8"
                     onClick={onClose}
                   >

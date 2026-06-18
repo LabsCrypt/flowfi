@@ -1,5 +1,6 @@
 import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
+import { logger } from "./logger";
 import { TOKEN_ADDRESSES } from "./soroban";
 
 export interface ActivityItem {
@@ -194,7 +195,7 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardSn
       incomingStreams,
     };
   } catch (error) {
-    console.error("Dashboard data fetch error:", error);
+    logger.error("Dashboard data fetch error:", error);
     throw error;
   }
 }

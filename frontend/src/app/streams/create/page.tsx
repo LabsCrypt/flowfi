@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
+import { logger } from "@/lib/logger";
 
 const TOKEN_DECIMALS = 7;
 
@@ -69,7 +70,7 @@ export default function CreateStreamPage() {
         }, 2000);
       }
     } catch (error) {
-      console.error("Stream creation failed:", error);
+      logger.error("Stream creation failed:", error);
       toast.error(toSorobanErrorMessage(error));
     } finally {
       setLoading(false);
@@ -187,7 +188,7 @@ export default function CreateStreamPage() {
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-400">Streaming Rate</span>
               <span className="font-mono font-medium text-accent">
-                {formData.amount && formData.duration 
+                {formData.amount && formData.duration
                   ? (Number(formData.amount) / (Number(formData.duration) * 86400)).toFixed(8)
                   : "0.00000000"} {formData.token}/sec
               </span>
@@ -207,7 +208,7 @@ export default function CreateStreamPage() {
           >
             {getButtonText()}
           </button>
-          
+
           {status !== "connected" && (
             <p className="text-center text-sm text-red-400">
               Please connect your wallet to create a stream.
