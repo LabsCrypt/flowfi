@@ -19,6 +19,7 @@ import {
   shortenPublicKey,
   isExpectedNetwork,
 } from "@/lib/wallet";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { WalletModal } from "./WalletModal";
 
 export function WalletButton() {
@@ -73,7 +74,7 @@ export function WalletButton() {
   // localStorage mismatch flicker.
   if (!isHydrated) {
     return (
-      <div className="wallet-btn-skeleton" aria-hidden="true" />
+      <Skeleton className="w-[140px] h-[2.4rem] rounded-full" aria-hidden="true" />
     );
   }
 
