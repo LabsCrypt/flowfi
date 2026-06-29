@@ -192,6 +192,27 @@ jobs:
           done
         shell: bash
 
+      - name: Check WASM size budget
+        run: |
+          set -euo pipefail
+
+          RELEASE_DIR="contracts/target/wasm32-unknown-unknown/release"
+          WASM_SIZE_LIMIT=200000  # 200KB budget for optimized WASM
+
+          for wasm in "$RELEASE_DIR"/*.optimized.wasm; do
+            if [ -f "$wasm" ]; then
+              size=$(stat -c%s "$wasm")
+              filename=$(basename "$wasm")
+              echo "Optimized WASM size: $filename = $size bytes"
+
+              if [ "$size" -gt "$WASM_SIZE_LIMIT" ]; then
+                echo "Error: $filename exceeds size budget of $WASM_SIZE_LIMIT bytes"
+                exit 1
+              fi
+            fi
+          done
+        shell: bash
+
       - name: Upload optimized WASM artifacts
         uses: actions/upload-artifact@v4
         with:
