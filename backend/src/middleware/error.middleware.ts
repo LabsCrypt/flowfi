@@ -14,6 +14,10 @@ export const errorHandler = (
 ) => {
     logger.error('Unhandled error:', err);
 
+    if (res.headersSent) {
+        return next(err);
+    }
+
     // Handle Zod Validation Errors
     if (err instanceof ZodError) {
         return res.status(400).json({
