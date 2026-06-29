@@ -92,9 +92,9 @@ export function useWithdrawIncomingStream(
 
       return { previousStreams, expectedWithdrawn };
     },
-    onSuccess: async (result, stream, _variables, context) => {
+    onSuccess: async (result, stream, onMutateResult) => {
       if (publicKey) {
-        const targetWithdrawn = context?.expectedWithdrawn ?? stream.withdrawn;
+        const targetWithdrawn = onMutateResult?.expectedWithdrawn ?? stream.withdrawn;
         // Start polling in the background without blocking the mutation
         pollIndexerForWithdraw(
           publicKey,
@@ -107,11 +107,11 @@ export function useWithdrawIncomingStream(
 
       await options?.onSuccess?.(result, stream);
     },
-    onError: (error, stream, context) => {
-      if (publicKey && context?.previousStreams) {
+    onError: (error, stream, onMutateResult) => {
+      if (publicKey && onMutateResult?.previousStreams) {
         queryClient.setQueryData(
           incomingStreamsQueryKey(publicKey),
-          context.previousStreams,
+          onMutateResult.previousStreams,
         );
       }
       options?.onError?.(error, stream);
