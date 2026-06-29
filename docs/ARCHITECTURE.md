@@ -221,11 +221,11 @@ To run the full stack end-to-end, set the following secrets. See [`backend/.env.
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string (Prisma) |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint (e.g. Testnet: `https://soroban-testnet.stellar.org`) |
-| `STREAMING_CONTRACT_ADDRESS` | Deployed FlowFi stream contract ID |
+| `STREAM_CONTRACT_ID` | Deployed FlowFi stream contract ID |
 | `KEEPER_SECRET_KEY` | Server wallet secret key used to sign custodial top-up transactions |
 | `JWT_SECRET` | Secret used to sign and verify auth JWTs |
 | `REDIS_URL` | Redis connection string (only needed for multi-instance SSE fanout) |
-| `STELLAR_NETWORK` | `TESTNET` or `MAINNET` |
+| `STELLAR_NETWORK` | `testnet` or `mainnet` |
 
 ### Frontend
 
