@@ -1,4 +1,3 @@
----
 # Contributing to FlowFi
 
 Thank you for your interest in contributing to **FlowFi**
@@ -6,15 +5,14 @@ Thank you for your interest in contributing to **FlowFi**
 FlowFi is a DeFi payment streaming protocol built on Stellar using Soroban smart contracts. This guide explains how to set up your local development environment and contribute effectively.
 
 Please read this document carefully before opening a Pull Request.
----
 
 ## Getting Help & Asking Questions
 
 Have questions before contributing? We've got you covered!
 
-- **Questions about using FlowFi?** → Start a discussion in [GitHub Discussions - Q&A](https://github.com/flowfi/flowfi/discussions/categories/q-a)
-- **Found a bug?** → [Open an Issue](https://github.com/flowfi/flowfi/issues)
-- **Want to suggest a feature?** → [Start a Discussion - Ideas](https://github.com/flowfi/flowfi/discussions/categories/ideas)
+- **Questions about using FlowFi?** → Start a discussion in [GitHub Discussions - Q&A](https://github.com/LabsCrypt/flowfi/discussions/categories/q-a)
+- **Found a bug?** → [Open an Issue](https://github.com/LabsCrypt/flowfi/issues)
+- **Want to suggest a feature?** → [Start a Discussion - Ideas](https://github.com/LabsCrypt/flowfi/discussions/categories/ideas)
 - **Need help setting up?** → Check [Local Development Setup](#local-development-setup) or ask in Discussions
 
 ### Issues vs Discussions
@@ -106,7 +104,7 @@ docker compose up --build
 
 This starts:
 
-- PostgreSQL (port 5432)
+- PostgreSQL (port 5433)
 - Backend API (port 3001)
 
 To run in detached mode:
