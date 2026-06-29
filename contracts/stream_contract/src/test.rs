@@ -825,6 +825,40 @@ fn test_no_fee_event_when_fee_rate_is_zero() {
 }
 
 #[test]
+fn test_no_fee_transfer_or_event_when_fee_rounds_to_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    // Non-zero fee rate, but tiny amount => fee rounds down to 0:
+    // 1 * 200 / 10_000 = 0
+    client.initialize(&admin, &treasury, &200);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1, &1);
+
+    assert_eq!(token_client.balance(&treasury), 0);
+
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(s.deposited_amount, 1);
+
+    let events = env.events().all();
+    let fee_event = events.iter().find(|e| {
+        Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+            == Symbol::new(&env, "fee_collected")
+    });
+    assert!(
+        fee_event.is_none(),
+        "fee_collected must not fire when rounded fee is 0"
+    );
+}
+
+#[test]
 fn test_no_fee_without_protocol_config() {
     let env = Env::default();
     env.mock_all_auths();
