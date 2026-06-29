@@ -102,7 +102,7 @@ describe('lib/amount.ts - formatRate', () => {
   });
 
   it('handles very small rates', () => {
-    expect(formatRate(1n, 7, 'USDC')).toBe('0.0000001 USDC/sec (0.0086400 USDC/day)');
+    expect(formatRate(1n, 7, 'USDC')).toBe('0.0000001 USDC/sec (0.00864 USDC/day)');
   });
 });
 
@@ -167,17 +167,17 @@ describe('lib/amount.ts - formatCompactAmount', () => {
   });
 
   it('formats thousands with K', () => {
-    expect(formatCompactAmount(1500000n, 0)).toBe('1.5K');
-    expect(formatCompactAmount(1000000n, 0)).toBe('1.0K');
+    expect(formatCompactAmount(1500n, 0)).toBe('1.5K');
+    expect(formatCompactAmount(1000n, 0)).toBe('1.0K');
   });
 
   it('formats millions with M', () => {
-    expect(formatCompactAmount(1500000000n, 0)).toBe('1.5M');
-    expect(formatCompactAmount(1000000000n, 0)).toBe('1.0M');
+    expect(formatCompactAmount(1500000n, 0)).toBe('1.5M');
+    expect(formatCompactAmount(1000000n, 0)).toBe('1.0M');
   });
 
   it('formats billions with B', () => {
-    expect(formatCompactAmount(1500000000000n, 0)).toBe('1.5B');
+    expect(formatCompactAmount(1500000000n, 0)).toBe('1.5B');
   });
 
   it('respects token decimals', () => {
