@@ -2,6 +2,7 @@
 name = "stream_contract"
 version = "0.1.0"
 edition = "2021"
+description = "Soroban payment-streaming contract with protocol fees"
 
 [lib]
 crate-type = ["cdylib"]
