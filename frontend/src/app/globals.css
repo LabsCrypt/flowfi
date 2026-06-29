@@ -52,6 +52,7 @@
   --animate-slide-down: slide-down 0.3s ease-out;
   --animate-pulse-slow: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-float: float 6s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.4s infinite;
 
   --shadow-glass:
     0 4px 6px -1px rgba(0, 0, 0, 0.1),
@@ -114,6 +115,15 @@
 
   50% {
     transform: translateY(-10px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
   }
 }
 
