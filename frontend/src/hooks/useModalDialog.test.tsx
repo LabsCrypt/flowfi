@@ -1,5 +1,4 @@
 import { renderHook, act, render } from '@testing-library/react';
-import { useRef } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useModalDialog } from './useModalDialog';
 

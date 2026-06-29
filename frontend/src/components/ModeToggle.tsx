@@ -9,7 +9,8 @@ export function ModeToggle() {
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    setIsMounted(true);
+    const rafId = requestAnimationFrame(() => setIsMounted(true));
+    return () => cancelAnimationFrame(rafId);
   }, []);
 
   const toggleTheme = () => {
