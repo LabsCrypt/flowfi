@@ -178,7 +178,7 @@ export const listStreams = async (req: Request, res: Response) => {
       typeof limit === 'string' ? (Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE) : DEFAULT_STREAM_PAGE_SIZE,
       MAX_STREAM_PAGE_SIZE
     );
-    const parsedOffset = typeof offset === 'string' ? (Number.parseInt(offset, 10) || 0) : 0;
+    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
 
     // Validate sort field
     const validSortFields = ['createdAt', 'startTime', 'lastUpdateTime', 'depositedAmount', 'endTime'];
@@ -295,7 +295,7 @@ export const getStreamEvents = async (req: Request, res: Response) => {
 
     let offset = 0;
     if (rawOffset && typeof rawOffset === 'string') {
-      offset = Number.parseInt(rawOffset, 10) || 0;
+      offset = Math.max(0, Number.parseInt(rawOffset, 10) || 0);
     } else if (rawPage && typeof rawPage === 'string' && !cursor) {
       const page = Number.parseInt(rawPage, 10) || 1;
       offset = Math.max(0, (page - 1) * limit);
@@ -564,7 +564,7 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
     return res.status(200).json({ streamId, txHash, depositedAmount: newDeposited });
   } catch (error: any) {
     logger.error(`[topUp] stream=${streamId} error:`, error);
-    return res.status(500).json({ error: error.message ?? 'Internal server error' });
+    return res.status(400).json({ error: 'Failed to top up stream on chain', message: error.message ?? 'Unknown error' });
   }
 };
 
