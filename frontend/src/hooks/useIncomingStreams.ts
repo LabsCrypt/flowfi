@@ -92,7 +92,7 @@ export function useWithdrawIncomingStream(
 
       return { previousStreams, expectedWithdrawn };
     },
-    onSuccess: async (result, stream, _variables, context) => {
+    onSuccess: async (result, stream, context) => {
       if (publicKey) {
         const targetWithdrawn = context?.expectedWithdrawn ?? stream.withdrawn;
         // Start polling in the background without blocking the mutation
