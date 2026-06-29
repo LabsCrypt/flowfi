@@ -41,7 +41,7 @@ export function IncomingStreamCard({
     deposited: stream.deposited,
     withdrawn: stream.withdrawn,
     ratePerSecond: stream.ratePerSecond,
-    startTime: stream.startTime,
+    lastUpdateTime: stream.lastUpdateTime,
     isActive: stream.isActive,
     isPaused: stream.isPaused,
     pausedAt: stream.pausedAt,

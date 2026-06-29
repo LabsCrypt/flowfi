@@ -53,7 +53,7 @@ export function useStreamingAmount({
       isPaused && pausedAt ? Math.max(0, nowSeconds - pausedAt) : 0;
     const effectiveElapsed = Math.max(
       0,
-      elapsedSinceStart - totalPausedDuration - currentPauseDuration,
+      elapsedSinceStart - (startTime ? totalPausedDuration : 0) - currentPauseDuration,
     );
 
     claimableRef.current = clamp(

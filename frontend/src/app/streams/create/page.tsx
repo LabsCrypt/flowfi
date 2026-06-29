@@ -10,6 +10,7 @@ import {
   TOKEN_ADDRESSES
 } from "@/lib/soroban";
 import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
+import { isValidStellarPublicKey } from "@/lib/stellar";
 import { toast } from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -38,10 +39,27 @@ export default function CreateStreamPage() {
       return;
     }
 
+    // Validate recipient
+    if (!formData.recipient.trim()) {
+      toast.error("Recipient address is required");
+      return;
+    }
+    if (!isValidStellarPublicKey(formData.recipient)) {
+      toast.error("Invalid Stellar public key format");
+      return;
+    }
+
     // Validate amount
     const validationError = validateAmountInput(formData.amount, TOKEN_DECIMALS);
     if (validationError) {
       toast.error(validationError);
+      return;
+    }
+
+    // Validate duration
+    const durationNum = parseFloat(formData.duration);
+    if (isNaN(durationNum) || durationNum <= 0) {
+      toast.error("Duration must be a positive number");
       return;
     }
 
@@ -94,6 +112,16 @@ export default function CreateStreamPage() {
     ? validateAmountInput(formData.amount, TOKEN_DECIMALS)
     : null;
 
+  const recipientError = formData.recipient
+    ? (!isValidStellarPublicKey(formData.recipient) ? "Invalid Stellar public key format" : null)
+    : null;
+
+  const durationError = formData.duration
+    ? (isNaN(Number(formData.duration)) || Number(formData.duration) <= 0
+      ? "Duration must be a positive number"
+      : null)
+    : null;
+
   return (
     <div className="container mx-auto max-w-2xl px-4 py-12">
       <Link
@@ -118,11 +146,16 @@ export default function CreateStreamPage() {
             <input
               type="text"
               placeholder="G..."
-              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
+              className={`w-full rounded-xl border ${
+                recipientError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-accent"
+              } bg-slate-900/50 p-4 outline-none transition-colors`}
               value={formData.recipient}
               onChange={(e) => setFormData({ ...formData, recipient: e.target.value })}
               required
             />
+            {recipientError && (
+              <p className="text-xs text-red-400 mt-1">{recipientError}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -150,7 +183,9 @@ export default function CreateStreamPage() {
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
+                className={`w-full rounded-xl border ${
+                  amountError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-accent"
+                } bg-slate-900/50 p-4 outline-none transition-colors`}
                 value={formData.amount}
                 onChange={(e) => {
                   const newValue = e.target.value;
@@ -176,18 +211,23 @@ export default function CreateStreamPage() {
             <input
               type="number"
               placeholder="30"
-              className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
+              className={`w-full rounded-xl border ${
+                durationError ? "border-red-500 focus:border-red-500" : "border-slate-800 focus:border-accent"
+              } bg-slate-900/50 p-4 outline-none transition-colors`}
               value={formData.duration}
               onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
               required
             />
+            {durationError && (
+              <p className="text-xs text-red-400 mt-1">{durationError}</p>
+            )}
           </div>
 
           <div className="rounded-2xl bg-accent/5 p-6 space-y-4">
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-400">Streaming Rate</span>
               <span className="font-mono font-medium text-accent">
-                {formData.amount && formData.duration 
+                {formData.amount && formData.duration && Number(formData.duration) > 0
                   ? (Number(formData.amount) / (Number(formData.duration) * 86400)).toFixed(8)
                   : "0.00000000"} {formData.token}/sec
               </span>
@@ -195,14 +235,16 @@ export default function CreateStreamPage() {
             <div className="flex justify-between items-center text-sm">
               <span className="text-slate-400">Estimated End Date</span>
               <span className="font-medium">
-                {new Date(nowTimestamp + Number(formData.duration || 0) * 86400000).toLocaleDateString()}
+                {formData.duration && Number(formData.duration) > 0
+                  ? new Date(nowTimestamp + Number(formData.duration) * 86400000).toLocaleDateString()
+                  : "—"}
               </span>
             </div>
           </div>
 
           <button
             type="submit"
-            disabled={loading || status !== "connected"}
+            disabled={loading || status !== "connected" || !!amountError || !!recipientError || !!durationError}
             className="w-full rounded-xl bg-accent py-4 text-lg font-bold text-background transition-all hover:opacity-90 disabled:opacity-50 active:scale-[0.98]"
           >
             {getButtonText()}

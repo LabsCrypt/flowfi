@@ -81,8 +81,11 @@ export const ScheduleStep: React.FC<ScheduleStepProps> = ({
   const ratePerDayPreview = useMemo(() => {
     if (!ratePerSecond) return null;
     const dailyRate = ratePerSecond * 86400;
-    if (token === "USDC" || token === "EURC") {
+    if (token === "USDC") {
       return `$${dailyRate.toFixed(2)} / day`;
+    }
+    if (token === "EURC") {
+      return `€${dailyRate.toFixed(2)} / day`;
     }
     return `${dailyRate.toFixed(4)} ${token || ""} / day`;
   }, [ratePerSecond, token]);
