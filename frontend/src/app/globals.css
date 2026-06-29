@@ -23,6 +23,17 @@
   --danger: #b12f3f;
 }
 
+:root.dark {
+  --background: #020617;
+  --foreground: #f8fafc;
+  --bg-sky: #0a1128;
+  --bg-sand: #131b2f;
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  --surface: rgba(15, 23, 42, 0.8);
+  --surface-border: rgba(255, 255, 255, 0.12);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -52,6 +63,7 @@
   --animate-slide-down: slide-down 0.3s ease-out;
   --animate-pulse-slow: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-float: float 6s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.4s infinite;
 
   --shadow-glass:
     0 4px 6px -1px rgba(0, 0, 0, 0.1),
@@ -117,6 +129,15 @@
   }
 }
 
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 *,
 *::before,
 *::after {
@@ -132,6 +153,13 @@ body {
   background:
     radial-gradient(circle at 14% 16%, #d2ecff 0%, transparent 37%),
     radial-gradient(circle at 84% 20%, #ffd8b7 0%, transparent 33%),
+    linear-gradient(160deg, var(--bg-sky) 0%, var(--bg-sand) 100%);
+}
+
+.dark body {
+  background:
+    radial-gradient(circle at 14% 16%, rgba(14, 165, 233, 0.15) 0%, transparent 37%),
+    radial-gradient(circle at 84% 20%, rgba(56, 189, 248, 0.1) 0%, transparent 33%),
     linear-gradient(160deg, var(--bg-sky) 0%, var(--bg-sand) 100%);
 }
 
