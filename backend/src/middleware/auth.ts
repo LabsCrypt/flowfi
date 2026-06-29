@@ -104,7 +104,7 @@ export function verifyJwt(token: string): { publicKey: string } | null {
       .digest();
     if (!crypto.timingSafeEqual(Buffer.from(sig, 'base64url'), expected)) return null;
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    if (typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) return null;
     return { publicKey: payload.sub };
   } catch {
     return null;
