@@ -25,6 +25,33 @@ export const metadata: Metadata = {
   title: "FlowFi | Real-time Payment Streams",
   description:
     "The trustless infrastructure to stream salaries, tokens, and rewards in real-time.",
+  metadataBase: new URL("https://flowfi.app"),
+  openGraph: {
+    title: "FlowFi | Real-time Payment Streams",
+    description:
+      "The trustless infrastructure to stream salaries, tokens, and rewards in real-time.",
+    url: "https://flowfi.app",
+    siteName: "FlowFi",
+    images: [
+      {
+        url: "/opengraph-image.png",
+        width: 1200,
+        height: 630,
+        alt: "FlowFi - Real-time Payment Streams",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "FlowFi | Real-time Payment Streams",
+    description:
+      "The trustless infrastructure to stream salaries, tokens, and rewards in real-time.",
+    images: ["/opengraph-image.png"],
+  },
+  alternates: {
+    canonical: "https://flowfi.app",
+  },
 };
 
 export default function RootLayout({

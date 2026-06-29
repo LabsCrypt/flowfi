@@ -11,7 +11,6 @@ import { ScheduleStep } from "./ScheduleStep";
 import { TemplateStep, type StreamTemplate } from "./TemplateStep";
 import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
-import { TransactionTracker } from "../ui/TransactionTracker";
 import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
 
@@ -513,14 +512,39 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
               
               {!timeoutError ? (
                 <>
-                  <TransactionTracker 
-                    steps={[
-                      { id: "1", label: "Sign Transaction", status: "completed" },
-                      { id: "2", label: "Network Confirmation", status: "completed" },
-                      { id: "3", label: "Indexer Synchronization", status: "current", description: "Detecting your stream on-chain..." }
-                    ]}
-                    className="w-full max-w-sm"
-                  />
+                  <div className="w-full max-w-sm mx-auto space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent">
+                        <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">Sign Transaction</p>
+                        <p className="text-xs text-slate-400">Confirmed</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent">
+                        <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">Network Confirmation</p>
+                        <p className="text-xs text-slate-400">Confirmed</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-accent animate-pulse">
+                        <div className="h-2 w-2 rounded-full bg-accent" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-accent">Indexer Synchronization</p>
+                        <p className="text-xs text-slate-400">Detecting your stream on-chain...</p>
+                      </div>
+                    </div>
+                  </div>
                   <div className="mt-12 flex flex-col items-center gap-2">
                     <div className="flex gap-1">
                       <div className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0s" }} />

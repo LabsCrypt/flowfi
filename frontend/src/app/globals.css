@@ -184,7 +184,7 @@ body {
   margin-bottom: 1rem;
   border: 1px solid rgba(177, 47, 63, 0.34);
   background: rgba(255, 243, 245, 0.9);
-  color: #8c2230;
+  color: var(--danger);
   border-radius: 0.9rem;
   padding: 0.72rem 0.92rem;
   display: flex;
@@ -370,7 +370,7 @@ body {
 
 .secondary-button--danger {
   border-color: rgba(177, 47, 63, 0.34);
-  color: #8f2a38;
+  color: var(--danger);
   background: rgba(255, 241, 244, 0.76);
 }
 
@@ -675,7 +675,7 @@ body {
 }
 
 .activity-item span.is-negative {
-  color: #b12f3f;
+  color: var(--danger);
 }
 
 .dashboard-empty-state {
@@ -1519,7 +1519,7 @@ body {
 .wallet-dropdown__warning {
   margin: 0;
   font-size: 0.8rem;
-  color: #8c2230;
+  color: var(--danger);
   background: rgba(255, 243, 245, 0.9);
   border: 1px solid rgba(177, 47, 63, 0.24);
   border-radius: 0.65rem;
@@ -1584,6 +1584,6 @@ body {
 }
 
 .dashboard-error-state h3 {
-  color: #b12f3f;
+  color: var(--danger);
   margin: 0;
 }
