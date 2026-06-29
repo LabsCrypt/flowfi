@@ -26,10 +26,10 @@ NC='\033[0m' # No Color
 
 # Default values
 NETWORK=""
-DEPLOYER_SECRET=""
-ADMIN_ADDRESS=""
-TREASURY_ADDRESS=""
-FEE_RATE_BPS=""
+DEPLOYER_SECRET="${DEPLOYER_SECRET:-}"
+ADMIN_ADDRESS="${ADMIN_ADDRESS:-}"
+TREASURY_ADDRESS="${TREASURY_ADDRESS:-}"
+FEE_RATE_BPS="${FEE_RATE_BPS:-}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
