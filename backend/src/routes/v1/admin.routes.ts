@@ -11,7 +11,8 @@ import { prisma } from '../../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../../lib/indexer-state.js';
 import { sseService } from '../../services/sse.service.js';
 import { cache } from '../../lib/redis.js';
-import logger from '../../logger.js';
+import type { AuthenticatedRequest } from '../../types/auth.types.js';
+import logger, { auditLog } from '../../logger.js';
 
 const router = Router();
 
@@ -211,6 +212,8 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
   }
   try {
     await resetIndexer(ledger);
+    const actor = (req as AuthenticatedRequest).user.publicKey;
+    auditLog(actor, 'admin.indexer.reset', { ledger });
     res.json({ ok: true, lastLedger: ledger });
   } catch (err) {
     res.status(500).json({ error: 'Reset failed' });
@@ -242,6 +245,8 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
   }
   try {
     await replayFromLedger(fromLedger);
+    const actor = (req as AuthenticatedRequest).user.publicKey;
+    auditLog(actor, 'admin.indexer.replay', { fromLedger });
     res.status(202).json({ ok: true, replayingFrom: fromLedger });
   } catch (err) {
     res.status(500).json({ error: 'Replay failed' });
