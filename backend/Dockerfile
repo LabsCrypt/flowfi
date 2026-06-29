@@ -3,10 +3,11 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY tsconfig.json ./
 COPY src ./src
+COPY prisma ./prisma
 
 RUN npm run build
 
@@ -17,7 +18,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --omit=dev
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/generated ./src/generated
