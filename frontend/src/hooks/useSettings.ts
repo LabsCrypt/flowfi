@@ -28,39 +28,84 @@ const STORAGE_KEYS = {
   decimalPlaces: "flowfi-decimal-places",
 };
 
+let sharedSettings: Settings = { ...DEFAULT_SETTINGS };
+let sharedIsHydrated = false;
+const listeners = new Set<() => void>();
+
+function notifyListeners() {
+  listeners.forEach((listener) => listener());
+}
+
+function loadSettingsFromStorage(): Settings {
+  if (typeof window === "undefined") return { ...DEFAULT_SETTINGS };
+  const savedTheme = localStorage.getItem(STORAGE_KEYS.theme) as Theme | null;
+  const savedCurrency = localStorage.getItem(
+    STORAGE_KEYS.displayCurrency
+  ) as DisplayCurrency | null;
+  const savedFormat = localStorage.getItem(
+    STORAGE_KEYS.amountFormat
+  ) as AmountFormat | null;
+  const savedDecimals = localStorage.getItem(STORAGE_KEYS.decimalPlaces);
+
+  return {
+    theme: savedTheme || DEFAULT_SETTINGS.theme,
+    displayCurrency: savedCurrency || DEFAULT_SETTINGS.displayCurrency,
+    amountFormat: savedFormat || DEFAULT_SETTINGS.amountFormat,
+    decimalPlaces: savedDecimals
+      ? (parseInt(savedDecimals, 10) as DecimalPlaces)
+      : DEFAULT_SETTINGS.decimalPlaces,
+  };
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (!e.key || Object.values(STORAGE_KEYS).includes(e.key)) {
+      sharedSettings = loadSettingsFromStorage();
+      sharedIsHydrated = true;
+      notifyListeners();
+    }
+  });
+}
+
+// For testing purposes
+export function _resetSharedSettings() {
+  sharedSettings = { ...DEFAULT_SETTINGS };
+  sharedIsHydrated = false;
+  listeners.clear();
+}
+
 export function useSettings() {
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [isHydrated, setIsHydrated] = useState(false);
+  const [settings, setSettingsState] = useState<Settings>(sharedSettings);
+  const [isHydrated, setIsHydrated] = useState(sharedIsHydrated);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    const listener = () => {
+      setSettingsState(sharedSettings);
+      setIsHydrated(sharedIsHydrated);
+    };
+    listeners.add(listener);
 
-    const savedTheme = localStorage.getItem(STORAGE_KEYS.theme) as Theme | null;
-    const savedCurrency = localStorage.getItem(
-      STORAGE_KEYS.displayCurrency
-    ) as DisplayCurrency | null;
-    const savedFormat = localStorage.getItem(
-      STORAGE_KEYS.amountFormat
-    ) as AmountFormat | null;
-    const savedDecimals = localStorage.getItem(STORAGE_KEYS.decimalPlaces);
-
-    // Use queueMicrotask to avoid synchronous setState in effect
-    queueMicrotask(() => {
-      setSettings({
-        theme: savedTheme || DEFAULT_SETTINGS.theme,
-        displayCurrency: savedCurrency || DEFAULT_SETTINGS.displayCurrency,
-        amountFormat: savedFormat || DEFAULT_SETTINGS.amountFormat,
-        decimalPlaces: savedDecimals
-          ? (parseInt(savedDecimals, 10) as DecimalPlaces)
-          : DEFAULT_SETTINGS.decimalPlaces,
+    if (!sharedIsHydrated && typeof window !== "undefined") {
+      queueMicrotask(() => {
+        if (!sharedIsHydrated) {
+          sharedSettings = loadSettingsFromStorage();
+          sharedIsHydrated = true;
+          notifyListeners();
+        }
       });
-      setIsHydrated(true);
-    });
+    } else {
+      listener();
+    }
+
+    return () => {
+      listeners.delete(listener);
+    };
   }, []);
 
   const setTheme = useCallback((theme: Theme) => {
-    setSettings((prev) => ({ ...prev, theme }));
+    sharedSettings = { ...sharedSettings, theme };
     localStorage.setItem(STORAGE_KEYS.theme, theme);
+    notifyListeners();
 
     // Apply theme immediately
     if (theme === "system") {
@@ -72,18 +117,21 @@ export function useSettings() {
   }, []);
 
   const setDisplayCurrency = useCallback((currency: DisplayCurrency) => {
-    setSettings((prev) => ({ ...prev, displayCurrency: currency }));
+    sharedSettings = { ...sharedSettings, displayCurrency: currency };
     localStorage.setItem(STORAGE_KEYS.displayCurrency, currency);
+    notifyListeners();
   }, []);
 
   const setAmountFormat = useCallback((format: AmountFormat) => {
-    setSettings((prev) => ({ ...prev, amountFormat: format }));
+    sharedSettings = { ...sharedSettings, amountFormat: format };
     localStorage.setItem(STORAGE_KEYS.amountFormat, format);
+    notifyListeners();
   }, []);
 
   const setDecimalPlaces = useCallback((places: DecimalPlaces) => {
-    setSettings((prev) => ({ ...prev, decimalPlaces: places }));
+    sharedSettings = { ...sharedSettings, decimalPlaces: places };
     localStorage.setItem(STORAGE_KEYS.decimalPlaces, places.toString());
+    notifyListeners();
   }, []);
 
   return {
