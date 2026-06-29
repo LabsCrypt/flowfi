@@ -1,4 +1,3 @@
-````md
 # Development Guide
 
 This guide is intended to let a new contributor run the full FlowFi stack from a fresh clone.
@@ -29,7 +28,7 @@ Optional:
 ```bash
 git clone https://github.com/LabsCrypt/flowfi.git
 cd flowfi
-````
+```
 
 ---
 
@@ -238,12 +237,3 @@ cargo build --target wasm32-unknown-unknown --release
 * Backend: `backend/`
 * Frontend: `frontend/`
 * Contracts: `contracts/stream_contract`
-
-```
-
----
-
-If you want next-level polish, I can turn this into:
-- a **Makefile / task runner setup (one-command dev start)**
-- or a **Dockerized full-stack dev environment (zero manual setup)**
-```
