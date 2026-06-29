@@ -16,9 +16,12 @@ import toast from "react-hot-toast";
  */
 
 import { Skeleton } from "@/components/ui/Skeleton";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getDashboardAnalytics,
   fetchDashboardData,
+  useDashboard,
+  dashboardQueryKey,
   type DashboardSnapshot,
   type Stream,
 } from "@/lib/dashboard";
@@ -440,13 +443,13 @@ function renderRecentActivity(snapshot: DashboardSnapshot | null, onCreateStream
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = React.useState("overview");
   const [showWizard, setShowWizard] = React.useState(false);
   const [modal, setModal] = React.useState<ModalState>(null);
 
-  const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
-  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
-  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+  const { data: snapshot = null, isLoading: isSnapshotLoading, error: queryError, refetch } = useDashboard(session.publicKey);
+  const snapshotError = queryError ? (queryError as Error).message : null;
 
   const { events: streamEvents, connected, reconnecting, error } = useStreamEvents({
     userPublicKeys: [session.publicKey],
@@ -459,15 +462,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       if (latestEvent) {
         const relevantTypes = ["created", "topped_up", "withdrawn", "cancelled", "completed", "paused", "resumed"];
         if (relevantTypes.includes(latestEvent.type)) {
-          fetchDashboardData(session.publicKey)
-            .then(setSnapshot)
-            .catch((err) => {
-              setSnapshotError(err instanceof Error ? err.message : "Failed to refresh dashboard");
-            });
+          queryClient.invalidateQueries({ queryKey: dashboardQueryKey(session.publicKey) });
         }
       }
     }
-  }, [streamEvents, session.publicKey]);
+  }, [streamEvents, session.publicKey, queryClient]);
 
   const [streamForm, setStreamForm] = React.useState<StreamFormValues>(EMPTY_STREAM_FORM);
   const [templates, setTemplates] = React.useState<StreamTemplate[]>([]);
@@ -524,42 +523,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     persistTemplates(templates);
   }, [templates, templatesHydrated]);
 
-  // ── Load dashboard snapshot ───────────────────────────────────────────────
-
-  const loadSnapshot = React.useCallback(async () => {
-    setIsSnapshotLoading(true);
-    setSnapshotError(null);
-    try {
-      const next = await fetchDashboardData(session.publicKey);
-      setSnapshot(next);
-    } catch (err) {
-      setSnapshot(null);
-      setSnapshotError(err instanceof Error ? err.message : "Failed to fetch dashboard data.");
-    } finally {
-      setIsSnapshotLoading(false);
-    }
-  }, [session.publicKey, setIsSnapshotLoading, setSnapshotError, setSnapshot]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      setIsSnapshotLoading(true);
-      setSnapshotError(null);
-      try {
-        const next = await fetchDashboardData(session.publicKey);
-        if (!cancelled) setSnapshot(next);
-      } catch (err) {
-        if (!cancelled) {
-          setSnapshot(null);
-          setSnapshotError(err instanceof Error ? err.message : "Failed to fetch dashboard data.");
-        }
-      } finally {
-        if (!cancelled) setIsSnapshotLoading(false);
-      }
-    };
-    void run();
-    return () => { cancelled = true; };
-  }, [session.publicKey]);
+  const loadSnapshot = () => refetch();
 
   // ── Template handlers ─────────────────────────────────────────────────────
 
@@ -619,19 +583,19 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   // ── Optimistic helpers ────────────────────────────────────────────────────
 
   const removeStreamLocally = (streamId: string) => {
-    setSnapshot((prev) => {
+    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => {
       if (!prev) return prev;
       return { ...prev, outgoingStreams: prev.outgoingStreams.map((s) => s.id === streamId ? { ...s, status: "Cancelled", isActive: false } : s), activeStreamsCount: Math.max(0, prev.activeStreamsCount - 1) };
     });
   };
 
   const topUpStreamLocally = (streamId: string, amount: number) => {
-    setSnapshot((prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: prev.outgoingStreams.map((s) => s.id === streamId ? { ...s, deposited: s.deposited + amount } : s) }; });
+    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: prev.outgoingStreams.map((s) => s.id === streamId ? { ...s, deposited: s.deposited + amount } : s) }; });
   };
 
   const addStreamLocally = (data: StreamFormData) => {
     const newStream: Stream = { id: `stream-${Date.now()}`, date: new Date().toISOString().split("T")[0] ?? "", recipient: shortenPublicKey(data.recipient), amount: parseFloat(data.amount), token: data.token, status: "Active", deposited: parseFloat(data.amount), withdrawn: 0, ratePerSecond: 0, lastUpdateTime: Math.floor(Date.now() / 1000), isActive: true };
-    setSnapshot((prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: [newStream, ...prev.outgoingStreams], activeStreamsCount: prev.activeStreamsCount + 1 }; });
+    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: [newStream, ...prev.outgoingStreams], activeStreamsCount: prev.activeStreamsCount + 1 }; });
   };
 
   // ── Contract handlers ─────────────────────────────────────────────────────
@@ -685,8 +649,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setWithdrawingIncomingStreamId(stream.id);
     try {
       await sorobanWithdraw(session, { streamId: BigInt(stream.id.replace(/\D/g, "") || "0") });
-      const refreshed = await fetchDashboardData(session.publicKey);
-      setSnapshot(refreshed);
+      await queryClient.invalidateQueries({ queryKey: dashboardQueryKey(session.publicKey) });
       toast.success("Withdrawal successful!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
