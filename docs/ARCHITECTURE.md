@@ -103,6 +103,8 @@ Rules used by backend/domain logic:
 
 ## Authentication Flow
 
+See [Authentication Documentation](../backend/docs/AUTHENTICATION.md) for full details.
+
 ```mermaid
 sequenceDiagram
     participant U as User Wallet (Freighter)

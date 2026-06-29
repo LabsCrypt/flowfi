@@ -6,8 +6,6 @@
 
 _Programmable, real-time payment streams and recurring subscriptions._
 
-i just need to create a draft pr
-
 ## Overview
 
 FlowFi allows users to create continuous payment streams and recurring subscriptions using stablecoins on the Stellar network. By leveraging Soroban smart contracts, FlowFi enables autonomous accurate-to-the-second distribution of funds.
@@ -197,6 +195,7 @@ stellar contract invoke --id CONTRACT_ID --source YOUR_SECRET_KEY --network http
 
 The FlowFi backend API uses URL-based versioning. All endpoints are prefixed with a version (e.g., `/v1/streams`).
 
+- **Authentication**: [backend/docs/AUTHENTICATION.md](backend/docs/AUTHENTICATION.md)
 - **API Versioning Guide**: [backend/docs/API_VERSIONING.md](backend/docs/API_VERSIONING.md)
 - **Deprecation Policy**: [backend/docs/DEPRECATION_POLICY.md](backend/docs/DEPRECATION_POLICY.md)
 - **Sandbox Mode**: [backend/docs/SANDBOX_MODE.md](backend/docs/SANDBOX_MODE.md) - Test without affecting production data
