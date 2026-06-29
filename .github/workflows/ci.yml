@@ -2,6 +2,10 @@
 # Covers frontend linting/build, backend build/test, and Soroban contract build/test.
 name: CI
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, develop]
@@ -35,8 +39,19 @@ jobs:
         working-directory: frontend
 
       - name: Run Frontend Tests
-        run: npm test
+        run: npm run test:coverage
         working-directory: frontend
+
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          name: frontend-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Build
         run: npm run build
