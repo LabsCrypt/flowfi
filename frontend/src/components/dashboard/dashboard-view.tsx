@@ -15,7 +15,6 @@ import toast from "react-hot-toast";
  *  - Error state: "Failed to load streams" with a retry button
  */
 
-
 import {
   getDashboardAnalytics,
   fetchDashboardData,
@@ -114,7 +113,7 @@ function SkeletonCard({ className = "" }: { className?: string }) {
     >
       {/* shimmer sweep */}
       <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-    </>
+    </div>
   );
 }
 
