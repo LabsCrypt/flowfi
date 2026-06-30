@@ -61,6 +61,9 @@ describe('Stream Controller', () => {
       },
       query: {},
       params: {},
+      user: {
+        publicKey: 'GSENDER',
+      },
     };
     res = {
       status: vi.fn().mockReturnThis(),
@@ -88,6 +91,25 @@ describe('Stream Controller', () => {
       req.body.ratePerSecond = '0';
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should return 400 for malformed numeric fields', async () => {
+      req.body.ratePerSecond = 'abc';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should return 400 when a required numeric field is missing', async () => {
+      delete req.body.depositedAmount;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should return 403 when caller does not match sender on upsert', async () => {
+      (req as any).user = { publicKey: 'GNOTSENDER' };
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
     });
   });
 

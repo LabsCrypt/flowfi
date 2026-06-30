@@ -59,7 +59,7 @@ describe('POST /v1/streams', () => {
     const mockStream = {
       id: 'uuid-123',
       streamId: 1,
-      sender: 'GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA',
+      sender: 'GTEST_USER_PUBLIC_KEY',
       recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
       tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
       ratePerSecond: '100',
@@ -80,7 +80,7 @@ describe('POST /v1/streams', () => {
 
     const validData = {
       streamId: '1',
-      sender: 'GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA',
+      sender: 'GTEST_USER_PUBLIC_KEY',
       recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
       tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
       ratePerSecond: '100',
@@ -101,6 +101,68 @@ describe('POST /v1/streams', () => {
     });
   });
 
+  it('should return 400 for malformed numeric fields', async () => {
+    const invalidData = {
+      streamId: '2',
+      sender: 'GTEST_USER_PUBLIC_KEY',
+      recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
+      tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
+      ratePerSecond: 'not-a-number',
+      depositedAmount: 'also-not-a-number',
+      startTime: '1700000000',
+    };
+
+    const response = await request(app)
+      .post('/v1/streams')
+      .send(invalidData)
+      .set('Accept', 'application/json');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toHaveProperty('error');
+    expect(prisma.stream.upsert).not.toHaveBeenCalled();
+  });
+
+  it('should return 400 when a required numeric field is missing', async () => {
+    const invalidData = {
+      streamId: '2',
+      sender: 'GTEST_USER_PUBLIC_KEY',
+      recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
+      tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
+      ratePerSecond: '100',
+      startTime: '1700000000',
+    };
+
+    const response = await request(app)
+      .post('/v1/streams')
+      .send(invalidData)
+      .set('Accept', 'application/json');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toHaveProperty('error');
+    expect(prisma.stream.upsert).not.toHaveBeenCalled();
+  });
+
+  it('should return 403 when an authenticated non-owner attempts to reactivate a stream via upsert', async () => {
+    const validData = {
+      streamId: '2',
+      sender: 'GDIFFERENT_SENDER_PUBLIC_KEY',
+      recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
+      tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
+      ratePerSecond: '100',
+      depositedAmount: '86400',
+      startTime: '1700000000',
+    };
+
+    const response = await request(app)
+      .post('/v1/streams')
+      .send(validData)
+      .set('Accept', 'application/json');
+
+    expect(response.status).toBe(403);
+    expect(response.body).toHaveProperty('error', 'Forbidden');
+    expect(prisma.stream.upsert).not.toHaveBeenCalled();
+  });
+
   it('should return 500 when stream creation fails (DB error)', async () => {
     (prisma.stream.upsert as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('DB connection failed')
@@ -108,7 +170,7 @@ describe('POST /v1/streams', () => {
 
     const validData = {
       streamId: '2',
-      sender: 'GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA',
+      sender: 'GTEST_USER_PUBLIC_KEY',
       recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
       tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
       ratePerSecond: '100',
@@ -174,9 +236,9 @@ describe('GET /v1/users/:address/summary', () => {
   it('returns accurate outgoing/incoming aggregates and claimable sum', async () => {
     vi.mocked(prisma.stream.findMany)
       .mockResolvedValueOnce([
-        { 
-          id: '1', 
-          createdAt: new Date(), 
+        {
+          id: '1',
+          createdAt: new Date(),
           updatedAt: new Date(),
           streamId: 1,
           sender: 'GSENDER',
@@ -184,18 +246,18 @@ describe('GET /v1/users/:address/summary', () => {
           tokenAddress: 'TOKEN',
           ratePerSecond: '10',
           depositedAmount: '100',
-          withdrawnAmount: '30', 
+          withdrawnAmount: '30',
           startTime: 1000,
           lastUpdateTime: 2000,
           isPaused: false,
       endTime: null,
       pausedAt: null,
       totalPausedDuration: 0,
-      isActive: true 
+      isActive: true
         },
-        { 
-          id: '2', 
-          createdAt: new Date(), 
+        {
+          id: '2',
+          createdAt: new Date(),
           updatedAt: new Date(),
           streamId: 2,
           sender: 'GSENDER2',
@@ -203,14 +265,14 @@ describe('GET /v1/users/:address/summary', () => {
           tokenAddress: 'TOKEN2',
           ratePerSecond: '20',
           depositedAmount: '200',
-          withdrawnAmount: '20', 
+          withdrawnAmount: '20',
           startTime: 1000,
           lastUpdateTime: 2000,
           isPaused: false,
       endTime: null,
       pausedAt: null,
       totalPausedDuration: 0,
-      isActive: false 
+      isActive: false
         },
       ])
       .mockResolvedValueOnce([
@@ -271,7 +333,7 @@ describe('GET /v1/users/:address/summary', () => {
 
   it('caches summary results for repeated requests within TTL', async () => {
     vi.mocked(prisma.stream.findMany)
-      .mockResolvedValueOnce([{ 
+      .mockResolvedValueOnce([{
         id: '5',
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -288,7 +350,7 @@ describe('GET /v1/users/:address/summary', () => {
       endTime: null,
       pausedAt: null,
       totalPausedDuration: 0,
-      isActive: true 
+      isActive: true
       }])
       .mockResolvedValueOnce([]);
 
