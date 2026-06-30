@@ -14,6 +14,7 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
     },
   },
 }));
@@ -81,6 +82,6 @@ describe('Withdraw Handler', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, txHash: 'tx123' }));
-    expect(prisma.streamEvent.create).toHaveBeenCalled();
+    expect(prisma.streamEvent.upsert).toHaveBeenCalled();
   });
 });

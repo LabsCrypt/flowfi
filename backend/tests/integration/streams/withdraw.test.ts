@@ -15,6 +15,7 @@ const {
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
     },
   },
   currentUser: { publicKey: '' },
@@ -116,9 +117,9 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
     );
 
     // Verify event creation
-    expect(mockPrisma.streamEvent.create).toHaveBeenCalledWith(
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        create: expect.objectContaining({
           eventType: 'WITHDRAWN',
           streamId,
           transactionHash: 'withdraw-tx-hash',

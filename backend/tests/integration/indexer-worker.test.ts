@@ -377,4 +377,63 @@ describe('Indexer worker integration (mocked DB)', () => {
       }),
     );
   });
+
+  it('Indexer updates ledgerSequence and timestamp on existing placeholder events (regression test for race condition)', async () => {
+    const event = {
+      id: 'paused-event-race',
+      txHash: 'hash-paused-race',
+      ledger: 102,
+      inSuccessfulContractCall: true,
+      topic: [
+        xdr.ScVal.scvSymbol('stream_paused'),
+        nativeToScVal(BigInt(streamId), { type: 'u64' }),
+      ],
+      value: xdr.ScVal.scvMap([
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('sender'),
+          val: nativeToScVal(sender, { type: 'address' }),
+        }),
+        new xdr.ScMapEntry({
+          key: xdr.ScVal.scvSymbol('paused_at'),
+          val: nativeToScVal(BigInt(1700000100), { type: 'u64' }),
+        }),
+      ]),
+    } as any;
+
+    mockPrisma.stream.findUnique.mockResolvedValue({
+      streamId,
+      sender,
+      recipient,
+      tokenAddress,
+      depositedAmount: '1000',
+      ratePerSecond: '10',
+      isActive: true,
+      startTime: 1700000000n,
+      updatedAt: new Date(),
+    });
+
+    await sorobanEventWorker.processEvent(event);
+
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'hash-paused-race',
+            eventType: 'PAUSED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId,
+          eventType: 'PAUSED',
+          transactionHash: 'hash-paused-race',
+          ledgerSequence: 102,
+        }),
+        update: expect.objectContaining({
+          ledgerSequence: 102,
+          timestamp: expect.any(BigInt),
+        }),
+      }),
+    );
+  });
 });
+

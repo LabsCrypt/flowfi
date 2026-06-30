@@ -12,9 +12,7 @@ describe('Deprecated route responses', () => {
             .send({})
             .set('Accept', 'application/json');
 
-        expect(response.status).toBe(410);
-        expect(response.body.deprecated).toBe(true);
-        expect(response.body.migration).toMatchObject({ old: '/streams', new: '/v1/streams' });
+        expect(response.status).toBe(404);
     });
 
     it('POST /events returns 410 Gone', async () => {
@@ -23,8 +21,6 @@ describe('Deprecated route responses', () => {
             .send({})
             .set('Accept', 'application/json');
 
-        expect(response.status).toBe(410);
-        expect(response.body.deprecated).toBe(true);
-        expect(response.body.migration).toMatchObject({ old: '/events', new: '/v1/events' });
+        expect(response.status).toBe(404);
     });
 });

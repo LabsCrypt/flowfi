@@ -16,6 +16,7 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
     },
   },
 }));
