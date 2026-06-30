@@ -342,12 +342,12 @@ impl StreamContract {
 
         let elapsed = effective_now.saturating_sub(stream.last_update_time);
 
-        // Use checked_sub for deposited - withdrawn calculation
-        // Underflow (withdrawn > deposited) falls back to 0.
+        // Clamp to 0: withdrawn_amount should never exceed deposited_amount in
+        // normal flow, but guard defensively so the function never returns negative.
         let remaining = stream
             .deposited_amount
-            .checked_sub(stream.withdrawn_amount)
-            .unwrap_or_default();
+            .saturating_sub(stream.withdrawn_amount)
+            .max(0);
 
         // Use checked_mul to prevent overflow when multiplying rate * elapsed.
         // If overflow would occur, cap at the remaining balance.

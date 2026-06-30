@@ -1042,6 +1042,36 @@ fn test_claimable_max_i128_rate_overflow() {
     assert_eq!(withdrawn, 1_000);
 }
 
+// ─── #795 calculate_claimable underflow guard ─────────────────────────────────
+
+#[test]
+fn test_calculate_claimable_underflow_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Forcibly set withdrawn_amount > deposited_amount to exercise the underflow guard.
+    let mut stream = client.get_stream(&stream_id).unwrap();
+    stream.withdrawn_amount = stream.deposited_amount + 1;
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), &stream);
+    });
+
+    // calculate_claimable uses checked_sub(...).unwrap_or_default(), so the
+    // underflow must return 0 rather than panicking or wrapping.
+    let claimable = client.get_claimable_amount(&stream_id).unwrap();
+    assert_eq!(claimable, 0);
+}
+
 // ─── #232 create_stream edge cases ───────────────────────────────────────────
 
 #[test]
