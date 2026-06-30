@@ -8,7 +8,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // User model - represents Stellar wallet addresses interacting with the protocol
@@ -67,8 +66,16 @@ model StreamEvent {
   // Relations
   stream          Stream   @relation(fields: [streamId], references: [streamId])
 
+  @@unique([transactionHash, eventType])
   @@index([streamId])
   @@index([eventType])
   @@index([timestamp])
   @@index([transactionHash])
+}
+
+// IndexerState model - tracks indexer cursor for resumable event processing
+model IndexerState {
+  id         String   @id @default("singleton")
+  lastLedger Int      @default(0)
+  updatedAt  DateTime @updatedAt
 }
