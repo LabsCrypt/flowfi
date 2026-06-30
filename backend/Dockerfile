@@ -6,6 +6,7 @@ COPY package*.json ./
 RUN npm install
 
 COPY tsconfig.json ./
+COPY prisma.config.ts ./
 COPY src ./src
 COPY prisma ./prisma
 
