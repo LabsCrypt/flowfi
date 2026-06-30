@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { fetchIncomingStreams, type IncomingStreamRecord } from "@/lib/api/streams";
+import { logger } from "@/lib/logger";
 import {
   withdrawFromStream,
   type SorobanResult,
@@ -48,7 +49,9 @@ export function useWithdrawIncomingStream(
       });
     },
     onMutate: async (stream) => {
-      if (!publicKey) return;
+      if (!publicKey) {
+        return {};
+      }
 
       // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
       await queryClient.cancelQueries({
@@ -95,6 +98,11 @@ export function useWithdrawIncomingStream(
     onSuccess: async (result, stream, onMutateResult) => {
       if (publicKey) {
         const targetWithdrawn = onMutateResult?.expectedWithdrawn ?? stream.withdrawn;
+        const ctx = context as {
+          previousStreams?: IncomingStreamRecord[];
+          expectedWithdrawn?: number;
+        };
+        const targetWithdrawn = ctx.expectedWithdrawn ?? stream.withdrawn;
         // Start polling in the background without blocking the mutation
         pollIndexerForWithdraw(
           publicKey,
@@ -112,6 +120,15 @@ export function useWithdrawIncomingStream(
         queryClient.setQueryData(
           incomingStreamsQueryKey(publicKey),
           onMutateResult.previousStreams,
+    onError: (error, stream, context) => {
+      const ctx = context as {
+        previousStreams?: IncomingStreamRecord[];
+        expectedWithdrawn?: number;
+      };
+      if (publicKey && ctx?.previousStreams) {
+        queryClient.setQueryData(
+          incomingStreamsQueryKey(publicKey),
+          ctx.previousStreams,
         );
       }
       options?.onError?.(error, stream);
@@ -143,7 +160,7 @@ async function pollIndexerForWithdraw(
         return;
       }
     } catch (err) {
-      console.warn("Error polling indexer for withdraw:", err);
+      logger.warn("Error polling indexer for withdraw:", err);
     }
     delay *= 2;
   }

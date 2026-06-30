@@ -1,4 +1,5 @@
 import type { WalletSession } from "@/lib/wallet";
+import { logger } from "@/lib/logger";
 
 const CONTRACT_ID =
   process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID ?? "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
@@ -182,7 +183,7 @@ function mockTxHash(): string {
 }
 
 async function mockCall(label: string): Promise<SorobanResult> {
-  console.info(`[soroban:mock] ${label}`);
+  logger.info(`[soroban:mock] ${label}`);
   await wait(MOCK_DELAY_MS);
   return { success: true, txHash: mockTxHash() };
 }

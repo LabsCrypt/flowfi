@@ -5,6 +5,8 @@ import { Loader2, CheckCircle, XCircle, ExternalLink, RefreshCw, Clock, Ban, Fil
 import toast from "react-hot-toast";
 import type { BackendStream } from "@/lib/api-types";
 import { formatAmount } from "@/utils/amount";
+import { getApiBaseUrl } from "@/lib/api/_shared";
+import { logger } from "@/lib/logger";
 
 /**
  * TransactionTracker - Shared component for tracking on-chain transaction lifecycle
@@ -56,7 +58,7 @@ interface TransactionTrackerProps {
 const STELLAR_EXPERT_BASE = process.env.NEXT_PUBLIC_STELLAR_EXPERT_URL ||
   "https://stellar.expert/explorer/testnet/tx";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+const API_BASE_URL = `${getApiBaseUrl()}/v1`;
 
 const POLL_INTERVAL = 3000; // 3 seconds as per requirements
 const MAX_POLL_ATTEMPTS = 20; // Max 1 minute of polling
@@ -94,7 +96,7 @@ export default function TransactionTracker({
         .then(data => {
           if (data) setPreviousStreamData(data);
         })
-        .catch(console.error);
+        .catch(logger.error);
     }
   }, [status, streamId, previousStreamData]);
 
@@ -132,7 +134,7 @@ export default function TransactionTracker({
         }
       } catch (err) {
         if (!cancelled) {
-          console.error("Polling error:", err);
+          logger.error("Polling error:", err);
         }
       }
 
