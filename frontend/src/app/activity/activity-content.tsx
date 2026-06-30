@@ -8,11 +8,11 @@ import { Button } from "@/components/ui/Button";
 import { Loader2, Download } from "lucide-react";
 import { formatAmount } from "@/lib/amount";
 import { downloadCSV } from "@/utils/csvExport";
+import { getApiBaseUrl } from "@/lib/api/_shared";
+import { logger } from "@/lib/logger";
 
 const PAGE_SIZE = 10;
-const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001"
-).replace(/\/+$/, "");
+const API_BASE_URL = getApiBaseUrl();
 
 const TABS = [
   { id: "ALL", label: "All" },
@@ -62,7 +62,7 @@ export default function ActivityContent() {
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        console.error("Failed to fetch activity:", error);
+        logger.error("Failed to fetch activity:", error);
         if (!append) setEvents([]);
         setHasMore(false);
       } finally {

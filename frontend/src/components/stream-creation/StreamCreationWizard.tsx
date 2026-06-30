@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { hasValidPrecision } from "@/lib/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import { logger } from "@/lib/logger";
 import { Stepper } from "../ui/Stepper";
 import { Button } from "../ui/Button";
 import { RecipientStep } from "./RecipientStep";
@@ -321,7 +322,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         setCurrentStep(currentStep + 1);
         // Scroll to top when moving to next step
         const modal = document.querySelector('.glass-card');
-        if (modal) {
+        if (modal && typeof modal.scrollTo === 'function') {
           modal.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }
@@ -338,7 +339,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
       // Scroll to top when going back
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (typeof window.scrollTo === 'function') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   };
 
@@ -361,7 +364,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           return;
         }
       } catch (e) {
-        console.warn("Polling error:", e);
+        logger.warn("Polling error:", e);
       }
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
     }
@@ -384,7 +387,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         await startPolling(formData.recipient);
         
       } catch (error) {
-        console.error("Failed to create stream:", error);
+        logger.error("Failed to create stream:", error);
         setIsSubmitting(false);
       }
     } else {
