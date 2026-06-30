@@ -512,9 +512,11 @@ impl StreamContract {
             token_client.transfer(&contract_address, &sender, &refunded_amount);
         }
 
-        // Mark stream as inactive
+        // Mark stream as inactive and clear any pause state
         stream.is_active = false;
         stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = None;
         stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
@@ -588,6 +590,12 @@ impl StreamContract {
         let mut stream = load_stream(&env, stream_id)?;
         Self::validate_stream_ownership(&stream, &sender)?;
 
+        // Reject if the stream is not in Paused status — this covers streams
+        // that were cancelled while paused (is_active=false, paused=true).
+        if stream.status != StreamStatus::Paused {
+            return Err(StreamError::StreamInactive);
+        }
+
         if !stream.paused {
             return Err(StreamError::StreamInactive);
         }
@@ -623,6 +631,20 @@ impl StreamContract {
     }
 
     // ─── Read-only Queries ────────────────────────────────────────────────────
+
+    /// Returns the total number of streams ever created (monotonically increasing).
+    ///
+    /// This is the global stream ID counter, not the count of currently active
+    /// streams. It equals the highest stream ID that has been assigned, making
+    /// it useful for cursor-based or offset pagination without a full DB scan.
+    ///
+    /// Returns `0` on a freshly-deployed contract where no stream has been created.
+    pub fn stream_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&crate::types::DataKey::StreamCounter)
+            .unwrap_or(0)
+    }
 
     /// Returns the stream record for `stream_id`, or `None` if it does not exist.
     pub fn get_stream(env: Env, stream_id: u64) -> Option<Stream> {
