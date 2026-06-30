@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
 import logger from "../logger.js";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/prisma/index.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
