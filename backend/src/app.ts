@@ -1,5 +1,11 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+
+// Globally handle BigInt serialization in JSON responses
+(BigInt.prototype as any).toJSON = function () {
+  return Number(this);
+};
+
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './config/swagger.js';
 import { apiVersionMiddleware, type VersionedRequest } from './middleware/api-version.middleware.js';

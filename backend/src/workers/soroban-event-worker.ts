@@ -1,5 +1,6 @@
 import { rpc, xdr, StrKey } from '@stellar/stellar-sdk';
-import { prisma, Prisma } from '../lib/prisma.js';
+import { prisma } from '../lib/prisma.js';
+import { Prisma } from '../generated/prisma/index.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { sseService } from '../services/sse.service.js';
 import logger from '../logger.js';
@@ -349,7 +350,7 @@ export class SorobanEventWorker {
     const newTreasury = decodeAddress(body['new_treasury']);
     const oldFeeRateBps = decodeU32(body['old_fee_rate_bps']);
     const newFeeRateBps = decodeU32(body['new_fee_rate_bps']);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.ensureSystemStream(tx);
@@ -370,7 +371,10 @@ export class SorobanEventWorker {
             new_fee_rate_bps: newFeeRateBps,
           }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     });
 
@@ -397,7 +401,7 @@ export class SorobanEventWorker {
 
     const previousAdmin = decodeAddress(body['previous_admin']);
     const newAdmin = decodeAddress(body['new_admin']);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.ensureSystemStream(tx);
@@ -411,12 +415,14 @@ export class SorobanEventWorker {
           ledgerSequence: event.ledger,
           timestamp,
           metadata: JSON.stringify({
-            previous_admin: previousAdmin,
-            new_admin: newAdmin,
-            transactionHash: event.txHash,
+            previousAdmin,
+            newAdmin,
           }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     });
 
@@ -454,13 +460,13 @@ export class SorobanEventWorker {
     const tokenAddress = decodeAddress(body['token_address']);
     const ratePerSecond = decodeI128(body['rate_per_second']);
     const depositedAmount = decodeI128(body['deposited_amount']);
-    const startTime = Number(decodeU64(body['start_time']));
+    const startTime = decodeU64(body['start_time']);
 
     const ratePerSecondBigInt = BigInt(ratePerSecond);
     const endTime =
       ratePerSecondBigInt === 0n
         ? null
-        : startTime + Number(BigInt(depositedAmount) / ratePerSecondBigInt);
+        : startTime + (BigInt(depositedAmount) / ratePerSecondBigInt);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.user.upsert({
@@ -518,7 +524,10 @@ export class SorobanEventWorker {
             timestamp: startTime,
             metadata: JSON.stringify({ tokenAddress, ratePerSecond }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp: startTime,
+          },
         });
       }
     });
@@ -549,7 +558,7 @@ export class SorobanEventWorker {
 
     const amount = decodeI128(body['amount']);
     const newDepositedAmount = decodeI128(body['new_deposited_amount']);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const stream = await tx.stream.findUniqueOrThrow({
@@ -561,9 +570,9 @@ export class SorobanEventWorker {
       const newEndTime =
         ratePerSecondBigInt === 0n
           ? null
-          : stream.startTime +
-          Number(BigInt(newDepositedAmount) / ratePerSecondBigInt) +
-          stream.totalPausedDuration;
+          : BigInt(stream.startTime) +
+          (BigInt(newDepositedAmount) / ratePerSecondBigInt) +
+          BigInt(stream.totalPausedDuration);
 
       await tx.stream.update({
         where: { streamId },
@@ -592,7 +601,10 @@ export class SorobanEventWorker {
             timestamp,
             metadata: JSON.stringify({ newDepositedAmount }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });
@@ -620,7 +632,7 @@ export class SorobanEventWorker {
 
     const recipient = decodeAddress(body['recipient']);
     const amount = decodeI128(body['amount']);
-    const timestamp = Number(decodeU64(body['timestamp']));
+    const timestamp = decodeU64(body['timestamp']);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const stream = await tx.stream.findUniqueOrThrow({
@@ -642,9 +654,9 @@ export class SorobanEventWorker {
 
       const existingEvent = await tx.streamEvent.findUnique({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
       } else {
         await tx.streamEvent.upsert({
@@ -658,7 +670,10 @@ export class SorobanEventWorker {
             timestamp,
             metadata: JSON.stringify({ recipient }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });
@@ -686,7 +701,7 @@ export class SorobanEventWorker {
 
     const amountWithdrawn = decodeI128(body['amount_withdrawn']);
     const refundedAmount = decodeI128(body['refunded_amount']);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -698,27 +713,22 @@ export class SorobanEventWorker {
         },
       });
 
-      const existingEvent = await tx.streamEvent.findUnique({
+      await tx.streamEvent.upsert({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'CANCELLED' } },
-        select: { id: true },
+        create: {
+          streamId,
+          eventType: 'CANCELLED',
+          amount: refundedAmount,
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
+        },
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
-      if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CANCELLED`);
-      } else {
-        await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'CANCELLED' } },
-          create: {
-            streamId,
-            eventType: 'CANCELLED',
-            amount: refundedAmount,
-            transactionHash: event.txHash,
-            ledgerSequence: event.ledger,
-            timestamp,
-            metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
-          },
-          update: {},
-        });
-      }
     });
 
     sseService.broadcastToStream(String(streamId), 'stream.cancelled', {
@@ -744,7 +754,7 @@ export class SorobanEventWorker {
 
     const recipient = decodeAddress(body['recipient']);
     const totalWithdrawn = decodeI128(body['total_withdrawn']);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -756,27 +766,22 @@ export class SorobanEventWorker {
         },
       });
 
-      const existingEvent = await tx.streamEvent.findUnique({
+      await tx.streamEvent.upsert({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'COMPLETED' } },
-        select: { id: true },
+        create: {
+          streamId,
+          eventType: 'COMPLETED',
+          amount: totalWithdrawn,
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ recipient }),
+        },
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
-      if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=COMPLETED`);
-      } else {
-        await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'COMPLETED' } },
-          create: {
-            streamId,
-            eventType: 'COMPLETED',
-            amount: totalWithdrawn,
-            transactionHash: event.txHash,
-            ledgerSequence: event.ledger,
-            timestamp,
-            metadata: JSON.stringify({ recipient }),
-          },
-          update: {},
-        });
-      }
     });
 
     sseService.broadcastToStream(String(streamId), 'stream.completed', {
@@ -803,7 +808,7 @@ export class SorobanEventWorker {
     const treasury = decodeAddress(body['treasury']);
     const feeAmount = decodeI128(body['fee_amount']);
     const token = decodeAddress(body['token']);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     const existingEvent = await prisma.streamEvent.findUnique({
       where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'FEE_COLLECTED' } },
@@ -823,7 +828,10 @@ export class SorobanEventWorker {
           timestamp,
           metadata: JSON.stringify({ treasury, token }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     }
 
@@ -850,8 +858,8 @@ export class SorobanEventWorker {
     }
 
     const sender = decodeAddress(body['sender']);
-    const pausedAt = Number(decodeU64(body['paused_at']));
-    const timestamp = Math.floor(Date.now() / 1000);
+    const pausedAt = decodeU64(body['paused_at']);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -865,9 +873,9 @@ export class SorobanEventWorker {
 
       const existingEvent = await tx.streamEvent.findUnique({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'PAUSED' } },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=PAUSED`);
       } else {
         await tx.streamEvent.upsert({
@@ -878,9 +886,12 @@ export class SorobanEventWorker {
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
             timestamp,
-            metadata: JSON.stringify({ sender, pausedAt }),
+            metadata: JSON.stringify({ sender, pausedAt: pausedAt.toString() }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });
@@ -907,8 +918,8 @@ export class SorobanEventWorker {
     }
 
     const sender = decodeAddress(body['sender']);
-    const newEndTime = Number(decodeU64(body['new_end_time']));
-    const timestamp = Math.floor(Date.now() / 1000);
+    const newEndTime = decodeU64(body['new_end_time']);
+    const timestamp = BigInt(Math.floor(Date.now() / 1000));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Get current stream to calculate paused duration
@@ -918,12 +929,12 @@ export class SorobanEventWorker {
       });
 
       // Calculate the duration of this pause interval
-      let additionalPausedDuration = 0;
+      let additionalPausedDuration = 0n;
       if (currentStream.pausedAt) {
-        additionalPausedDuration = timestamp - currentStream.pausedAt;
+        additionalPausedDuration = timestamp - BigInt(currentStream.pausedAt);
       }
 
-      const newTotalPausedDuration = currentStream.totalPausedDuration + additionalPausedDuration;
+      const newTotalPausedDuration = currentStream.totalPausedDuration + Number(additionalPausedDuration);
 
       await tx.stream.update({
         where: { streamId },
@@ -938,9 +949,9 @@ export class SorobanEventWorker {
 
       const existingEvent = await tx.streamEvent.findUnique({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'RESUMED' } },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=RESUMED`);
       } else {
         await tx.streamEvent.upsert({
@@ -953,12 +964,15 @@ export class SorobanEventWorker {
             timestamp,
             metadata: JSON.stringify({
               sender,
-              newEndTime,
-              pausedDuration: additionalPausedDuration,
+              newEndTime: newEndTime.toString(),
+              pausedDuration: Number(additionalPausedDuration),
               totalPausedDuration: newTotalPausedDuration,
             }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });

@@ -8,11 +8,11 @@ export interface ClaimableStreamState {
   ratePerSecond: string;
   depositedAmount: string;
   withdrawnAmount: string;
-  startTime: number;
-  lastUpdateTime: number;
+  startTime: bigint | number;
+  lastUpdateTime: bigint | number;
   isActive: boolean;
   isPaused: boolean;
-  pausedAt: number | null;
+  pausedAt: bigint | number | null;
   totalPausedDuration: number;
   updatedAt?: Date;
 }
@@ -62,11 +62,11 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
     stream.ratePerSecond,
     stream.depositedAmount,
     stream.withdrawnAmount,
-    stream.startTime,
-    stream.lastUpdateTime,
+    stream.startTime.toString(),
+    stream.lastUpdateTime.toString(),
     stream.isActive ? '1' : '0',
     stream.isPaused ? '1' : '0',
-    stream.pausedAt ?? 'null',
+    stream.pausedAt?.toString() ?? 'null',
     stream.totalPausedDuration,
   ].join(':');
 
@@ -114,14 +114,14 @@ export class ClaimableAmountService {
       };
     }
 
-    const anchorTime = BigInt(Math.max(0, stream.lastUpdateTime));
-    const nowTs = BigInt(Math.max(0, calculatedAt));
+    const anchorTime = BigInt(stream.lastUpdateTime) > 0n ? BigInt(stream.lastUpdateTime) : 0n;
+    const nowTs = BigInt(calculatedAt) > 0n ? BigInt(calculatedAt) : 0n;
     let elapsed = nowTs > anchorTime ? nowTs - anchorTime : 0n;
 
     // Paused duration is handled by the contract updating lastUpdateTime on resume,
     // but we still account for it if it's currently paused.
     if (stream.isPaused && stream.pausedAt !== null) {
-      const currentPauseStart = BigInt(Math.max(0, stream.pausedAt));
+      const currentPauseStart = BigInt(stream.pausedAt) > 0n ? BigInt(stream.pausedAt) : 0n;
       if (nowTs > currentPauseStart) {
         const currentPauseDuration = nowTs - currentPauseStart;
         elapsed = elapsed > currentPauseDuration ? elapsed - currentPauseDuration : 0n;

@@ -69,7 +69,7 @@ export const createStream = async (req: Request, res: Response) => {
     const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
 
     const parsedStreamId = Number.parseInt(streamId, 10);
-    const parsedStartTime = Number.parseInt(startTime, 10);
+    const parsedStartTime = BigInt(startTime);
     const parsedRatePerSecond = BigInt(ratePerSecond);
     const parsedDepositedAmount = BigInt(depositedAmount);
 
@@ -77,7 +77,7 @@ export const createStream = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid streamId: must be a valid integer' });
     }
 
-    if (!Number.isFinite(parsedStartTime) || parsedStartTime < 0) {
+    if (parsedStartTime < 0n) {
       return res.status(400).json({ error: 'Invalid startTime: must be a non-negative integer' });
     }
 
@@ -89,13 +89,13 @@ export const createStream = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid depositedAmount: must be greater than zero' });
     }
 
-    const endTime = parsedStartTime + Number(parsedDepositedAmount / parsedRatePerSecond);
+    const endTime = parsedStartTime + (parsedDepositedAmount / parsedRatePerSecond);
 
     const stream = await prisma.stream.upsert({
       where: { streamId: parsedStreamId },
       update: {
         isActive: true,
-        lastUpdateTime: Math.floor(Date.now() / 1000)
+        lastUpdateTime: BigInt(Math.floor(Date.now() / 1000))
       },
       create: {
         streamId: parsedStreamId,
@@ -632,21 +632,28 @@ export const pauseStream = async (req: Request, res: Response) => {
         where: { streamId: parsedStreamId },
         data: {
           isPaused: true,
-          pausedAt: now,
-          lastUpdateTime: now,
+          pausedAt: BigInt(now),
+          lastUpdateTime: BigInt(now),
         },
       });
 
-      // Create a PAUSED event
-      await prisma.streamEvent.create({
-        data: {
+      // Create or update a PAUSED event
+      await prisma.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: result.txHash,
+            eventType: 'PAUSED',
+          },
+        },
+        create: {
           streamId: parsedStreamId,
           eventType: 'PAUSED',
           transactionHash: result.txHash,
           ledgerSequence: 0, // Will be updated by event indexer
-          timestamp: now,
+          timestamp: BigInt(now),
           metadata: JSON.stringify({ pausedBy: authReq.user.publicKey }),
         },
+        update: {},
       });
 
       logger.info(`Stream ${parsedStreamId} paused by ${authReq.user.publicKey}`);
@@ -722,8 +729,8 @@ export const resumeStream = async (req: Request, res: Response) => {
 
       // Calculate pause duration and update the database
       const now = Math.floor(Date.now() / 1000);
-      const pausedAt = stream.pausedAt ?? now;
-      const pauseDuration = Math.max(0, now - pausedAt);
+      const pausedAt = stream.pausedAt ?? BigInt(now);
+      const pauseDuration = Math.max(0, now - Number(pausedAt));
       const totalPausedDuration = (stream.totalPausedDuration ?? 0) + pauseDuration;
 
       const updatedStream = await prisma.stream.update({
@@ -732,23 +739,30 @@ export const resumeStream = async (req: Request, res: Response) => {
           isPaused: false,
           pausedAt: null,
           totalPausedDuration,
-          lastUpdateTime: now,
+          lastUpdateTime: BigInt(now),
         },
       });
 
-      // Create a RESUMED event
-      await prisma.streamEvent.create({
-        data: {
+      // Create or update a RESUMED event
+      await prisma.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: result.txHash,
+            eventType: 'RESUMED',
+          },
+        },
+        create: {
           streamId: parsedStreamId,
           eventType: 'RESUMED',
           transactionHash: result.txHash,
           ledgerSequence: 0, // Will be updated by event indexer
-          timestamp: now,
+          timestamp: BigInt(now),
           metadata: JSON.stringify({
             resumedBy: authReq.user.publicKey,
             pauseDuration,
           }),
         },
+        update: {},
       });
 
       logger.info(`Stream ${parsedStreamId} resumed by ${authReq.user.publicKey}`);

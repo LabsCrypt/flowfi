@@ -117,22 +117,29 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
         where: { streamId: parsedStreamId },
         data: {
           withdrawnAmount: nextWithdrawnAmount,
-          lastUpdateTime: now,
+          lastUpdateTime: BigInt(now),
           isActive: isCompleted ? false : stream.isActive,
         },
       });
 
-      // Create a WITHDRAWN event
-      await prisma.streamEvent.create({
-        data: {
+      // Create or update a WITHDRAWN event
+      await prisma.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: result.txHash,
+            eventType: 'WITHDRAWN',
+          },
+        },
+        create: {
           streamId: parsedStreamId,
           eventType: 'WITHDRAWN',
           amount: claimable.claimableAmount,
           transactionHash: result.txHash,
           ledgerSequence: 0,
-          timestamp: now,
+          timestamp: BigInt(now),
           metadata: JSON.stringify({ withdrawnBy: req.user.publicKey }),
         },
+        update: {},
       });
 
       logger.info(`Stream ${parsedStreamId} withdrawn by ${req.user.publicKey}`);
