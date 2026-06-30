@@ -105,35 +105,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     return next(); // Not versioned, continue to deprecated handlers
 });
 
-// Legacy routes (deprecated - redirect to v1)
-// These will be removed in a future version
-// Only match unversioned requests
-app.use('/streams', (req: Request, res: Response, next) => {
-    res.status(410).json({
-        error: 'Deprecated endpoint',
-        message: 'This endpoint has been deprecated. Please use /v1/streams instead.',
-        deprecated: true,
-        migration: {
-            old: '/streams',
-            new: '/v1/streams',
-        },
-        sunsetDate: '2024-12-31',
-    });
-});
-
-app.use('/events', (req: Request, res: Response, next) => {
-    res.status(410).json({
-        error: 'Deprecated endpoint',
-        message: 'This endpoint has been deprecated. Please use /v1/events instead.',
-        deprecated: true,
-        migration: {
-            old: '/events',
-            new: '/v1/events',
-        },
-        sunsetDate: '2024-12-31',
-    });
-});
-
 // Health check routes
 app.use('/health', healthRoutes);
 
