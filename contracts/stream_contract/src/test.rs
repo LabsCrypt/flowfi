@@ -1246,6 +1246,35 @@ fn test_withdraw_full_balance() {
 }
 
 #[test]
+fn test_withdraw_rejects_double_withdraw_after_completion() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    // Fully drain the stream via withdraw.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    let claimed = client.withdraw(&recipient, &id);
+    assert_eq!(claimed, 500);
+
+    // Verify stream is now inactive and completed.
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Completed);
+
+    // Try to withdraw again — should return StreamInactive error.
+    assert_eq!(
+        client.try_withdraw(&recipient, &id),
+        Err(Ok(StreamError::StreamInactive))
+    );
+}
+
+#[test]
 fn test_top_up_extends_stream() {
     let env = Env::default();
     env.mock_all_auths();
