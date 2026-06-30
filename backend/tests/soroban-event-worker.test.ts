@@ -159,6 +159,65 @@ describe('SorobanEventWorker', () => {
       );
     });
 
+    it('applies a tokens_withdrawn event only once under indexer replay (Issue #802)', async () => {
+      const txHash = 'withdraw-tx-1';
+      const streamId = 7;
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'withdraw-event-1',
+        type: 'contract',
+        ledger: 2000,
+        ledgerClosedAt: '2024-06-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'tokens_withdrawn' } as any,
+          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '500' }) }) }) },
+            { key: () => ({ sym: () => 'timestamp' }), val: () => ({ u64: () => ({ toString: () => '1700000500' }) }) },
+          ] as any,
+        } as any,
+      };
+
+      // Simulate persistent DB state across both runs of the same event.
+      let withdrawn = '1000';
+      let eventExists = false;
+
+      const mockTx = {
+        streamEvent: {
+          findUnique: vi.fn().mockImplementation(async () => (eventExists ? { id: 'evt-row' } : null)),
+          create: vi.fn().mockImplementation(async () => { eventExists = true; return { id: 'evt-row' }; }),
+        },
+        stream: {
+          findUniqueOrThrow: vi.fn().mockImplementation(async () => ({ withdrawnAmount: withdrawn })),
+          update: vi.fn().mockImplementation(async ({ data }: any) => { withdrawn = data.withdrawnAmount; return { streamId }; }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // First processing applies the withdrawal: 1000 + 500 = 1500.
+      await (worker as any).handleTokensWithdrawn(mockEvent, mockEvent.topic![1]);
+      expect(withdrawn).toBe('1500');
+      expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
+
+      // Admin replay re-polls the same ledger and re-emits the identical event.
+      await (worker as any).handleTokensWithdrawn(mockEvent, mockEvent.topic![1]);
+      expect(withdrawn).toBe('1500'); // unchanged — no double count
+      expect(mockTx.stream.update).toHaveBeenCalledTimes(1); // financial field not touched again
+      expect(mockTx.streamEvent.create).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Duplicate StreamEvent skipped')
+      );
+    });
+
     it('should persist a zero-rate stream_created event without throwing', async () => {
       const txHash = 'zero-rate-tx-hash';
       const streamId = 77;
