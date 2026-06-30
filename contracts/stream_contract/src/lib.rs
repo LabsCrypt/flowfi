@@ -602,11 +602,8 @@ impl StreamContract {
         let remaining = stream
             .deposited_amount
             .saturating_sub(stream.withdrawn_amount);
-        let new_end_time = if stream.rate_per_second > 0 {
-            now + (remaining / stream.rate_per_second) as u64
-        } else {
-            now
-        };
+        // rate_per_second is guaranteed >= 1 due to create_stream's InvalidRate guard
+        let new_end_time = now + (remaining / stream.rate_per_second) as u64;
 
         stream.paused = false;
         stream.paused_at = None;
