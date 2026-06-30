@@ -108,7 +108,10 @@ jobs:
         run: |
           ls -la src/generated/prisma
           npm install @vitest/coverage-v8@2.1.9 --no-save
-          npx vitest run --coverage --reporter=basic
+          # Run unit + integration tests. The stream-lifecycle integration suite
+          # self-skips when Postgres is unreachable so a missing DB does not
+          # fail the suite (Closes #760).
+          npm test --silent -- --coverage --reporter=basic
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
