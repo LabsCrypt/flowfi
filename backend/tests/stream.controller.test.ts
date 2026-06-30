@@ -1,11 +1,24 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStream, listStreams, getStream, getStreamClaimableAmount, pauseStream, resumeStream } from '../src/controllers/stream.controller.js';
-import { prisma } from '../src/lib/prisma.js';
-import { claimableAmountService } from '../src/services/claimable.service.js';
-import * as sorobanService from '../src/services/sorobanService.js';
-import type { Request, Response } from 'express';
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  createStream,
+  listStreams,
+  getStream,
+  getStreamClaimableAmount,
+  pauseStream,
+  resumeStream,
+} from "../src/controllers/stream.controller.js";
+import { prisma } from "../src/lib/prisma.js";
+import { claimableAmountService } from "../src/services/claimable.service.js";
+import * as sorobanService from "../src/services/sorobanService.js";
+import type { Request, Response } from "express";
 
-vi.mock('../src/lib/prisma.js', () => ({
+type TestRequest = Partial<Request> & {
+  user?: {
+    publicKey: string;
+  };
+};
+
+vi.mock("../src/lib/prisma.js", () => ({
   prisma: {
     stream: {
       upsert: vi.fn(),
@@ -20,20 +33,20 @@ vi.mock('../src/lib/prisma.js', () => ({
   },
 }));
 
-vi.mock('../src/services/claimable.service.js', () => ({
+vi.mock("../src/services/claimable.service.js", () => ({
   claimableAmountService: {
     getClaimableAmount: vi.fn(),
   },
 }));
 
-vi.mock('../src/services/sorobanService.js', () => ({
+vi.mock("../src/services/sorobanService.js", () => ({
   isStale: vi.fn(),
   getStreamFromChain: vi.fn(),
   pauseStream: vi.fn(),
   resumeStream: vi.fn(),
 }));
 
-vi.mock('../src/logger.js', () => ({
+vi.mock("../src/logger.js", () => ({
   default: {
     info: vi.fn(),
     error: vi.fn(),
@@ -41,8 +54,8 @@ vi.mock('../src/logger.js', () => ({
   },
 }));
 
-describe('Stream Controller', () => {
-  let req: Partial<Request>;
+describe("Stream Controller", () => {
+  let req: TestRequest;
   let res: Partial<Response>;
 
   beforeEach(() => {
@@ -51,18 +64,18 @@ describe('Stream Controller', () => {
     (sorobanService.getStreamFromChain as any).mockResolvedValue(null);
     req = {
       body: {
-        streamId: '123',
-        sender: 'GSENDER',
-        recipient: 'GRECIPIENT',
-        tokenAddress: 'T1',
-        ratePerSecond: '10',
-        depositedAmount: '1000',
-        startTime: '1622505600',
+        streamId: "123",
+        sender: "GSENDER",
+        recipient: "GRECIPIENT",
+        tokenAddress: "T1",
+        ratePerSecond: "10",
+        depositedAmount: "1000",
+        startTime: "1622505600",
       },
       query: {},
       params: {},
       user: {
-        publicKey: 'GSENDER',
+        publicKey: "GSENDER",
       },
     };
     res = {
@@ -71,8 +84,8 @@ describe('Stream Controller', () => {
     };
   });
 
-  describe('createStream', () => {
-    it('should create a stream successfully', async () => {
+  describe("createStream", () => {
+    it("should create a stream successfully", async () => {
       (prisma.stream.upsert as any).mockResolvedValue({ streamId: 123 });
 
       await createStream(req as Request, res as Response);
@@ -81,54 +94,60 @@ describe('Stream Controller', () => {
       expect(prisma.stream.upsert).toHaveBeenCalled();
     });
 
-    it('should return 400 for invalid streamId', async () => {
-      req.body.streamId = 'abc';
+    it("should return 400 for invalid streamId", async () => {
+      req.body.streamId = "abc";
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
-    it('should return 400 for non-positive ratePerSecond', async () => {
-      req.body.ratePerSecond = '0';
+    it("should return 400 for non-positive ratePerSecond", async () => {
+      req.body.ratePerSecond = "0";
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
-    it('should return 400 for malformed numeric fields', async () => {
-      req.body.ratePerSecond = 'abc';
+    it("should return 400 for malformed numeric fields", async () => {
+      req.body.ratePerSecond = "abc";
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
-    it('should return 400 when a required numeric field is missing', async () => {
+    it("should return 400 when a required numeric field is missing", async () => {
       delete req.body.depositedAmount;
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
-    it('should return 403 when caller does not match sender on upsert', async () => {
-      (req as any).user = { publicKey: 'GNOTSENDER' };
+    it("should return 403 when caller does not match sender on upsert", async () => {
+      (req as any).user = { publicKey: "GNOTSENDER" };
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(403);
       expect(prisma.stream.upsert).not.toHaveBeenCalled();
     });
   });
 
-  describe('listStreams', () => {
-    it('should list streams with pagination', async () => {
-      req.query = { address: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ', limit: '10', offset: '0' };
+  describe("listStreams", () => {
+    it("should list streams with pagination", async () => {
+      req.query = {
+        address: "GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ",
+        limit: "10",
+        offset: "0",
+      };
       (prisma.stream.findMany as any).mockResolvedValue([]);
       (prisma.stream.count as any).mockResolvedValue(0);
 
       await listStreams(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ total: 0 }));
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ total: 0 }),
+      );
     });
   });
 
-  describe('getStream', () => {
-    it('should return 404 if stream not found', async () => {
-      req.params = { streamId: '999' };
+  describe("getStream", () => {
+    it("should return 404 if stream not found", async () => {
+      req.params = { streamId: "999" };
       (prisma.stream.findUnique as any).mockResolvedValue(null);
 
       await getStream(req as Request, res as Response);
@@ -136,38 +155,60 @@ describe('Stream Controller', () => {
       expect(res.status).toHaveBeenCalledWith(404);
     });
 
-    it('should return stream if found', async () => {
-      req.params = { streamId: '123' };
-      (prisma.stream.findUnique as any).mockResolvedValue({ streamId: 123, updatedAt: new Date() });
+    it("should return stream if found", async () => {
+      req.params = { streamId: "123" };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123,
+        updatedAt: new Date(),
+      });
 
       await getStream(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ streamId: 123 }));
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ streamId: 123 }),
+      );
     });
   });
 
-  describe('getStreamClaimableAmount', () => {
-    it('should return claimable amount', async () => {
-      req.params = { streamId: '123' };
-      (prisma.stream.findUnique as any).mockResolvedValue({ streamId: 123, updatedAt: new Date() });
-      (claimableAmountService.getClaimableAmount as any).mockReturnValue({ claimableAmount: '100' });
+  describe("getStreamClaimableAmount", () => {
+    it("should return claimable amount", async () => {
+      req.params = { streamId: "123" };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123,
+        updatedAt: new Date(),
+      });
+      (claimableAmountService.getClaimableAmount as any).mockReturnValue({
+        claimableAmount: "100",
+      });
 
       await getStreamClaimableAmount(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ claimableAmount: '100' }));
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ claimableAmount: "100" }),
+      );
     });
   });
 
-  describe('pauseStream', () => {
-    it('should pause stream', async () => {
-      req.params = { streamId: '123' };
-      req.body = { secret: 'S123' };
-      (req as any).user = { publicKey: 'GUSER1' };
-      (prisma.stream.findUnique as any).mockResolvedValue({ streamId: 123, sender: 'GUSER1', isPaused: false, isActive: true });
-      (sorobanService.pauseStream as any).mockResolvedValue({ txHash: 'tx123' });
-      (prisma.stream.update as any).mockResolvedValue({ streamId: 123, isPaused: true });
+  describe("pauseStream", () => {
+    it("should pause stream", async () => {
+      req.params = { streamId: "123" };
+      req.body = { secret: "S123" };
+      (req as any).user = { publicKey: "GUSER1" };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123,
+        sender: "GUSER1",
+        isPaused: false,
+        isActive: true,
+      });
+      (sorobanService.pauseStream as any).mockResolvedValue({
+        txHash: "tx123",
+      });
+      (prisma.stream.update as any).mockResolvedValue({
+        streamId: 123,
+        isPaused: true,
+      });
 
       await pauseStream(req as Request, res as Response);
 
@@ -175,14 +216,25 @@ describe('Stream Controller', () => {
     });
   });
 
-  describe('resumeStream', () => {
-    it('should resume stream', async () => {
-      req.params = { streamId: '123' };
-      req.body = { secret: 'S123' };
-      (req as any).user = { publicKey: 'GUSER1' };
-      (prisma.stream.findUnique as any).mockResolvedValue({ streamId: 123, sender: 'GUSER1', isPaused: true, isActive: true, pausedAt: Math.floor(Date.now() / 1000) });
-      (sorobanService.resumeStream as any).mockResolvedValue({ txHash: 'tx123' });
-      (prisma.stream.update as any).mockResolvedValue({ streamId: 123, isPaused: false });
+  describe("resumeStream", () => {
+    it("should resume stream", async () => {
+      req.params = { streamId: "123" };
+      req.body = { secret: "S123" };
+      (req as any).user = { publicKey: "GUSER1" };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123,
+        sender: "GUSER1",
+        isPaused: true,
+        isActive: true,
+        pausedAt: Math.floor(Date.now() / 1000),
+      });
+      (sorobanService.resumeStream as any).mockResolvedValue({
+        txHash: "tx123",
+      });
+      (prisma.stream.update as any).mockResolvedValue({
+        streamId: 123,
+        isPaused: false,
+      });
 
       await resumeStream(req as Request, res as Response);
 
