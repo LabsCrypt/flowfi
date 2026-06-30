@@ -44,6 +44,8 @@ export const subscribe = async (req: Request, res: Response) => {
     const { publicKey } = (req as AuthenticatedRequest).user;
     const { streams, users, all } = subscribeSchema.parse(req.query);
 
+    // Consistent with GET /v1/events/ (which requires requireAuth and is scoped to user's address),
+    // SSE subscriptions are also restricted to streams owned by the authenticated user.
     // Scope: only streams where the authenticated user is sender or recipient
     const ownedStreams = await prisma.stream.findMany({
       where: { OR: [{ sender: publicKey }, { recipient: publicKey }] },

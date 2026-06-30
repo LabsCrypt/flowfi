@@ -39,7 +39,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     res.setHeader('X-Download-Options', 'noopen');
     res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-    if (isProduction) {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'");
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    if (process.env.NODE_ENV === 'production') {
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
     next();
