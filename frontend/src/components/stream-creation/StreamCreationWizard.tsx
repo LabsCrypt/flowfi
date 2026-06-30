@@ -321,7 +321,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         setCurrentStep(currentStep + 1);
         // Scroll to top when moving to next step
         const modal = document.querySelector('.glass-card');
-        if (modal) {
+        if (modal && typeof modal.scrollTo === 'function') {
           modal.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }
@@ -338,7 +338,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
       // Scroll to top when going back
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (typeof window.scrollTo === 'function') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   };
 

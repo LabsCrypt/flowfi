@@ -48,7 +48,9 @@ export function useWithdrawIncomingStream(
       });
     },
     onMutate: async (stream) => {
-      if (!publicKey) return;
+      if (!publicKey) {
+        return {};
+      }
 
       // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
       await queryClient.cancelQueries({
@@ -94,7 +96,11 @@ export function useWithdrawIncomingStream(
     },
     onSuccess: async (result, stream, _variables, context) => {
       if (publicKey) {
-        const targetWithdrawn = context?.expectedWithdrawn ?? stream.withdrawn;
+        const ctx = context as {
+          previousStreams?: IncomingStreamRecord[];
+          expectedWithdrawn?: number;
+        };
+        const targetWithdrawn = ctx.expectedWithdrawn ?? stream.withdrawn;
         // Start polling in the background without blocking the mutation
         pollIndexerForWithdraw(
           publicKey,
@@ -108,10 +114,14 @@ export function useWithdrawIncomingStream(
       await options?.onSuccess?.(result, stream);
     },
     onError: (error, stream, context) => {
-      if (publicKey && context?.previousStreams) {
+      const ctx = context as {
+        previousStreams?: IncomingStreamRecord[];
+        expectedWithdrawn?: number;
+      };
+      if (publicKey && ctx?.previousStreams) {
         queryClient.setQueryData(
           incomingStreamsQueryKey(publicKey),
-          context.previousStreams,
+          ctx.previousStreams,
         );
       }
       options?.onError?.(error, stream);
