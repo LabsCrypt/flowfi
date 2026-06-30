@@ -1,5 +1,5 @@
 import { rpc, xdr, StrKey } from '@stellar/stellar-sdk';
-import { prisma } from '../lib/prisma.js';
+import { prisma, Prisma } from '../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { sseService } from '../services/sse.service.js';
 import logger from '../logger.js';
@@ -146,7 +146,7 @@ export class SorobanEventWorker {
     this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
   }
 
-  private async ensureSystemStream(tx: any): Promise<void> {
+  private async ensureSystemStream(tx: Prisma.TransactionClient): Promise<void> {
     const systemUser = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
     await tx.user.upsert({
       where: { publicKey: systemUser },
@@ -351,7 +351,7 @@ export class SorobanEventWorker {
     const newFeeRateBps = decodeU32(body['new_fee_rate_bps']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.ensureSystemStream(tx);
 
       await tx.streamEvent.upsert({
@@ -399,7 +399,7 @@ export class SorobanEventWorker {
     const newAdmin = decodeAddress(body['new_admin']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.ensureSystemStream(tx);
 
       await tx.streamEvent.upsert({
@@ -462,7 +462,7 @@ export class SorobanEventWorker {
         ? null
         : startTime + Number(BigInt(depositedAmount) / ratePerSecondBigInt);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.user.upsert({
         where: { publicKey: sender },
         create: { publicKey: sender },
@@ -551,7 +551,7 @@ export class SorobanEventWorker {
     const newDepositedAmount = decodeI128(body['new_deposited_amount']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const stream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
         select: { ratePerSecond: true, startTime: true, totalPausedDuration: true }
@@ -622,7 +622,7 @@ export class SorobanEventWorker {
     const amount = decodeI128(body['amount']);
     const timestamp = Number(decodeU64(body['timestamp']));
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const stream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
         select: { withdrawnAmount: true },
@@ -688,7 +688,7 @@ export class SorobanEventWorker {
     const refundedAmount = decodeI128(body['refunded_amount']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
         where: { streamId },
         data: {
@@ -746,7 +746,7 @@ export class SorobanEventWorker {
     const totalWithdrawn = decodeI128(body['total_withdrawn']);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
         where: { streamId },
         data: {
@@ -853,7 +853,7 @@ export class SorobanEventWorker {
     const pausedAt = Number(decodeU64(body['paused_at']));
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
         where: { streamId },
         data: {
@@ -910,7 +910,7 @@ export class SorobanEventWorker {
     const newEndTime = Number(decodeU64(body['new_end_time']));
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: any) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Get current stream to calculate paused duration
       const currentStream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
