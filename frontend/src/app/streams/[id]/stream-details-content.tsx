@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { getApiBaseUrl } from "@/lib/api/_shared";
+import { logger } from "@/lib/logger";
 import { ArrowLeft, Pause, Play, X, Plus, Download, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
@@ -42,7 +44,7 @@ interface StreamDetail {
   updatedAt: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+const API_BASE_URL = `${getApiBaseUrl()}/v1`;
 const EVENTS_PER_PAGE = 10;
 
 const TOKEN_SYMBOLS: Record<string, string> = {
@@ -116,7 +118,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
-      console.error("Failed to fetch events:", err);
+      logger.error("Failed to fetch events:", err);
     }
   }, [streamId]);
 

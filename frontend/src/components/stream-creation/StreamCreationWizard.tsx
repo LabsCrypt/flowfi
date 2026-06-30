@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { hasValidPrecision } from "@/lib/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import { logger } from "@/lib/logger";
 import { Stepper } from "../ui/Stepper";
 import { Button } from "../ui/Button";
 import { RecipientStep } from "./RecipientStep";
@@ -363,7 +364,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           return;
         }
       } catch (e) {
-        console.warn("Polling error:", e);
+        logger.warn("Polling error:", e);
       }
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
     }
@@ -386,7 +387,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         await startPolling(formData.recipient);
         
       } catch (error) {
-        console.error("Failed to create stream:", error);
+        logger.error("Failed to create stream:", error);
         setIsSubmitting(false);
       }
     } else {

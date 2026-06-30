@@ -6,6 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { fetchIncomingStreams, type IncomingStreamRecord } from "@/lib/api/streams";
+import { logger } from "@/lib/logger";
 import {
   withdrawFromStream,
   type SorobanResult,
@@ -153,7 +154,7 @@ async function pollIndexerForWithdraw(
         return;
       }
     } catch (err) {
-      console.warn("Error polling indexer for withdraw:", err);
+      logger.warn("Error polling indexer for withdraw:", err);
     }
     delay *= 2;
   }
