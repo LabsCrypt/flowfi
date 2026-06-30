@@ -16,7 +16,7 @@ describe('Global Security Headers Middleware', () => {
         expect(response.headers['x-frame-options']).toBe('DENY');
         expect(response.headers['referrer-policy']).toBe('no-referrer');
         expect(response.headers['content-security-policy']).toBe(
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'"
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'"
         );
         expect(response.headers['cross-origin-opener-policy']).toBe('same-origin');
         expect(response.headers['cross-origin-resource-policy']).toBe('same-origin');
