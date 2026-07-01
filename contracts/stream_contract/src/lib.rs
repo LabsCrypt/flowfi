@@ -1,4 +1,5 @@
 #![no_std]
+#![doc = include_str!("../README.md")]
 
 mod errors;
 mod events;
@@ -658,6 +659,7 @@ impl StreamContract {
     /// emits a `fee_collected` event, and returns the net amount.
     ///
     /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
+    /// If fee calculation truncates to 0, no transfer/event occurs and `amount` is unchanged.
     /// Time complexity: O(1).
     fn collect_fee(env: &Env, token_address: &Address, amount: i128, stream_id: u64) -> i128 {
         match try_load_config(env) {
