@@ -342,12 +342,12 @@ impl StreamContract {
 
         let elapsed = effective_now.saturating_sub(stream.last_update_time);
 
-        // Use checked_sub for deposited - withdrawn calculation
-        // Underflow (withdrawn > deposited) falls back to 0.
+        // Clamp to 0: withdrawn_amount should never exceed deposited_amount in
+        // normal flow, but guard defensively so the function never returns negative.
         let remaining = stream
             .deposited_amount
-            .checked_sub(stream.withdrawn_amount)
-            .unwrap_or_default();
+            .saturating_sub(stream.withdrawn_amount)
+            .max(0);
 
         // Use checked_mul to prevent overflow when multiplying rate * elapsed.
         // If overflow would occur, cap at the remaining balance.
@@ -431,7 +431,7 @@ impl StreamContract {
         // Validate stream is active and not paused
         Self::validate_stream_active(&stream)?;
         if stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamPaused);
         }
 
         let now = env.ledger().timestamp();
@@ -602,11 +602,8 @@ impl StreamContract {
         let remaining = stream
             .deposited_amount
             .saturating_sub(stream.withdrawn_amount);
-        let new_end_time = if stream.rate_per_second > 0 {
-            now + (remaining / stream.rate_per_second) as u64
-        } else {
-            now
-        };
+        // rate_per_second is guaranteed >= 1 due to create_stream's InvalidRate guard
+        let new_end_time = now + (remaining / stream.rate_per_second) as u64;
 
         stream.paused = false;
         stream.paused_at = None;

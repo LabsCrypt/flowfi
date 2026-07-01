@@ -15,8 +15,9 @@ import {
 } from "@/lib/soroban";
 import { shortenPublicKey } from "@/lib/wallet";
 import { formatAmount } from "@/utils/amount";
+import { getApiBaseUrl } from "@/lib/api/_shared";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+const API_BASE_URL = `${getApiBaseUrl()}/v1`;
 const TOKEN_DECIMALS = 7;
 
 interface StreamDetailsPageProps {

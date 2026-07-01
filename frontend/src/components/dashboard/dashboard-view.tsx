@@ -15,7 +15,7 @@ import toast from "react-hot-toast";
  *  - Error state: "Failed to load streams" with a retry button
  */
 
-import { Skeleton } from "@/components/ui/Skeleton";
+
 import {
   getDashboardAnalytics,
   fetchDashboardData,
@@ -108,8 +108,8 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 /** Shimmer card used as a placeholder while data loads */
 function SkeletonCard({ className = "" }: { className?: string }) {
   return (
-    <Skeleton
-      className={`relative overflow-hidden rounded-2xl ${className}`}
+    <div
+      className={`animate-pulse bg-gray-200 dark:bg-gray-700 rounded-2xl relative overflow-hidden ${className}`}
       aria-hidden="true"
     >
       {/* shimmer sweep */}

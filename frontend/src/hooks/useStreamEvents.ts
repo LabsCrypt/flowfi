@@ -28,6 +28,7 @@ export function useStreamEvents(
 ): UseStreamEventsReturn {
   const {
     streamIds = [],
+    // userPublicKeys = [],
     subscribeToAll = false,
     autoReconnect = true,
     maxRetryDelay = 30000,
