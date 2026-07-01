@@ -29,4 +29,9 @@ pub enum StreamError {
     InvalidTokenAddress = 10,
     /// `amount / duration` rounds to zero — the stream would lock tokens but never accrue.
     InvalidRate = 11,
+    /// `pause_stream` called on a stream that is already paused.
+    StreamAlreadyPaused = 12,
+    /// `resume_stream` called on a stream that is not currently paused.
+    StreamNotPaused = 13,
+
 }

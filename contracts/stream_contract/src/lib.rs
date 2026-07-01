@@ -540,9 +540,10 @@ impl StreamContract {
     /// Pause an active stream. Only the sender may pause.
     ///
     /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is already inactive.
+    /// - `StreamNotFound`        — no stream exists with `stream_id`.
+    /// - `Unauthorized`          — caller is not the stream's sender.
+    /// - `StreamInactive`        — stream is inactive (e.g. cancelled/completed).
+    /// - `StreamAlreadyPaused`   — stream is already paused.
     pub fn pause_stream(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
         sender.require_auth();
 
@@ -551,9 +552,8 @@ impl StreamContract {
         Self::validate_stream_active(&stream)?;
 
         if stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamAlreadyPaused);
         }
-
         let now = env.ledger().timestamp();
         stream.paused = true;
         stream.paused_at = Some(now);
@@ -581,7 +581,7 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
     /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is not paused (already active or cancelled).
+    /// - `StreamNotPaused` — stream is not paused (it is active or cancelled).
     pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
         sender.require_auth();
 
@@ -589,7 +589,7 @@ impl StreamContract {
         Self::validate_stream_ownership(&stream, &sender)?;
 
         if !stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamNotPaused);
         }
 
         let now = env.ledger().timestamp();

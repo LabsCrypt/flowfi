@@ -1546,7 +1546,26 @@ fn test_resume_non_paused_stream_fails() {
 
     assert_eq!(
         client.try_resume_stream(&sender, &id),
-        Err(Ok(StreamError::StreamInactive))
+        Err(Ok(StreamError::StreamNotPaused))
+    );
+}
+
+#[test]
+fn test_pause_already_paused_stream_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    client.pause_stream(&sender, &id);
+
+    assert_eq!(
+        client.try_pause_stream(&sender, &id),
+        Err(Ok(StreamError::StreamAlreadyPaused))
     );
 }
 
