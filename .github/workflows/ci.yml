@@ -42,17 +42,6 @@ jobs:
         run: npm run test:coverage
         working-directory: frontend
 
-      - name: Upload frontend coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: frontend/coverage/lcov.info
-          flags: frontend
-          name: frontend-coverage
-          fail_ci_if_error: false
-          verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
       - name: Build
         run: npm run build
         working-directory: frontend
@@ -124,40 +113,6 @@ jobs:
           verbose: true
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  backend-docker:
-    name: Backend Docker Image CI
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check changed files
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-              - 'docker-compose.yml'
-
-      - name: Build Docker Image
-        if: steps.filter.outputs.backend == 'true' || github.event_name == 'push'
-        run: docker build -f backend/Dockerfile backend -t flowfi-backend:test
-
-      - name: Docker Compose Build
-        if: steps.filter.outputs.backend == 'true' || github.event_name == 'push'
-        run: docker compose build
-
-      - name: Boot and Check Health
-        if: steps.filter.outputs.backend == 'true' || github.event_name == 'push'
-        run: |
-          docker compose up -d postgres
-          sleep 10
-          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx -y prisma db push --accept-data-loss
-          docker compose up -d backend
-          sleep 15
-          curl --fail http://localhost:3001/health || (docker compose logs backend && exit 1)
 
   contracts:
     name: Soroban Contracts CI

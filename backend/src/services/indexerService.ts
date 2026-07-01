@@ -38,8 +38,13 @@ export async function resetIndexer(toLedger: number): Promise<void> {
 
 /**
  * Replay events from a given ledger by resetting state and triggering a poll.
- * Deduplication in the worker (transactionHash + eventType + ledger) ensures
- * no duplicate StreamEvent rows are created.
+ * The @@unique([transactionHash, eventType]) constraint on StreamEvent
+ * guarantees no duplicate StreamEvent rows are created on replay.
+ *
+ * CAVEAT: This dedup does NOT apply to stream state mutations.
+ * Stream.withdrawnAmount (handleTokensWithdrawn, soroban-event-worker.ts:635)
+ * is incremented unconditionally on every replay, so replay is NOT fully
+ * idempotent. See issue #808 for the withdrawnAmount idempotency fix.
  */
 export async function replayFromLedger(fromLedger: number): Promise<void> {
   await resetIndexer(fromLedger);
