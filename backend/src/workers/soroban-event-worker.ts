@@ -623,31 +623,38 @@ export class SorobanEventWorker {
     const amount = decodeI128(body['amount']);
     const timestamp = Number(decodeU64(body['timestamp']));
 
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: { withdrawnAmount: true },
-      });
+    const applied = await prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        // Idempotency guard: withdrawnAmount is a *relative* increment
+        // (existing + amount), so re-observing the same WITHDRAWN event must
+        // NOT re-apply it. Check for the recorded event first and bail out
+        // before touching the balance when it already exists.
+        const existingEvent = await tx.streamEvent.findUnique({
+          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+          select: { id: true },
+        });
+        if (existingEvent) {
+          logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
+          return false;
+        }
 
-      const newWithdrawnAmount = (
-        BigInt(stream.withdrawnAmount) + BigInt(amount)
-      ).toString();
+        const stream = await tx.stream.findUniqueOrThrow({
+          where: { streamId },
+          select: { withdrawnAmount: true },
+        });
 
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          withdrawnAmount: newWithdrawnAmount,
-          lastUpdateTime: timestamp,
-        },
-      });
+        const newWithdrawnAmount = (
+          BigInt(stream.withdrawnAmount) + BigInt(amount)
+        ).toString();
 
-      const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
-        select: { id: true },
-      });
-      if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
-      } else {
+        await tx.stream.update({
+          where: { streamId },
+          data: {
+            withdrawnAmount: newWithdrawnAmount,
+            lastUpdateTime: timestamp,
+          },
+        });
+
         await tx.streamEvent.upsert({
           where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
           create: {
@@ -661,8 +668,13 @@ export class SorobanEventWorker {
           },
           update: {},
         });
-      }
-    });
+
+        return true;
+      },
+    );
+
+    // Skip re-broadcasting SSE for an already-recorded (duplicate) event.
+    if (!applied) return;
 
     sseService.broadcastToStream(String(streamId), 'stream.withdrawn', {
       streamId,
