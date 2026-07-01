@@ -316,7 +316,11 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const [events, total] = await Promise.all([
       prisma.streamEvent.findMany({
         where: whereClause,
-        orderBy: { timestamp: order },
+        // `timestamp` is not unique (events in the same block/ledger can
+        // share a timestamp), so it can't be the sole sort key for cursor
+        // pagination. Add `id` as a unique tiebreaker so ordering (and
+        // therefore cursor pagination) is stable across pages.
+        orderBy: [{ timestamp: order }, { id: order }],
         take: limit,
         ...(cursor
           ? { cursor: { id: cursor }, skip: 1 }

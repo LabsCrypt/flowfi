@@ -14,6 +14,7 @@ import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
 import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
+import { getApiBaseUrl } from "@/lib/api/_shared";
 
 export interface StreamFormData {
   recipient: string;
@@ -349,18 +350,20 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     const startTime = Date.now();
     const TIMEOUT_MS = 30000; // 30 seconds
     const POLL_INTERVAL = 2000; // 2 seconds
+    const baseUrl = getApiBaseUrl();
 
     while (Date.now() - startTime < TIMEOUT_MS) {
       try {
-        const response = await fetch(`/v1/streams?sender=${senderAddress}`);
-        const streams = await response.json();
+        const response = await fetch(`${baseUrl}/v1/streams?sender=${senderAddress}`);
+        const payload = await response.json();
+        const streams = Array.isArray(payload) ? payload : (payload.data ?? []);
         
         // Assuming the latest stream is what we want
         if (streams && streams.length > 0) {
           // Found!
           const newStream = streams[0]; // Simplification
           toast.success("Stream indexed and confirmed!");
-          router.push(`/app/streams/${newStream.streamId}`); // Updated path to match new structure
+          router.push(`/streams/${newStream.streamId}`); // Updated path to match new structure
           return;
         }
       } catch (e) {
@@ -384,7 +387,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         
         // Step 2: Start Polling for Indexer
         setIsPolling(true);
-        await startPolling(formData.recipient);
+        await startPolling(walletPublicKey || "");
         
       } catch (error) {
         logger.error("Failed to create stream:", error);

@@ -75,17 +75,18 @@ describe('SSE Controller', () => {
     (sseService.isShuttingDown as any).mockReturnValue(false);
     (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
     (req as any).user = { publicKey: 'GUSER1' };
-    (prisma.stream.findMany as any).mockResolvedValue([{ streamId: 'stream-1' }]);
+    (prisma.stream.findMany as any).mockResolvedValue([
+      { streamId: 'stream-1', sender: 'GUSER1', recipient: 'GUSER2' },
+    ]);
     req.query = { users: ['GUSER2', 'GUSER3'] };
 
     await subscribe(req as Request, res as Response);
 
-    expect(sseService.addClient).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Object),
-      expect.arrayContaining(['stream-1', 'user:GUSER2', 'user:GUSER3', 'user:GUSER1']),
-      expect.any(String),
-    );
+    const subscriptions = (sseService.addClient as any).mock.calls[0][2] as string[];
+    expect(subscriptions).toContain('stream-1');
+    expect(subscriptions).toContain('user:GUSER1');
+    expect(subscriptions).toContain('user:GUSER2');
+    expect(subscriptions).not.toContain('user:GUSER3');
   });
 
   it('should handle zod validation error for query params', async () => {

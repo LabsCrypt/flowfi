@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createStreamRateLimiter } from '../src/middleware/stream-rate-limiter.middleware.js';

@@ -50,7 +50,7 @@ export function useWithdrawIncomingStream(
     },
     onMutate: async (stream) => {
       if (!publicKey) {
-        return {};
+        return { previousStreams: undefined, expectedWithdrawn: stream.withdrawn };
       }
 
       // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
