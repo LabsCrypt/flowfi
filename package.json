@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.7",
+    "lint-staged": "^17.0.8",
     "vitest": "^2.1.8"
   },
   "lint-staged": {
@@ -26,9 +26,9 @@
     "react-hot-toast": "^2.6.0"
   },
   "optionalDependencies": {
-    "@tailwindcss/oxide-darwin-arm64": "^4.3.1",
-    "@tailwindcss/oxide-darwin-x64": "^4.3.1",
-    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.1",
+    "@tailwindcss/oxide-darwin-arm64": "^4.3.2",
+    "@tailwindcss/oxide-darwin-x64": "^4.3.2",
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.2",
     "lightningcss-darwin-arm64": "^1.31.1",
     "lightningcss-darwin-x64": "^1.32.0",
     "lightningcss-linux-x64-gnu": "^1.31.1"
