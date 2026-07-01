@@ -20,9 +20,11 @@ import {
   explainSkipReason,
 } from "./_db.js";
 
-// Lazy-loaded Prisma client. The actual PrismaClient is constructed in the
-// suite's beforeAll only after DATABASE_URL has been verified reachable.
-let testPrisma: PrismaClient | null = null;
+// Lazy-loaded Prisma client. Promise type via definite assignment; the
+// skip-on-no-DB guards below (lastDbReadiness?.ready + ctx.skip() + getDb())
+// ensure we never dereference testPrisma when it has not been assigned.
+// See issue #760 for the runtime contract.
+let testPrisma!: PrismaClient;
 // Captured during beforeAll so other hooks can read the readiness report
 // (and skip message) without re-probing the database.
 let lastDbReadiness: Awaited<ReturnType<typeof resolveDbReadiness>> | null =
@@ -265,7 +267,7 @@ describe("Stream Lifecycle Integration Tests", () => {
   });
 
   afterEach(async () => {
-    if (!lastDbReadiness?.ready || !testPrisma) return;
+    if (!lastDbReadiness?.ready) return;
     if (server) {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
