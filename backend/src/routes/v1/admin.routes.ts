@@ -222,7 +222,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
  * /v1/admin/indexer/replay:
  *   post:
  *     tags: [Admin]
- *     summary: Replay events from a given ledger (idempotent)
+ *     summary: Replay events from a given ledger (StreamEvent rows deduplicated; stream mutations not idempotent — see indexerService.ts JSDoc)
  *     security: [{ adminAuth: [] }]
  *     parameters:
  *       - in: query

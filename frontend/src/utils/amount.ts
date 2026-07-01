@@ -221,6 +221,8 @@ export function getDefaultTokenDecimals(symbol: string): number {
   return DEFAULT_TOKEN_DECIMALS[symbol.toUpperCase()] ?? 7;
 }
 
+import { logger } from "@/lib/logger";
+
 // RPC configuration for fetching token decimals
 const SOROBAN_RPC_URL =
   process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
@@ -266,7 +268,7 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
     const simResult = await server.simulateTransaction(tx);
 
     if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
-      console.warn(`Failed to fetch decimals for ${tokenAddress}:`, simResult.error);
+      logger.warn(`Failed to fetch decimals for ${tokenAddress}:`, simResult.error);
       // Cache default to avoid repeated failed calls
       setCachedTokenDecimals(tokenAddress, 7);
       return 7;
@@ -274,7 +276,7 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
 
     const rawResult = simResult?.result?.retval;
     if (!rawResult) {
-      console.warn(`No decimals returned for ${tokenAddress}`);
+      logger.warn(`No decimals returned for ${tokenAddress}`);
       setCachedTokenDecimals(tokenAddress, 7);
       return 7;
     }
@@ -296,7 +298,7 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
     setCachedTokenDecimals(tokenAddress, decimals);
     return decimals;
   } catch (error) {
-    console.error(`Error fetching token decimals for ${tokenAddress}:`, error);
+    logger.error(`Error fetching token decimals for ${tokenAddress}:`, error);
     // Cache default to avoid repeated failed calls
     setCachedTokenDecimals(tokenAddress, 7);
     return 7;

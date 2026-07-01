@@ -148,9 +148,10 @@ X-API-Migration-Path: /v1/streams
 - `/streams` → `/v1/streams`
 - `/events` → `/v1/events`
 
-**Status:** Deprecated (as of 2024-02-21)
+**Status:** Removed (deprecated 2024-02-21, sunset 2024-12-31, handlers deleted 2026-06-30)
 
-**Sunset Date:** 2024-12-31
+These routes no longer exist in the codebase. Clients still calling the unversioned
+paths will receive a 404. Update all callers to use the `/v1/` prefix.
 
 **Migration:**
 ```javascript

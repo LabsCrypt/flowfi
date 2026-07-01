@@ -32,6 +32,7 @@ app.use(requestIdMiddleware);
 app.disable('x-powered-by');
 
 // Helmet-equivalent core headers without external dependency.
+// Strict CSP applied globally; the /api-docs route overrides it below for Swagger UI.
 app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -39,7 +40,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     res.setHeader('X-Download-Options', 'noopen');
     res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-    if (isProduction) {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'");
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    if (process.env.NODE_ENV === 'production') {
         res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
     next();
@@ -78,7 +82,11 @@ app.use(express.json());
 app.use(sandboxMiddleware);
 
 // Swagger UI setup
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+// Override CSP for /api-docs only: Swagger UI requires inline scripts/styles.
+app.use('/api-docs', (req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'");
+    next();
+}, swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
     customCss: '.swagger-ui .topbar { display: none }',
     customSiteTitle: 'FlowFi API Documentation',
 }));
@@ -103,35 +111,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
         return v1Routes(req, res, next);
     }
     return next(); // Not versioned, continue to deprecated handlers
-});
-
-// Legacy routes (deprecated - redirect to v1)
-// These will be removed in a future version
-// Only match unversioned requests
-app.use('/streams', (req: Request, res: Response, next) => {
-    res.status(410).json({
-        error: 'Deprecated endpoint',
-        message: 'This endpoint has been deprecated. Please use /v1/streams instead.',
-        deprecated: true,
-        migration: {
-            old: '/streams',
-            new: '/v1/streams',
-        },
-        sunsetDate: '2024-12-31',
-    });
-});
-
-app.use('/events', (req: Request, res: Response, next) => {
-    res.status(410).json({
-        error: 'Deprecated endpoint',
-        message: 'This endpoint has been deprecated. Please use /v1/events instead.',
-        deprecated: true,
-        migration: {
-            old: '/events',
-            new: '/v1/events',
-        },
-        sunsetDate: '2024-12-31',
-    });
 });
 
 // Health check routes

@@ -2,34 +2,14 @@ version: 2
 
 updates:
   # ── npm: root workspace ────────────────────────────────────────────────────
+  # flowfi is a single npm workspace (frontend + backend hoisted into one root
+  # package-lock.json). Dependabot must update from the workspace root so the
+  # root lockfile CI runs `npm ci` against stays in sync. Per-directory entries
+  # for /frontend and /backend only touched their package.json without updating
+  # the root lockfile, so every PR they opened failed `npm ci` with
+  # "lock file's X does not satisfy Y". One root entry covers all workspaces.
   - package-ecosystem: "npm"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 10
-    groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
-
-  # ── npm: frontend ──────────────────────────────────────────────────────────
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    open-pull-requests-limit: 10
-    groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
-
-  # ── npm: backend ───────────────────────────────────────────────────────────
-  - package-ecosystem: "npm"
-    directory: "/backend"
     schedule:
       interval: "weekly"
       day: "monday"

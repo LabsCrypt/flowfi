@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { logger } from "@/lib/logger";
 import {
   createStream,
   toBaseUnits,
@@ -67,7 +68,7 @@ export default function CreateStreamContent() {
         }, 2000);
       }
     } catch (error) {
-      console.error("Stream creation failed:", error);
+      logger.error("Stream creation failed:", error);
       toast.error(toSorobanErrorMessage(error));
     } finally {
       setLoading(false);

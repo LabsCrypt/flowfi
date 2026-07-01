@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatNetwork } from "@/lib/wallet";
 import toast from "react-hot-toast";
+import { getApiBaseUrl } from "@/lib/api/_shared";
 
 type DisplayCurrency = "USD" | "XLM" | "USDC";
 type AmountFormat = "full" | "compact";
@@ -15,7 +16,7 @@ type DecimalPlaces = 2 | 4 | 7;
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAMING_CONTRACT || "CDV4K...7ZQY";
-const INDEXER_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+const INDEXER_URL = `${getApiBaseUrl()}/v1`;
 
 export default function SettingsContent() {
   const router = useRouter();
