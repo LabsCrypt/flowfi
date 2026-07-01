@@ -108,9 +108,10 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 function SkeletonCard({ className = "" }: { className?: string }) {
   return (
     <div
-      className={`animate-pulse bg-gray-200 dark:bg-gray-700 rounded-2xl relative overflow-hidden ${className}`}
+      className={`relative overflow-hidden rounded-2xl ${className}`}
       aria-hidden="true"
     >
+      <Skeleton className="w-full h-full" />
       {/* shimmer sweep */}
       <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
     </div>
