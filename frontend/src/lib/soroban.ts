@@ -277,6 +277,7 @@ export async function createStream(
   session: WalletSession,
   params: CreateStreamParams,
 ): Promise<SorobanResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (session.mocked || (typeof window !== "undefined" && (window as any).E2E_MOCK_SOROBAN)) {
     return mockCall(`create_stream recipient=${params.recipient} amount=${params.amount} duration=${params.durationSeconds}s`);
   }
@@ -294,6 +295,7 @@ export async function topUpStream(
   session: WalletSession,
   params: TopUpParams,
 ): Promise<SorobanResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (session.mocked || (typeof window !== "undefined" && (window as any).E2E_MOCK_SOROBAN)) {
     return mockCall(`top_up_stream stream_id=${params.streamId} amount=${params.amount}`);
   }
@@ -309,6 +311,7 @@ export async function cancelStream(
   session: WalletSession,
   params: CancelParams,
 ): Promise<SorobanResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (session.mocked || (typeof window !== "undefined" && (window as any).E2E_MOCK_SOROBAN)) {
     return mockCall(`cancel_stream stream_id=${params.streamId}`);
   }
@@ -323,6 +326,7 @@ export async function withdrawFromStream(
   session: WalletSession,
   params: WithdrawParams,
 ): Promise<SorobanResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (session.mocked || (typeof window !== "undefined" && (window as any).E2E_MOCK_SOROBAN)) {
     return mockCall(`withdraw stream_id=${params.streamId}`);
   }
@@ -337,6 +341,7 @@ export async function pauseStream(
   session: WalletSession,
   params: PauseParams,
 ): Promise<SorobanResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (session.mocked || (typeof window !== "undefined" && (window as any).E2E_MOCK_SOROBAN)) {
     return mockCall(`pause_stream stream_id=${params.streamId}`);
   }
@@ -351,6 +356,7 @@ export async function resumeStream(
   session: WalletSession,
   params: ResumeParams,
 ): Promise<SorobanResult> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   if (session.mocked || (typeof window !== "undefined" && (window as any).E2E_MOCK_SOROBAN)) {
     return mockCall(`resume_stream stream_id=${params.streamId}`);
   }

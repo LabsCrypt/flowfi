@@ -5,55 +5,63 @@ test.describe("Stream Lifecycle Flow", () => {
     "GCKSZH3YZR7BBA76LXI4RUKMVMSTJ67DIABZTQA2H3ISG5VZGLNU2NGP";
 
   test.beforeEach(async ({ page }: { page: Page }) => {
-    // 1. Mock Freighter extension messaging
+    // Mock Freighter extension messaging
     await page.addInitScript((addr: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).E2E_MOCK_SOROBAN = true;
-      
+
       // The freighter API sets up a listener for FREIGHTER_EXTERNAL_MSG_RESPONSE
       window.addEventListener("message", (event) => {
-        if (event.data && event.data.source === "FREIGHTER_EXTERNAL_MSG_REQUEST") {
+        if (
+          event.data &&
+          event.data.source === "FREIGHTER_EXTERNAL_MSG_REQUEST"
+        ) {
           const { type, messageId } = event.data;
-          
+
           let responseData = {};
           if (type === "REQUEST_CONNECTION_STATUS") {
             responseData = { isConnected: true };
           } else if (type === "REQUEST_PUBLIC_KEY") {
             responseData = { publicKey: addr };
           } else if (type === "REQUEST_NETWORK_DETAILS") {
-            responseData = { 
+            responseData = {
               networkDetails: {
                 network: "TESTNET",
                 networkUrl: "https://horizon-testnet.stellar.org",
-                networkPassphrase: "Test SDF Network ; September 2015"
-              }
+                networkPassphrase: "Test SDF Network ; September 2015",
+              },
             };
           } else if (type === "SET_ALLOWED_STATUS") {
             responseData = { isAllowed: true };
           } else if (type === "REQUEST_ALLOWED_STATUS") {
             responseData = { isAllowed: true };
           } else if (type === "SIGN_TRANSACTION") {
-            responseData = { 
+            responseData = {
               signedTransaction: "mock_signed_tx_xdr",
               signedTxXdr: "mock_signed_tx_xdr",
-              signerAddress: addr
+              signerAddress: addr,
             };
           } else if (type === "REQUEST_ACCESS") {
-             responseData = { publicKey: addr };
+            responseData = { publicKey: addr };
           }
-          
-          window.postMessage({
-            source: "FREIGHTER_EXTERNAL_MSG_RESPONSE",
-            messagedId: messageId,
-            ...responseData
-          }, "*");
+
+          window.postMessage(
+            {
+              source: "FREIGHTER_EXTERNAL_MSG_RESPONSE",
+              messagedId: messageId,
+              ...responseData,
+            },
+            "*",
+          );
         }
       });
-      
+
       // Also set window.freighter just in case
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).freighter = true;
     }, MOCK_ADDRESS);
 
-    // 2. Setup API interception routes
+    // Setup API interception routes
     // Note: use route.fulfill with JSON so the stream list can render deterministically.
 
     await page.route("**/v1/users/*/summary", async (route: Route) => {
@@ -134,7 +142,9 @@ test.describe("Stream Lifecycle Flow", () => {
     await expect(connectModal).toBeVisible({ timeout: 7000 });
 
     // Select Freighter from the modal
-    const freighterBtn = page.getByRole("button", { name: /connect freighter/i });
+    const freighterBtn = page.getByRole("button", {
+      name: /connect freighter/i,
+    });
     await freighterBtn.waitFor({ state: "visible", timeout: 5000 });
     await freighterBtn.click();
 
@@ -142,30 +152,44 @@ test.describe("Stream Lifecycle Flow", () => {
     await expect(connectModal).toBeHidden({ timeout: 7000 });
 
     // Wait for the mocked stream list to mount
-    await expect(page.getByRole("link", { name: /details/i }).first()).toBeVisible({ timeout: 30000 });
-    
-    // --- 2. Create a new stream ---
-    await page.getByRole("link", { name: "Create Stream" }).click();
-    await expect(page.getByRole("heading", { name: "Create New Stream" })).toBeVisible({ timeout: 30000 });
+    await expect(
+      page.getByRole("link", { name: /details/i }).first(),
+    ).toBeVisible({ timeout: 30000 });
 
-    await page.getByPlaceholder("G...").fill("GDOS6EZLJWBJIX7FUIC5EJ657T6MAFCADO524ZHFCKUIE3VZX23JRCY5");
+    // --- Create a new stream ---
+    await page.getByRole("link", { name: "Create Stream" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Create New Stream" }),
+    ).toBeVisible({ timeout: 30000 });
+
+    await page
+      .getByPlaceholder("G...")
+      .fill("GDOS6EZLJWBJIX7FUIC5EJ657T6MAFCADO524ZHFCKUIE3VZX23JRCY5");
     await page.getByPlaceholder("0.00").fill("100");
     await page.getByRole("button", { name: "Start Streaming" }).click();
 
     // Verify success and redirect
-    await expect(page.getByText("Stream created successfully!")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText("Stream created successfully!")).toBeVisible({
+      timeout: 30000,
+    });
     // Wait for the automatic redirect back to dashboard
-    await expect(page.getByRole("heading", { name: /Streams/i })).toBeVisible({ timeout: 10000 });
-    
-    // --- 3. Pause and Resume the stream ---
+    await expect(page.getByRole("heading", { name: /Streams/i })).toBeVisible({
+      timeout: 10000,
+    });
+
+    // --- Pause and Resume the stream ---
     // Navigate directly to the details page to avoid click bubbling issues on the row
     await page.goto("http://localhost:3000/streams/101");
-    
-    await expect(page.getByRole("heading", { name: /Stream Details/i })).toBeVisible({ timeout: 30000 });
+
+    await expect(
+      page.getByRole("heading", { name: /Stream Details/i }),
+    ).toBeVisible({ timeout: 30000 });
 
     // Click Pause
     await page.getByRole("button", { name: "Pause" }).click();
-    await expect(page.getByText("Stream paused")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText("Stream paused")).toBeVisible({
+      timeout: 30000,
+    });
 
     // Mock update: change stream to paused for the UI update so Resume button appears
     await page.route("**/v1/streams/101", async (route: Route) => {
@@ -190,20 +214,26 @@ test.describe("Stream Lifecycle Flow", () => {
     });
 
     // Wait for the UI to reflect the paused state
-    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("button", { name: "Resume" })).toBeVisible({
+      timeout: 10000,
+    });
 
     // Click Resume
     await page.getByRole("button", { name: "Resume" }).click();
-    await expect(page.getByText("Stream resumed")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText("Stream resumed")).toBeVisible({
+      timeout: 30000,
+    });
 
-    // --- 4. Cancel Stream ---
+    // --- Cancel Stream ---
     // The details page has a 'Cancel' button with an X icon
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
-      
+
     // This opens the CancelConfirmModal
     await page.getByRole("button", { name: "Yes, Cancel Stream" }).click();
-    
+
     // Status should be verified by the success toast
-    await expect(page.getByText("Stream cancelled")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByText("Stream cancelled")).toBeVisible({
+      timeout: 30000,
+    });
   });
 });
