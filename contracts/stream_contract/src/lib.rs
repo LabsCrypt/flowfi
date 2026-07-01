@@ -431,7 +431,7 @@ impl StreamContract {
         // Validate stream is active and not paused
         Self::validate_stream_active(&stream)?;
         if stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamPaused);
         }
 
         let now = env.ledger().timestamp();

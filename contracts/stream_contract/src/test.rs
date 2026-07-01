@@ -1568,7 +1568,7 @@ fn test_withdraw_on_paused_stream_fails() {
 
     assert_eq!(
         client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamInactive))
+        Err(Ok(StreamError::StreamPaused))
     );
 }
 
@@ -2206,7 +2206,7 @@ fn test_withdraw_on_paused_stream_returns_stream_inactive() {
 
     // Withdraw must be rejected while paused.
     let result = client.try_withdraw(&recipient, &id);
-    assert_eq!(result, Err(Ok(StreamError::StreamInactive)));
+    assert_eq!(result, Err(Ok(StreamError::StreamPaused)));
 }
 
 #[test]
