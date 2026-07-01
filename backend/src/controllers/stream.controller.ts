@@ -630,36 +630,13 @@ export const pauseStream = async (req: Request, res: Response) => {
       // Call Soroban service to verify the pause operation would succeed
       const result = await sorobanPauseStream(authReq.user.publicKey, parsedStreamId);
 
-      // Update the database to mark stream as paused
-      const now = Math.floor(Date.now() / 1000);
-      const updatedStream = await prisma.stream.update({
-        where: { streamId: parsedStreamId },
-        data: {
-          isPaused: true,
-          pausedAt: now,
-          lastUpdateTime: now,
-        },
-      });
-
-      // Create a PAUSED event
-      await prisma.streamEvent.create({
-        data: {
-          streamId: parsedStreamId,
-          eventType: 'PAUSED',
-          transactionHash: result.txHash,
-          ledgerSequence: 0, // Will be updated by event indexer
-          timestamp: now,
-          metadata: JSON.stringify({ pausedBy: authReq.user.publicKey }),
-        },
-      });
-
-      logger.info(`Stream ${parsedStreamId} paused by ${authReq.user.publicKey}`);
+      logger.info(`Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`);
 
       return res.status(200).json({
         success: true,
         streamId: parsedStreamId,
         txHash: result.txHash,
-        stream: updatedStream,
+        stream,
       });
     } catch (sorobanError) {
       logger.error(`Soroban pause failed for stream ${parsedStreamId}:`, sorobanError);
@@ -724,44 +701,13 @@ export const resumeStream = async (req: Request, res: Response) => {
       // Call Soroban service to verify the resume operation would succeed
       const result = await sorobanResumeStream(authReq.user.publicKey, parsedStreamId);
 
-      // Calculate pause duration and update the database
-      const now = Math.floor(Date.now() / 1000);
-      const pausedAt = stream.pausedAt ?? now;
-      const pauseDuration = Math.max(0, now - pausedAt);
-      const totalPausedDuration = (stream.totalPausedDuration ?? 0) + pauseDuration;
-
-      const updatedStream = await prisma.stream.update({
-        where: { streamId: parsedStreamId },
-        data: {
-          isPaused: false,
-          pausedAt: null,
-          totalPausedDuration,
-          lastUpdateTime: now,
-        },
-      });
-
-      // Create a RESUMED event
-      await prisma.streamEvent.create({
-        data: {
-          streamId: parsedStreamId,
-          eventType: 'RESUMED',
-          transactionHash: result.txHash,
-          ledgerSequence: 0, // Will be updated by event indexer
-          timestamp: now,
-          metadata: JSON.stringify({
-            resumedBy: authReq.user.publicKey,
-            pauseDuration,
-          }),
-        },
-      });
-
-      logger.info(`Stream ${parsedStreamId} resumed by ${authReq.user.publicKey}`);
+      logger.info(`Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`);
 
       return res.status(200).json({
         success: true,
         streamId: parsedStreamId,
         txHash: result.txHash,
-        stream: updatedStream,
+        stream,
       });
     } catch (sorobanError) {
       logger.error(`Soroban resume failed for stream ${parsedStreamId}:`, sorobanError);
