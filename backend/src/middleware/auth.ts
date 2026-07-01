@@ -105,15 +105,13 @@ export function verifyJwt(token: string): { publicKey: string } | null {
       .update(`${header}.${body}`)
       .digest();
 
-    let providedSig: Buffer;
-    try {
-      providedSig = Buffer.from(sig, 'base64url');
-    } catch {
+    const expectedSigB64 = b64url(expected);
+
+    // Use timingSafeEqual on the base64url strings to prevent timing attacks and signature malleability
+    if (sig.length !== expectedSigB64.length) {
       return null;
     }
-
-    // Use timingSafeEqual to prevent timing attacks
-    if (providedSig.length !== expected.length || !crypto.timingSafeEqual(providedSig, expected)) {
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSigB64))) {
       return null;
     }
 
