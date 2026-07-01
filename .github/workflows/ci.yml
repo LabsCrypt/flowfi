@@ -107,7 +107,6 @@ jobs:
       - name: Run Backend Tests
         run: |
           ls -la src/generated/prisma
-          npm install @vitest/coverage-v8@2.1.9 --no-save
           npx vitest run --coverage --reporter=basic
         working-directory: backend
         env:
