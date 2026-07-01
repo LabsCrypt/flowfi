@@ -76,7 +76,7 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     }
     next(err);
 });
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Sandbox mode detection (before versioning)
 app.use(sandboxMiddleware);
