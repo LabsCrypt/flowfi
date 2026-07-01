@@ -38,6 +38,12 @@ jobs:
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
         working-directory: frontend
 
+      # Frontend devDeps do not list @vitest/coverage-v8 (mirrors the
+      # backend workflow), so install it ad-hoc before coverage runs.
+      - name: Install Vitest Coverage Provider
+        run: npm install @vitest/coverage-v8@2.1.9 --no-save
+        working-directory: frontend
+
       - name: Run Frontend Tests
         run: npm run test:coverage
         working-directory: frontend

@@ -4,7 +4,16 @@
  * These tests use real Postgres database and verify the complete pipeline:
  * event worker → DB update → controller response → SSE broadcast
  */
-import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import request from "supertest";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -25,6 +34,10 @@ import {
 // ensure we never dereference testPrisma when it has not been assigned.
 // See issue #760 for the runtime contract.
 let testPrisma!: PrismaClient;
+// Underlying pg pool, kept at module scope so we can close it in afterAll
+// without leaking TCP handles (which would otherwise keep the Vitest
+// process alive past the hook timeout).
+let testPool!: pg.Pool;
 // Captured during beforeAll so other hooks can read the readiness report
 // (and skip message) without re-probing the database.
 let lastDbReadiness: Awaited<ReturnType<typeof resolveDbReadiness>> | null =
@@ -239,7 +252,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       "../../src/generated/prisma/index.js"
     );
     const connectionString = resolveTestDatabaseUrl();
-    const testPool = new pg.Pool({ connectionString });
+    testPool = new pg.Pool({ connectionString });
     const testAdapter = new PrismaPg(testPool);
     testPrisma = new PrismaClient({
       adapter: testAdapter,
@@ -274,7 +287,26 @@ describe("Stream Lifecycle Integration Tests", () => {
       });
     }
     await cleanupDatabase();
+    // NOTE: do NOT call testPrisma.$disconnect() here. The Prisma client
+    // (and its underlying pg.Pool) are created once per file in beforeAll
+    // and reused across every test; disconnecting after each test would
+    // make the very next beforeEach fail with
+    // "Prisma Client is disconnected" when cleanupDatabase() runs.
+  });
+
+  afterAll(async () => {
+    if (!lastDbReadiness?.ready) return;
+    // Defensive: if beforeAll threw midway through the import → pg.Pool →
+    // PrismaClient assignment chain (e.g., schema not generated yet),
+    // testPrisma may still be undefined even though readiness reported
+    // ready. Skip the teardown rather than dereferencing undefined and
+    // crashing the test runner. `testPool.end()` is wrapped in `.catch`
+    // because PrismaPg's $disconnect() already closes the underlying
+    // pg.Pool on most engines, and a second `.end()` would warn
+    // "Pool is ended" into the test output.
+    if (!testPrisma) return;
     await testPrisma.$disconnect();
+    await testPool.end().catch(() => undefined);
   });
 
   describe("Indexer → stream_created: stream appears in GET /v1/streams/:id", () => {

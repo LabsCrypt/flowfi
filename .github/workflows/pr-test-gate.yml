@@ -53,9 +53,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --include=optional
 
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
-
       - name: Prepare database schema
         run: |
           npx prisma generate --schema=prisma/schema.prisma
@@ -64,8 +61,21 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
 
+      # mirrors the ci.yml backend job: vitest's coverage provider is
+      # enabled by default in backend/vitest.config.ts, so the @vitest/
+      # coverage-v8 package must be present before `npm test` runs.
+      # Also installs the rollup native binding into backend/node_modules
+      # (where vitest actually resolves it from) rather than the root.
+      - name: Install Vitest + Native Bindings
+        run: |
+          npm install @vitest/coverage-v8@2.1.9 --no-save
+          npm install @rollup/rollup-linux-x64-gnu --no-save
+        working-directory: backend
+
       - name: Run backend tests
-        run: npm test
+        run: |
+          ls -la src/generated/prisma
+          npm test --silent -- --reporter=basic
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
