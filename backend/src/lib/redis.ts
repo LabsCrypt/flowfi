@@ -2,7 +2,7 @@
  * Redis / In-Memory Cache Service
  * Used for horizontal SSE scaling and claimable amount caching (Issue #377)
  */
-import IORedis, { type Redis } from 'ioredis';
+import { Redis } from 'ioredis';
 import logger from '../logger.js';
 
 const REDIS_URL = process.env.REDIS_URL;
@@ -29,7 +29,7 @@ class MemoryCache {
       this.misses++;
       return null;
     }
-    if (Date.now() > item.expiresAt) {
+    if (Date.now() >= item.expiresAt) {
       this.cache.delete(key);
       this.misses++;
       return null;
@@ -54,6 +54,10 @@ class MemoryCache {
   getMetadata(key: string) {
     const item = this.cache.get(key);
     if (!item) return null;
+    if (Date.now() >= item.expiresAt) {
+      this.cache.delete(key);
+      return null;
+    }
     return {
       createdAt: new Date(item.createdAt).toISOString(),
       expiresAt: new Date(item.expiresAt).toISOString(),
@@ -73,7 +77,7 @@ class MemoryCache {
   cleanup(): void {
     const now = Date.now();
     for (const [key, item] of this.cache.entries()) {
-      if (now > item.expiresAt) {
+      if (now >= item.expiresAt) {
         this.cache.delete(key);
       }
     }
@@ -81,7 +85,39 @@ class MemoryCache {
 }
 
 export const cache = new MemoryCache();
-setInterval(() => cache.cleanup(), 60000);
+
+let sweepInterval: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Starts the memory cache cleanup sweep interval.
+ * Uses process.env.MEMORY_CACHE_SWEEP_MS (default 60,000ms) unless overridden.
+ */
+export function startMemoryCacheSweep(intervalMs?: number): void {
+  if (sweepInterval) {
+    clearInterval(sweepInterval);
+  }
+  
+  const configuredMs = Number.parseInt(
+    process.env.MEMORY_CACHE_SWEEP_MS ?? '60000',
+    10
+  );
+  const ms = intervalMs ?? (Number.isFinite(configuredMs) ? configuredMs : 60000);
+  
+  sweepInterval = setInterval(() => cache.cleanup(), ms);
+}
+
+/**
+ * Stops the active memory cache cleanup sweep interval to prevent timer leaks.
+ */
+export function stopMemoryCacheSweep(): void {
+  if (sweepInterval) {
+    clearInterval(sweepInterval);
+    sweepInterval = undefined;
+  }
+}
+
+// Start memory cache sweep automatically on module load
+startMemoryCacheSweep();
 
 // --- Redis Pub/Sub Logic ---
 
@@ -98,13 +134,13 @@ export function isRedisAvailable(): boolean {
 }
 
 function makeClient(url: string): Redis {
-  return new (IORedis as any)(url, {
+  return new Redis(url, {
     maxRetriesPerRequest: 3,
     retryStrategy: (times: number) =>
       times > 3 ? null : Math.min(times * 200, 2000),
     enableOfflineQueue: false,
     lazyConnect: true,
-  }) as Redis;
+  });
 }
 
 export async function connectRedis(): Promise<void> {
@@ -138,6 +174,7 @@ export async function connectRedis(): Promise<void> {
 }
 
 export async function disconnectRedis(): Promise<void> {
+  stopMemoryCacheSweep();
   await Promise.all([_publisher?.quit(), _subscriber?.quit()]);
   _publisher = null;
   _subscriber = null;

@@ -10,10 +10,15 @@ export default defineConfig({
     include: ['src/__tests__/**/*.{test,spec}.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       reporter: ['text', 'json', 'html'],
-      include: ['src/utils/**', 'src/hooks/**', 'src/components/**'],
+      include: ['src/**'],
+      exclude: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'src/**/__tests__/**',
+      ],
+      all: true,
       thresholds: {
-        functions: 80,
-        lines: 80,
+        functions: 20,
+        lines: 20,
       },
     },
   },

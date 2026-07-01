@@ -1,0 +1,24 @@
+# Code Owners for FlowFi
+# This file controls who is automatically assigned for review
+# based on the files changed in a pull request.
+
+# Default owners for the entire repository
+* @LabsCrypt
+
+# Backend
+backend/ @LabsCrypt
+
+# Frontend  
+frontend/ @LabsCrypt
+
+# Smart contracts
+contracts/ @LabsCrypt
+
+# Documentation
+docs/ @LabsCrypt
+
+# GitHub workflows and CI/CD
+.github/ @LabsCrypt
+
+# Deployment scripts
+scripts/ @LabsCrypt

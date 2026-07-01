@@ -1,3 +1,11 @@
+/**
+ * Integration tests for the Soroban event worker with mocked Prisma/SSE.
+ *
+ * Exercises indexer → DB → GET API wiring without a real Postgres instance.
+ * Governance events (fee_config_updated, admin_transferred) and per-stream
+ * lifecycle handlers are covered here; full DB-backed flows live in
+ * stream-lifecycle.test.ts.
+ */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import { nativeToScVal, xdr, StrKey, Keypair } from '@stellar/stellar-sdk';
@@ -34,29 +42,27 @@ const { mockPrisma, mockSseService } = vi.hoisted(() => ({
     user: {
       upsert: vi.fn().mockResolvedValue({}),
     },
-    $transaction: vi.fn(async (fn: any) => fn(mockPrisma)),
+    $transaction: vi.fn(async (fn: (client: typeof mockPrisma) => unknown) => fn(mockPrisma)),
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
     $disconnect: vi.fn(),
-  }
+  },
 }));
 
-vi.mock('../../lib/prisma.js', () => ({
+vi.mock('../../src/lib/prisma.js', () => ({
   prisma: mockPrisma,
   default: mockPrisma,
 }));
 
-vi.mock('../../services/sse.service.js', () => ({
+vi.mock('../../src/services/sse.service.js', () => ({
   sseService: mockSseService,
 }));
 
 // ─── App import (after mocks) ─────────────────────────────────────────────────
 
-import app from '../../app.js';
-import { sorobanEventWorker } from '../../workers/soroban-event-worker.js';
+import app from '../../src/app.js';
+import { sorobanEventWorker } from '../../src/workers/soroban-event-worker.js';
 
-const describeIfDatabase = process.env.DATABASE_URL ? describe : describe.skip;
-
-describeIfDatabase('Stream Lifecycle Integration Tests', () => {
+describe('Indexer worker integration (mocked DB)', () => {
   const senderPair = Keypair.random();
   const recipientPair = Keypair.random();
   const sender = senderPair.publicKey();
@@ -122,7 +128,6 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
 
     await sorobanEventWorker.processEvent(event);
 
-    // Verify stream appears in GET API
     const res = await request(app).get(`/v1/streams/${streamId}`);
     expect(res.status).toBe(200);
     expect(res.body.streamId).toBe(streamId);
@@ -157,7 +162,7 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
       expect.objectContaining({
         where: { streamId },
         data: expect.objectContaining({ isPaused: true }),
-      })
+      }),
     );
   });
 
@@ -235,7 +240,7 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
   it('GET /v1/streams/{id}/events returns events', async () => {
     mockPrisma.stream.findUnique.mockResolvedValue({ streamId });
     mockPrisma.streamEvent.findMany.mockResolvedValue([
-      { id: 'evt-1', eventType: 'CREATED', transactionHash: 'hash' }
+      { id: 'evt-1', eventType: 'CREATED', transactionHash: 'hash' },
     ]);
     mockPrisma.streamEvent.count.mockResolvedValue(1);
 
@@ -255,9 +260,7 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
       txHash: 'hash-fee-config',
       ledger: 105,
       inSuccessfulContractCall: true,
-      topic: [
-        xdr.ScVal.scvSymbol('fee_config_updated'),
-      ],
+      topic: [xdr.ScVal.scvSymbol('fee_config_updated')],
       value: xdr.ScVal.scvMap([
         new xdr.ScMapEntry({
           key: xdr.ScVal.scvSymbol('admin'),
@@ -287,25 +290,30 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
     expect(mockPrisma.user.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { publicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF' },
-      })
+      }),
     );
 
     expect(mockPrisma.stream.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { streamId: 0 },
-      })
+      }),
     );
 
     expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { transactionHash_eventType: { transactionHash: 'hash-fee-config', eventType: 'FEE_CONFIG_UPDATED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'hash-fee-config',
+            eventType: 'FEE_CONFIG_UPDATED',
+          },
+        },
         create: expect.objectContaining({
           streamId: 0,
           eventType: 'FEE_CONFIG_UPDATED',
           transactionHash: 'hash-fee-config',
           ledgerSequence: 105,
         }),
-      })
+      }),
     );
 
     expect(mockSseService.broadcastToAdmin).toHaveBeenCalledWith(
@@ -316,7 +324,7 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
         newTreasury,
         oldFeeRateBps: 100,
         newFeeRateBps: 200,
-      })
+      }),
     );
   });
 
@@ -329,9 +337,7 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
       txHash: 'hash-admin-transfer',
       ledger: 106,
       inSuccessfulContractCall: true,
-      topic: [
-        xdr.ScVal.scvSymbol('admin_transferred'),
-      ],
+      topic: [xdr.ScVal.scvSymbol('admin_transferred')],
       value: xdr.ScVal.scvMap([
         new xdr.ScMapEntry({
           key: xdr.ScVal.scvSymbol('previous_admin'),
@@ -348,14 +354,19 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
 
     expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { transactionHash_eventType: { transactionHash: 'hash-admin-transfer', eventType: 'ADMIN_TRANSFERRED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'hash-admin-transfer',
+            eventType: 'ADMIN_TRANSFERRED',
+          },
+        },
         create: expect.objectContaining({
           streamId: 0,
           eventType: 'ADMIN_TRANSFERRED',
           transactionHash: 'hash-admin-transfer',
           ledgerSequence: 106,
         }),
-      })
+      }),
     );
 
     expect(mockSseService.broadcastToAdmin).toHaveBeenCalledWith(
@@ -363,8 +374,7 @@ describeIfDatabase('Stream Lifecycle Integration Tests', () => {
       expect.objectContaining({
         previousAdmin,
         newAdmin,
-      })
+      }),
     );
   });
 });
-

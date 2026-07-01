@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { createStreamRateLimiter } from '../src/middleware/stream-rate-limiter.middleware.js';
@@ -242,32 +242,85 @@ describe('Stream Creation Rate Limiter Middleware', () => {
   });
 
   describe('Environment Variable Configuration', () => {
-    it('should use STREAM_CREATE_RATE_LIMIT environment variable', () => {
-      const originalEnv = process.env.STREAM_CREATE_RATE_LIMIT;
-      process.env.STREAM_CREATE_RATE_LIMIT = '5';
+    const originalEnv = process.env.STREAM_CREATE_RATE_LIMIT;
 
-      const limiter = createStreamRateLimiter({ windowMs: 10000 });
-      // The limiter should be created with max: 5 from env
-
-      // Clean up
-      if (originalEnv) {
+    afterEach(() => {
+      if (originalEnv !== undefined) {
         process.env.STREAM_CREATE_RATE_LIMIT = originalEnv;
       } else {
         delete process.env.STREAM_CREATE_RATE_LIMIT;
       }
+      vi.resetModules();
     });
 
-    it('should default to 10 requests when STREAM_CREATE_RATE_LIMIT is not set', () => {
-      const originalEnv = process.env.STREAM_CREATE_RATE_LIMIT;
+    it('should use STREAM_CREATE_RATE_LIMIT when max is omitted', async () => {
+      process.env.STREAM_CREATE_RATE_LIMIT = '2';
+      vi.resetModules();
+      const { createStreamRateLimiter: createLimiter } = await import(
+        '../src/middleware/stream-rate-limiter.middleware.js'
+      );
+      const limiter = createLimiter({ windowMs: 10000 });
+
+      app.post(
+        '/streams',
+        mockAuthMiddleware('GENV123'),
+        limiter,
+        (req: Request, res: Response) => res.status(201).json({ success: true })
+      );
+
+      await request(app).post('/streams').set('Content-Type', 'application/json');
+      await request(app).post('/streams').set('Content-Type', 'application/json');
+
+      const res = await request(app)
+        .post('/streams')
+        .set('Content-Type', 'application/json');
+      expect(res.status).toBe(429);
+      expect(res.headers['ratelimit-limit']).toBe('2');
+    });
+
+    it('should default to 10 requests when STREAM_CREATE_RATE_LIMIT is not set', async () => {
       delete process.env.STREAM_CREATE_RATE_LIMIT;
+      vi.resetModules();
+      const { createStreamRateLimiter: createLimiter } = await import(
+        '../src/middleware/stream-rate-limiter.middleware.js'
+      );
+      const limiter = createLimiter({ windowMs: 10000 });
 
-      // The limiter should be created with max: 10 by default
-      const limiter = createStreamRateLimiter({ windowMs: 10000 });
+      app.post(
+        '/streams',
+        mockAuthMiddleware('GENV456'),
+        limiter,
+        (req: Request, res: Response) => res.status(201).json({ success: true })
+      );
 
-      // Clean up
-      if (originalEnv) {
-        process.env.STREAM_CREATE_RATE_LIMIT = originalEnv;
-      }
+      const res = await request(app)
+        .post('/streams')
+        .set('Content-Type', 'application/json');
+      expect(res.headers['ratelimit-limit']).toBe('10');
+    });
+
+    it('should apply STREAM_CREATE_RATE_LIMIT to streamCreationRateLimiter export', async () => {
+      process.env.STREAM_CREATE_RATE_LIMIT = '2';
+      vi.resetModules();
+      const { streamCreationRateLimiter } = await import(
+        '../src/middleware/stream-rate-limiter.middleware.js'
+      );
+
+      app.post(
+        '/streams',
+        mockAuthMiddleware('GEXPORT123'),
+        streamCreationRateLimiter,
+        (req: Request, res: Response) => res.status(201).json({ success: true })
+      );
+
+      await request(app).post('/streams').set('Content-Type', 'application/json');
+      await request(app).post('/streams').set('Content-Type', 'application/json');
+
+      const res = await request(app)
+        .post('/streams')
+        .set('Content-Type', 'application/json');
+      expect(res.status).toBe(429);
+      expect(res.headers['ratelimit-limit']).toBe('2');
     });
   });
 

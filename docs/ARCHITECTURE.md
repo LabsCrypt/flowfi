@@ -103,6 +103,8 @@ Rules used by backend/domain logic:
 
 ## Authentication Flow
 
+See [Authentication Documentation](../backend/docs/AUTHENTICATION.md) for full details.
+
 ```mermaid
 sequenceDiagram
     participant U as User Wallet (Freighter)
@@ -221,17 +223,24 @@ To run the full stack end-to-end, set the following secrets. See [`backend/.env.
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string (Prisma) |
 | `SOROBAN_RPC_URL` | Soroban RPC endpoint (e.g. Testnet: `https://soroban-testnet.stellar.org`) |
-| `STREAMING_CONTRACT_ADDRESS` | Deployed FlowFi stream contract ID |
+| `STREAM_CONTRACT_ID` | Deployed FlowFi stream contract ID |
 | `KEEPER_SECRET_KEY` | Server wallet secret key used to sign custodial top-up transactions |
 | `JWT_SECRET` | Secret used to sign and verify auth JWTs |
 | `REDIS_URL` | Redis connection string (only needed for multi-instance SSE fanout) |
-| `STELLAR_NETWORK` | `TESTNET` or `MAINNET` |
+| `STELLAR_NETWORK` | `testnet` or `mainnet` |
 
 ### Frontend
 
 | Variable | Purpose |
-|---|---|
+|---|---|---|
 | `NEXT_PUBLIC_API_URL` | Base URL of the backend API (e.g. `http://localhost:3001/v1`) |
-| `NEXT_PUBLIC_STREAMING_CONTRACT` | Contract address displayed in the Settings page |
-| `NEXT_PUBLIC_STELLAR_NETWORK` | `TESTNET` or `MAINNET` — must match the backend value |
 | `NEXT_PUBLIC_APP_VERSION` | Displayed in Settings; optional, defaults to `1.0.0` |
+| `NEXT_PUBLIC_STELLAR_NETWORK` | `TESTNET` or `MAINNET` — must match the backend value |
+| `NEXT_PUBLIC_STELLAR_EXPERT_URL` | Base URL for Stellar Expert explorer links (e.g. `https://stellar.expert/explorer/testnet`) |
+| `NEXT_PUBLIC_SOROBAN_RPC_URL` | Soroban RPC endpoint (e.g. `https://soroban-testnet.stellar.org`) |
+| `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Stellar network passphrase (e.g. `Test SDF Network ; September 2015`) |
+| `NEXT_PUBLIC_STREAM_CONTRACT_ID` | Soroban stream contract ID used by the Soroban client |
+| `NEXT_PUBLIC_STREAMING_CONTRACT` | Contract address displayed in the Settings page |
+| `NEXT_PUBLIC_USDC_ADDRESS` | USDC token contract address (testnet default provided) |
+| `NEXT_PUBLIC_EURC_ADDRESS` | EURC token contract address (testnet default provided) |
+| `NEXT_PUBLIC_XLM_ADDRESS` | XLM token contract address (testnet default provided) |

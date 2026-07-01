@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
-import { formatAmount } from '@/lib/amount';
+
 
 interface IncomingStreamsProps {
     streams: Stream[];
@@ -12,9 +12,20 @@ interface IncomingStreamsProps {
     withdrawingStreamId?: string | null;
 }
 
-function formatTokenAmount(value: number, decimals: number = 7): string {
+/**
+ * Format an already-human-scaled token amount (e.g. 10.5) for display.
+ *
+ * Values coming from the Stream interface have already been divided by 1e7
+ * (stroops → token units) by the dashboard mapper, so we must NOT re-scale
+ * them through formatAmount. Instead we format the number directly using
+ * Intl.NumberFormat, consistent with IncomingStreamCard.
+ */
+function formatTokenAmount(value: number, maximumFractionDigits = 7): string {
     if (!Number.isFinite(value)) return '0.0000000';
-    return formatAmount(BigInt(Math.floor(value)), decimals);
+    return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits,
+    }).format(value);
 }
 
 const ClaimableAmount: React.FC<{ stream: Stream }> = ({ stream }) => {

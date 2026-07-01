@@ -9,6 +9,10 @@ coverage:
         target: 70%
         flags:
           - contracts
+      frontend:
+        target: auto
+        flags:
+          - frontend
     patch:
       default:
         target: 60%

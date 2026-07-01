@@ -15,6 +15,7 @@ import toast from "react-hot-toast";
  *  - Error state: "Failed to load streams" with a retry button
  */
 
+import { Skeleton } from "@/components/ui/Skeleton";
 import {
   getDashboardAnalytics,
   fetchDashboardData,
@@ -107,12 +108,10 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 /** Shimmer card used as a placeholder while data loads */
 function SkeletonCard({ className = "" }: { className?: string }) {
   return (
-    <div
-      className={`rounded-2xl bg-white/5 overflow-hidden relative ${className}`}
-      aria-hidden="true"
-    >
+    <div className={`relative overflow-hidden rounded-2xl ${className}`} aria-hidden="true">
+      <Skeleton className="w-full h-full" />
       {/* shimmer sweep */}
-      <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.4s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+      <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
     </div>
   );
 }
@@ -442,6 +441,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [showWizard, setShowWizard] = React.useState(false);
   const [modal, setModal] = React.useState<ModalState>(null);
 
+  const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
+  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
+  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+
   const { events: streamEvents, connected, reconnecting, error } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
@@ -450,13 +453,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   React.useEffect(() => {
     if (streamEvents.length > 0) {
       const latestEvent = streamEvents[0];
-      const relevantTypes = ["created", "topped_up", "withdrawn", "cancelled", "completed", "paused", "resumed"];
-      if (relevantTypes.includes(latestEvent.type)) {
-        fetchDashboardData(session.publicKey)
-          .then(setSnapshot)
-          .catch((err) => {
-            setSnapshotError(err instanceof Error ? err.message : "Failed to refresh dashboard");
-          });
+      if (latestEvent) {
+        const relevantTypes = ["created", "topped_up", "withdrawn", "cancelled", "completed", "paused", "resumed"];
+        if (relevantTypes.includes(latestEvent.type)) {
+          fetchDashboardData(session.publicKey)
+            .then(setSnapshot)
+            .catch((err) => {
+              setSnapshotError(err instanceof Error ? err.message : "Failed to refresh dashboard");
+            });
+        }
       }
     }
   }, [streamEvents, session.publicKey]);
@@ -472,9 +477,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] = React.useState<string | null>(null);
   const [isFormSubmitting, setIsFormSubmitting] = React.useState(false);
 
-  const [snapshot, setSnapshot] = React.useState<DashboardSnapshot | null>(null);
-  const [isSnapshotLoading, setIsSnapshotLoading] = React.useState(true);
-  const [snapshotError, setSnapshotError] = React.useState<string | null>(null);
+
 
   const safeLoadTemplates = (): StreamTemplate[] => {
     try {
@@ -506,8 +509,11 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   };
 
   React.useEffect(() => {
-    setTemplates(safeLoadTemplates());
-    setTemplatesHydrated(true);
+    const timer = setTimeout(() => {
+      setTemplates(safeLoadTemplates());
+      setTemplatesHydrated(true);
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   React.useEffect(() => {
@@ -529,7 +535,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     } finally {
       setIsSnapshotLoading(false);
     }
-  }, [session.publicKey]);
+  }, [session.publicKey, setIsSnapshotLoading, setSnapshotError, setSnapshot]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -621,7 +627,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   };
 
   const addStreamLocally = (data: StreamFormData) => {
-    const newStream: Stream = { id: `stream-${Date.now()}`, date: new Date().toISOString().split("T")[0], recipient: shortenPublicKey(data.recipient), amount: parseFloat(data.amount), token: data.token, status: "Active", deposited: parseFloat(data.amount), withdrawn: 0, ratePerSecond: 0, lastUpdateTime: Math.floor(Date.now() / 1000), isActive: true };
+    const newStream: Stream = { id: `stream-${Date.now()}`, date: new Date().toISOString().split("T")[0] ?? "", recipient: shortenPublicKey(data.recipient), amount: parseFloat(data.amount), token: data.token, status: "Active", deposited: parseFloat(data.amount), withdrawn: 0, ratePerSecond: 0, lastUpdateTime: Math.floor(Date.now() / 1000), isActive: true };
     setSnapshot((prev) => { if (!prev) return prev; return { ...prev, outgoingStreams: [newStream, ...prev.outgoingStreams], activeStreamsCount: prev.activeStreamsCount + 1 }; });
   };
 

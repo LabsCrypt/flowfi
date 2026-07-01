@@ -195,6 +195,7 @@ stellar contract invoke --id CONTRACT_ID --source YOUR_SECRET_KEY --network http
 
 The FlowFi backend API uses URL-based versioning. All endpoints are prefixed with a version (e.g., `/v1/streams`).
 
+- **Authentication**: [backend/docs/AUTHENTICATION.md](backend/docs/AUTHENTICATION.md)
 - **API Versioning Guide**: [backend/docs/API_VERSIONING.md](backend/docs/API_VERSIONING.md)
 - **Deprecation Policy**: [backend/docs/DEPRECATION_POLICY.md](backend/docs/DEPRECATION_POLICY.md)
 - **Sandbox Mode**: [backend/docs/SANDBOX_MODE.md](backend/docs/SANDBOX_MODE.md) - Test without affecting production data
@@ -269,11 +270,8 @@ If you discover a security vulnerability, please see our [Security Policy](SECUR
 
 ## Community & Support
 
-Have questions? Want to share ideas or projects? Join the conversation!
+Review the discussions guide before opening an issue or looking for community support.
 
-- **❓ [Ask Questions](https://github.com/flowfi/flowfi/discussions/categories/q-a)** - Get help in GitHub Discussions Q&A
-- **💡 [Share Ideas](https://github.com/flowfi/flowfi/discussions/categories/ideas)** - Propose features and discuss improvements
-- **🎪 [Show and Tell](https://github.com/flowfi/flowfi/discussions/categories/show-and-tell)** - Share projects and use cases built with FlowFi
 - **📖 [Discussions Guide](DISCUSSIONS.md)** - Learn when to use Discussions vs Issues.
 
 ## Contributors

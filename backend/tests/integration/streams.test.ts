@@ -1,16 +1,13 @@
 /**
- * Integration tests for the full stream lifecycle.
+ * Integration tests for stream HTTP routes with mocked Prisma/SSE.
  *
- * These tests mock the Prisma client and SSE service so they run in CI without
- * a real Postgres or Redis instance. They verify that the indexer worker, stream
- * controller, SSE broadcast, and RPC fallback all wire up correctly end-to-end.
+ * Indexer worker lifecycle flows are covered in indexer-worker.test.ts (mocked
+ * worker) and stream-lifecycle.test.ts (real Postgres). This file focuses on
+ * claimable RPC fallback, SSE broadcast contracts, and events pagination.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 
-// Bypass Stellar signature verification on POST /v1/streams. The route is
-// exercised here as a stand-in for the indexer worker, so we replace the auth
-// middleware with a stub that injects a deterministic wallet.
 // Preserve the module's real exports (issueChallenge, verifyChallenge,
 // verifyJwt) — auth.routes wires them up at app construction — while stubbing
 // only the middleware so requests bypass JWT verification.
@@ -118,147 +115,6 @@ function makeStream(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 // ─── Test suites ──────────────────────────────────────────────────────────────
-
-describe('Indexer → stream_created: stream appears in GET /v1/streams/:id', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
-  it('creates a stream via POST and retrieves it via GET', async () => {
-    const stream = makeStream();
-    mockPrisma.stream.upsert.mockResolvedValue(stream);
-    mockPrisma.stream.findUnique.mockResolvedValue(stream);
-
-    // POST simulates what the indexer would do after processing stream_created
-    const createRes = await request(app)
-      .post('/v1/streams')
-      .send({
-        streamId: '1',
-        sender: SENDER,
-        recipient: RECIPIENT,
-        tokenAddress: TOKEN,
-        ratePerSecond: '10',
-        depositedAmount: '86400',
-        startTime: '1700000000',
-      });
-
-    expect(createRes.status).toBe(201);
-    expect(createRes.body.streamId).toBe(1);
-
-    // GET the same stream
-    const getRes = await request(app).get('/v1/streams/1');
-    expect(getRes.status).toBe(200);
-    expect(getRes.body.streamId).toBe(1);
-    expect(getRes.body.isActive).toBe(true);
-  });
-});
-
-describe('Indexer → stream_topped_up: depositedAmount updated', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
-  it('GET reflects updated depositedAmount after top-up upsert', async () => {
-    const after = makeStream({ depositedAmount: '172800' });
-    mockPrisma.stream.upsert.mockResolvedValue(after);
-    mockPrisma.stream.findUnique.mockResolvedValue(after);
-
-    const createRes = await request(app)
-      .post('/v1/streams')
-      .send({
-        streamId: '1',
-        sender: SENDER,
-        recipient: RECIPIENT,
-        tokenAddress: TOKEN,
-        ratePerSecond: '10',
-        depositedAmount: '172800',
-        startTime: '1700000000',
-      });
-    expect(createRes.status).toBe(201);
-
-    const getRes = await request(app).get('/v1/streams/1');
-    expect(getRes.status).toBe(200);
-    expect(getRes.body.depositedAmount).toBe('172800');
-  });
-});
-
-describe('Indexer → stream_paused: isPaused = true, accrual stops', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
-  it('GET returns isPaused=true after paused upsert', async () => {
-    const paused = makeStream({ isPaused: true, isActive: true });
-    mockPrisma.stream.upsert.mockResolvedValue(paused);
-    mockPrisma.stream.findUnique.mockResolvedValue(paused);
-
-    const createRes = await request(app)
-      .post('/v1/streams')
-      .send({
-        streamId: '1',
-        sender: SENDER,
-        recipient: RECIPIENT,
-        tokenAddress: TOKEN,
-        ratePerSecond: '10',
-        depositedAmount: '86400',
-        startTime: '1700000000',
-      });
-    expect(createRes.status).toBe(201);
-
-    const getRes = await request(app).get('/v1/streams/1');
-    expect(getRes.status).toBe(200);
-    // isPaused reflects the indexer's last write
-    expect(getRes.body.isPaused ?? false).toBe(true);
-  });
-});
-
-describe('Indexer → stream_resumed: isPaused = false, accrual resumes', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
-  it('GET returns isPaused=false after resumed upsert', async () => {
-    const resumed = makeStream({ isPaused: false, isActive: true });
-    mockPrisma.stream.upsert.mockResolvedValue(resumed);
-    mockPrisma.stream.findUnique.mockResolvedValue(resumed);
-
-    const createRes = await request(app)
-      .post('/v1/streams')
-      .send({
-        streamId: '1',
-        sender: SENDER,
-        recipient: RECIPIENT,
-        tokenAddress: TOKEN,
-        ratePerSecond: '10',
-        depositedAmount: '86400',
-        startTime: '1700000000',
-      });
-    expect(createRes.status).toBe(201);
-
-    const getRes = await request(app).get('/v1/streams/1');
-    expect(getRes.status).toBe(200);
-    expect(getRes.body.isPaused ?? false).toBe(false);
-  });
-});
-
-describe('Indexer → stream_cancelled: isActive = false', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-
-  it('GET returns isActive=false after cancelled upsert', async () => {
-    const cancelled = makeStream({ isActive: false });
-    mockPrisma.stream.upsert.mockResolvedValue(cancelled);
-    mockPrisma.stream.findUnique.mockResolvedValue(cancelled);
-
-    const createRes = await request(app)
-      .post('/v1/streams')
-      .send({
-        streamId: '1',
-        sender: SENDER,
-        recipient: RECIPIENT,
-        tokenAddress: TOKEN,
-        ratePerSecond: '10',
-        depositedAmount: '86400',
-        startTime: '1700000000',
-      });
-    expect(createRes.status).toBe(201);
-
-    const getRes = await request(app).get('/v1/streams/1');
-    expect(getRes.status).toBe(200);
-    expect(getRes.body.isActive).toBe(false);
-  });
-});
 
 describe('Stale DB (>30s) → GET /v1/streams/:id/claimable falls back to RPC', () => {
   beforeEach(() => { vi.clearAllMocks(); });

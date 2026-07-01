@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { hasValidPrecision } from "@/lib/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import { logger } from "@/lib/logger";
 import { Stepper } from "../ui/Stepper";
 import { Button } from "../ui/Button";
 import { RecipientStep } from "./RecipientStep";
@@ -11,7 +12,6 @@ import { ScheduleStep } from "./ScheduleStep";
 import { TemplateStep, type StreamTemplate } from "./TemplateStep";
 import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
-import { TransactionTracker } from "../ui/TransactionTracker";
 import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
 
@@ -30,7 +30,8 @@ interface StreamCreationWizardProps {
   walletPublicKey?: string;
 }
 
-const CUSTOM_TEMPLATE_STORAGE_KEY = "flowfi.stream.wizard.custom-templates.v1";
+// Unified storage key shared with dashboard form (Issue #699)
+const CUSTOM_TEMPLATE_STORAGE_KEY = "flowfi.stream.templates.v1";
 
 const BUILT_IN_TEMPLATES: StreamTemplate[] = [
   {
@@ -124,23 +125,33 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
 
   React.useEffect(() => {
+    let timer: NodeJS.Timeout;
     try {
       const stored = localStorage.getItem(CUSTOM_TEMPLATE_STORAGE_KEY);
-      if (!stored) return;
-      const parsed = JSON.parse(stored);
-      if (!Array.isArray(parsed)) return;
-      const sanitized = parsed
-        .filter((item) => item && typeof item.id === "string" && typeof item.name === "string")
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          description: item.description || "Saved custom template",
-          values: item.values || {},
-        } as StreamTemplate));
-      setCustomTemplates(sanitized);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          const sanitized = parsed
+            .filter((item) => item && typeof item.id === "string" && typeof item.name === "string")
+            .map((item) => ({
+              id: item.id,
+              name: item.name,
+              description: item.description || "Saved custom template",
+              values: item.values || {},
+            } as StreamTemplate));
+          timer = setTimeout(() => {
+            setCustomTemplates(sanitized);
+          }, 0);
+        }
+      }
     } catch {
-      setCustomTemplates([]);
+      timer = setTimeout(() => {
+        setCustomTemplates([]);
+      }, 0);
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -152,16 +163,22 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   }, [customTemplates]);
 
   React.useEffect(() => {
+    let cancelled = false;
+    let timer: NodeJS.Timeout;
+
     if (!walletPublicKey || !formData.token) {
-      setWalletBalance(null);
-      setWalletBalanceError(null);
-      setWalletBalanceLoading(false);
-      return;
+      timer = setTimeout(() => {
+        setWalletBalance(null);
+        setWalletBalanceError(null);
+        setWalletBalanceLoading(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
-    let cancelled = false;
-    setWalletBalanceLoading(true);
-    setWalletBalanceError(null);
+    timer = setTimeout(() => {
+      setWalletBalanceLoading(true);
+      setWalletBalanceError(null);
+    }, 0);
 
     fetchTokenBalanceDisplay(walletPublicKey, formData.token)
       .then((balance) => {
@@ -180,6 +197,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [walletPublicKey, formData.token]);
 
@@ -304,7 +322,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         setCurrentStep(currentStep + 1);
         // Scroll to top when moving to next step
         const modal = document.querySelector('.glass-card');
-        if (modal) {
+        if (modal && typeof modal.scrollTo === 'function') {
           modal.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }
@@ -321,7 +339,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
       // Scroll to top when going back
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (typeof window.scrollTo === 'function') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   };
 
@@ -344,7 +364,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           return;
         }
       } catch (e) {
-        console.warn("Polling error:", e);
+        logger.warn("Polling error:", e);
       }
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
     }
@@ -367,7 +387,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         await startPolling(formData.recipient);
         
       } catch (error) {
-        console.error("Failed to create stream:", error);
+        logger.error("Failed to create stream:", error);
         setIsSubmitting(false);
       }
     } else {
@@ -495,14 +515,39 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
               
               {!timeoutError ? (
                 <>
-                  <TransactionTracker 
-                    steps={[
-                      { id: "1", label: "Sign Transaction", status: "completed" },
-                      { id: "2", label: "Network Confirmation", status: "completed" },
-                      { id: "3", label: "Indexer Synchronization", status: "current", description: "Detecting your stream on-chain..." }
-                    ]}
-                    className="w-full max-w-sm"
-                  />
+                  <div className="w-full max-w-sm mx-auto space-y-4">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent">
+                        <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">Sign Transaction</p>
+                        <p className="text-xs text-slate-400">Confirmed</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent">
+                        <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium">Network Confirmation</p>
+                        <p className="text-xs text-slate-400">Confirmed</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-accent animate-pulse">
+                        <div className="h-2 w-2 rounded-full bg-accent" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-accent">Indexer Synchronization</p>
+                        <p className="text-xs text-slate-400">Detecting your stream on-chain...</p>
+                      </div>
+                    </div>
+                  </div>
                   <div className="mt-12 flex flex-col items-center gap-2">
                     <div className="flex gap-1">
                       <div className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0s" }} />

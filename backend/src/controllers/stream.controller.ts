@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
+import { Prisma } from '../generated/prisma/index.js';
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
 import { claimableAmountService } from '../services/claimable.service.js';
@@ -12,6 +13,10 @@ import {
   resumeStream as sorobanResumeStream,
 } from '../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import { DEFAULT_EVENTS_PAGE_SIZE, MAX_EVENTS_PAGE_SIZE } from '../routes/v1/events.routes.js';
+
+const DEFAULT_STREAM_PAGE_SIZE = 20;
+const MAX_STREAM_PAGE_SIZE = 100;
 
 interface UserStreamSummary {
   address: string;
@@ -38,6 +43,11 @@ function pruneUserSummaryCache(nowMs: number): void {
     }
   }
 }
+
+// Issue #682: Periodic prune to prevent memory drift when no requests come in
+setInterval(() => {
+  pruneUserSummaryCache(Date.now());
+}, 60_000); // Run every 60 seconds
 
 function sumStringI128(values: string[]): string {
   let total = 0n;
@@ -128,7 +138,7 @@ export const listStreams = async (req: Request, res: Response) => {
       offset = '0'
     } = req.query;
 
-    const where: any = {};
+    const where: Prisma.StreamWhereInput = {};
     if (typeof sender === 'string') where.sender = sender;
     if (typeof recipient === 'string') where.recipient = recipient;
     if (typeof token === 'string') where.tokenAddress = token;
@@ -165,8 +175,8 @@ export const listStreams = async (req: Request, res: Response) => {
 
     // Validate and parse pagination parameters
     const parsedLimit = Math.min(
-      typeof limit === 'string' ? (Number.parseInt(limit, 10) || 20) : 20,
-      100
+      typeof limit === 'string' ? (Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE) : DEFAULT_STREAM_PAGE_SIZE,
+      MAX_STREAM_PAGE_SIZE
     );
     const parsedOffset = typeof offset === 'string' ? (Number.parseInt(offset, 10) || 0) : 0;
 
@@ -275,13 +285,12 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const rawOffset = req.query['offset'];
     const rawPage = req.query['page'];
     const cursor = typeof req.query['cursor'] === 'string' ? req.query['cursor'] : undefined;
-    const direction = req.query['direction'] === 'asc' ? 'asc' as const : 'desc' as const;
     const order = req.query['order'] === 'asc' ? 'asc' as const : 'desc' as const;
     const eventType = typeof req.query['eventType'] === 'string' ? req.query['eventType'] : undefined;
 
     const limit = Math.min(
-      rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || 50) : 50,
-      500,
+      rawLimit && typeof rawLimit === 'string' ? (Number.parseInt(rawLimit, 10) || DEFAULT_EVENTS_PAGE_SIZE) : DEFAULT_EVENTS_PAGE_SIZE,
+      MAX_EVENTS_PAGE_SIZE,
     );
 
     let offset = 0;
@@ -292,7 +301,7 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       offset = Math.max(0, (page - 1) * limit);
     }
 
-    const whereClause: any = { streamId: parsedStreamId };
+    const whereClause: Prisma.StreamEventWhereInput = { streamId: parsedStreamId, };
     if (eventType) {
       const validEventTypes = ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED', 'FEE_CONFIG_UPDATED', 'ADMIN_TRANSFERRED'];
       if (!validEventTypes.includes(eventType)) {
@@ -474,11 +483,11 @@ export const getUserStreamSummary = async (req: Request<{ address: string }>, re
     }
 
     const totalStreamsCreated = outgoingStreams.length;
-    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream: any) => stream.withdrawnAmount));
-    const totalStreamedIn = sumStringI128(incomingStreams.map((stream: any) => stream.withdrawnAmount));
+    const totalStreamedOut = sumStringI128(outgoingStreams.map((stream) => stream.withdrawnAmount));
+    const totalStreamedIn = sumStringI128(incomingStreams.map((stream) => stream.withdrawnAmount));
 
-    const activeOutgoingCount = outgoingStreams.filter((stream: any) => stream.isActive).length;
-    const activeIncomingCount = incomingStreams.filter((stream: any) => stream.isActive).length;
+    const activeOutgoingCount = outgoingStreams.filter((stream) => stream.isActive).length;
+    const activeIncomingCount = incomingStreams.filter((stream) => stream.isActive).length;
 
     const summary: UserStreamSummary = {
       address,
@@ -762,4 +771,3 @@ export const resumeStream = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Internal server error' });
   }
 };
-

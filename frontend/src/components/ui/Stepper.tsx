@@ -13,8 +13,8 @@ export const Stepper: React.FC<StepperProps> = ({
   className = "",
 }) => {
   return (
-    <div className={`stepper ${className}`}>
-      <div className="stepper__container">
+    <nav className={`stepper ${className}`} aria-label="Progress">
+      <ol className="stepper__container">
         {steps.map((step, index) => {
           const stepNumber = index + 1;
           const isActive = stepNumber === currentStep;
@@ -22,7 +22,7 @@ export const Stepper: React.FC<StepperProps> = ({
 
           return (
             <React.Fragment key={step}>
-              <div className="stepper__step">
+              <li className="stepper__step" aria-current={isActive ? "step" : undefined}>
                 <div
                   className={`stepper__circle ${
                     isActive
@@ -60,19 +60,23 @@ export const Stepper: React.FC<StepperProps> = ({
                   }`}
                 >
                   {step}
+                  <span className="sr-only">
+                    {isActive ? " (current step)" : isCompleted ? " (completed)" : " (upcoming)"}
+                  </span>
                 </span>
-              </div>
+              </li>
               {index < steps.length - 1 && (
                 <div
                   className={`stepper__line ${
                     isCompleted ? "stepper__line--completed" : ""
                   }`}
+                  aria-hidden="true"
                 />
               )}
             </React.Fragment>
           );
         })}
-      </div>
-    </div>
+      </ol>
+    </nav>
   );
 };

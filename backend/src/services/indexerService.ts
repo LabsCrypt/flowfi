@@ -1,8 +1,7 @@
 import { prisma } from '../lib/prisma.js';
+import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { sorobanEventWorker } from '../workers/soroban-event-worker.js';
 import logger from '../logger.js';
-
-const INDEXER_STATE_ID = 'singleton';
 
 export interface IndexerStatus {
   lastLedger: number;
@@ -45,8 +44,6 @@ export async function resetIndexer(toLedger: number): Promise<void> {
 export async function replayFromLedger(fromLedger: number): Promise<void> {
   await resetIndexer(fromLedger);
   // Kick off an immediate poll cycle without waiting for the next interval.
-  await sorobanEventWorker.triggerPoll().catch((err: unknown) => {
-    logger.error('[IndexerService] Replay poll error:', err);
-  });
+  await sorobanEventWorker.triggerPoll();
   logger.info(`[IndexerService] Replay triggered from ledger ${fromLedger}`);
 }

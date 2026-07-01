@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Account, Networks } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks, Account } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
@@ -33,7 +33,8 @@ function decodeAddress(val: xdr.ScVal): string {
   if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
-  return StrKey.encodeContract(Buffer.from(addr.contractId() as any));
+  const hash = addr.contractId();
+  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
 }
 
 function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
@@ -48,8 +49,6 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
   const contract = new Contract(CONTRACT_ID);
 
   const op = contract.call(method, ...args);
-
-  const { TransactionBuilder, Account, Networks } = await import('@stellar/stellar-sdk');
 
   const tx = new TransactionBuilder(
     new Account(
@@ -203,10 +202,10 @@ export async function pauseStream(
 
   try {
     const { Address } = await import('@stellar/stellar-sdk');
-    
+
     const senderAddr = new Address(senderAddress);
-    
-    const retval = await simulateContractCall('pause_stream', [
+
+    await simulateContractCall('pause_stream', [
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
@@ -237,10 +236,10 @@ export async function resumeStream(
 
   try {
     const { Address } = await import('@stellar/stellar-sdk');
-    
+
     const senderAddr = new Address(senderAddress);
-    
-    const retval = await simulateContractCall('resume_stream', [
+
+    await simulateContractCall('resume_stream', [
       senderAddr.toScVal(),
       nativeToScVal(streamId, { type: 'u64' }),
     ]);

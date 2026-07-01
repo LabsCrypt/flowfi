@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, vi, beforeEach } from 'vitest';
 import { sorobanIndexerService } from '../src/services/soroban-indexer.service.js';
 
 vi.mock('../src/logger.js', () => ({

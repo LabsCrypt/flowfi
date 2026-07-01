@@ -94,7 +94,7 @@ export function hasValidPrecision(input: string, decimals: number): boolean {
   if (!/^\d*\.?\d*$/.test(cleanInput)) return false;
   
   if (cleanInput.includes('.')) {
-    const fractionalPart = cleanInput.split('.')[1];
+    const fractionalPart = cleanInput.split('.')[1] ?? '';
     return fractionalPart.length <= decimals;
   }
   

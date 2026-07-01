@@ -2,19 +2,17 @@
  * lib/wallet.ts
  *
  * Production wallet adapter for FlowFi.
- * Supports Freighter (browser extension), Albedo (web auth popup),
- * and xBull (extension / mobile handoff) via @creit.tech/stellar-wallets-kit.
+ * Currently supports Freighter (browser extension).
  *
- * No mock sessions are created in production paths.
+ * Albedo and xBull are intentionally not advertised until real connectors are
+ * implemented. No mock sessions are created in production paths.
  * Set NEXT_PUBLIC_STELLAR_NETWORK=TESTNET|MAINNET in .env to control network.
  */
 
 // ── Network configuration ─────────────────────────────────────────────────────
 
-export const STELLAR_NETWORK =
-  (process.env.NEXT_PUBLIC_STELLAR_NETWORK ?? "TESTNET") as
-  | "TESTNET"
-  | "MAINNET";
+export const STELLAR_NETWORK = (process.env.NEXT_PUBLIC_STELLAR_NETWORK ??
+  "TESTNET") as "TESTNET" | "MAINNET";
 
 export const STELLAR_NETWORK_ID =
   STELLAR_NETWORK === "MAINNET"
@@ -28,7 +26,7 @@ import {
   getNetworkDetails,
 } from "@stellar/freighter-api";
 
-export type WalletId = "freighter" | "albedo" | "xbull";
+export type WalletId = "freighter";
 
 export interface WalletDescriptor {
   id: WalletId;
@@ -71,18 +69,6 @@ export const SUPPORTED_WALLETS: readonly WalletDescriptor[] = [
     badge: "Extension",
     description: "Direct browser wallet for Stellar accounts and Soroban apps.",
   },
-  {
-    id: "albedo",
-    name: "Albedo",
-    badge: "Web",
-    description: "Connect via web authentication popup. No extension required.",
-  },
-  {
-    id: "xbull",
-    name: "xBull",
-    badge: "Extension",
-    description: "Browser extension and mobile wallet for Stellar ecosystem.",
-  },
 ];
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -91,7 +77,6 @@ function buildSession(
   walletId: WalletId,
   publicKey: string,
   network: string,
-  mocked: boolean = false,
 ): WalletSession {
   const descriptor = SUPPORTED_WALLETS.find((w) => w.id === walletId);
 
@@ -105,7 +90,7 @@ function buildSession(
     publicKey,
     connectedAt: new Date().toISOString(),
     network,
-    mocked,
+    mocked: false,
   };
 }
 
@@ -122,10 +107,14 @@ async function connectFreighter(): Promise<WalletSession> {
   const { address, error: addressError } = await getAddress();
 
   if (!address || addressError) {
-    throw new Error(addressError || "Freighter did not return a valid public key.");
+    throw new Error(
+      addressError || "Freighter did not return a valid public key.",
+    );
   }
 
-  let networkId =STELLAR_NETWORK_ID.toLowerCase().includes("public") ? "Mainnet" : "Testnet";
+  let networkId = STELLAR_NETWORK_ID.toLowerCase().includes("public")
+    ? "Mainnet"
+    : "Testnet";
 
   try {
     const details = await getNetworkDetails();
@@ -146,48 +135,6 @@ async function connectFreighter(): Promise<WalletSession> {
   return buildSession("freighter", address, networkId);
 }
 
-// ── Albedo (Mock) ──────────────────────────────────────────────────────────────
-
-/**
- * Mock connection for Albedo wallet.
- * Simulates a connection with a delay to show loading state.
- * In production, this would integrate with Albedo's web auth popup.
- */
-async function connectAlbedo(): Promise<WalletSession> {
-  // Simulate connection delay
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  // Generate a mock public key for demonstration
-  // In production, this would come from Albedo's authentication flow
-  // Stellar public keys are base32 encoded and 56 characters long, starting with G
-  const mockPublicKey = "G" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".substring(0, 55);
-  
-  const networkId = STELLAR_NETWORK === "MAINNET" ? "Mainnet" : "Testnet";
-
-  return buildSession("albedo", mockPublicKey, networkId, true);
-}
-
-// ── xBull (Mock) ────────────────────────────────────────────────────────────────
-
-/**
- * Mock connection for xBull wallet.
- * Simulates a connection with a delay to show loading state.
- * In production, this would integrate with xBull extension or mobile handoff.
- */
-async function connectXBull(): Promise<WalletSession> {
-  // Simulate connection delay
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  // Generate a mock public key for demonstration
-  // In production, this would come from xBull's connection flow
-  // Stellar public keys are base32 encoded and 56 characters long, starting with G
-  const mockPublicKey = "G" + "ZYXWVUTSRQPONMLKJIHGFEDCBA234567".substring(0, 55);
-  
-  const networkId = STELLAR_NETWORK === "MAINNET" ? "Mainnet" : "Testnet";
-
-  return buildSession("xbull", mockPublicKey, networkId, true);
-}
-
 // ── Public connect dispatch ───────────────────────────────────────────────────
 
 export async function connectWallet(
@@ -196,10 +143,6 @@ export async function connectWallet(
   switch (walletId) {
     case "freighter":
       return connectFreighter();
-    case "albedo":
-      return connectAlbedo();
-    case "xbull":
-      return connectXBull();
     default:
       throw new Error("Unsupported wallet selected.");
   }

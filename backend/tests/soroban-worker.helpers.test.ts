@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { decodeSymbol, decodeU64, decodeI128, decodeAddress, decodeMap } from '../src/workers/soroban-event-worker.js';
 import { xdr, StrKey } from '@stellar/stellar-sdk';
 

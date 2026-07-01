@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { subscribe } from '../../controllers/sse.controller.js';
 import { sseService } from '../../services/sse.service.js';
 import { requireAuth } from '../../middleware/auth.js';
+import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import { prisma } from '../../lib/prisma.js';
 import logger from '../../logger.js';
 
@@ -21,8 +22,8 @@ const EVENT_TYPES = new Set([
   'ADMIN_TRANSFERRED',
 ]);
 
-const MAX_EVENT_LIMIT = 200;
-const DEFAULT_EVENT_LIMIT = 50;
+export const MAX_EVENTS_PAGE_SIZE = 200;
+export const DEFAULT_EVENTS_PAGE_SIZE = 50;
 
 /**
  * @openapi
@@ -65,11 +66,18 @@ const DEFAULT_EVENT_LIMIT = 50;
  *       200:
  *         description: Paginated event list
  */
-router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const { publicKey } = (req as AuthenticatedRequest).user;
     const address = typeof req.query.address === 'string' ? req.query.address.trim() : '';
     if (!address) {
       res.status(400).json({ error: 'address query parameter is required' });
+      return;
+    }
+
+    // Aligned with SSE security: history queries require authentication and are scoped to the caller.
+    if (address !== publicKey) {
+      res.status(403).json({ error: 'Forbidden', message: 'You can only view your own event history' });
       return;
     }
 
@@ -86,8 +94,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const parsedLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
-      ? Math.min(parsedLimit, MAX_EVENT_LIMIT)
-      : DEFAULT_EVENT_LIMIT;
+      ? Math.min(parsedLimit, MAX_EVENTS_PAGE_SIZE)
+      : DEFAULT_EVENTS_PAGE_SIZE;
 
     const hasOffset = req.query.offset !== undefined;
     const parsedOffset = Number.parseInt(String(req.query.offset ?? ''), 10);

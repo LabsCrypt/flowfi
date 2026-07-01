@@ -17,6 +17,9 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
+# WASM size budget: 200KB (200000 bytes) for optimized contract
+# Enforced in .github/workflows/ci.yml
+
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true

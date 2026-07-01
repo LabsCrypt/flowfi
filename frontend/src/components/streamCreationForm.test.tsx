@@ -6,7 +6,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import { StreamCreationWizard } from "./stream-creation/StreamCreationWizard";
-import React from "react";
+
 
 test("StreamCreationWizard — validation errors shown", () => {
   const mockOnClose = vi.fn();
