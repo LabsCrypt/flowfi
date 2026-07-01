@@ -218,7 +218,7 @@ jobs:
         shell: bash
 
       - name: Upload optimized WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: optimized-wasm
           path: contracts/target/wasm32-unknown-unknown/release/*.optimized.wasm
