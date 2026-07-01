@@ -108,6 +108,10 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 /** Shimmer card used as a placeholder while data loads */
 function SkeletonCard({ className = "" }: { className?: string }) {
   return (
+    <Skeleton
+      className={`rounded-2xl ${className}`}
+      aria-hidden="true"
+    />
     <div className={`relative overflow-hidden rounded-2xl ${className}`} aria-hidden="true">
       <Skeleton className="w-full h-full" />
       {/* shimmer sweep */}
