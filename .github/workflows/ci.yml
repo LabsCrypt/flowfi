@@ -153,7 +153,7 @@ jobs:
         run: |
           docker compose up -d postgres
           sleep 10
-          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx -y prisma db push --accept-data-loss --schema=prisma/schema.prisma
+          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx -y prisma db push --accept-data-loss --schema=/app/prisma/schema.prisma
           docker compose up -d backend
           sleep 15
           curl --fail http://localhost:3001/health || (docker compose logs backend && exit 1)
