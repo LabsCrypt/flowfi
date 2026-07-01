@@ -98,13 +98,31 @@ export function verifyJwt(token: string): { publicKey: string } | null {
   try {
     const [header, body, sig] = token.split('.');
     if (!header || !body || !sig) return null;
+
+    // Verify signature
     const expected = crypto
       .createHmac('sha256', JWT_SECRET)
       .update(`${header}.${body}`)
       .digest();
-    if (!crypto.timingSafeEqual(Buffer.from(sig, 'base64url'), expected)) return null;
+
+    let providedSig: Buffer;
+    try {
+      providedSig = Buffer.from(sig, 'base64url');
+    } catch {
+      return null;
+    }
+
+    // Use timingSafeEqual to prevent timing attacks
+    if (providedSig.length !== expected.length || !crypto.timingSafeEqual(providedSig, expected)) {
+      return null;
+    }
+
+    // Verify expiration
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
-    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+
     return { publicKey: payload.sub };
   } catch {
     return null;
