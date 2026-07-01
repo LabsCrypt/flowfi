@@ -357,7 +357,7 @@ function renderStreams(
                     <div className="flex items-center justify-end gap-2">
                       {/^\d+$/.test(stream.id) ? (
                         <Link
-                          href={`/app/streams/${stream.id}`}
+                          href={`/streams/${stream.id}`}
                           className="secondary-button py-1 px-3 text-sm h-auto inline-flex items-center"
                         >
                           Details
