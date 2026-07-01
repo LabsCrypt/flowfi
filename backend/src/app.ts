@@ -124,36 +124,6 @@ app.get("/api-docs.json", (req: Request, res: Response) => {
 // All versioned routes must include version prefix (e.g., /v1/streams)
 app.use(apiVersionMiddleware);
 
-// Legacy (pre-versioning) routes: respond with 410 Gone and a migration hint
-// instead of falling through to a bare 404. Only the specific legacy paths
-// that used to exist before /v1 are covered here.
-const DEPRECATED_ROUTES: Record<string, string> = {
-  "/streams": "/v1/streams",
-  "/events": "/v1/events",
-};
-
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const versionedReq = req as VersionedRequest;
-  if (versionedReq.apiVersion) {
-    // Already versioned; nothing to do here.
-    return next();
-  }
-
-  const newPath = DEPRECATED_ROUTES[req.path];
-  if (newPath) {
-    res.status(410).json({
-      deprecated: true,
-      migration: {
-        old: req.path,
-        new: newPath,
-      },
-    });
-    return;
-  }
-
-  return next();
-});
-
 // Versioned API routes
 // After versioning middleware, /v1/streams becomes /streams, so we mount v1Routes at root
 // But only handle requests that had a version prefix (apiVersion is set)
