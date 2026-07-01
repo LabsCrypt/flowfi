@@ -3,6 +3,7 @@ import request from 'supertest';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import app from '../src/app.js';
 import { __authChallengeTestUtils, requireAdmin, signJwt } from '../src/middleware/auth.js';
 
@@ -287,6 +288,14 @@ describe('Authentication & Middleware Tests', () => {
     beforeEach(() => {
       adminApp = express();
       adminApp.use(express.json());
+      const adminLimiter = rateLimit({
+        windowMs: 60_000,
+        max: 100,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Too many requests' },
+      });
+      adminApp.use('/test-admin', adminLimiter);
       adminApp.get('/test-admin', requireAdmin, (_req: any, res: any) => {
         res.status(200).json({ success: true });
       });
