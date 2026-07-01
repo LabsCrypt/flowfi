@@ -64,6 +64,17 @@ test.describe("Stream Lifecycle Flow", () => {
     // Setup API interception routes
     // Note: use route.fulfill with JSON so the stream list can render deterministically.
 
+    await page.route("**/v1/streams/*/events*", async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: [],
+          meta: { total: 0, page: 1, limit: 10, totalPages: 0 },
+        }),
+      });
+    });
+
     await page.route("**/v1/users/*/summary", async (route: Route) => {
       await route.fulfill({
         status: 200,
@@ -185,13 +196,8 @@ test.describe("Stream Lifecycle Flow", () => {
       page.getByRole("heading", { name: /Stream Details/i }),
     ).toBeVisible({ timeout: 30000 });
 
-    // Click Pause
-    await page.getByRole("button", { name: "Pause" }).click();
-    await expect(page.getByText("Stream paused")).toBeVisible({
-      timeout: 30000,
-    });
-
-    // Mock update: change stream to paused for the UI update so Resume button appears
+    // Mock update BEFORE clicking pause! This prevents a race condition where
+    // fetchStream() is called before the test runner sets up the new route.
     await page.route("**/v1/streams/101", async (route: Route) => {
       await route.fulfill({
         status: 200,
@@ -211,6 +217,12 @@ test.describe("Stream Lifecycle Flow", () => {
           status: "Paused",
         }),
       });
+    });
+
+    // Click Pause
+    await page.getByRole("button", { name: "Pause" }).click();
+    await expect(page.getByText("Stream paused")).toBeVisible({
+      timeout: 30000,
     });
 
     // Wait for the UI to reflect the paused state
