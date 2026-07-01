@@ -552,6 +552,20 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Only the stream sender may top up this stream' });
     }
 
+    if (stream.isPaused) {
+      return res.status(409).json({
+        error: 'Conflict',
+        message: 'Cannot top up a paused stream',
+      });
+    }
+
+    if (!stream.isActive) {
+      return res.status(409).json({
+        error: 'Conflict',
+        message: 'Cannot top up an inactive stream',
+      });
+    }
+
     const txHash = await topUpStream(streamId, amount, callerAddress);
 
     const newDeposited = (BigInt(stream.depositedAmount) + amount).toString();

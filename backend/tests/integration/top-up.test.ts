@@ -148,6 +148,22 @@ describe('POST /v1/streams/:streamId/top-up', () => {
     expect(res.status).toBe(403);
   });
 
+  it('returns 409 when stream is inactive', async () => {
+    vi.mocked(mockPrisma.stream.findUnique).mockResolvedValue({
+      ...mockStream,
+      isActive: false,
+      isPaused: false,
+    } as any);
+
+    const res = await request(app)
+      .post('/v1/streams/42/top-up')
+      .set('Authorization', 'Bearer dummy')
+      .send({ amount: '1000' });
+
+    expect(res.status).toBe(409);
+    expect(topUpStream).not.toHaveBeenCalled();
+  });
+
   it('updates depositedAmount in DB on success', async () => {
     await request(app)
       .post('/v1/streams/42/top-up')
