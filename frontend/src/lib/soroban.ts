@@ -360,3 +360,56 @@ export async function resumeStream(
     nativeToScVal(params.streamId, { type: "u64" }),
   ]);
 }
+
+/**
+ * Read-only call to the contract's `stream_count` view function.
+ *
+ * Returns the total number of streams ever created (monotonically increasing
+ * stream ID counter). This is NOT the count of currently active streams —
+ * cancelled and completed streams are still counted.
+ *
+ * Returns `0n` on a freshly-deployed contract where no stream has been created.
+ * Does not require wallet authentication.
+ */
+export async function fetchStreamCount(): Promise<bigint> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sdk: any = await import("@stellar/stellar-sdk");
+  const { Contract, TransactionBuilder, BASE_FEE, scValToNative, Keypair } = sdk;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
+
+  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  // stream_count is a read-only view — use a throwaway keypair for simulation.
+  const throwawayKeypair = Keypair.random();
+  const account = await server.getAccount(throwawayKeypair.publicKey()).catch(() => {
+    // If the throwaway account doesn't exist on-chain, build a minimal account object.
+    return { accountId: () => throwawayKeypair.publicKey(), sequenceNumber: () => "0", incrementSequenceNumber: () => {} };
+  });
+
+  const contract = new Contract(CONTRACT_ID);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(contract.call("stream_count"))
+    .setTimeout(30)
+    .build();
+
+  const simResult = await server.simulateTransaction(tx);
+  if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+    throw new SorobanCallError(`stream_count simulation failed: ${simResult.error}`, "NetworkError");
+  }
+
+  const rawResult = simResult?.result?.retval;
+  if (!rawResult) {
+    // Contract not yet initialized (no streams ever created).
+    return 0n;
+  }
+
+  const nativeValue = scValToNative(rawResult);
+  if (typeof nativeValue === "bigint") return nativeValue;
+  if (typeof nativeValue === "number") return BigInt(Math.trunc(nativeValue));
+  if (typeof nativeValue === "string") return BigInt(nativeValue);
+
+  throw new SorobanCallError("stream_count returned an unexpected value type.", "Unknown");
+}
