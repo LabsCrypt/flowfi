@@ -88,6 +88,7 @@ export const subscribe = async (req: Request, res: Response) => {
     res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
 
     sseService.addClient(clientId, res, subscriptions, sourceIp);
+
     return;
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
