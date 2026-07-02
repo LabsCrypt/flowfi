@@ -884,7 +884,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                 <p>Save recurring stream settings once, apply instantly, then override before submitting.</p>
 
                 <div className="stream-template-editor">
-                  <input value={templateNameInput} onChange={(e) => setTemplateNameInput(e.target.value)} placeholder="e.g. Monthly Contributor Payroll" aria-label="Template name" />
+                  <label htmlFor="template-name-input" style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', borderWidth: 0 }}>Template name</label>
+                  <input id="template-name-input" value={templateNameInput} onChange={(e) => setTemplateNameInput(e.target.value)} placeholder="e.g. Monthly Contributor Payroll" aria-label="Template name" />
                   <div className="stream-template-editor__actions">
                     <button type="button" className="secondary-button" disabled={!isTemplateNameValid} onClick={handleSaveTemplate}>{saveTemplateButtonLabel}</button>
                     {editingTemplateId ? <button type="button" className="secondary-button" onClick={handleClearTemplateEditor}>Stop Editing</button> : null}
@@ -918,28 +919,28 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     <h4>Stream Configuration</h4>
                     <p>{requiredFieldsCompleted} / 5 required fields completed</p>
                   </div>
-                  <label className="stream-form__template-select">
+                  <label className="stream-form__template-select" htmlFor="template-select">
                     Load template
-                    <select value={selectedTemplateId ?? ""} onChange={(e) => { const id = e.target.value; if (!id) { setSelectedTemplateId(null); return; } handleApplyTemplate(id); }}>
+                    <select id="template-select" value={selectedTemplateId ?? ""} onChange={(e) => { const id = e.target.value; if (!id) { setSelectedTemplateId(null); return; } handleApplyTemplate(id); }}>
                       <option value="">Select saved template</option>
                       {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                     </select>
                   </label>
                 </div>
 
-                <label>Recipient Address<input required type="text" value={streamForm.recipient} onChange={(e) => updateStreamForm("recipient", e.target.value)} placeholder="G..." /></label>
+                <label htmlFor="stream-recipient">Recipient Address<input id="stream-recipient" required type="text" value={streamForm.recipient} onChange={(e) => updateStreamForm("recipient", e.target.value)} placeholder="G..." /></label>
                 <div className="stream-form__row">
-                  <label>Token<input required type="text" value={streamForm.token} onChange={(e) => updateStreamForm("token", e.target.value.toUpperCase())} placeholder="USDC" /></label>
-                  <label>Total Amount<input required type="number" min="0" step="0.0000001" value={streamForm.totalAmount} onChange={(e) => updateStreamForm("totalAmount", e.target.value)} placeholder="100" /></label>
+                  <label htmlFor="stream-token">Token<input id="stream-token" required type="text" value={streamForm.token} onChange={(e) => updateStreamForm("token", e.target.value.toUpperCase())} placeholder="USDC" /></label>
+                  <label htmlFor="stream-total-amount">Total Amount<input id="stream-total-amount" required type="number" min="0" step="0.0000001" value={streamForm.totalAmount} onChange={(e) => updateStreamForm("totalAmount", e.target.value)} placeholder="100" /></label>
                 </div>
                 <div className="stream-form__row">
-                  <label>Starts At<input required type="datetime-local" value={streamForm.startsAt} onChange={(e) => updateStreamForm("startsAt", e.target.value)} /></label>
-                  <label>Ends At<input required type="datetime-local" value={streamForm.endsAt} onChange={(e) => updateStreamForm("endsAt", e.target.value)} /></label>
+                  <label htmlFor="stream-starts-at">Starts At<input id="stream-starts-at" required type="datetime-local" value={streamForm.startsAt} onChange={(e) => updateStreamForm("startsAt", e.target.value)} /></label>
+                  <label htmlFor="stream-ends-at">Ends At<input id="stream-ends-at" required type="datetime-local" value={streamForm.endsAt} onChange={(e) => updateStreamForm("endsAt", e.target.value)} /></label>
                 </div>
                 <div className="stream-form__row">
-                  <label>Cadence (seconds)<input type="number" min="1" step="1" value={streamForm.cadenceSeconds} onChange={(e) => updateStreamForm("cadenceSeconds", e.target.value)} /></label>
+                  <label htmlFor="stream-cadence">Cadence (seconds)<input id="stream-cadence" type="number" min="1" step="1" value={streamForm.cadenceSeconds} onChange={(e) => updateStreamForm("cadenceSeconds", e.target.value)} /></label>
                 </div>
-                <label>Note<textarea value={streamForm.note} onChange={(e) => updateStreamForm("note", e.target.value)} placeholder="Optional internal note for this stream configuration." /></label>
+                <label htmlFor="stream-note">Note<textarea id="stream-note" value={streamForm.note} onChange={(e) => updateStreamForm("note", e.target.value)} placeholder="Optional internal note for this stream configuration." /></label>
 
                 <div className="stream-form__actions">
                   <button type="submit" className="wallet-button" disabled={isFormSubmitting}>{isFormSubmitting ? "Submitting..." : "Create Stream"}</button>
