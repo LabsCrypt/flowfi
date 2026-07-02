@@ -1,9 +1,9 @@
-import { rpc, xdr, StrKey } from '@stellar/stellar-sdk';
-import { prisma } from '../lib/prisma.js';
-import type { Prisma } from '../generated/prisma/index.js';
-import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
-import { sseService } from '../services/sse.service.js';
-import logger from '../logger.js';
+import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
+import { prisma } from "../lib/prisma.js";
+import { INDEXER_STATE_ID } from "../lib/indexer-state.js";
+import { sseService } from "../services/sse.service.js";
+import logger from "../logger.js";
+import { Prisma } from "../generated/prisma/index.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -45,10 +45,7 @@ export function decodeI128(val: xdr.ScVal): string {
  */
 export function decodeAddress(val: xdr.ScVal): string {
   const addr = val.address();
-  if (
-    addr.switch().value ===
-    xdr.ScAddressType.scAddressTypeAccount().value
-  ) {
+  if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
     return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
   }
   // addr.contractId() returns a Hash (Opaque[]); cast to Uint8Array for encodeContract
@@ -84,16 +81,13 @@ export class SorobanEventWorker {
 
   constructor() {
     const rpcUrl =
-      process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
-    this.contractId = process.env.STREAM_CONTRACT_ID ?? '';
+      process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
+    this.contractId = process.env.STREAM_CONTRACT_ID ?? "";
     this.pollIntervalMs = parseInt(
-      process.env.INDEXER_POLL_INTERVAL_MS ?? '5000',
+      process.env.INDEXER_POLL_INTERVAL_MS ?? "5000",
       10,
     );
-    this.startLedger = parseInt(
-      process.env.INDEXER_START_LEDGER ?? '0',
-      10,
-    );
+    this.startLedger = parseInt(process.env.INDEXER_START_LEDGER ?? "0", 10);
     this.server = new rpc.Server(rpcUrl, { allowHttp: true });
   }
 
@@ -104,13 +98,13 @@ export class SorobanEventWorker {
   async start(): Promise<void> {
     if (!this.contractId) {
       logger.warn(
-        '[SorobanWorker] STREAM_CONTRACT_ID is not set — event indexing disabled.',
+        "[SorobanWorker] STREAM_CONTRACT_ID is not set — event indexing disabled.",
       );
       return;
     }
 
     this.isRunning = true;
-    logger.info('[SorobanWorker] Starting Soroban event indexer…');
+    logger.info("[SorobanWorker] Starting Soroban event indexer…");
     await this.poll();
   }
 
@@ -121,7 +115,7 @@ export class SorobanEventWorker {
       clearTimeout(this.pollTimer);
       this.pollTimer = undefined;
     }
-    logger.info('[SorobanWorker] Stopped.');
+    logger.info("[SorobanWorker] Stopped.");
   }
 
   /** Wait for the currently-running poll batch to finish (no-op if idle). */
@@ -136,7 +130,7 @@ export class SorobanEventWorker {
     try {
       await this.fetchAndProcessEvents();
     } catch (err) {
-      logger.error('[SorobanWorker] Manual poll error:', err);
+      logger.error("[SorobanWorker] Manual poll error:", err);
     }
   }
 
@@ -147,8 +141,11 @@ export class SorobanEventWorker {
     this.pollTimer = setTimeout(() => this.poll(), this.pollIntervalMs);
   }
 
-  private async ensureSystemStream(tx: Prisma.TransactionClient): Promise<void> {
-    const systemUser = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+  private async ensureSystemStream(
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    const systemUser =
+      "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
     await tx.user.upsert({
       where: { publicKey: systemUser },
       create: { publicKey: systemUser },
@@ -160,10 +157,11 @@ export class SorobanEventWorker {
         streamId: 0,
         sender: systemUser,
         recipient: systemUser,
-        tokenAddress: 'CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHF',
-        ratePerSecond: '0',
-        depositedAmount: '0',
-        withdrawnAmount: '0',
+        tokenAddress:
+          "CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHF",
+        ratePerSecond: "0",
+        depositedAmount: "0",
+        withdrawnAmount: "0",
         startTime: 0,
         lastUpdateTime: 0,
         endTime: 0,
@@ -175,7 +173,7 @@ export class SorobanEventWorker {
 
   private async poll(): Promise<void> {
     this.activeBatch = this.fetchAndProcessEvents().catch((err) => {
-      logger.error('[SorobanWorker] Unhandled error during poll:', err);
+      logger.error("[SorobanWorker] Unhandled error during poll:", err);
     });
     try {
       await this.activeBatch;
@@ -204,19 +202,21 @@ export class SorobanEventWorker {
     const baseFilter = {
       filters: [
         {
-          type: 'contract' as const,
+          type: "contract" as const,
           contractIds: [this.contractId],
         },
       ],
       limit: 100,
-    } satisfies Omit<Parameters<rpc.Server['getEvents']>[0], 'startLedger' | 'cursor'>;
+    } satisfies Omit<
+      Parameters<rpc.Server["getEvents"]>[0],
+      "startLedger" | "cursor"
+    >;
 
     // Prefer cursor-based pagination after the first poll so we never
     // re-process events.
-    const params: Parameters<rpc.Server['getEvents']>[0] =
-      state.lastCursor
-        ? { ...baseFilter, cursor: state.lastCursor }
-        : { ...baseFilter, startLedger: state.lastLedger || this.startLedger };
+    const params: Parameters<rpc.Server["getEvents"]>[0] = state.lastCursor
+      ? { ...baseFilter, cursor: state.lastCursor }
+      : { ...baseFilter, startLedger: state.lastLedger || this.startLedger };
 
     const response = await this.server.getEvents(params);
 
@@ -229,10 +229,10 @@ export class SorobanEventWorker {
     // This ensures that subsequent events (like 'fee_collected') that depend on
     // the stream existing in the DB can find it.
     const sortedEvents = [...response.events].sort((a, b) => {
-      const aType = a.topic[0] ? decodeSymbol(a.topic[0]) : '';
-      const bType = b.topic[0] ? decodeSymbol(b.topic[0]) : '';
-      if (aType === 'stream_created' && bType !== 'stream_created') return -1;
-      if (bType === 'stream_created' && aType !== 'stream_created') return 1;
+      const aType = a.topic[0] ? decodeSymbol(a.topic[0]) : "";
+      const bType = b.topic[0] ? decodeSymbol(b.topic[0]) : "";
+      if (aType === "stream_created" && bType !== "stream_created") return -1;
+      if (bType === "stream_created" && aType !== "stream_created") return 1;
       return 0;
     });
 
@@ -276,9 +276,7 @@ export class SorobanEventWorker {
    * Dispatch a single contract event to the appropriate handler based on the
    * first topic symbol.
    */
-  public async processEvent(
-    event: rpc.Api.EventResponse,
-  ): Promise<void> {
+  public async processEvent(event: rpc.Api.EventResponse): Promise<void> {
     if (!event.topic || event.topic.length < 1) return;
 
     const topic0: xdr.ScVal | undefined = event.topic[0];
@@ -286,8 +284,11 @@ export class SorobanEventWorker {
 
     const eventName = decodeSymbol(topic0);
 
-    if (eventName === 'fee_config_updated' || eventName === 'admin_transferred') {
-      if (eventName === 'fee_config_updated') {
+    if (
+      eventName === "fee_config_updated" ||
+      eventName === "admin_transferred"
+    ) {
+      if (eventName === "fee_config_updated") {
         await this.handleFeeConfigUpdated(event);
       } else {
         await this.handleAdminTransferred(event);
@@ -300,28 +301,28 @@ export class SorobanEventWorker {
     if (!topic1) return;
 
     switch (eventName) {
-      case 'stream_created':
+      case "stream_created":
         await this.handleStreamCreated(event, topic1);
         break;
-      case 'stream_topped_up':
+      case "stream_topped_up":
         await this.handleStreamToppedUp(event, topic1);
         break;
-      case 'tokens_withdrawn':
+      case "tokens_withdrawn":
         await this.handleTokensWithdrawn(event, topic1);
         break;
-      case 'stream_paused':
+      case "stream_paused":
         await this.handleStreamPaused(event, topic1);
         break;
-      case 'stream_resumed':
+      case "stream_resumed":
         await this.handleStreamResumed(event, topic1);
         break;
-      case 'stream_cancelled':
+      case "stream_cancelled":
         await this.handleStreamCancelled(event, topic1);
         break;
-      case 'stream_completed':
+      case "stream_completed":
         await this.handleStreamCompleted(event, topic1);
         break;
-      case 'fee_collected':
+      case "fee_collected":
         await this.handleFeeCollected(event, topic1);
         break;
       default:
@@ -336,30 +337,35 @@ export class SorobanEventWorker {
     const body = decodeMap(event.value);
 
     if (
-      !body['admin'] ||
-      !body['old_treasury'] ||
-      !body['new_treasury'] ||
-      body['old_fee_rate_bps'] === undefined ||
-      body['new_fee_rate_bps'] === undefined
+      !body["admin"] ||
+      !body["old_treasury"] ||
+      !body["new_treasury"] ||
+      body["old_fee_rate_bps"] === undefined ||
+      body["new_fee_rate_bps"] === undefined
     ) {
-      throw new Error('FeeConfigUpdated: missing body fields');
+      throw new Error("FeeConfigUpdated: missing body fields");
     }
 
-    const admin = decodeAddress(body['admin']);
-    const oldTreasury = decodeAddress(body['old_treasury']);
-    const newTreasury = decodeAddress(body['new_treasury']);
-    const oldFeeRateBps = decodeU32(body['old_fee_rate_bps']);
-    const newFeeRateBps = decodeU32(body['new_fee_rate_bps']);
+    const admin = decodeAddress(body["admin"]);
+    const oldTreasury = decodeAddress(body["old_treasury"]);
+    const newTreasury = decodeAddress(body["new_treasury"]);
+    const oldFeeRateBps = decodeU32(body["old_fee_rate_bps"]);
+    const newFeeRateBps = decodeU32(body["new_fee_rate_bps"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.ensureSystemStream(tx);
 
       await tx.streamEvent.upsert({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'FEE_CONFIG_UPDATED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "FEE_CONFIG_UPDATED",
+          },
+        },
         create: {
           streamId: 0,
-          eventType: 'FEE_CONFIG_UPDATED',
+          eventType: "FEE_CONFIG_UPDATED",
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
           timestamp,
@@ -375,7 +381,7 @@ export class SorobanEventWorker {
       });
     });
 
-    sseService.broadcastToAdmin('stream.fee_config_updated', {
+    sseService.broadcastToAdmin("stream.fee_config_updated", {
       admin,
       oldTreasury,
       newTreasury,
@@ -392,22 +398,27 @@ export class SorobanEventWorker {
   ): Promise<void> {
     const body = decodeMap(event.value);
 
-    if (!body['previous_admin'] || !body['new_admin']) {
-      throw new Error('AdminTransferred: missing body fields');
+    if (!body["previous_admin"] || !body["new_admin"]) {
+      throw new Error("AdminTransferred: missing body fields");
     }
 
-    const previousAdmin = decodeAddress(body['previous_admin']);
-    const newAdmin = decodeAddress(body['new_admin']);
+    const previousAdmin = decodeAddress(body["previous_admin"]);
+    const newAdmin = decodeAddress(body["new_admin"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await this.ensureSystemStream(tx);
 
       await tx.streamEvent.upsert({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'ADMIN_TRANSFERRED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "ADMIN_TRANSFERRED",
+          },
+        },
         create: {
           streamId: 0,
-          eventType: 'ADMIN_TRANSFERRED',
+          eventType: "ADMIN_TRANSFERRED",
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
           timestamp,
@@ -421,7 +432,7 @@ export class SorobanEventWorker {
       });
     });
 
-    sseService.broadcastToAdmin('stream.admin_transferred', {
+    sseService.broadcastToAdmin("stream.admin_transferred", {
       previousAdmin,
       newAdmin,
       transactionHash: event.txHash,
@@ -440,22 +451,22 @@ export class SorobanEventWorker {
     const body = decodeMap(event.value);
 
     if (
-      !body['sender'] ||
-      !body['recipient'] ||
-      !body['token_address'] ||
-      !body['rate_per_second'] ||
-      !body['deposited_amount'] ||
-      !body['start_time']
+      !body["sender"] ||
+      !body["recipient"] ||
+      !body["token_address"] ||
+      !body["rate_per_second"] ||
+      !body["deposited_amount"] ||
+      !body["start_time"]
     ) {
       throw new Error(`StreamCreated #${streamId}: missing body fields`);
     }
 
-    const sender = decodeAddress(body['sender']);
-    const recipient = decodeAddress(body['recipient']);
-    const tokenAddress = decodeAddress(body['token_address']);
-    const ratePerSecond = decodeI128(body['rate_per_second']);
-    const depositedAmount = decodeI128(body['deposited_amount']);
-    const startTime = Number(decodeU64(body['start_time']));
+    const sender = decodeAddress(body["sender"]);
+    const recipient = decodeAddress(body["recipient"]);
+    const tokenAddress = decodeAddress(body["token_address"]);
+    const ratePerSecond = decodeI128(body["rate_per_second"]);
+    const depositedAmount = decodeI128(body["deposited_amount"]);
+    const startTime = Number(decodeU64(body["start_time"]));
 
     const ratePerSecondBigInt = BigInt(ratePerSecond);
     const endTime =
@@ -484,7 +495,7 @@ export class SorobanEventWorker {
           tokenAddress,
           ratePerSecond,
           depositedAmount,
-          withdrawnAmount: '0',
+          withdrawnAmount: "0",
           startTime,
           endTime,
           lastUpdateTime: startTime,
@@ -502,17 +513,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'CREATED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "CREATED",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CREATED`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CREATED`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'CREATED' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "CREATED",
+            },
+          },
           create: {
             streamId,
-            eventType: 'CREATED',
+            eventType: "CREATED",
             amount: depositedAmount,
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
@@ -524,7 +547,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.created', {
+    sseService.broadcastToStream(String(streamId), "stream.created", {
       streamId,
       sender,
       recipient,
@@ -544,18 +567,22 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['amount'] || !body['new_deposited_amount']) {
+    if (!body["amount"] || !body["new_deposited_amount"]) {
       throw new Error(`StreamToppedUp #${streamId}: missing body fields`);
     }
 
-    const amount = decodeI128(body['amount']);
-    const newDepositedAmount = decodeI128(body['new_deposited_amount']);
+    const amount = decodeI128(body["amount"]);
+    const newDepositedAmount = decodeI128(body["new_deposited_amount"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const stream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
-        select: { ratePerSecond: true, startTime: true, totalPausedDuration: true }
+        select: {
+          ratePerSecond: true,
+          startTime: true,
+          totalPausedDuration: true,
+        },
       });
 
       const ratePerSecondBigInt = BigInt(stream.ratePerSecond);
@@ -563,8 +590,8 @@ export class SorobanEventWorker {
         ratePerSecondBigInt === 0n
           ? null
           : stream.startTime +
-          Number(BigInt(newDepositedAmount) / ratePerSecondBigInt) +
-          stream.totalPausedDuration;
+            Number(BigInt(newDepositedAmount) / ratePerSecondBigInt) +
+            stream.totalPausedDuration;
 
       await tx.stream.update({
         where: { streamId },
@@ -576,17 +603,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "TOPPED_UP",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "TOPPED_UP",
+            },
+          },
           create: {
             streamId,
-            eventType: 'TOPPED_UP',
+            eventType: "TOPPED_UP",
             amount,
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
@@ -598,7 +637,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.topped_up', {
+    sseService.broadcastToStream(String(streamId), "stream.topped_up", {
       streamId,
       amount,
       newDepositedAmount,
@@ -615,13 +654,13 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['recipient'] || !body['amount'] || !body['timestamp']) {
+    if (!body["recipient"] || !body["amount"] || !body["timestamp"]) {
       throw new Error(`TokensWithdrawn #${streamId}: missing body fields`);
     }
 
-    const recipient = decodeAddress(body['recipient']);
-    const amount = decodeI128(body['amount']);
-    const timestamp = Number(decodeU64(body['timestamp']));
+    const recipient = decodeAddress(body["recipient"]);
+    const amount = decodeI128(body["amount"]);
+    const timestamp = Number(decodeU64(body["timestamp"]));
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const stream = await tx.stream.findUniqueOrThrow({
@@ -642,17 +681,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "WITHDRAWN",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "WITHDRAWN",
+            },
+          },
           create: {
             streamId,
-            eventType: 'WITHDRAWN',
+            eventType: "WITHDRAWN",
             amount,
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
@@ -664,7 +715,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.withdrawn', {
+    sseService.broadcastToStream(String(streamId), "stream.withdrawn", {
       streamId,
       recipient,
       amount,
@@ -681,12 +732,12 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['amount_withdrawn'] || !body['refunded_amount']) {
+    if (!body["amount_withdrawn"] || !body["refunded_amount"]) {
       throw new Error(`StreamCancelled #${streamId}: missing body fields`);
     }
 
-    const amountWithdrawn = decodeI128(body['amount_withdrawn']);
-    const refundedAmount = decodeI128(body['refunded_amount']);
+    const amountWithdrawn = decodeI128(body["amount_withdrawn"]);
+    const refundedAmount = decodeI128(body["refunded_amount"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -700,17 +751,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'CANCELLED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "CANCELLED",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CANCELLED`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CANCELLED`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'CANCELLED' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "CANCELLED",
+            },
+          },
           create: {
             streamId,
-            eventType: 'CANCELLED',
+            eventType: "CANCELLED",
             amount: refundedAmount,
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
@@ -722,7 +785,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.cancelled', {
+    sseService.broadcastToStream(String(streamId), "stream.cancelled", {
       streamId,
       refundedAmount,
       amountWithdrawn,
@@ -739,12 +802,12 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['recipient'] || !body['total_withdrawn']) {
+    if (!body["recipient"] || !body["total_withdrawn"]) {
       throw new Error(`StreamCompleted #${streamId}: missing body fields`);
     }
 
-    const recipient = decodeAddress(body['recipient']);
-    const totalWithdrawn = decodeI128(body['total_withdrawn']);
+    const recipient = decodeAddress(body["recipient"]);
+    const totalWithdrawn = decodeI128(body["total_withdrawn"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -758,17 +821,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'COMPLETED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "COMPLETED",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=COMPLETED`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=COMPLETED`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'COMPLETED' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "COMPLETED",
+            },
+          },
           create: {
             streamId,
-            eventType: 'COMPLETED',
+            eventType: "COMPLETED",
             amount: totalWithdrawn,
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
@@ -780,7 +855,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.completed', {
+    sseService.broadcastToStream(String(streamId), "stream.completed", {
       streamId,
       recipient,
       totalWithdrawn,
@@ -797,27 +872,39 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['treasury'] || !body['fee_amount'] || !body['token']) {
+    if (!body["treasury"] || !body["fee_amount"] || !body["token"]) {
       throw new Error(`FeeCollected #${streamId}: missing body fields`);
     }
 
-    const treasury = decodeAddress(body['treasury']);
-    const feeAmount = decodeI128(body['fee_amount']);
-    const token = decodeAddress(body['token']);
+    const treasury = decodeAddress(body["treasury"]);
+    const feeAmount = decodeI128(body["fee_amount"]);
+    const token = decodeAddress(body["token"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
     const existingEvent = await prisma.streamEvent.findUnique({
-      where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'FEE_COLLECTED' } },
+      where: {
+        transactionHash_eventType: {
+          transactionHash: event.txHash,
+          eventType: "FEE_COLLECTED",
+        },
+      },
       select: { id: true },
     });
     if (existingEvent) {
-      logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`);
+      logger.warn(
+        `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
+      );
     } else {
       await prisma.streamEvent.upsert({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'FEE_COLLECTED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "FEE_COLLECTED",
+          },
+        },
         create: {
           streamId,
-          eventType: 'FEE_COLLECTED',
+          eventType: "FEE_COLLECTED",
           amount: feeAmount,
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
@@ -829,7 +916,7 @@ export class SorobanEventWorker {
     }
 
     // Broadcast to admin channel for treasury reporting
-    sseService.broadcastToAdmin('stream.fee_collected', {
+    sseService.broadcastToAdmin("stream.fee_collected", {
       streamId,
       treasury,
       feeAmount,
@@ -846,12 +933,12 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['sender'] || !body['paused_at']) {
+    if (!body["sender"] || !body["paused_at"]) {
       throw new Error(`StreamPaused #${streamId}: missing body fields`);
     }
 
-    const sender = decodeAddress(body['sender']);
-    const pausedAt = Number(decodeU64(body['paused_at']));
+    const sender = decodeAddress(body["sender"]);
+    const pausedAt = Number(decodeU64(body["paused_at"]));
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -865,17 +952,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'PAUSED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "PAUSED",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=PAUSED`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=PAUSED`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'PAUSED' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "PAUSED",
+            },
+          },
           create: {
             streamId,
-            eventType: 'PAUSED',
+            eventType: "PAUSED",
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
             timestamp,
@@ -886,7 +985,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.paused', {
+    sseService.broadcastToStream(String(streamId), "stream.paused", {
       streamId,
       sender,
       pausedAt,
@@ -903,12 +1002,12 @@ export class SorobanEventWorker {
     const streamId = Number(decodeU64(streamIdTopic));
     const body = decodeMap(event.value);
 
-    if (!body['sender'] || !body['new_end_time']) {
+    if (!body["sender"] || !body["new_end_time"]) {
       throw new Error(`StreamResumed #${streamId}: missing body fields`);
     }
 
-    const sender = decodeAddress(body['sender']);
-    const newEndTime = Number(decodeU64(body['new_end_time']));
+    const sender = decodeAddress(body["sender"]);
+    const newEndTime = Number(decodeU64(body["new_end_time"]));
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -924,7 +1023,8 @@ export class SorobanEventWorker {
         additionalPausedDuration = timestamp - currentStream.pausedAt;
       }
 
-      const newTotalPausedDuration = currentStream.totalPausedDuration + additionalPausedDuration;
+      const newTotalPausedDuration =
+        currentStream.totalPausedDuration + additionalPausedDuration;
 
       await tx.stream.update({
         where: { streamId },
@@ -938,17 +1038,29 @@ export class SorobanEventWorker {
       });
 
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'RESUMED' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "RESUMED",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=RESUMED`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=RESUMED`,
+        );
       } else {
         await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'RESUMED' } },
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "RESUMED",
+            },
+          },
           create: {
             streamId,
-            eventType: 'RESUMED',
+            eventType: "RESUMED",
             transactionHash: event.txHash,
             ledgerSequence: event.ledger,
             timestamp,
@@ -964,7 +1076,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), 'stream.resumed', {
+    sseService.broadcastToStream(String(streamId), "stream.resumed", {
       streamId,
       sender,
       newEndTime,

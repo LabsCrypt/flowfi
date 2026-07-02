@@ -67,9 +67,26 @@ function sumStringI128(values: string[]): string {
 export const createStream = async (req: Request, res: Response) => {
   try {
     const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
+    const callerAddress = (req as AuthenticatedRequest).user?.publicKey;
 
-    const parsedStreamId = Number.parseInt(streamId, 10);
-    const parsedStartTime = Number.parseInt(startTime, 10);
+    if (callerAddress && callerAddress !== sender) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Only the stream sender can create or reactivate the stream'
+      });
+    }
+
+    if (
+      streamId == null
+      || startTime == null
+      || ratePerSecond == null
+      || depositedAmount == null
+    ) {
+      return res.status(400).json({ error: 'Missing required numeric fields in request body' });
+    }
+
+    const parsedStreamId = Number.parseInt(String(streamId), 10);
+    const parsedStartTime = Number.parseInt(String(startTime), 10);
     const parsedRatePerSecond = BigInt(ratePerSecond);
     const parsedDepositedAmount = BigInt(depositedAmount);
 
@@ -113,8 +130,8 @@ export const createStream = async (req: Request, res: Response) => {
 
     return res.status(201).json(stream);
   } catch (error) {
-    if (error instanceof RangeError) {
-      logger.error('Range error in createStream:', error);
+    if (error instanceof RangeError || error instanceof SyntaxError || error instanceof TypeError) {
+      logger.error('Numeric parsing error in createStream:', error);
       return res.status(400).json({ error: 'Invalid numeric values in request body' });
     }
     logger.error('Error creating/upserting stream:', error);
