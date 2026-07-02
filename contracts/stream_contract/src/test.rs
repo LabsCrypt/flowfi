@@ -497,6 +497,53 @@ fn test_top_up_emits_event() {
     assert_eq!(payload.new_deposited_amount, 15_000);
 }
 
+#[test]
+fn test_top_up_preserves_already_accrued_claimable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Recipient vests 900 tokens (rate 1/sec) before the top-up.
+    env.ledger().with_mut(|l| l.timestamp += 900);
+    assert_eq!(client.get_claimable_amount(&id), Some(900));
+
+    client.top_up_stream(&sender, &id, &100);
+
+    // Already-accrued, unwithdrawn time must survive the top-up.
+    assert_eq!(client.get_claimable_amount(&id), Some(900));
+}
+
+#[test]
+fn test_top_up_then_cancel_pays_pre_topup_accrued() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 900);
+    client.top_up_stream(&sender, &id, &100);
+
+    let token_client = token::Client::new(&env, &token);
+    let recipient_balance_before = token_client.balance(&recipient);
+
+    // Cancel immediately after the top-up — no further time should accrue.
+    client.cancel_stream(&sender, &id);
+
+    let recipient_balance_after = token_client.balance(&recipient);
+    assert_eq!(recipient_balance_after - recipient_balance_before, 900);
+}
+
 // ─── withdraw ────────────────────────────────────────────────────────────────
 
 #[test]
@@ -1756,6 +1803,34 @@ fn test_top_up_while_paused_increases_deposited() {
     let new_deposited = client.get_stream(&id).unwrap().deposited_amount;
 
     assert!(new_deposited > old_deposited);
+}
+
+#[test]
+fn test_top_up_while_paused_does_not_advance_last_update_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Accrue 300s, then pause.
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    // More ledger time passes while paused; top up during this window.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.top_up_stream(&sender, &id, &100);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(stream.last_update_time <= stream.paused_at.unwrap());
+
+    // Claimable should still reflect the 300s accrued before the pause, not be
+    // wiped out by the top-up pushing last_update_time past paused_at.
+    assert_eq!(client.get_claimable_amount(&id), Some(300));
 }
 
 #[test]
