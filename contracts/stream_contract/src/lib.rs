@@ -176,6 +176,7 @@ impl StreamContract {
     /// # Errors
     /// - `InvalidAmount`   — `amount` ≤ 0.
     /// - `InvalidDuration` — `duration` is 0.
+    /// - `InvalidRate`     — `net_amount / duration` rounds to zero.
     /// - `InvalidTokenAddress` — `token_address` is not a token contract.
     pub fn create_stream(
         env: Env,
