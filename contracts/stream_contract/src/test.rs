@@ -2406,3 +2406,76 @@ fn test_resume_stream_emits_event() {
     assert_eq!(payload.sender, sender);
     assert_eq!(payload.new_end_time, 1150);
 }
+
+// ─── CEI / reentrancy regression (#789) ──────────────────────────────────────
+
+/// Verify that stream state is committed to storage before the token transfer,
+/// so that a re-entrant call (e.g. from a malicious token hook) at the same
+/// ledger timestamp sees the updated withdrawn_amount and cannot claim twice.
+#[test]
+fn test_withdraw_state_committed_before_transfer_prevents_double_payout() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    // 1 000 tokens / 1 000 s = 1 token/s
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    // First withdrawal: 100 tokens accrued.
+    let claimed = client.withdraw(&recipient, &id);
+    assert_eq!(claimed, 100);
+
+    // Immediately re-attempt at the same timestamp (simulates a re-entrant call
+    // during the token transfer). State was already committed, so no additional
+    // tokens have accrued and the call must fail with InvalidAmount.
+    let result = client.try_withdraw(&recipient, &id);
+    assert_eq!(
+        result,
+        Err(Ok(StreamError::InvalidAmount)),
+        "re-entrant withdrawal at same timestamp must fail: state must be committed before transfer"
+    );
+
+    // Token balance must reflect exactly one payout.
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), 100);
+}
+
+/// Verify that cancel_stream commits state before both token transfers, so a
+/// re-entrant cancel attempt finds the stream already inactive.
+#[test]
+fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.cancel_stream(&sender, &id);
+
+    // Stream is now inactive; a second cancel (simulating re-entry) must fail.
+    let result = client.try_cancel_stream(&sender, &id);
+    assert_eq!(
+        result,
+        Err(Ok(StreamError::StreamInactive)),
+        "re-entrant cancel must fail: stream marked inactive before transfers"
+    );
+
+    // Total outflow must equal deposited amount (no double-payout).
+    let token_client = token::Client::new(&env, &token);
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(
+        token_client.balance(&recipient) + token_client.balance(&sender),
+        s.deposited_amount
+    );
+}
