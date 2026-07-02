@@ -181,6 +181,20 @@ fn test_update_fee_config_rejects_invalid_fee_rate() {
 }
 
 #[test]
+fn test_update_fee_config_rejects_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    // Call update_fee_config before initialize
+    let result = client.try_update_fee_config(&admin, &treasury, &100);
+    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+}
+
+#[test]
 fn test_initialize_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
