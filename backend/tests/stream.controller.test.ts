@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStream, listStreams, getStream, getStreamClaimableAmount, pauseStream, resumeStream } from '../src/controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, pauseStream, resumeStream } from '../src/controllers/stream.controller.js';
 import { prisma } from '../src/lib/prisma.js';
 import { claimableAmountService } from '../src/services/claimable.service.js';
 import * as sorobanService from '../src/services/sorobanService.js';
@@ -16,6 +16,8 @@ vi.mock('../src/lib/prisma.js', () => ({
     },
     streamEvent: {
       create: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
     },
   },
 }));
@@ -122,6 +124,34 @@ describe('Stream Controller', () => {
 
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ streamId: 123 }));
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            events: { orderBy: { timestamp: 'desc' } },
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('getStreamEvents', () => {
+    it('should paginate stream events ordered by timestamp desc', async () => {
+      req.params = { streamId: '123' };
+      req.query = { limit: '10', offset: '0' };
+      (prisma.streamEvent.findMany as any).mockResolvedValue([]);
+      (prisma.streamEvent.count as any).mockResolvedValue(0);
+
+      await getStreamEvents(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.streamEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { streamId: 123 },
+          orderBy: { timestamp: 'desc' },
+          take: 10,
+          skip: 0,
+        }),
+      );
     });
   });
 

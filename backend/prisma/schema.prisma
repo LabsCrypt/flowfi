@@ -85,6 +85,6 @@ model StreamEvent {
   @@index([timestamp])
   @@index([transactionHash])
   @@index([createdAt])
-  @@index([streamId, createdAt])
+  @@index([streamId, timestamp])
   @@unique([transactionHash, eventType])
 }
