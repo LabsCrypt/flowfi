@@ -89,6 +89,46 @@ describe('Stream Controller', () => {
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
     });
+
+    it('should return 400 with a validation error for non-numeric ratePerSecond', async () => {
+      req.body.ratePerSecond = 'abc';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('ratePerSecond') })
+      );
+    });
+
+    it('should return 400 with a validation error for non-numeric depositedAmount', async () => {
+      req.body.depositedAmount = 'xyz';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('depositedAmount') })
+      );
+    });
+
+    it('should return 400, not 500, when ratePerSecond is missing', async () => {
+      delete req.body.ratePerSecond;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('ratePerSecond') })
+      );
+    });
+
+    it('should return 400, not 500, when depositedAmount is missing', async () => {
+      delete req.body.depositedAmount;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('depositedAmount') })
+      );
+    });
   });
 
   describe('listStreams', () => {
