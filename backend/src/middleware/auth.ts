@@ -99,19 +99,23 @@ export function verifyJwt(token: string): { publicKey: string } | null {
     const [header, body, sig] = token.split('.');
     if (!header || !body || !sig) return null;
 
-    // Verify signature
+    // Compute the expected signature and re-encode it as base64url so we can
+    // compare strings directly, rather than decoding the provided signature
+    // to bytes first. Decoding base64url to bytes silently discards the
+    // unused trailing bits of the final character (a 32-byte digest only
+    // uses 4 of the 6 bits in its last base64 character), which means a
+    // tampered last character can decode to the *same* bytes as the
+    // original and slip past a byte-level comparison undetected.
     const expected = crypto
       .createHmac('sha256', JWT_SECRET)
       .update(`${header}.${body}`)
       .digest();
+    const expectedSig = b64url(expected);
 
-    let providedSig: Buffer;
-    try {
-      providedSig = Buffer.from(sig, 'base64url');
-    } catch {
-      return null;
-    }
+    const providedSigBuf = Buffer.from(sig);
+    const expectedSigBuf = Buffer.from(expectedSig);
 
+<<<<<<< fix/jwt-signature-verification
     // Use timingSafeEqual to prevent timing attacks
     // This will throw if lengths differ, or return false if content differs
     try {
@@ -121,6 +125,14 @@ export function verifyJwt(token: string): { publicKey: string } | null {
         return null;
       }
     } catch {
+=======
+    // Use timingSafeEqual to prevent timing attacks. Lengths are checked
+    // first since timingSafeEqual throws on mismatched buffer lengths.
+    if (
+      providedSigBuf.length !== expectedSigBuf.length ||
+      !crypto.timingSafeEqual(providedSigBuf, expectedSigBuf)
+    ) {
+>>>>>>> main
       return null;
     }
 
