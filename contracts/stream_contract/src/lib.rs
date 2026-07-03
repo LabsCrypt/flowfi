@@ -288,9 +288,10 @@ impl StreamContract {
         // Collect protocol fee and get net amount
         let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id);
 
-        // Update stream state
+        // Update stream state. `last_update_time` is intentionally left untouched:
+        // it is the accrual anchor for `calculate_claimable`, and advancing it to
+        // `now` would discard any already-vested, unwithdrawn tokens.
         stream.deposited_amount += net_amount;
-        stream.last_update_time = env.ledger().timestamp();
 
         save_stream(&env, stream_id, &stream);
 
