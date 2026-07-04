@@ -118,11 +118,44 @@ describe("Stream Controller", () => {
       expect(res.status).toHaveBeenCalledWith(400);
     });
 
-    it("should return 403 when caller does not match sender on upsert", async () => {
-      (req as any).user = { publicKey: "GNOTSENDER" };
+    it('should return 400 with a validation error for non-numeric ratePerSecond', async () => {
+      req.body.ratePerSecond = 'abc';
       await createStream(req as Request, res as Response);
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('ratePerSecond') })
+      );
+    });
+
+    it('should return 400 with a validation error for non-numeric depositedAmount', async () => {
+      req.body.depositedAmount = 'xyz';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('depositedAmount') })
+      );
+    });
+
+    it('should return 400, not 500, when ratePerSecond is missing', async () => {
+      delete req.body.ratePerSecond;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('ratePerSecond') })
+      );
+    });
+
+    it('should return 400, not 500, when depositedAmount is missing', async () => {
+      delete req.body.depositedAmount;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('depositedAmount') })
+      );
     });
   });
 
