@@ -162,19 +162,9 @@ export const createStream = async (req: Request, res: Response) => {
     const endTime =
       parsedStartTime + Number(parsedDepositedAmount / parsedRatePerSecond);
 
-    const existingStream = await prisma.stream.findUnique({
-      where: { streamId: parsedStreamId },
-      select: { sender: true },
-    });
-
-    if (
-      existingStream &&
-      callerAddress &&
-      existingStream.sender !== callerAddress
-    ) {
+    if (callerAddress && sender && callerAddress !== sender) {
       return res.status(403).json({ error: "Forbidden" });
     }
-
     const stream = await prisma.stream.upsert({
       where: { streamId: parsedStreamId },
       update: {
