@@ -12,5 +12,7 @@ fix.md
 .npm-cache/
 
 # Playwright test execution items
+test-results/
+playwright-report/
 frontend/playwright-report/
 frontend/test-results/
