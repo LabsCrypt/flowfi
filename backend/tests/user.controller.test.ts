@@ -130,6 +130,11 @@ describe('User Controller', () => {
       await getUserEvents(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.streamEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { timestamp: 'desc' },
+        }),
+      );
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
         data: [],
         total: 0,
