@@ -161,4 +161,28 @@ describe('POST /v1/streams/:streamId/top-up', () => {
       }),
     );
   });
+
+  it('returns 409 when stream is inactive', async () => {
+    vi.mocked(mockPrisma.stream.findUnique).mockResolvedValue({ ...mockStream, isActive: false } as any);
+
+    const res = await request(app)
+      .post('/v1/streams/42/top-up')
+      .set('Authorization', 'Bearer dummy')
+      .send({ amount: '1000' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/inactive stream/);
+  });
+
+  it('returns 409 when stream is paused', async () => {
+    vi.mocked(mockPrisma.stream.findUnique).mockResolvedValue({ ...mockStream, isPaused: true } as any);
+
+    const res = await request(app)
+      .post('/v1/streams/42/top-up')
+      .set('Authorization', 'Bearer dummy')
+      .send({ amount: '1000' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/paused stream/);
+  });
 });
