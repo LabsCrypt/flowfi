@@ -78,14 +78,17 @@ describe("Stream Controller", () => {
         publicKey: "GSENDER",
       },
     };
+    // Authenticated caller matches body.sender by default (Issue #809).
+    (req as any).user = { publicKey: 'GSENDER' };
     res = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
     };
   });
 
-  describe("createStream", () => {
-    it("should create a stream successfully", async () => {
+  describe('createStream', () => {
+    it('should create a stream successfully', async () => {
+      (prisma.stream.findUnique as any).mockResolvedValue(null);
       (prisma.stream.upsert as any).mockResolvedValue({ streamId: 123 });
 
       await createStream(req as Request, res as Response);
@@ -94,20 +97,54 @@ describe("Stream Controller", () => {
       expect(prisma.stream.upsert).toHaveBeenCalled();
     });
 
-    it("should return 400 for invalid streamId", async () => {
-      req.body.streamId = "abc";
+    it('should return 401 when the request is unauthenticated', async () => {
+      (req as any).user = undefined;
+
       await createStream(req as Request, res as Response);
-      expect(res.status).toHaveBeenCalledWith(400);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
     });
 
-    it("should return 400 for non-positive ratePerSecond", async () => {
-      req.body.ratePerSecond = "0";
+    it('should return 403 when the caller is not the body sender (Issue #809)', async () => {
+      (req as any).user = { publicKey: 'GATTACKER' };
+
       await createStream(req as Request, res as Response);
-      expect(res.status).toHaveBeenCalledWith(400);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
     });
 
-    it("should return 400 for malformed numeric fields", async () => {
-      req.body.ratePerSecond = "abc";
+    it('should reject 400 when sender is missing (Issue #809)', async () => {
+      delete req.body.sender;
+      (req as any).user = { publicKey: 'GSENDER' };
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should return 403 and not reactivate a cancelled stream owned by another wallet (Issue #809)', async () => {
+      // A victim previously created (and cancelled) this stream.
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123,
+        sender: 'GVICTIM',
+        isActive: false,
+      });
+      // Attacker authenticates as themselves and sets sender to their own key,
+      // trying to hijack the victim's streamId.
+      req.body.sender = 'GATTACKER';
+      (req as any).user = { publicKey: 'GATTACKER' };
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should return 400 for invalid streamId', async () => {
+      req.body.streamId = 'abc';
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
     });

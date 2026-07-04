@@ -100,16 +100,33 @@ function parseRequiredBigIntField(fieldName: string, value: unknown): bigint {
  */
 export const createStream = async (req: Request, res: Response) => {
   try {
-    const {
-      streamId,
-      sender,
-      recipient,
-      tokenAddress,
-      ratePerSecond,
-      depositedAmount,
-      startTime,
-    } = req.body;
-    const callerAddress = (req as AuthenticatedRequest).user?.publicKey;
+    const callerPublicKey = (req as AuthenticatedRequest).user?.publicKey;
+    if (!callerPublicKey) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Authentication required' });
+    }
+
+    const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
+
+    // Issue #809: validate identity fields before any DB write.
+    if (typeof sender !== 'string' || sender.length === 0) {
+      return res.status(400).json({ error: 'Invalid sender: must be a non-empty string' });
+    }
+    if (typeof recipient !== 'string' || recipient.length === 0) {
+      return res.status(400).json({ error: 'Invalid recipient: must be a non-empty string' });
+    }
+    if (typeof tokenAddress !== 'string' || tokenAddress.length === 0) {
+      return res.status(400).json({ error: 'Invalid tokenAddress: must be a non-empty string' });
+    }
+
+    // Issue #809: the authenticated wallet may only create/modify streams it owns.
+    // Without this, any logged-in wallet could POST an arbitrary `sender` and have
+    // it persisted, or flip another owner's cancelled stream back to active.
+    if (sender !== callerPublicKey) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'sender must match the authenticated wallet',
+      });
+    }
 
     const parsedStreamId = Number.parseInt(streamId, 10);
     const parsedStartTime = Number.parseInt(startTime, 10);
@@ -162,9 +179,18 @@ export const createStream = async (req: Request, res: Response) => {
     const endTime =
       parsedStartTime + Number(parsedDepositedAmount / parsedRatePerSecond);
 
-    if (callerAddress && sender && callerAddress !== sender) {
-      return res.status(403).json({ error: "Forbidden" });
+    // Issue #809: never let the upsert update branch touch a stream owned by a
+    // different wallet. The caller is already proven to equal `sender` above, so
+    // reject any existing row whose sender differs — this blocks reactivating or
+    // overwriting someone else's (e.g. cancelled) stream.
+    const existing = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
+    if (existing && existing.sender !== callerPublicKey) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Cannot modify a stream owned by another wallet',
+      });
     }
+
     const stream = await prisma.stream.upsert({
       where: { streamId: parsedStreamId },
       update: {
@@ -697,6 +723,13 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
       return res
         .status(403)
         .json({ error: "Only the stream sender may top up this stream" });
+    }
+
+    if (!stream.isActive) {
+      return res.status(409).json({ error: 'Conflict', message: 'Cannot top up an inactive stream' });
+    }
+    if (stream.isPaused) {
+      return res.status(409).json({ error: 'Conflict', message: 'Cannot top up a paused stream' });
     }
 
     const txHash = await topUpStream(streamId, amount, callerAddress);
