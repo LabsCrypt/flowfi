@@ -62,6 +62,8 @@ describe('Stream Controller', () => {
       query: {},
       params: {},
     };
+    // Authenticated caller matches body.sender by default (Issue #809).
+    (req as any).user = { publicKey: 'GSENDER' };
     res = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
@@ -70,12 +72,59 @@ describe('Stream Controller', () => {
 
   describe('createStream', () => {
     it('should create a stream successfully', async () => {
+      (prisma.stream.findUnique as any).mockResolvedValue(null);
       (prisma.stream.upsert as any).mockResolvedValue({ streamId: 123 });
 
       await createStream(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect(prisma.stream.upsert).toHaveBeenCalled();
+    });
+
+    it('should return 401 when the request is unauthenticated', async () => {
+      (req as any).user = undefined;
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should return 403 when the caller is not the body sender (Issue #809)', async () => {
+      (req as any).user = { publicKey: 'GATTACKER' };
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should reject 400 when sender is missing (Issue #809)', async () => {
+      delete req.body.sender;
+      (req as any).user = { publicKey: 'GSENDER' };
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+    });
+
+    it('should return 403 and not reactivate a cancelled stream owned by another wallet (Issue #809)', async () => {
+      // A victim previously created (and cancelled) this stream.
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123,
+        sender: 'GVICTIM',
+        isActive: false,
+      });
+      // Attacker authenticates as themselves and sets sender to their own key,
+      // trying to hijack the victim's streamId.
+      req.body.sender = 'GATTACKER';
+      (req as any).user = { publicKey: 'GATTACKER' };
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
     });
 
     it('should return 400 for invalid streamId', async () => {
@@ -88,6 +137,46 @@ describe('Stream Controller', () => {
       req.body.ratePerSecond = '0';
       await createStream(req as Request, res as Response);
       expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('should return 400 with a validation error for non-numeric ratePerSecond', async () => {
+      req.body.ratePerSecond = 'abc';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('ratePerSecond') })
+      );
+    });
+
+    it('should return 400 with a validation error for non-numeric depositedAmount', async () => {
+      req.body.depositedAmount = 'xyz';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('depositedAmount') })
+      );
+    });
+
+    it('should return 400, not 500, when ratePerSecond is missing', async () => {
+      delete req.body.ratePerSecond;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('ratePerSecond') })
+      );
+    });
+
+    it('should return 400, not 500, when depositedAmount is missing', async () => {
+      delete req.body.depositedAmount;
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining('depositedAmount') })
+      );
     });
   });
 

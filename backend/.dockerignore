@@ -1,6 +1,10 @@
 node_modules
 dist
 coverage
+
+# Omit secrets and logs
 .env*
 *.log
+
+# Omit code generated
 src/generated

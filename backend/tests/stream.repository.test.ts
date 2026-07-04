@@ -23,6 +23,14 @@ describe('Stream Repository', () => {
     });
   });
 
+  it('should update isActive to false for COMPLETED', async () => {
+    await updateStatus(123, 'COMPLETED');
+    expect(prisma.stream.update).toHaveBeenCalledWith({
+      where: { streamId: 123 },
+      data: { isActive: false },
+    });
+  });
+
   it('should update isActive to true for ACTIVE', async () => {
     await updateStatus(123, 'ACTIVE');
     expect(prisma.stream.update).toHaveBeenCalledWith({

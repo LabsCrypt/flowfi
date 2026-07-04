@@ -91,8 +91,8 @@ router.get('/:streamId', getStream);
  *           type: integer
  *           default: 50
  *           minimum: 1
- *           maximum: 500
- *         description: "Number of events to return per page (default: 50, max: 500)"
+ *           maximum: 200
+ *         description: "Number of events to return per page (default: 50, max: 200)"
  *       - in: query
  *         name: offset
  *         schema:
