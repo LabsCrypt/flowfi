@@ -62,6 +62,35 @@ function sumStringI128(values: string[]): string {
 }
 
 /**
+ * Thrown when a request body field fails presence/format validation. Kept
+ * distinct from generic errors so createStream can reliably map it to a 400
+ * response instead of falling through to the catch-all 500.
+ */
+class StreamValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StreamValidationError';
+  }
+}
+
+/**
+ * Validate presence and integer format of a required i128-style field, then
+ * coerce it to a BigInt. Any missing value or conversion failure (SyntaxError
+ * from a non-numeric string, TypeError from undefined/null/objects, etc.) is
+ * normalized into a StreamValidationError so the caller can map it to 400.
+ */
+function parseRequiredBigIntField(fieldName: string, value: unknown): bigint {
+  if (value === undefined || value === null || value === '') {
+    throw new StreamValidationError(`Missing required field: ${fieldName}`);
+  }
+  try {
+    return BigInt(value as bigint | number | string | boolean);
+  } catch {
+    throw new StreamValidationError(`Invalid ${fieldName}: must be a valid integer`);
+  }
+}
+
+/**
  * Create a new stream (stub for on-chain indexing)
  */
 export const createStream = async (req: Request, res: Response) => {
@@ -70,8 +99,6 @@ export const createStream = async (req: Request, res: Response) => {
 
     const parsedStreamId = Number.parseInt(streamId, 10);
     const parsedStartTime = Number.parseInt(startTime, 10);
-    const parsedRatePerSecond = BigInt(ratePerSecond);
-    const parsedDepositedAmount = BigInt(depositedAmount);
 
     if (!Number.isFinite(parsedStreamId)) {
       return res.status(400).json({ error: 'Invalid streamId: must be a valid integer' });
@@ -79,6 +106,21 @@ export const createStream = async (req: Request, res: Response) => {
 
     if (!Number.isFinite(parsedStartTime) || parsedStartTime < 0) {
       return res.status(400).json({ error: 'Invalid startTime: must be a non-negative integer' });
+    }
+
+    // Presence/format validation happens here, before any BigInt coercion,
+    // so a malformed or missing numeric field always yields 400 rather than
+    // an uncaught SyntaxError/TypeError falling through to 500.
+    let parsedRatePerSecond: bigint;
+    let parsedDepositedAmount: bigint;
+    try {
+      parsedRatePerSecond = parseRequiredBigIntField('ratePerSecond', ratePerSecond);
+      parsedDepositedAmount = parseRequiredBigIntField('depositedAmount', depositedAmount);
+    } catch (validationError) {
+      if (validationError instanceof StreamValidationError) {
+        return res.status(400).json({ error: validationError.message });
+      }
+      throw validationError;
     }
 
     if (parsedRatePerSecond <= 0n) {
@@ -556,6 +598,13 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Only the stream sender may top up this stream' });
     }
 
+    if (!stream.isActive) {
+      return res.status(409).json({ error: 'Conflict', message: 'Cannot top up an inactive stream' });
+    }
+    if (stream.isPaused) {
+      return res.status(409).json({ error: 'Conflict', message: 'Cannot top up a paused stream' });
+    }
+
     const txHash = await topUpStream(streamId, amount, callerAddress);
 
     const newDeposited = (BigInt(stream.depositedAmount) + amount).toString();
@@ -630,36 +679,13 @@ export const pauseStream = async (req: Request, res: Response) => {
       // Call Soroban service to verify the pause operation would succeed
       const result = await sorobanPauseStream(authReq.user.publicKey, parsedStreamId);
 
-      // Update the database to mark stream as paused
-      const now = Math.floor(Date.now() / 1000);
-      const updatedStream = await prisma.stream.update({
-        where: { streamId: parsedStreamId },
-        data: {
-          isPaused: true,
-          pausedAt: now,
-          lastUpdateTime: now,
-        },
-      });
-
-      // Create a PAUSED event
-      await prisma.streamEvent.create({
-        data: {
-          streamId: parsedStreamId,
-          eventType: 'PAUSED',
-          transactionHash: result.txHash,
-          ledgerSequence: 0, // Will be updated by event indexer
-          timestamp: now,
-          metadata: JSON.stringify({ pausedBy: authReq.user.publicKey }),
-        },
-      });
-
-      logger.info(`Stream ${parsedStreamId} paused by ${authReq.user.publicKey}`);
+      logger.info(`Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`);
 
       return res.status(200).json({
         success: true,
         streamId: parsedStreamId,
         txHash: result.txHash,
-        stream: updatedStream,
+        stream,
       });
     } catch (sorobanError) {
       logger.error(`Soroban pause failed for stream ${parsedStreamId}:`, sorobanError);
@@ -724,44 +750,13 @@ export const resumeStream = async (req: Request, res: Response) => {
       // Call Soroban service to verify the resume operation would succeed
       const result = await sorobanResumeStream(authReq.user.publicKey, parsedStreamId);
 
-      // Calculate pause duration and update the database
-      const now = Math.floor(Date.now() / 1000);
-      const pausedAt = stream.pausedAt ?? now;
-      const pauseDuration = Math.max(0, now - pausedAt);
-      const totalPausedDuration = (stream.totalPausedDuration ?? 0) + pauseDuration;
-
-      const updatedStream = await prisma.stream.update({
-        where: { streamId: parsedStreamId },
-        data: {
-          isPaused: false,
-          pausedAt: null,
-          totalPausedDuration,
-          lastUpdateTime: now,
-        },
-      });
-
-      // Create a RESUMED event
-      await prisma.streamEvent.create({
-        data: {
-          streamId: parsedStreamId,
-          eventType: 'RESUMED',
-          transactionHash: result.txHash,
-          ledgerSequence: 0, // Will be updated by event indexer
-          timestamp: now,
-          metadata: JSON.stringify({
-            resumedBy: authReq.user.publicKey,
-            pauseDuration,
-          }),
-        },
-      });
-
-      logger.info(`Stream ${parsedStreamId} resumed by ${authReq.user.publicKey}`);
+      logger.info(`Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`);
 
       return res.status(200).json({
         success: true,
         streamId: parsedStreamId,
         txHash: result.txHash,
-        stream: updatedStream,
+        stream,
       });
     } catch (sorobanError) {
       logger.error(`Soroban resume failed for stream ${parsedStreamId}:`, sorobanError);

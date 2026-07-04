@@ -181,6 +181,20 @@ fn test_update_fee_config_rejects_invalid_fee_rate() {
 }
 
 #[test]
+fn test_update_fee_config_rejects_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    // Call update_fee_config before initialize
+    let result = client.try_update_fee_config(&admin, &treasury, &100);
+    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+}
+
+#[test]
 fn test_initialize_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
@@ -495,6 +509,53 @@ fn test_top_up_emits_event() {
     assert_eq!(payload.stream_id, id);
     assert_eq!(payload.amount, 5_000);
     assert_eq!(payload.new_deposited_amount, 15_000);
+}
+
+#[test]
+fn test_top_up_preserves_already_accrued_claimable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Recipient vests 900 tokens (rate 1/sec) before the top-up.
+    env.ledger().with_mut(|l| l.timestamp += 900);
+    assert_eq!(client.get_claimable_amount(&id), Some(900));
+
+    client.top_up_stream(&sender, &id, &100);
+
+    // Already-accrued, unwithdrawn time must survive the top-up.
+    assert_eq!(client.get_claimable_amount(&id), Some(900));
+}
+
+#[test]
+fn test_top_up_then_cancel_pays_pre_topup_accrued() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 900);
+    client.top_up_stream(&sender, &id, &100);
+
+    let token_client = token::Client::new(&env, &token);
+    let recipient_balance_before = token_client.balance(&recipient);
+
+    // Cancel immediately after the top-up — no further time should accrue.
+    client.cancel_stream(&sender, &id);
+
+    let recipient_balance_after = token_client.balance(&recipient);
+    assert_eq!(recipient_balance_after - recipient_balance_before, 900);
 }
 
 // ─── withdraw ────────────────────────────────────────────────────────────────
@@ -1759,6 +1820,34 @@ fn test_top_up_while_paused_increases_deposited() {
 }
 
 #[test]
+fn test_top_up_while_paused_does_not_advance_last_update_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Accrue 300s, then pause.
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    // More ledger time passes while paused; top up during this window.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.top_up_stream(&sender, &id, &100);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(stream.last_update_time <= stream.paused_at.unwrap());
+
+    // Claimable should still reflect the 300s accrued before the pause, not be
+    // wiped out by the top-up pushing last_update_time past paused_at.
+    assert_eq!(client.get_claimable_amount(&id), Some(300));
+}
+
+#[test]
 fn test_withdraw_after_long_stream_runtime_is_bounded() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2405,4 +2494,77 @@ fn test_resume_stream_emits_event() {
     assert_eq!(payload.stream_id, id);
     assert_eq!(payload.sender, sender);
     assert_eq!(payload.new_end_time, 1150);
+}
+
+// ─── CEI / reentrancy regression (#789) ──────────────────────────────────────
+
+/// Verify that stream state is committed to storage before the token transfer,
+/// so that a re-entrant call (e.g. from a malicious token hook) at the same
+/// ledger timestamp sees the updated withdrawn_amount and cannot claim twice.
+#[test]
+fn test_withdraw_state_committed_before_transfer_prevents_double_payout() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    // 1 000 tokens / 1 000 s = 1 token/s
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    // First withdrawal: 100 tokens accrued.
+    let claimed = client.withdraw(&recipient, &id);
+    assert_eq!(claimed, 100);
+
+    // Immediately re-attempt at the same timestamp (simulates a re-entrant call
+    // during the token transfer). State was already committed, so no additional
+    // tokens have accrued and the call must fail with InvalidAmount.
+    let result = client.try_withdraw(&recipient, &id);
+    assert_eq!(
+        result,
+        Err(Ok(StreamError::InvalidAmount)),
+        "re-entrant withdrawal at same timestamp must fail: state must be committed before transfer"
+    );
+
+    // Token balance must reflect exactly one payout.
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), 100);
+}
+
+/// Verify that cancel_stream commits state before both token transfers, so a
+/// re-entrant cancel attempt finds the stream already inactive.
+#[test]
+fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.cancel_stream(&sender, &id);
+
+    // Stream is now inactive; a second cancel (simulating re-entry) must fail.
+    let result = client.try_cancel_stream(&sender, &id);
+    assert_eq!(
+        result,
+        Err(Ok(StreamError::StreamInactive)),
+        "re-entrant cancel must fail: stream marked inactive before transfers"
+    );
+
+    // Total outflow must equal deposited amount (no double-payout).
+    let token_client = token::Client::new(&env, &token);
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(
+        token_client.balance(&recipient) + token_client.balance(&sender),
+        s.deposited_amount
+    );
 }
