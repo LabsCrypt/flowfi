@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatNetwork } from "@/lib/wallet";
 import toast from "react-hot-toast";
+import { getApiBaseUrl } from "@/lib/api/_shared";
 
 type DisplayCurrency = "USD" | "XLM" | "USDC";
 type AmountFormat = "full" | "compact";
@@ -15,7 +16,7 @@ type DecimalPlaces = 2 | 4 | 7;
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAMING_CONTRACT || "CDV4K...7ZQY";
-const INDEXER_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/v1";
+const INDEXER_URL = `${getApiBaseUrl()}/v1`;
 
 export default function SettingsContent() {
   const router = useRouter();
@@ -241,8 +242,9 @@ export default function SettingsContent() {
 
             <div className="space-y-3 pl-12">
               <div>
-                <label className="text-sm text-white/60 dark:text-black/60">Default Token</label>
+                <label htmlFor="default-token" className="text-sm text-white/60 dark:text-black/60">Default Token</label>
                 <select
+                  id="default-token"
                   value={displayCurrency}
                   onChange={(e) => {
                     const val = e.target.value as DisplayCurrency;
@@ -258,8 +260,12 @@ export default function SettingsContent() {
               </div>
 
               <div>
-                <label className="text-sm text-white/60 dark:text-black/60">Amount Format</label>
-                <div className="flex gap-2 mt-1">
+                <label id="amount-format-label" className="text-sm text-white/60 dark:text-black/60">Amount Format</label>
+                <div
+                  className="flex gap-2 mt-1"
+                  role="radiogroup"
+                  aria-labelledby="amount-format-label"
+                >
                   {(["full", "compact"] as const).map((fmt) => (
                     <button
                       key={fmt}
@@ -280,8 +286,12 @@ export default function SettingsContent() {
               </div>
 
               <div>
-                <label className="text-sm text-white/60 dark:text-black/60">Decimal Places</label>
-                <div className="flex gap-2 mt-1">
+                <label id="decimal-places-label" className="text-sm text-white/60 dark:text-black/60">Decimal Places</label>
+                <div
+                  className="flex gap-2 mt-1"
+                  role="radiogroup"
+                  aria-labelledby="decimal-places-label"
+                >
                   {([2, 4, 7] as DecimalPlaces[]).map((places) => (
                     <button
                       key={places}

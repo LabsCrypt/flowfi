@@ -15,7 +15,7 @@ import toast from "react-hot-toast";
  *  - Error state: "Failed to load streams" with a retry button
  */
 
-import { Skeleton } from "@/components/ui/Skeleton";
+
 import {
   getDashboardAnalytics,
   fetchDashboardData,
@@ -110,6 +110,10 @@ function SkeletonCard({ className = "" }: { className?: string }) {
   return (
     <div className={`relative overflow-hidden rounded-2xl ${className}`}>
       <Skeleton className="absolute inset-0" aria-hidden="true" />
+    <div
+      className={`animate-pulse bg-gray-200 dark:bg-gray-700 rounded-2xl relative overflow-hidden ${className}`}
+      aria-hidden="true"
+    >
       {/* shimmer sweep */}
       <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
     </div>

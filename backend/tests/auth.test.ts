@@ -1,9 +1,69 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import app from '../src/app.js';
-import { __authChallengeTestUtils } from '../src/middleware/auth.js';
+import { __authChallengeTestUtils, requireAdmin, signJwt } from '../src/middleware/auth.js';
+
+// Mocking prisma for any downstream dependency
+vi.mock('../src/lib/prisma.js', () => ({
+  default: {
+    stream: { findMany: vi.fn(() => Promise.resolve([])) },
+    streamEvent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+      count: vi.fn(() => Promise.resolve(0)),
+    },
+    $queryRaw: vi.fn(() => Promise.resolve([{ '?column?': 1n }])),
+    $disconnect: vi.fn(() => Promise.resolve()),
+  },
+  prisma: {
+    stream: { findMany: vi.fn(() => Promise.resolve([])) },
+    streamEvent: {
+      findMany: vi.fn(() => Promise.resolve([])),
+      count: vi.fn(() => Promise.resolve(0)),
+    },
+    $queryRaw: vi.fn(() => Promise.resolve([{ '?column?': 1n }])),
+    $disconnect: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+// Mock sseService so SSE subscribe endpoints resolve immediately (addClient ends the response)
+vi.mock('../src/services/sse.service.js', () => ({
+  sseService: {
+    isShuttingDown: vi.fn(() => false),
+    checkCapacity: vi.fn(() => ({ allowed: true })),
+    addClient: vi.fn((_id: string, res: any, _subs: string[], _ip: string) => {
+      res.end();
+    }),
+    removeClient: vi.fn(),
+    getClientCount: vi.fn(() => 0),
+    getActiveIpCount: vi.fn(() => 0),
+    getPerIpPeakConnections: vi.fn(() => 0),
+    getMaxConnections: vi.fn(() => 10000),
+    broadcastToStream: vi.fn(),
+    broadcastToUser: vi.fn(),
+    initRedisSubscription: vi.fn(() => Promise.resolve()),
+  },
+  SSEService: vi.fn(),
+}));
+
+// Mock redis so SSE service doesn't try to connect
+vi.mock('../src/lib/redis.js', () => ({
+  cache: {
+    get: vi.fn(() => null),
+    set: vi.fn(),
+    del: vi.fn(),
+    getStats: vi.fn(() => ({ hits: 0, misses: 0, hitRate: 0, itemCount: 0 })),
+    cleanup: vi.fn(),
+  },
+  isRedisAvailable: vi.fn(() => false),
+  getPublisher: vi.fn(() => null),
+  getSubscriber: vi.fn(() => null),
+  connectRedis: vi.fn(() => Promise.resolve()),
+  disconnectRedis: vi.fn(() => Promise.resolve()),
+}));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -182,20 +242,6 @@ describe('Authentication & Middleware Tests', () => {
       const keypair = makeKeypair();
       const token = await getValidJwt(keypair);
 
-      // Mocking prisma for any downstream dependency
-      vi.mock('../src/lib/prisma.js', () => ({
-        default: {
-          stream: { findMany: vi.fn().mockResolvedValue([]) },
-          $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
-          $disconnect: vi.fn(),
-        },
-        prisma: {
-          stream: { findMany: vi.fn().mockResolvedValue([]) },
-          $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
-          $disconnect: vi.fn(),
-        },
-      }));
-
       // Any route that uses requireAuth
       const res = await request(app)
         .get('/v1/events/subscribe')
@@ -232,6 +278,128 @@ describe('Authentication & Middleware Tests', () => {
         .set('Accept', 'text/event-stream');
 
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe('Auth Middleware (requireAdmin)', () => {
+    let adminApp: any;
+    const originalAdminPublicKey = process.env.ADMIN_PUBLIC_KEY;
+
+    beforeEach(() => {
+      adminApp = express();
+      adminApp.use(express.json());
+      const adminLimiter = rateLimit({
+        windowMs: 60_000,
+        max: 100,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Too many requests' },
+      });
+      adminApp.use('/test-admin', adminLimiter);
+      adminApp.get('/test-admin', requireAdmin, (_req: any, res: any) => {
+        res.status(200).json({ success: true });
+      });
+    });
+
+    afterEach(() => {
+      process.env.ADMIN_PUBLIC_KEY = originalAdminPublicKey;
+    });
+
+    it('test_admin_middleware_rejects_non_admin_token', async () => {
+      const nonAdminKeypair = makeKeypair();
+      const token = signJwt({
+        sub: nonAdminKeypair.publicKey(),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      // Set admin key to something else
+      process.env.ADMIN_PUBLIC_KEY = makeKeypair().publicKey();
+
+      const res = await request(adminApp)
+        .get('/test-admin')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Forbidden');
+      expect(res.body.message).toMatch(/Admin access required/i);
+    });
+
+    it('test_admin_middleware_accepts_admin_token', async () => {
+      const adminKeypair = makeKeypair();
+      const token = signJwt({
+        sub: adminKeypair.publicKey(),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      process.env.ADMIN_PUBLIC_KEY = adminKeypair.publicKey();
+
+      const res = await request(adminApp)
+        .get('/test-admin')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('test_admin_middleware_fails_closed_when_key_unset', async () => {
+      const keypair = makeKeypair();
+      const token = signJwt({
+        sub: keypair.publicKey(),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      // Unset the admin key
+      delete process.env.ADMIN_PUBLIC_KEY;
+
+      const res = await request(adminApp)
+        .get('/test-admin')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Forbidden');
+      expect(res.body.message).toMatch(/Admin access required/i);
+    });
+  });
+
+  describe('GET /v1/events (authenticated & scoped)', () => {
+    it('test_events_endpoint_rejects_unauthenticated', async () => {
+      const res = await request(app)
+        .get('/v1/events')
+        .query({ address: makeKeypair().publicKey() });
+      expect(res.status).toBe(401);
+    });
+
+    it('test_events_endpoint_allows_authenticated_matching_address', async () => {
+      const keypair = makeKeypair();
+      const token = signJwt({
+        sub: keypair.publicKey(),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const res = await request(app)
+        .get('/v1/events')
+        .query({ address: keypair.publicKey() })
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.events).toEqual([]);
+    });
+
+    it('test_events_endpoint_rejects_authenticated_mismatched_address', async () => {
+      const keypair = makeKeypair();
+      const otherKeypair = makeKeypair();
+      const token = signJwt({
+        sub: keypair.publicKey(),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      });
+
+      const res = await request(app)
+        .get('/v1/events')
+        .query({ address: otherKeypair.publicKey() })
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Forbidden');
     });
   });
 });

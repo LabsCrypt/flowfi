@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { hasValidPrecision } from "@/lib/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import { logger } from "@/lib/logger";
 import { Stepper } from "../ui/Stepper";
 import { Button } from "../ui/Button";
 import { RecipientStep } from "./RecipientStep";
@@ -13,6 +14,7 @@ import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 import { isValidStellarPublicKey } from "@/lib/stellar";
 import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
+import { getApiBaseUrl } from "@/lib/api/_shared";
 
 export interface StreamFormData {
   recipient: string;
@@ -321,7 +323,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         setCurrentStep(currentStep + 1);
         // Scroll to top when moving to next step
         const modal = document.querySelector('.glass-card');
-        if (modal) {
+        if (modal && typeof modal.scrollTo === 'function') {
           modal.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }
@@ -338,7 +340,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1);
       // Scroll to top when going back
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (typeof window.scrollTo === 'function') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
   };
 
@@ -346,22 +350,24 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     const startTime = Date.now();
     const TIMEOUT_MS = 30000; // 30 seconds
     const POLL_INTERVAL = 2000; // 2 seconds
+    const baseUrl = getApiBaseUrl();
 
     while (Date.now() - startTime < TIMEOUT_MS) {
       try {
-        const response = await fetch(`/v1/streams?sender=${senderAddress}`);
-        const streams = await response.json();
+        const response = await fetch(`${baseUrl}/v1/streams?sender=${senderAddress}`);
+        const payload = await response.json();
+        const streams = Array.isArray(payload) ? payload : (payload.data ?? []);
         
         // Assuming the latest stream is what we want
         if (streams && streams.length > 0) {
           // Found!
           const newStream = streams[0]; // Simplification
           toast.success("Stream indexed and confirmed!");
-          router.push(`/app/streams/${newStream.streamId}`); // Updated path to match new structure
+          router.push(`/streams/${newStream.streamId}`); // Updated path to match new structure
           return;
         }
       } catch (e) {
-        console.warn("Polling error:", e);
+        logger.warn("Polling error:", e);
       }
       await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
     }
@@ -381,10 +387,10 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         
         // Step 2: Start Polling for Indexer
         setIsPolling(true);
-        await startPolling(formData.recipient);
+        await startPolling(walletPublicKey || "");
         
       } catch (error) {
-        console.error("Failed to create stream:", error);
+        logger.error("Failed to create stream:", error);
         setIsSubmitting(false);
       }
     } else {
