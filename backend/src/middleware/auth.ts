@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
-import logger from '../logger.js';
+import logger, { auditLog } from '../logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const rawJwtSecret = process.env.JWT_SECRET;
@@ -206,6 +206,7 @@ export function verifyChallenge(req: Request, res: Response): void {
 
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: publicKey, iat: now, exp: now + JWT_EXPIRY_SECONDS });
+    auditLog(publicKey, 'auth.verify.success');
     res.json({ token, expiresIn: JWT_EXPIRY_SECONDS });
   } catch (err) {
     logger.error('[Auth] verifyChallenge error:', err);
@@ -235,9 +236,11 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     const user = (req as AuthenticatedRequest).user;
     const adminKey = process.env.ADMIN_PUBLIC_KEY;
     if (!adminKey || user.publicKey !== adminKey) {
+      auditLog(user.publicKey, 'admin.access.denied');
       res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
       return;
     }
+    auditLog(user.publicKey, 'admin.access.granted');
     next();
   });
 }

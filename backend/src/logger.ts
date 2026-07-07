@@ -18,3 +18,19 @@ const logger = createLogger({
 });
 
 export default logger;
+
+/** Structured audit entry for security-sensitive actions (no secrets/tokens). */
+export function auditLog(
+  actor: string,
+  action: string,
+  params: Record<string, unknown> = {},
+): void {
+  const ctx = requestContext.getStore();
+  logger.info('audit', {
+    audit: true,
+    actor,
+    action,
+    params,
+    requestId: ctx?.requestId,
+  });
+}
