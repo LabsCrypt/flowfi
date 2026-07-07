@@ -113,17 +113,6 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     return next(); // Not versioned, continue to deprecated handlers
 });
 
-// Deprecated routes fallback
-app.use(['/streams', '/events'], (req: Request, res: Response) => {
-    res.status(410).json({
-        deprecated: true,
-        migration: {
-            old: req.originalUrl,
-            new: `/v1${req.originalUrl}`
-        }
-    });
-});
-
 // Health check routes
 app.use('/health', healthRoutes);
 

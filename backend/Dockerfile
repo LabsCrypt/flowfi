@@ -8,7 +8,6 @@ RUN npm install
 COPY tsconfig.json ./
 COPY src ./src
 COPY prisma ./prisma
-COPY prisma.config.ts ./
 
 RUN npm run build
 
