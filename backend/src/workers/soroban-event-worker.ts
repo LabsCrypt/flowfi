@@ -553,6 +553,17 @@ export class SorobanEventWorker {
     const timestamp = Math.floor(Date.now() / 1000);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Check for a duplicate BEFORE mutating any Stream fields so that a
+      // replayed event never re-applies the top-up.
+      const existingEvent = await tx.streamEvent.findUnique({
+        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
+        select: { id: true },
+      });
+      if (existingEvent) {
+        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`);
+        return;
+      }
+
       const stream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
         select: { ratePerSecond: true, startTime: true, totalPausedDuration: true }
@@ -575,27 +586,19 @@ export class SorobanEventWorker {
         },
       });
 
-      const existingEvent = await tx.streamEvent.findUnique({
+      await tx.streamEvent.upsert({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
-        select: { id: true },
+        create: {
+          streamId,
+          eventType: 'TOPPED_UP',
+          amount,
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ newDepositedAmount }),
+        },
+        update: {},
       });
-      if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`);
-      } else {
-        await tx.streamEvent.upsert({
-          where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
-          create: {
-            streamId,
-            eventType: 'TOPPED_UP',
-            amount,
-            transactionHash: event.txHash,
-            ledgerSequence: event.ledger,
-            timestamp,
-            metadata: JSON.stringify({ newDepositedAmount }),
-          },
-          update: {},
-        });
-      }
     });
 
     sseService.broadcastToStream(String(streamId), 'stream.topped_up', {
@@ -642,6 +645,22 @@ export class SorobanEventWorker {
           where: { streamId },
           select: { withdrawnAmount: true },
         });
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // Check for a duplicate BEFORE mutating any Stream fields so that a
+      // replayed event never double-increments withdrawnAmount.
+      const existingEvent = await tx.streamEvent.findUnique({
+        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+        select: { id: true },
+      });
+      if (existingEvent) {
+        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
+        return;
+      }
+
+      const stream = await tx.stream.findUniqueOrThrow({
+        where: { streamId },
+        select: { withdrawnAmount: true },
+      });
 
         const newWithdrawnAmount = (
           BigInt(stream.withdrawnAmount) + BigInt(amount)
@@ -675,6 +694,20 @@ export class SorobanEventWorker {
 
     // Skip re-broadcasting SSE for an already-recorded (duplicate) event.
     if (!applied) return;
+      await tx.streamEvent.upsert({
+        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+        create: {
+          streamId,
+          eventType: 'WITHDRAWN',
+          amount,
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ recipient }),
+        },
+        update: {},
+      });
+    });
 
     sseService.broadcastToStream(String(streamId), 'stream.withdrawn', {
       streamId,
