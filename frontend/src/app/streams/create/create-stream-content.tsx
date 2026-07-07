@@ -108,10 +108,11 @@ export default function CreateStreamContent() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-300">
+            <label htmlFor="recipient" className="text-sm font-medium text-slate-300">
               Recipient Address
             </label>
             <input
+              id="recipient"
               type="text"
               placeholder="G..."
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
@@ -123,10 +124,11 @@ export default function CreateStreamContent() {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">
+              <label htmlFor="create-stream-token" className="text-sm font-medium text-slate-300">
                 Token
               </label>
               <select
+                id="create-stream-token"
                 className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors appearance-none"
                 value={formData.token}
                 onChange={(e) => setFormData({ ...formData, token: e.target.value })}
@@ -139,10 +141,11 @@ export default function CreateStreamContent() {
               </select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300">
+              <label htmlFor="create-stream-amount" className="text-sm font-medium text-slate-300">
                 Total Amount
               </label>
               <input
+                id="create-stream-amount"
                 type="text"
                 inputMode="decimal"
                 placeholder="0.00"
@@ -165,10 +168,11 @@ export default function CreateStreamContent() {
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-300">
+            <label htmlFor="create-stream-duration" className="text-sm font-medium text-slate-300">
               Duration (Days)
             </label>
             <input
+              id="create-stream-duration"
               type="number"
               placeholder="30"
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
