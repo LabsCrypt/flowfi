@@ -32,7 +32,6 @@
     "express-rate-limit": "^8.5.2",
     "ioredis": "^5.11.1",
     "pg": "^8.21.0",
-    "stellar-sdk": "^13.3.0",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.11.0",
@@ -43,19 +42,17 @@
     "@types/eventsource": "^1.1.15",
     "@types/express": "^5.0.6",
     "@types/node": "^25.2.3",
-    "@types/pg": "^8.20.0",
-    "@types/supertest": "^7.2.0",
+    "@types/supertest": "^6.0.3",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.6",
     "@vitest/coverage-v8": "^2.1.8",
     "eventsource": "^2.0.2",
     "nodemon": "^3.1.11",
-    "prisma": "^7.8.0",
-    "rollup": "^4.62.0",
-    "supertest": "^7.2.2",
+    "prisma": "^7.4.1",
+    "supertest": "^7.1.0",
     "ts-node": "^10.9.2",
-    "tsx": "^4.22.4",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3",
-    "vitest": "^2.1.8"
+    "vitest": "^3.2.4"
   }
 }

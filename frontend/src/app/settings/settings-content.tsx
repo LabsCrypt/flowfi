@@ -242,8 +242,9 @@ export default function SettingsContent() {
 
             <div className="space-y-3 pl-12">
               <div>
-                <label className="text-sm text-white/60 dark:text-black/60">Default Token</label>
+                <label htmlFor="default-token" className="text-sm text-white/60 dark:text-black/60">Default Token</label>
                 <select
+                  id="default-token"
                   value={displayCurrency}
                   onChange={(e) => {
                     const val = e.target.value as DisplayCurrency;
@@ -259,8 +260,12 @@ export default function SettingsContent() {
               </div>
 
               <div>
-                <label className="text-sm text-white/60 dark:text-black/60">Amount Format</label>
-                <div className="flex gap-2 mt-1">
+                <label id="amount-format-label" className="text-sm text-white/60 dark:text-black/60">Amount Format</label>
+                <div
+                  className="flex gap-2 mt-1"
+                  role="radiogroup"
+                  aria-labelledby="amount-format-label"
+                >
                   {(["full", "compact"] as const).map((fmt) => (
                     <button
                       key={fmt}
@@ -281,8 +286,12 @@ export default function SettingsContent() {
               </div>
 
               <div>
-                <label className="text-sm text-white/60 dark:text-black/60">Decimal Places</label>
-                <div className="flex gap-2 mt-1">
+                <label id="decimal-places-label" className="text-sm text-white/60 dark:text-black/60">Decimal Places</label>
+                <div
+                  className="flex gap-2 mt-1"
+                  role="radiogroup"
+                  aria-labelledby="decimal-places-label"
+                >
                   {([2, 4, 7] as DecimalPlaces[]).map((places) => (
                     <button
                       key={places}

@@ -69,7 +69,29 @@ flowchart LR
 
 ### 6) PAUSED / RESUMED
 
-FlowFi timing math supports pause windows by excluding paused wall-clock duration from effective streaming time.
+**Database Models:**
+- `Stream` - Mirrors on-chain stream state for fast querying
+- `StreamEvent` - Stores all on-chain events (CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED)
+- `User` - Tracks Stellar wallet addresses
+- `IndexerState` - Tracks the last successfully indexed ledger sequence
+
+**Indexer Worker Write Path:**
+
+When the indexer worker processes a ledger batch:
+
+1. Reads the cursor from `IndexerState.lastLedger` to determine where to resume
+2. Upserts `Stream` records to mirror on-chain state changes
+3. Persists each `StreamEvent` via per-event `findUnique` + `upsert` keyed on `(transactionHash, eventType)` (not batch `createMany` with `skipDuplicates`)
+4. Advances `IndexerState.lastLedger` after the batch completes
+
+**Database Model Reference:**
+
+| Model | Key Fields | Purpose |
+|-------|------------|---------|
+| `User` | `publicKey` | Stellar wallet addresses |
+| `Stream` | `streamId`, `sender`, `recipient`, `ratePerSecond`, `depositedAmount`, `withdrawnAmount`, `isActive` | Mirrors on-chain stream state |
+| `StreamEvent` | `streamId`, `eventType`, `transactionHash`, `ledgerSequence`, `timestamp` | Indexed on-chain events; unique on `(transactionHash, eventType)` |
+| `IndexerState` | `lastLedger` | Cursor for last successfully indexed ledger sequence |
 
 Paused behavior:
 
