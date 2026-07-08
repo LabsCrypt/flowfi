@@ -95,9 +95,8 @@ export function useWithdrawIncomingStream(
 
       return { previousStreams, expectedWithdrawn };
     },
-    onSuccess: async (result, stream, onMutateResult) => {
+    onSuccess: async (result, stream, _variables, context) => {
       if (publicKey) {
-        const targetWithdrawn = onMutateResult?.expectedWithdrawn ?? stream.withdrawn;
         const ctx = context as {
           previousStreams?: IncomingStreamRecord[];
           expectedWithdrawn?: number;
@@ -115,11 +114,6 @@ export function useWithdrawIncomingStream(
 
       await options?.onSuccess?.(result, stream);
     },
-    onError: (error, stream, onMutateResult) => {
-      if (publicKey && onMutateResult?.previousStreams) {
-        queryClient.setQueryData(
-          incomingStreamsQueryKey(publicKey),
-          onMutateResult.previousStreams,
     onError: (error, stream, context) => {
       const ctx = context as {
         previousStreams?: IncomingStreamRecord[];
