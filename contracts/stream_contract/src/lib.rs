@@ -31,13 +31,13 @@ pub struct StreamContract;
 
 #[contractimpl]
 impl StreamContract {
-    // ─── Protocol Administration ──────────────────────────────────────────────
+    // ΓöÇΓöÇΓöÇ Protocol Administration ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     /// One-time initialization of the protocol fee configuration.
     ///
     /// # Errors
-    /// - `AlreadyInitialized` — called more than once.
-    /// - `InvalidFeeRate`     — `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS`.
+    /// - `AlreadyInitialized` ΓÇö called more than once.
+    /// - `InvalidFeeRate`     ΓÇö `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS`.
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -77,9 +77,9 @@ impl StreamContract {
     /// Update the treasury address and/or fee rate. Admin-only.
     ///
     /// # Errors
-    /// - `NotInitialized` — `initialize` has not been called.
-    /// - `NotAdmin`       — caller is not the current admin.
-    /// - `InvalidFeeRate` — `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS`.
+    /// - `NotInitialized` ΓÇö `initialize` has not been called.
+    /// - `NotAdmin`       ΓÇö caller is not the current admin.
+    /// - `InvalidFeeRate` ΓÇö `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS`.
     pub fn update_fee_config(
         env: Env,
         admin: Address,
@@ -125,8 +125,8 @@ impl StreamContract {
     /// becomes the sole admin and the previous admin loses all admin privileges.
     ///
     /// # Errors
-    /// - `NotInitialized` — `initialize` has not been called.
-    /// - `NotAdmin`       — caller is not the current admin.
+    /// - `NotInitialized` ΓÇö `initialize` has not been called.
+    /// - `NotAdmin`       ΓÇö caller is not the current admin.
     pub fn transfer_admin(
         env: Env,
         current_admin: Address,
@@ -164,7 +164,7 @@ impl StreamContract {
         try_load_config(&env)
     }
 
-    // ─── Stream Operations ────────────────────────────────────────────────────
+    // ΓöÇΓöÇΓöÇ Stream Operations ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     /// Create a new payment stream.
     ///
@@ -211,7 +211,7 @@ impl StreamContract {
 
         // Reject streams where integer division rounds the rate to zero.
         // Such a stream would lock the sender's tokens in the contract while
-        // never accruing anything to the recipient — almost always a caller
+        // never accruing anything to the recipient ΓÇö almost always a caller
         // mistake (wrong decimals or an excessively long duration).
         // Soroban rolls back the entire transaction on Err, so the token
         // transfer above is unwound automatically.
@@ -260,10 +260,10 @@ impl StreamContract {
     /// is subject to protocol fees (if configured) before being added to the stream.
     ///
     /// # Errors
-    /// - `InvalidAmount`   — `amount` ≤ 0.
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream has been cancelled or fully withdrawn.
+    /// - `InvalidAmount`   ΓÇö `amount` Γëñ 0.
+    /// - `StreamNotFound`  ΓÇö no stream exists with `stream_id`.
+    /// - `Unauthorized`    ΓÇö caller is not the stream's sender.
+    /// - `StreamInactive`  ΓÇö stream has been cancelled or fully withdrawn.
     pub fn top_up_stream(
         env: Env,
         sender: Address,
@@ -311,7 +311,7 @@ impl StreamContract {
         Ok(())
     }
 
-    // ─── Internal Helpers ─────────────────────────────────────────────────────
+    // ΓöÇΓöÇΓöÇ Internal Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     /// Ensures the supplied token address implements the Soroban token interface.
     fn validate_token_contract(env: &Env, token_address: &Address) -> Result<(), StreamError> {
@@ -365,8 +365,8 @@ impl StreamContract {
     /// Validate that a stream exists and is owned by the caller.
     ///
     /// # Errors
-    /// - `StreamNotFound` — no stream exists with `stream_id`.
-    /// - `Unauthorized` — caller is not the stream's sender.
+    /// - `StreamNotFound` ΓÇö no stream exists with `stream_id`.
+    /// - `Unauthorized` ΓÇö caller is not the stream's sender.
     fn validate_stream_ownership(stream: &Stream, caller: &Address) -> Result<(), StreamError> {
         if stream.sender != *caller {
             return Err(StreamError::Unauthorized);
@@ -377,7 +377,7 @@ impl StreamContract {
     /// Validate that a stream is active.
     ///
     /// # Errors
-    /// - `StreamInactive` — stream has been cancelled or fully withdrawn.
+    /// - `StreamInactive` ΓÇö stream has been cancelled or fully withdrawn.
     fn validate_stream_active(stream: &Stream) -> Result<(), StreamError> {
         if !stream.is_active {
             return Err(StreamError::StreamInactive);
@@ -423,10 +423,10 @@ impl StreamContract {
     /// inactive once fully drained.
     ///
     /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's recipient.
-    /// - `StreamInactive`  — stream is already inactive.
-    /// - `InvalidAmount`   — no claimable balance (fully withdrawn already).
+    /// - `StreamNotFound`  ΓÇö no stream exists with `stream_id`.
+    /// - `Unauthorized`    ΓÇö caller is not the stream's recipient.
+    /// - `StreamInactive`  ΓÇö stream is already inactive.
+    /// - `InvalidAmount`   ΓÇö no claimable balance (fully withdrawn already).
     pub fn withdraw(env: Env, recipient: Address, stream_id: u64) -> Result<i128, StreamError> {
         recipient.require_auth();
 
@@ -487,9 +487,9 @@ impl StreamContract {
     /// balance is refunded to the sender.
     ///
     /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is already inactive.
+    /// - `StreamNotFound`  ΓÇö no stream exists with `stream_id`.
+    /// - `Unauthorized`    ΓÇö caller is not the stream's sender.
+    /// - `StreamInactive`  ΓÇö stream is already inactive.
     pub fn cancel_stream(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
         sender.require_auth();
 
@@ -510,9 +510,10 @@ impl StreamContract {
         let refunded_amount = stream
             .deposited_amount
             .saturating_sub(stream.withdrawn_amount);
-
         stream.is_active = false;
         stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = None;
         stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
@@ -551,9 +552,9 @@ impl StreamContract {
     /// Pause an active stream. Only the sender may pause.
     ///
     /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is already inactive.
+    /// - `StreamNotFound`  ΓÇö no stream exists with `stream_id`.
+    /// - `Unauthorized`    ΓÇö caller is not the stream's sender.
+    /// - `StreamInactive`  ΓÇö stream is already inactive.
     pub fn pause_stream(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
         sender.require_auth();
 
@@ -590,14 +591,20 @@ impl StreamContract {
     /// duration it was paused.
     ///
     /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is not paused (already active or cancelled).
+    /// - `StreamNotFound`  ΓÇö no stream exists with `stream_id`.
+    /// - `Unauthorized`    ΓÇö caller is not the stream's sender.
+    /// - `StreamInactive`  ΓÇö stream is not paused (already active or cancelled).
     pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
         sender.require_auth();
 
         let mut stream = load_stream(&env, stream_id)?;
         Self::validate_stream_ownership(&stream, &sender)?;
+
+        // Reject if the stream is not in Paused status — this covers streams
+        // that were cancelled while paused (is_active=false, paused=true).
+        if stream.status != StreamStatus::Paused {
+            return Err(StreamError::StreamInactive);
+        }
 
         if !stream.paused {
             return Err(StreamError::StreamInactive);
@@ -633,7 +640,21 @@ impl StreamContract {
         Ok(new_end_time)
     }
 
-    // ─── Read-only Queries ────────────────────────────────────────────────────
+    // ΓöÇΓöÇΓöÇ Read-only Queries ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    /// Returns the total number of streams ever created (monotonically increasing).
+    ///
+    /// This is the global stream ID counter, not the count of currently active
+    /// streams. It equals the highest stream ID that has been assigned, making
+    /// it useful for cursor-based or offset pagination without a full DB scan.
+    ///
+    /// Returns `0` on a freshly-deployed contract where no stream has been created.
+    pub fn stream_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&crate::types::DataKey::StreamCounter)
+            .unwrap_or(0)
+    }
 
     /// Returns the stream record for `stream_id`, or `None` if it does not exist.
     pub fn get_stream(env: Env, stream_id: u64) -> Option<Stream> {
@@ -663,7 +684,7 @@ impl StreamContract {
         })
     }
 
-    // ─── Internal Helpers ─────────────────────────────────────────────────────
+    // ΓöÇΓöÇΓöÇ Internal Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
     /// Deducts the protocol fee from `amount`, transfers it to the treasury,
     /// emits a `fee_collected` event, and returns the net amount.

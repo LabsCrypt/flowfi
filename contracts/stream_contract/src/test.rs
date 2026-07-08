@@ -2530,6 +2530,177 @@ fn test_resume_stream_emits_event() {
     assert_eq!(payload.new_end_time, 1150);
 }
 
+// ─── #421 stream_count ────────────────────────────────────────────────────────
+
+#[test]
+fn test_stream_count_returns_zero_on_fresh_contract() {
+    // A freshly deployed contract with no streams must return 0.
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    assert_eq!(client.stream_count(), 0);
+}
+
+#[test]
+fn test_stream_count_increments_by_one_per_create() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 3_000);
+
+    let client = create_contract(&env);
+
+    assert_eq!(client.stream_count(), 0);
+
+    client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &100);
+    assert_eq!(client.stream_count(), 1);
+
+    client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &100);
+    assert_eq!(client.stream_count(), 2);
+
+    client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &100);
+    assert_eq!(client.stream_count(), 3);
+}
+
+#[test]
+fn test_stream_count_is_not_decremented_by_cancel() {
+    // stream_count counts all streams ever created, not just active ones.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+    assert_eq!(client.stream_count(), 1);
+
+    client.cancel_stream(&sender, &id);
+    // Cancelling must NOT decrement the counter.
+    assert_eq!(client.stream_count(), 1);
+}
+
+#[test]
+fn test_stream_count_matches_last_stream_id() {
+    // The counter equals the highest stream ID that has been issued.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 5_000);
+
+    let client = create_contract(&env);
+    for i in 1u64..=5 {
+        let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &100);
+        assert_eq!(id, i);
+        assert_eq!(client.stream_count(), i);
+    }
+}
+
+// ─── #787 resume_stream must reject cancelled-while-paused streams ────────────
+
+#[test]
+fn test_resume_after_cancel_while_paused_returns_stream_inactive() {
+    // Pause a stream, cancel it while paused, then attempt to resume.
+    // resume_stream must return StreamInactive and must NOT emit stream_resumed.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    // 1_000 tokens / 1_000 s = 1 token/s
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Pause at t=100.
+    env.ledger().with_mut(|l| l.timestamp += 100);
+    client.pause_stream(&sender, &id);
+
+    // Cancel while paused at t=200.
+    env.ledger().with_mut(|l| l.timestamp += 100);
+    client.cancel_stream(&sender, &id);
+
+    // Verify the stream is correctly marked cancelled.
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    // cancel_stream must also clear the pause fields.
+    assert!(!s.paused);
+    assert!(s.paused_at.is_none());
+
+    // Attempting to resume must return StreamInactive.
+    let result = client.try_resume_stream(&sender, &id);
+    assert_eq!(result, Err(Ok(StreamError::StreamInactive)));
+
+    // No stream_resumed event must have been emitted.
+    let events = env.events().all();
+    let resumed_event = events.iter().find(|e| {
+        Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+            == Symbol::new(&env, "stream_resumed")
+    });
+    assert!(
+        resumed_event.is_none(),
+        "stream_resumed must not be emitted after cancel"
+    );
+}
+
+#[test]
+fn test_cancel_while_paused_clears_pause_fields() {
+    // After cancel_stream on a paused stream, paused and paused_at must be cleared.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.pause_stream(&sender, &id);
+
+    // Verify pause state is set before cancel.
+    let before = client.get_stream(&id).unwrap();
+    assert!(before.paused);
+    assert!(before.paused_at.is_some());
+
+    client.cancel_stream(&sender, &id);
+
+    // After cancel, pause state must be cleared.
+    let after = client.get_stream(&id).unwrap();
+    assert!(!after.paused, "paused flag must be false after cancel");
+    assert!(
+        after.paused_at.is_none(),
+        "paused_at must be None after cancel"
+    );
+    assert_eq!(after.status, StreamStatus::Cancelled);
+}
+
+#[test]
+fn test_cancel_normal_stream_also_clears_pause_fields() {
+    // Cancelling a non-paused stream should set paused=false and paused_at=None
+    // (they are already in that state, but the assignment must be idempotent).
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    client.cancel_stream(&sender, &id);
+
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.paused);
+    assert!(s.paused_at.is_none());
+    assert_eq!(s.status, StreamStatus::Cancelled);
+}
+
 // ─── CEI / reentrancy regression (#789) ──────────────────────────────────────
 
 /// Verify that stream state is committed to storage before the token transfer,
