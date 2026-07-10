@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React from "react";
 import { Button } from "@/components/ui/Button";
+import { useModalDialog } from "@/hooks/useModalDialog";
 import type { Stream } from "@/lib/dashboard";
 
 interface StreamDetailsModalProps {
@@ -17,14 +18,7 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
     onCancelClick,
     onTopUpClick,
 }) => {
-    // Escape key support
-    useEffect(() => {
-        const handleEscape = (e: KeyboardEvent) => {
-            if (e.key === "Escape") onClose();
-        };
-        window.addEventListener("keydown", handleEscape);
-        return () => window.removeEventListener("keydown", handleEscape);
-    }, [onClose]);
+    const dialogRef = useModalDialog({ onClose });
 
     const progress = stream.deposited > 0 ? Math.min(100, Math.max(0, (stream.withdrawn / stream.deposited) * 100)) : 0;
     const remaining = stream.deposited - stream.withdrawn;
@@ -32,15 +26,21 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
     return (
         <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="stream-details-modal-title"
             onClick={(e) => {
                 if (e.target === e.currentTarget) onClose();
             }}
         >
-            <div className="glass-card relative w-full max-w-2xl mx-4 rounded-3xl border border-glass-border p-8 shadow-2xl animate-in fade-in zoom-in-95">
+            <div
+                ref={dialogRef}
+                className="glass-card relative w-full max-w-2xl mx-4 rounded-3xl border border-glass-border p-8 shadow-2xl animate-in fade-in zoom-in-95"
+            >
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <h2 className="text-2xl font-black tracking-tight">Stream Details</h2>
+                        <h2 id="stream-details-modal-title" className="text-2xl font-black tracking-tight">Stream Details</h2>
                         <p className="text-sm text-slate-400 font-mono">ID: {stream.id}</p>
                     </div>
                     <button

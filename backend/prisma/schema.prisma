@@ -51,6 +51,7 @@ model Stream {
 
   @@index([sender])
   @@index([recipient])
+  @@index([tokenAddress])
   @@index([streamId])
   @@index([isActive])
   @@index([isPaused])
@@ -79,6 +80,7 @@ model StreamEvent {
   // Relations
   stream          Stream   @relation(fields: [streamId], references: [streamId])
 
+  @@unique([transactionHash, eventType])
   @@index([streamId])
   @@index([eventType])
   @@index([timestamp])
@@ -86,4 +88,11 @@ model StreamEvent {
   @@index([createdAt])
   @@index([streamId, createdAt])
   @@unique([transactionHash, eventType])
+}
+
+// IndexerState model - tracks indexer cursor for resumable event processing
+model IndexerState {
+  id         String   @id @default("singleton")
+  lastLedger Int      @default(0)
+  updatedAt  DateTime @updatedAt
 }

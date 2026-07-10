@@ -1,4 +1,5 @@
 #![no_std]
+#![doc = include_str!("../README.md")]
 
 mod errors;
 mod events;
@@ -176,6 +177,7 @@ impl StreamContract {
     /// # Errors
     /// - `InvalidAmount`   — `amount` ≤ 0.
     /// - `InvalidDuration` — `duration` is 0.
+    /// - `InvalidRate`     — `net_amount / duration` rounds to zero.
     /// - `InvalidTokenAddress` — `token_address` is not a token contract.
     pub fn create_stream(
         env: Env,
@@ -288,9 +290,10 @@ impl StreamContract {
         // Collect protocol fee and get net amount
         let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id);
 
-        // Update stream state
+        // Update stream state. `last_update_time` is intentionally left untouched:
+        // it is the accrual anchor for `calculate_claimable`, and advancing it to
+        // `now` would discard any already-vested, unwithdrawn tokens.
         stream.deposited_amount += net_amount;
-        stream.last_update_time = env.ledger().timestamp();
 
         save_stream(&env, stream_id, &stream);
 
@@ -342,12 +345,12 @@ impl StreamContract {
 
         let elapsed = effective_now.saturating_sub(stream.last_update_time);
 
-        // Use checked_sub for deposited - withdrawn calculation
-        // Underflow (withdrawn > deposited) falls back to 0.
+        // Clamp to 0: withdrawn_amount should never exceed deposited_amount in
+        // normal flow, but guard defensively so the function never returns negative.
         let remaining = stream
             .deposited_amount
-            .checked_sub(stream.withdrawn_amount)
-            .unwrap_or_default();
+            .saturating_sub(stream.withdrawn_amount)
+            .max(0);
 
         // Use checked_mul to prevent overflow when multiplying rate * elapsed.
         // If overflow would occur, cap at the remaining balance.
@@ -382,29 +385,35 @@ impl StreamContract {
         Ok(())
     }
 
-    /// Transfer tokens from contract to recipient and update stream state.
+    /// Apply a withdrawal: update stream state, persist it, then transfer tokens.
     ///
-    /// This helper consolidates the token transfer logic and stream state updates
-    /// to reduce code duplication across withdrawal operations.
-    fn transfer_and_update_stream(
+    /// Follows the Checks-Effects-Interactions (CEI) pattern: all state mutations
+    /// and the storage write complete before the external token transfer fires.
+    /// A re-entrant call via a malicious token hook therefore sees the already-updated
+    /// withdrawn_amount in storage and cannot trigger a double payout.
+    fn apply_withdrawal(
         env: &Env,
         stream: &mut Stream,
+        stream_id: u64,
         recipient: &Address,
         amount: i128,
         now: u64,
     ) {
-        let token_client = token::Client::new(env, &stream.token_address);
-        let contract_address = env.current_contract_address();
-        token_client.transfer(&contract_address, recipient, &amount);
-
+        // Effects: update stream state
         stream.withdrawn_amount += amount;
         stream.last_update_time = now;
 
-        // Mark stream as inactive and completed if fully drained
         if stream.withdrawn_amount >= stream.deposited_amount {
             stream.is_active = false;
             stream.status = StreamStatus::Completed;
         }
+
+        // Persist state before any external call (CEI)
+        save_stream(env, stream_id, stream);
+
+        // Interaction: transfer tokens only after state is committed to storage
+        let token_client = token::Client::new(env, &stream.token_address);
+        token_client.transfer(&env.current_contract_address(), recipient, &amount);
     }
 
     /// Withdraw all currently claimable tokens from a stream.
@@ -431,7 +440,7 @@ impl StreamContract {
         // Validate stream is active and not paused
         Self::validate_stream_active(&stream)?;
         if stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamPaused);
         }
 
         let now = env.ledger().timestamp();
@@ -441,11 +450,10 @@ impl StreamContract {
             return Err(StreamError::InvalidAmount);
         }
 
-        // Use helper function to transfer tokens and update state
-        Self::transfer_and_update_stream(&env, &mut stream, &recipient, claimable, now);
+        // Apply withdrawal: updates state, persists to storage, then transfers (CEI)
+        Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now);
 
         let completed = stream.status == StreamStatus::Completed;
-        save_stream(&env, stream_id, &stream);
 
         env.events().publish(
             (Symbol::new(&env, "tokens_withdrawn"), stream_id),
@@ -494,25 +502,15 @@ impl StreamContract {
         let now = env.ledger().timestamp();
         let accrued_amount = Self::calculate_claimable(&stream, now);
 
-        let token_client = token::Client::new(&env, &stream.token_address);
-        let contract_address = env.current_contract_address();
-
-        // Settle recipient with all accrued tokens at cancellation
+        // Effects: update all stream state before any external call
         if accrued_amount > 0 {
-            token_client.transfer(&contract_address, &stream.recipient, &accrued_amount);
             stream.withdrawn_amount = stream.withdrawn_amount.saturating_add(accrued_amount);
         }
 
-        // Calculate and refund remaining balance to sender
         let refunded_amount = stream
             .deposited_amount
             .saturating_sub(stream.withdrawn_amount);
 
-        if refunded_amount > 0 {
-            token_client.transfer(&contract_address, &sender, &refunded_amount);
-        }
-
-        // Mark stream as inactive
         stream.is_active = false;
         stream.status = StreamStatus::Cancelled;
         stream.last_update_time = now;
@@ -520,7 +518,20 @@ impl StreamContract {
         let recipient = stream.recipient.clone();
         let amount_withdrawn = stream.withdrawn_amount;
 
+        // Persist state before any external calls (CEI)
         save_stream(&env, stream_id, &stream);
+
+        // Interactions: token transfers after state is committed to storage
+        let token_client = token::Client::new(&env, &stream.token_address);
+        let contract_address = env.current_contract_address();
+
+        if accrued_amount > 0 {
+            token_client.transfer(&contract_address, &recipient, &accrued_amount);
+        }
+
+        if refunded_amount > 0 {
+            token_client.transfer(&contract_address, &sender, &refunded_amount);
+        }
 
         // Emit cancellation event
         env.events().publish(
@@ -658,6 +669,7 @@ impl StreamContract {
     /// emits a `fee_collected` event, and returns the net amount.
     ///
     /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
+    /// If fee calculation truncates to 0, no transfer/event occurs and `amount` is unchanged.
     /// Time complexity: O(1).
     fn collect_fee(env: &Env, token_address: &Address, amount: i128, stream_id: u64) -> i128 {
         match try_load_config(env) {

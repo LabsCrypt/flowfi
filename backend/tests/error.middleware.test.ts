@@ -44,4 +44,15 @@ describe('Error Middleware', () => {
     errorHandler(error, req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(500);
   });
+
+  it('should delegate to next when headers were already sent', () => {
+    const error = new Error('Stream failed after headers');
+    res.headersSent = true;
+
+    errorHandler(error, req as Request, res as Response, next);
+
+    expect(next).toHaveBeenCalledWith(error);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
+  });
 });
