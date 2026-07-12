@@ -5,7 +5,10 @@ members = [
 ]
 
 [workspace.dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "22.1.0"
+
+[patch.crates-io]
+ethnum = "1.5.3"
 
 [profile.release]
 opt-level = "z"

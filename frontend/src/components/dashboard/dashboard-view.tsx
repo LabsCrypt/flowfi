@@ -1130,11 +1130,17 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                 </p>
 
                 <div className="stream-template-editor">
+                  <label
+                    htmlFor="template-name-input"
+                    className="visually-hidden"
+                  >
+                    Template name
+                  </label>
                   <input
+                    id="template-name-input"
                     value={templateNameInput}
                     onChange={(e) => setTemplateNameInput(e.target.value)}
                     placeholder="e.g. Monthly Contributor Payroll"
-                    aria-label="Template name"
                   />
                   <div className="stream-template-editor__actions">
                     <button
@@ -1214,9 +1220,13 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       {requiredFieldsCompleted} / 5 required fields completed
                     </p>
                   </div>
-                  <label className="stream-form__template-select">
+                  <label
+                    htmlFor="template-select"
+                    className="stream-form__template-select"
+                  >
                     Load template
                     <select
+                      id="template-select"
                       value={selectedTemplateId ?? ""}
                       onChange={(e) => {
                         const id = e.target.value;
@@ -1237,9 +1247,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                   </label>
                 </div>
 
-                <label>
+                <label htmlFor="stream-recipient">
                   Recipient Address
                   <input
+                    id="stream-recipient"
                     required
                     type="text"
                     value={streamForm.recipient}
@@ -1250,9 +1261,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                   />
                 </label>
                 <div className="stream-form__row">
-                  <label>
+                  <label htmlFor="stream-token">
                     Token
                     <input
+                      id="stream-token"
                       required
                       type="text"
                       value={streamForm.token}
@@ -1262,9 +1274,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       placeholder="USDC"
                     />
                   </label>
-                  <label>
+                  <label htmlFor="stream-total-amount">
                     Total Amount
                     <input
+                      id="stream-total-amount"
                       required
                       type="number"
                       min="0"
@@ -1278,9 +1291,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                   </label>
                 </div>
                 <div className="stream-form__row">
-                  <label>
+                  <label htmlFor="stream-starts-at">
                     Starts At
                     <input
+                      id="stream-starts-at"
                       required
                       type="datetime-local"
                       value={streamForm.startsAt}
@@ -1289,9 +1303,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                       }
                     />
                   </label>
-                  <label>
+                  <label htmlFor="stream-ends-at">
                     Ends At
                     <input
+                      id="stream-ends-at"
                       required
                       type="datetime-local"
                       value={streamForm.endsAt}
@@ -1302,9 +1317,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                   </label>
                 </div>
                 <div className="stream-form__row">
-                  <label>
+                  <label htmlFor="stream-cadence">
                     Cadence (seconds)
                     <input
+                      id="stream-cadence"
                       type="number"
                       min="1"
                       step="1"
@@ -1315,9 +1331,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                     />
                   </label>
                 </div>
-                <label>
+                <label htmlFor="stream-note">
                   Note
                   <textarea
+                    id="stream-note"
                     value={streamForm.note}
                     onChange={(e) => updateStreamForm("note", e.target.value)}
                     placeholder="Optional internal note for this stream configuration."
