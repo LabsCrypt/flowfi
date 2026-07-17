@@ -18,6 +18,8 @@ import toast from "react-hot-toast";
 import {
   getDashboardAnalytics,
   fetchDashboardData,
+  useDashboard,
+  dashboardQueryKey,
   type DashboardSnapshot,
   type Stream,
 } from "@/lib/dashboard";
@@ -507,6 +509,7 @@ function renderRecentActivity(
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = React.useState("overview");
   const [showWizard, setShowWizard] = React.useState(false);
   const [modal, setModal] = React.useState<ModalState>(null);
@@ -553,7 +556,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         }
       }
     }
-  }, [streamEvents, session.publicKey]);
+  }, [streamEvents, session.publicKey, queryClient]);
 
   const [streamForm, setStreamForm] =
     React.useState<StreamFormValues>(EMPTY_STREAM_FORM);
@@ -764,7 +767,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   // ── Optimistic helpers ────────────────────────────────────────────────────
 
   const removeStreamLocally = (streamId: string) => {
-    setSnapshot((prev) => {
+    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => {
       if (!prev) return prev;
       return {
         ...prev,
