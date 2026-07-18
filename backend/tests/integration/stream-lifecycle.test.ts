@@ -4,16 +4,53 @@
  * These tests use real Postgres database and verify the complete pipeline:
  * event worker → DB update → controller response → SSE broadcast
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import request from "supertest";
-import { PrismaClient } from "../../src/generated/prisma/index.js";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { xdr, nativeToScVal, Keypair, StrKey } from "@stellar/stellar-sdk";
+import type { PrismaClient } from "../../src/generated/prisma/index.js";
 import app from "../../src/app.js";
 import { SorobanEventWorker } from "../../src/workers/soroban-event-worker.js";
 import { sseService } from "../../src/services/sse.service.js";
 import EventSource from "eventsource";
+import {
+  resolveDbReadiness,
+  resolveTestDatabaseUrl,
+  explainSkipReason,
+} from "./_db.js";
+
+// Lazy-loaded Prisma client. Promise type via definite assignment; the
+// skip-on-no-DB guards below (lastDbReadiness?.ready + ctx.skip() + getDb())
+// ensure we never dereference testPrisma when it has not been assigned.
+// See issue #760 for the runtime contract.
+let testPrisma!: PrismaClient;
+// Underlying pg pool, kept at module scope so we can close it in afterAll
+// without leaking TCP handles (which would otherwise keep the Vitest
+// process alive past the hook timeout).
+let testPool!: pg.Pool;
+// Captured during beforeAll so other hooks can read the readiness report
+// (and skip message) without re-probing the database.
+let lastDbReadiness: Awaited<ReturnType<typeof resolveDbReadiness>> | null =
+  null;
+
+function getDb(): PrismaClient {
+  if (!testPrisma) {
+    throw new Error(
+      "testPrisma accessed before initialization (this suite should have been skipped)",
+    );
+  }
+  return testPrisma;
+}
 
 // XDR Helper functions (copied from soroban-event-worker.test.ts)
 function scvU64(n: bigint): xdr.ScVal {
@@ -41,17 +78,6 @@ function scvMap(entries: [string, xdr.ScVal][]): xdr.ScVal {
     entries.map(([k, v]) => new xdr.ScMapEntry({ key: scvSymbol(k), val: v })),
   );
 }
-
-// Test database setup
-const connectionString =
-  process.env.DATABASE_URL ||
-  "postgresql://postgres:password@127.0.0.1:5432/flowfi_test";
-const testPool = new pg.Pool({ connectionString });
-const testAdapter = new PrismaPg(testPool);
-const testPrisma = new PrismaClient({
-  adapter: testAdapter,
-  log: ["error"], // Minimal logging for tests
-});
 
 // Mock RPC calls for stale DB fallback tests
 vi.mock("../../src/services/sorobanService.js", () => ({
@@ -190,15 +216,16 @@ function createStreamCancelledEvent(
 
 async function cleanupDatabase() {
   // Clean up in order to respect foreign key constraints
-  await testPrisma.streamEvent.deleteMany();
-  await testPrisma.stream.deleteMany();
-  await testPrisma.user.deleteMany();
-  await testPrisma.indexerState.deleteMany();
+  const db = getDb();
+  await db.streamEvent.deleteMany();
+  await db.stream.deleteMany();
+  await db.user.deleteMany();
+  await db.indexerState.deleteMany();
 }
 
 async function createTestUsers() {
   // Create test users for foreign key constraints
-  await testPrisma.user.createMany({
+  await getDb().user.createMany({
     data: [{ publicKey: SENDER }, { publicKey: RECIPIENT }],
     skipDuplicates: true,
   });
@@ -209,7 +236,37 @@ describe("Stream Lifecycle Integration Tests", () => {
   let server: any;
   let serverPort: number;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    // Issue #760: when DATABASE_URL is missing or the server is unreachable,
+    // skip this suite cleanly with an actionable message rather than letting
+    // Prisma throw PrismaClientInitializationError mid-test.
+    const readiness = await resolveDbReadiness();
+    lastDbReadiness = readiness;
+    if (!readiness.ready) {
+      // eslint-disable-next-line no-console
+      console.warn(`\n${explainSkipReason(readiness)}\n`);
+      return;
+    }
+
+    const { PrismaClient } = await import(
+      "../../src/generated/prisma/index.js"
+    );
+    const connectionString = resolveTestDatabaseUrl();
+    testPool = new pg.Pool({ connectionString });
+    const testAdapter = new PrismaPg(testPool);
+    testPrisma = new PrismaClient({
+      adapter: testAdapter,
+      log: ["error"], // Minimal logging for tests
+    });
+  });
+
+  beforeEach(async (ctx) => {
+    // Issue #760: when DB is missing, skip this test cleanly and short-circuit
+    // so we don't throw via getDb() or open an orphan Express listener.
+    if (!lastDbReadiness?.ready) {
+      ctx.skip();
+      return;
+    }
     vi.clearAllMocks();
     await cleanupDatabase();
     await createTestUsers();
@@ -223,13 +280,33 @@ describe("Stream Lifecycle Integration Tests", () => {
   });
 
   afterEach(async () => {
+    if (!lastDbReadiness?.ready) return;
     if (server) {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
     }
     await cleanupDatabase();
+    // NOTE: do NOT call testPrisma.$disconnect() here. The Prisma client
+    // (and its underlying pg.Pool) are created once per file in beforeAll
+    // and reused across every test; disconnecting after each test would
+    // make the very next beforeEach fail with
+    // "Prisma Client is disconnected" when cleanupDatabase() runs.
+  });
+
+  afterAll(async () => {
+    if (!lastDbReadiness?.ready) return;
+    // Defensive: if beforeAll threw midway through the import → pg.Pool →
+    // PrismaClient assignment chain (e.g., schema not generated yet),
+    // testPrisma may still be undefined even though readiness reported
+    // ready. Skip the teardown rather than dereferencing undefined and
+    // crashing the test runner. `testPool.end()` is wrapped in `.catch`
+    // because PrismaPg's $disconnect() already closes the underlying
+    // pg.Pool on most engines, and a second `.end()` would warn
+    // "Pool is ended" into the test output.
+    if (!testPrisma) return;
     await testPrisma.$disconnect();
+    await testPool.end().catch(() => undefined);
   });
 
   describe("Indexer → stream_created: stream appears in GET /v1/streams/:id", () => {
