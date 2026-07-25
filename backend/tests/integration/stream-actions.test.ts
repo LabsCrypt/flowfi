@@ -20,6 +20,7 @@ const {
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
     },
@@ -124,6 +125,29 @@ describe('stream action routes', () => {
       txHash: 'pause-tx-hash',
     });
     expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7);
+    expect(mockPrisma.stream.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { streamId: 7 },
+        data: expect.objectContaining({
+          isPaused: true,
+        }),
+      }),
+    );
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'pause-tx-hash',
+            eventType: 'PAUSED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId: 7,
+          eventType: 'PAUSED',
+          transactionHash: 'pause-tx-hash',
+        }),
+      }),
+    );
   });
 
   it('rejects a raw signed transaction bearer token without a JWT', async () => {
@@ -174,6 +198,29 @@ describe('stream action routes', () => {
       txHash: 'resume-tx-hash',
     });
     expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9);
+    expect(mockPrisma.stream.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { streamId: 9 },
+        data: expect.objectContaining({
+          isPaused: false,
+        }),
+      }),
+    );
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'resume-tx-hash',
+            eventType: 'RESUMED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId: 9,
+          eventType: 'RESUMED',
+          transactionHash: 'resume-tx-hash',
+        }),
+      }),
+    );
   });
 
   it('POST /v1/streams/:streamId/withdraw withdraws the claimable amount for the recipient', async () => {
@@ -214,9 +261,15 @@ describe('stream action routes', () => {
       amount: '100',
     });
     expect(mockWithdraw).toHaveBeenCalledWith(11, recipient.publicKey());
-    expect(mockPrisma.streamEvent.create).toHaveBeenCalledWith(
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'withdraw-tx-hash',
+            eventType: 'WITHDRAWN',
+          },
+        },
+        create: expect.objectContaining({
           eventType: 'WITHDRAWN',
           amount: '100',
           transactionHash: 'withdraw-tx-hash',

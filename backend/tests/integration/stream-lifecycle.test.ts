@@ -46,12 +46,22 @@ function scvMap(entries: [string, xdr.ScVal][]): xdr.ScVal {
 const connectionString =
   process.env.DATABASE_URL ||
   "postgresql://postgres:password@127.0.0.1:5432/flowfi_test";
-const testPool = new pg.Pool({ connectionString });
+const testPool = new pg.Pool({ connectionString, connectionTimeoutMillis: 1000 });
 const testAdapter = new PrismaPg(testPool);
 const testPrisma = new PrismaClient({
   adapter: testAdapter,
   log: ["error"], // Minimal logging for tests
 });
+
+let dbReachable = false;
+try {
+  const client = await testPool.connect();
+  client.release();
+  dbReachable = true;
+} catch (err) {
+  dbReachable = false;
+}
+
 
 // Mock RPC calls for stale DB fallback tests
 vi.mock("../../src/services/sorobanService.js", () => ({
@@ -204,7 +214,7 @@ async function createTestUsers() {
   });
 }
 
-describe("Stream Lifecycle Integration Tests", () => {
+describe.runIf(dbReachable)("Stream Lifecycle Integration Tests", () => {
   let worker: SorobanEventWorker;
   let server: any;
   let serverPort: number;

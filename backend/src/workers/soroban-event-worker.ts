@@ -377,7 +377,10 @@ export class SorobanEventWorker {
             new_fee_rate_bps: newFeeRateBps,
           }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     });
 
@@ -428,7 +431,10 @@ export class SorobanEventWorker {
             transactionHash: event.txHash,
           }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     });
 
@@ -519,9 +525,9 @@ export class SorobanEventWorker {
             eventType: "CREATED",
           },
         },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(
           `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CREATED`,
         );
@@ -542,7 +548,10 @@ export class SorobanEventWorker {
             timestamp: startTime,
             metadata: JSON.stringify({ tokenAddress, ratePerSecond }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp: startTime,
+          },
         });
       }
     });
@@ -624,7 +633,10 @@ export class SorobanEventWorker {
           timestamp,
           metadata: JSON.stringify({ newDepositedAmount }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     });
 
@@ -658,9 +670,9 @@ export class SorobanEventWorker {
       // replayed event never double-increments withdrawnAmount.
       const existingEvent = await tx.streamEvent.findUnique({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
         return;
       }
@@ -693,7 +705,10 @@ export class SorobanEventWorker {
           timestamp,
           metadata: JSON.stringify({ recipient }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     });
 
@@ -739,9 +754,9 @@ export class SorobanEventWorker {
             eventType: "CANCELLED",
           },
         },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(
           `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CANCELLED`,
         );
@@ -762,7 +777,10 @@ export class SorobanEventWorker {
             timestamp,
             metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });
@@ -809,9 +827,9 @@ export class SorobanEventWorker {
             eventType: "COMPLETED",
           },
         },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(
           `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=COMPLETED`,
         );
@@ -832,7 +850,10 @@ export class SorobanEventWorker {
             timestamp,
             metadata: JSON.stringify({ recipient }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });
@@ -870,9 +891,9 @@ export class SorobanEventWorker {
           eventType: "FEE_COLLECTED",
         },
       },
-      select: { id: true },
+      select: { id: true, ledgerSequence: true },
     });
-    if (existingEvent) {
+    if (existingEvent && existingEvent.ledgerSequence !== 0) {
       logger.warn(
         `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
       );
@@ -893,7 +914,10 @@ export class SorobanEventWorker {
           timestamp,
           metadata: JSON.stringify({ treasury, token }),
         },
-        update: {},
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+        },
       });
     }
 
@@ -940,9 +964,9 @@ export class SorobanEventWorker {
             eventType: "PAUSED",
           },
         },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(
           `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=PAUSED`,
         );
@@ -962,7 +986,10 @@ export class SorobanEventWorker {
             timestamp,
             metadata: JSON.stringify({ sender, pausedAt }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });
@@ -1026,9 +1053,9 @@ export class SorobanEventWorker {
             eventType: "RESUMED",
           },
         },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
-      if (existingEvent) {
+      if (existingEvent && existingEvent.ledgerSequence !== 0) {
         logger.warn(
           `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=RESUMED`,
         );
@@ -1053,7 +1080,10 @@ export class SorobanEventWorker {
               totalPausedDuration: newTotalPausedDuration,
             }),
           },
-          update: {},
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
         });
       }
     });

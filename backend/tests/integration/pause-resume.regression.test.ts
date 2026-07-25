@@ -99,9 +99,30 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
 
     expect(pauseRes.status).toBe(200);
 
-    // Controller should NOT write to DB for PAUSED event
-    expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
-    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    // Controller should write to DB for PAUSED event via upsert and update stream
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'simulated-pause-77',
+            eventType: 'PAUSED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId: 77,
+          eventType: 'PAUSED',
+          transactionHash: 'simulated-pause-77',
+        }),
+      }),
+    );
+    expect(mockPrisma.stream.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { streamId: 77 },
+        data: expect.objectContaining({
+          isPaused: true,
+        }),
+      }),
+    );
 
     // 2. Indexer flow
     const worker = new SorobanEventWorker();
@@ -131,8 +152,8 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
 
     await worker.processEvent(mockEvent);
 
-    // Indexer should write exactly one PAUSED event
-    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledTimes(1);
+    // Indexer/Controller should write/upsert the PAUSED event and update stream
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledTimes(2);
     expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         create: expect.objectContaining({
@@ -141,7 +162,7 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
         }),
       }),
     );
-    expect(mockPrisma.stream.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.stream.update).toHaveBeenCalledTimes(2);
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { streamId },

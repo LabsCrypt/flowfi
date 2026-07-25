@@ -17,6 +17,7 @@ export class SSEService {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowClientsDropped = 0;
 
+  addClient(clientId: string, res: Response, subscriptions: string[] = [], ip = 'unknown'): void {
     const client: SSEClient = {
       id: clientId,
       res,

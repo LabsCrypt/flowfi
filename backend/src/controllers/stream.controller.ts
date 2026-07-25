@@ -815,6 +815,36 @@ export const pauseStream = async (req: Request, res: Response) => {
         parsedStreamId,
       );
 
+      // Update the database to mark stream as paused
+      const now = Math.floor(Date.now() / 1000);
+      const updatedStream = await prisma.stream.update({
+        where: { streamId: parsedStreamId },
+        data: {
+          isPaused: true,
+          pausedAt: now,
+          lastUpdateTime: now,
+        },
+      });
+
+      // Create/upsert a PAUSED event
+      await prisma.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: result.txHash,
+            eventType: 'PAUSED',
+          },
+        },
+        create: {
+          streamId: parsedStreamId,
+          eventType: 'PAUSED',
+          transactionHash: result.txHash,
+          ledgerSequence: 0,
+          timestamp: now,
+          metadata: JSON.stringify({ pausedBy: authReq.user.publicKey }),
+        },
+        update: {},
+      });
+
       logger.info(
         `Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`,
       );
@@ -823,7 +853,7 @@ export const pauseStream = async (req: Request, res: Response) => {
         success: true,
         streamId: parsedStreamId,
         txHash: result.txHash,
-        stream,
+        stream: updatedStream,
       });
     } catch (sorobanError) {
       logger.error(
@@ -899,6 +929,44 @@ export const resumeStream = async (req: Request, res: Response) => {
         parsedStreamId,
       );
 
+      // Calculate pause duration and update the database
+      const now = Math.floor(Date.now() / 1000);
+      const pausedAt = stream.pausedAt ?? now;
+      const pauseDuration = Math.max(0, now - pausedAt);
+      const totalPausedDuration = (stream.totalPausedDuration ?? 0) + pauseDuration;
+
+      const updatedStream = await prisma.stream.update({
+        where: { streamId: parsedStreamId },
+        data: {
+          isPaused: false,
+          pausedAt: null,
+          totalPausedDuration,
+          lastUpdateTime: now,
+        },
+      });
+
+      // Create/upsert a RESUMED event
+      await prisma.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: result.txHash,
+            eventType: 'RESUMED',
+          },
+        },
+        create: {
+          streamId: parsedStreamId,
+          eventType: 'RESUMED',
+          transactionHash: result.txHash,
+          ledgerSequence: 0,
+          timestamp: now,
+          metadata: JSON.stringify({ 
+            resumedBy: authReq.user.publicKey,
+            pauseDuration,
+          }),
+        },
+        update: {},
+      });
+
       logger.info(
         `Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`,
       );
@@ -907,7 +975,7 @@ export const resumeStream = async (req: Request, res: Response) => {
         success: true,
         streamId: parsedStreamId,
         txHash: result.txHash,
-        stream,
+        stream: updatedStream,
       });
     } catch (sorobanError) {
       logger.error(

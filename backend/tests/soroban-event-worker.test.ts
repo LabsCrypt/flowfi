@@ -139,13 +139,13 @@ describe('SorobanEventWorker', () => {
       expect(mockTx.streamEvent.findUnique).toHaveBeenCalledTimes(1);
       expect(mockTx.streamEvent.findUnique).toHaveBeenCalledWith({
         where: { transactionHash_eventType: { transactionHash: txHash, eventType: 'CREATED' } },
-        select: { id: true },
+        select: { id: true, ledgerSequence: true },
       });
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
       expect(logger.warn).not.toHaveBeenCalled();
 
       // Second call: event exists (duplicate), should skip with warning
-      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'event-1' });
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'event-1', ledgerSequence: 100 });
 
       vi.clearAllMocks();
       (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
