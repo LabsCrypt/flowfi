@@ -6,6 +6,7 @@ members = [
 
 [workspace.dependencies]
 soroban-sdk = "22.0.0"
+ethnum = "1.6.0"
 
 [profile.release]
 opt-level = "z"
@@ -23,3 +24,4 @@ lto = true
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true
+

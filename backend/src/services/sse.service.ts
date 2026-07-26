@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import logger from '../logger.js';
-import { isRedisAvailable, getPublisher, getSubscriber } from '../lib/redis.js';
+import { isRedisAvailable, getSubscriber } from '../lib/redis.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_WRITABLE_BUFFER = 64 * 1024;
@@ -16,6 +16,11 @@ export class SSEService {
   private clients: Map<string, SSEClient> = new Map();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowClientsDropped = 0;
+  private shuttingDown: boolean = false;
+  private ipConnectionCounts: Map<string, number> = new Map();
+  private ipPeakConnections: Map<string, number> = new Map();
+  private maxConnectionsPerIp: number = 100;
+  private globalMaxConnections: number = 10000;
 
   addClient(clientId: string, res: Response, subscriptions: string[] = [], ip = 'unknown'): void {
     const client: SSEClient = {
@@ -26,15 +31,111 @@ export class SSEService {
     };
 
     this.clients.set(clientId, client);
+
+    // Track per-IP connection counts
+    const ipCount = (this.ipConnectionCounts.get(ip) || 0) + 1;
+    this.ipConnectionCounts.set(ip, ipCount);
+    const peak = this.ipPeakConnections.get(ip) || 0;
+    if (ipCount > peak) {
+      this.ipPeakConnections.set(ip, ipCount);
+    }
+
     logger.info(
       `[SSEService] Connection opened: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
       this.removeClient(clientId);
+      // Decrement per-IP count
+      const currentCount = this.ipConnectionCounts.get(ip) || 1;
+      if (currentCount <= 1) {
+        this.ipConnectionCounts.delete(ip);
+      } else {
+        this.ipConnectionCounts.set(ip, currentCount - 1);
+      }
     });
 
     this.ensureHeartbeat();
+  }
+
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  setShuttingDown(value: boolean): void {
+    this.shuttingDown = value;
+  }
+
+  checkCapacity(ip: string): { allowed: boolean; status?: number; message?: string; retryAfterSeconds?: number } {
+    if (this.shuttingDown) {
+      return { allowed: false, status: 503, message: 'Server is shutting down' };
+    }
+
+    if (this.clients.size >= this.globalMaxConnections) {
+      return { allowed: false, status: 503, message: 'Server at capacity', retryAfterSeconds: 30 };
+    }
+
+    const ipCount = this.ipConnectionCounts.get(ip) || 0;
+    if (ipCount >= this.maxConnectionsPerIp) {
+      return { allowed: false, status: 429, message: 'Too many connections from this IP', retryAfterSeconds: 60 };
+    }
+
+    return { allowed: true };
+  }
+
+  initRedisSubscription(): void {
+    if (!isRedisAvailable()) {
+      return;
+    }
+
+    const subscriber = getSubscriber();
+    if (!subscriber) {
+      return;
+    }
+
+    subscriber.subscribe('sse-broadcast', (err) => {
+      if (err) {
+        logger.error('Failed to subscribe to Redis SSE channel', err);
+      }
+    });
+
+    subscriber.on('message', (_channel: string, message: string) => {
+      try {
+        const data = JSON.parse(message);
+        if (data.type === 'broadcast') {
+          this.broadcast(data.event, data.payload);
+        } else if (data.type === 'broadcastToStream') {
+          this.broadcastToStream(data.streamId, data.event, data.payload);
+        } else if (data.type === 'broadcastToUser') {
+          this.broadcastToUser(data.publicKey, data.event, data.payload);
+        }
+      } catch (error) {
+        logger.error('Failed to parse Redis SSE message', error);
+      }
+    });
+  }
+
+  sendReconnectToAll(): void {
+    this.shuttingDown = true;
+    this.broadcast('reconnect', { timestamp: Date.now() });
+  }
+
+  broadcastToAdmin(event: string, data: unknown): void {
+    this.broadcast(event, data, (client) =>
+      client.subscriptions.has('admin') || client.subscriptions.has('*')
+    );
+  }
+
+  getActiveIpCount(): number {
+    return this.ipConnectionCounts.size;
+  }
+
+  getPerIpPeakConnections(): Map<string, number> {
+    return this.ipPeakConnections;
+  }
+
+  getMaxConnections(): number {
+    return this.globalMaxConnections;
   }
 
   sendHeartbeat(): void {
