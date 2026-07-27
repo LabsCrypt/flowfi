@@ -43,10 +43,14 @@ function scvMap(entries: [string, xdr.ScVal][]): xdr.ScVal {
 }
 
 // Test database setup
+import { createPgPoolConfig } from "../../src/lib/pg-pool.js";
+
 const connectionString =
   process.env.DATABASE_URL ||
   "postgresql://postgres:password@127.0.0.1:5432/flowfi_test";
-const testPool = new pg.Pool({ connectionString });
+const testPoolConfig = createPgPoolConfig();
+testPoolConfig.connectionString = connectionString;
+const testPool = new pg.Pool(testPoolConfig);
 const testAdapter = new PrismaPg(testPool);
 const testPrisma = new PrismaClient({
   adapter: testAdapter,
