@@ -1,6 +1,5 @@
 import type { Response } from 'express';
 import logger from '../logger.js';
-import { isRedisAvailable, getPublisher, getSubscriber } from '../lib/redis.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_WRITABLE_BUFFER = 64 * 1024;
@@ -16,6 +15,11 @@ export class SSEService {
   private clients: Map<string, SSEClient> = new Map();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowClientsDropped = 0;
+  private shuttingDown = false;
+  private ipConnections: Map<string, number> = new Map();
+  private perIpPeakConnections: Map<string, number> = new Map();
+  private maxConnections = 1000;
+  private maxConnectionsPerIp = 10;
 
   addClient(clientId: string, res: Response, subscriptions: string[], ip?: string): void {
     const client: SSEClient = {
@@ -26,12 +30,22 @@ export class SSEService {
     };
 
     this.clients.set(clientId, client);
+    
+    if (ip) {
+      const currentCount = this.ipConnections.get(ip) || 0;
+      this.ipConnections.set(ip, currentCount + 1);
+      const peak = this.perIpPeakConnections.get(ip) || 0;
+      if (currentCount + 1 > peak) {
+        this.perIpPeakConnections.set(ip, currentCount + 1);
+      }
+    }
+    
     logger.info(
       `[SSEService] Connection opened: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
-      this.removeClient(clientId);
+      this.removeClient(clientId, ip);
     });
 
     this.ensureHeartbeat();
@@ -75,6 +89,59 @@ export class SSEService {
     return this.slowClientsDropped;
   }
 
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  checkCapacity(sourceIp: string): { allowed: boolean; retryAfterSeconds?: number } {
+    if (this.shuttingDown) {
+      return { allowed: false, retryAfterSeconds: 30 };
+    }
+
+    if (this.clients.size >= this.maxConnections) {
+      return { allowed: false, retryAfterSeconds: 60 };
+    }
+
+    const ipCount = this.ipConnections.get(sourceIp) || 0;
+    if (ipCount >= this.maxConnectionsPerIp) {
+      return { allowed: false, retryAfterSeconds: 300 };
+    }
+
+    return { allowed: true };
+  }
+
+  async initRedisSubscription(): Promise<void> {
+    // Redis subscription logic would go here
+    // For now, this is a no-op placeholder
+  }
+
+  sendReconnectToAll(): void {
+    this.shuttingDown = true;
+    this.broadcast('reconnect', { message: 'Server is restarting, please reconnect' });
+  }
+
+  getActiveIpCount(): number {
+    return this.ipConnections.size;
+  }
+
+  getPerIpPeakConnections(): number {
+    let total = 0;
+    for (const peak of this.perIpPeakConnections.values()) {
+      total += peak;
+    }
+    return total;
+  }
+
+  getMaxConnections(): number {
+    return this.maxConnections;
+  }
+
+  broadcastToAdmin(event: string, data: unknown): void {
+    this.broadcast(event, data, (client) =>
+      client.subscriptions.has('admin') || client.subscriptions.has('*')
+    );
+  }
+
   stopHeartbeat(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
@@ -101,13 +168,20 @@ export class SSEService {
     return res.socket?.writableLength ?? 0;
   }
 
-  private removeClient(clientId: string, reason?: string): void {
+  private removeClient(clientId: string, ip?: string, reason?: string): void {
     const client = this.clients.get(clientId);
     if (!client) {
       return;
     }
 
     this.clients.delete(clientId);
+    
+    if (ip) {
+      const currentCount = this.ipConnections.get(ip) || 0;
+      if (currentCount > 0) {
+        this.ipConnections.set(ip, currentCount - 1);
+      }
+    }
 
     try {
       if (!client.res.writableEnded) {

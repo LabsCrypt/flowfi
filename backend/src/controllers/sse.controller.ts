@@ -36,8 +36,8 @@ export const subscribe = async (req: Request, res: Response) => {
       if (capacity.retryAfterSeconds) {
         res.setHeader('Retry-After', String(capacity.retryAfterSeconds));
       }
-      return res.status(capacity.status ?? 503).json({
-        message: capacity.message ?? 'SSE connection rejected',
+      return res.status(503).json({
+        message: 'SSE connection rejected',
       });
     }
 

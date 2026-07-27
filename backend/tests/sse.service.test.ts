@@ -51,8 +51,8 @@ describe('SSEService backpressure', () => {
     const failingRes = createMockResponse({ throwOnWrite: true });
     const healthyRes = createMockResponse();
 
-    service.addClient('failing-client', failingRes);
-    service.addClient('healthy-client', healthyRes);
+    service.addClient('failing-client', failingRes, []);
+    service.addClient('healthy-client', healthyRes, []);
 
     expect(service.getClientCount()).toBe(2);
 
@@ -72,8 +72,8 @@ describe('SSEService backpressure', () => {
     });
     const healthyRes = createMockResponse();
 
-    service.addClient('slow-client', slowRes);
-    service.addClient('healthy-client', healthyRes);
+    service.addClient('slow-client', slowRes, []);
+    service.addClient('healthy-client', healthyRes, []);
 
     service.broadcast('stream.created', { streamId: 1 });
 
@@ -91,7 +91,7 @@ describe('SSEService backpressure', () => {
       writableLength: MAX_WRITABLE_BUFFER,
     });
 
-    service.addClient('slow-client', slowRes);
+    service.addClient('slow-client', slowRes, []);
     service.sendHeartbeat();
 
     expect(service.getClientCount()).toBe(0);
