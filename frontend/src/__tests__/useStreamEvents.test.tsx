@@ -9,6 +9,7 @@ type ErrorHandler = () => void;
 
 class MockEventSource {
   static instance: MockEventSource | null = null;
+  static instanceCount = 0;
 
   url: string;
   onopen: (() => void) | null = null;
@@ -21,6 +22,7 @@ class MockEventSource {
   constructor(url: string) {
     this.url = url;
     MockEventSource.instance = this;
+    MockEventSource.instanceCount += 1;
   }
 
   addEventListener(type: string, handler: EventHandler) {
@@ -66,6 +68,7 @@ class MockEventSource {
 describe('useStreamEvents', () => {
   beforeEach(() => {
     MockEventSource.instance = null;
+    MockEventSource.instanceCount = 0;
     vi.useFakeTimers();
   });
 
@@ -199,5 +202,54 @@ describe('useStreamEvents', () => {
     });
 
     expect(result.current.events).toHaveLength(types.length);
+  });
+
+  it('creates only one EventSource across multiple re-renders and incoming events', () => {
+    const { result, rerender } = renderHook(
+      (opts: { streamIds: string[] } = { streamIds: ['1'] }) =>
+        useStreamEvents({ ...opts, autoReconnect: false }),
+    );
+
+    const firstInstance = MockEventSource.instance;
+
+    act(() => { firstInstance?.open(); });
+
+    // Simulate multiple re-renders with the same subscription (inline array)
+    rerender({ streamIds: ['1'] });
+    rerender({ streamIds: ['1'] });
+    rerender({ streamIds: ['1'] });
+
+    // Simulate incoming events causing re-renders of the consumer
+    act(() => {
+      MockEventSource.instance?.emit('stream.created', { i: 1 });
+      MockEventSource.instance?.emit('stream.created', { i: 2 });
+      MockEventSource.instance?.emit('stream.created', { i: 3 });
+    });
+
+    expect(result.current.events).toHaveLength(3);
+
+    // Re-render again after events
+    rerender({ streamIds: ['1'] });
+    rerender({ streamIds: ['1'] });
+
+    expect(MockEventSource.instanceCount).toBe(1);
+    expect(MockEventSource.instance).toBe(firstInstance);
+  });
+
+  it('stops reconnecting after reaching the cap', () => {
+    renderHook(() =>
+      useStreamEvents({ streamIds: ['1'], autoReconnect: true, maxRetryDelay: 1000 }),
+    );
+
+    // Trigger errors repeatedly to consume reconnect attempts.
+    // The reconnect delay stays at 1000ms (capped by maxRetryDelay).
+    for (let i = 0; i < 25; i++) {
+      act(() => { MockEventSource.instance?.triggerError(); });
+      act(() => { vi.advanceTimersByTime(2000); });
+    }
+
+    // 1 initial + 20 reconnect attempts = 21 instances max.
+    // After the 20th reconnect attempt, no more timers should fire.
+    expect(MockEventSource.instanceCount).toBeLessThanOrEqual(21);
   });
 });
