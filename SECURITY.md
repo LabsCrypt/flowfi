@@ -110,6 +110,8 @@ For security-related questions or concerns that are not vulnerabilities, you can
 - Reach out to the maintainers through GitHub
 - Join our community discussions
 
+For Code of Conduct violations or community safety concerns, please refer to our [Code of Conduct](CODE_OF_CONDUCT.md) or email **conduct@labscrypt.org**.
+
 ## Acknowledgments
 
 We thank the security research community for helping keep FlowFi and our users safe. Contributors who responsibly disclose vulnerabilities will be acknowledged in our security advisories and release notes.
