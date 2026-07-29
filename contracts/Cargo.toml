@@ -6,7 +6,7 @@ members = [
 rust-version = "1.81.0"
 
 [workspace.dependencies]
-soroban-sdk = "22.0.0"
+soroban-sdk = "27.0.3"
 
 [profile.release]
 # Optimize for minimal WASM binary size — critical for on-chain deployment.
