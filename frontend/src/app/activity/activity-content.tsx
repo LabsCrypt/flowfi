@@ -10,6 +10,7 @@ import { formatAmount } from "@/utils/amount";
 import { downloadCSV } from "@/utils/csvExport";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";
+import { useAsyncPageData } from "@/hooks/useAsyncPageData";
 
 const PAGE_SIZE = 10;
 const API_BASE_URL = getApiBaseUrl();
@@ -30,6 +31,11 @@ export default function ActivityContent() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+
+  const pageState = useAsyncPageData({
+    isLoading: loading && events.length === 0,
+    data: events,
+  });
 
   const fetchActivity = useCallback(
     async (pageNum: number, tab: string, append: boolean = false, signal?: AbortSignal) => {
@@ -89,18 +95,18 @@ export default function ActivityContent() {
   };
 
   const handleExportCSV = () => {
-    const csvData = events.map(event => ({
-        'Stream ID': event.streamId,
-        'Event Type': event.eventType,
-        'Amount': event.amount ? formatAmount(BigInt(event.amount), 7) : '0',
-        'Timestamp': new Date(event.timestamp * 1000).toLocaleString(),
-        'Transaction Hash': event.transactionHash,
-        'Ledger': event.ledgerSequence,
+    const csvData = events.map((event) => ({
+      "Stream ID": event.streamId,
+      "Event Type": event.eventType,
+      Amount: event.amount ? formatAmount(BigInt(event.amount), 7) : "0",
+      Timestamp: new Date(event.timestamp * 1000).toLocaleString(),
+      "Transaction Hash": event.transactionHash,
+      Ledger: event.ledgerSequence,
     }));
     downloadCSV(csvData, `flowfi-activity-${Date.now()}.csv`);
   };
 
-  if (status !== "connected") {
+  if (!pageState.isConnected) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
         <h1 className="text-2xl font-bold mb-2 text-white">Access Denied</h1>
@@ -152,7 +158,7 @@ export default function ActivityContent() {
         ))}
       </div>
 
-      <ActivityHistory events={events} isLoading={loading && events.length === 0} />
+      <ActivityHistory events={events} isLoading={pageState.isLoading} />
 
       {hasMore && (
         <div className="mt-12 flex justify-center">
