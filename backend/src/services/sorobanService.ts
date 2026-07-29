@@ -26,6 +26,90 @@ const SUBMIT_FEE = '1000';
 /** Transaction validity window in seconds (applied via setTimeout). */
 const TX_TIMEOUT_SECONDS = 30;
 
+/** Bounded, configurable deadline applied to every outbound Soroban RPC call. */
+const RPC_TIMEOUT_MS = Number(process.env.SOROBAN_RPC_TIMEOUT_MS ?? 10_000);
+
+/** Max retry attempts for transient RPC failures (in addition to the first try). */
+const RPC_MAX_RETRIES = Number(process.env.SOROBAN_RPC_MAX_RETRIES ?? 2);
+
+/** Base delay for exponential backoff between retries (doubles each attempt). */
+const RPC_RETRY_BASE_MS = Number(process.env.SOROBAN_RPC_RETRY_BASE_MS ?? 250);
+
+export class RpcTimeoutError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = 'RpcTimeoutError';
+  }
+}
+
+function isTransientRpcError(err: unknown): boolean {
+  if (err instanceof RpcTimeoutError) return true;
+  if (err instanceof Error && err.name === 'AbortError') return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|network|fetch failed|\b50[234]\b/i.test(
+    message,
+  );
+}
+
+/**
+ * Bound an RPC call with a configurable deadline. The call is raced against a
+ * timer so a hung endpoint can never stall the indexer poll loop or a request
+ * handler indefinitely; `signal` is passed through so raw `fetch` calls can
+ * genuinely cancel the in-flight request (SDK calls that don't accept a
+ * signal simply ignore it and the race abandons them on timeout).
+ */
+export async function withRpcTimeout<T>(
+  label: string,
+  fn: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = RPC_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
+  const start = Date.now();
+  let timer: ReturnType<typeof setTimeout>;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new RpcTimeoutError(label, timeoutMs));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fn(controller.signal), timedOut]);
+  } finally {
+    clearTimeout(timer!);
+    const elapsedMs = Date.now() - start;
+    if (elapsedMs >= timeoutMs) {
+      logger.warn(
+        `[SorobanService] RPC latency exceeded timeout: ${label} took ${elapsedMs}ms (timeout=${timeoutMs}ms)`,
+      );
+    }
+  }
+}
+
+/** Retry a transient RPC failure with exponential backoff. */
+export async function withRpcRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  maxRetries: number = RPC_MAX_RETRIES,
+): Promise<T> {
+  let attempt = 0;
+  for (;;) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt += 1;
+      if (attempt > maxRetries || !isTransientRpcError(err)) throw err;
+      const backoffMs = RPC_RETRY_BASE_MS * 2 ** (attempt - 1);
+      logger.warn(
+        `[SorobanService] ${label} attempt ${attempt}/${maxRetries} failed (${
+          err instanceof Error ? err.message : String(err)
+        }); retrying in ${backoffMs}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+}
+
 /**
  * Throw-away source account used when building simulation-only transactions.
  * Any valid Ed25519 public key works here; the account never needs to exist on-chain
@@ -107,7 +191,9 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
     .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
 
-  const result = await getServer().simulateTransaction(tx);
+  const result = await withRpcRetry('simulateTransaction', () =>
+    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+  );
 
   if (rpc.Api.isSimulationError(result)) {
     throw new Error(`Simulation error: ${result.error}`);
@@ -123,7 +209,7 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 
   const keypair = Keypair.fromSecret(senderSecret);
   const contract = new Contract(contractId);
-  const account = await getServer().getAccount(keypair.publicKey());
+  const account = await withRpcTimeout('getAccount', () => getServer().getAccount(keypair.publicKey()));
 
   const op = contract.call(method, ...args);
 
@@ -139,7 +225,9 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
     .build();
 
   // Simulate first to get foot print and resource info
-  const simulation = await getServer().simulateTransaction(tx);
+  const simulation = await withRpcRetry('simulateTransaction', () =>
+    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+  );
   if (rpc.Api.isSimulationError(simulation)) {
     throw new Error(`Simulation failed: ${simulation.error}`);
   }
@@ -148,7 +236,7 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
   const assembledTx = rpc.assembleTransaction(tx, simulation).build();
   assembledTx.sign(keypair);
 
-  const response = await getServer().sendTransaction(assembledTx);
+  const response = await withRpcTimeout('sendTransaction', () => getServer().sendTransaction(assembledTx));
 
   if (response.status === 'ERROR') {
     throw new Error(`Transaction failed: ${JSON.stringify(response.errorResult)}`);

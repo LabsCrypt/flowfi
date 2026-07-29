@@ -1,9 +1,9 @@
 
 
 const stats = [
-    { label: 'Total Value Locked', value: '$240M+', gradient: 'text-gradient' },
-    { label: 'Active Streams', value: '85k+', gradient: 'text-white' },
-    { label: 'Network Savings', value: '$4.2M', gradient: 'text-gradient-secondary' },
+    { label: 'Network', value: 'Stellar Testnet', gradient: 'text-gradient' },
+    { label: 'Status', value: 'Early Access', gradient: 'text-white' },
+    { label: 'Settlement', value: 'Real-time', gradient: 'text-gradient-secondary' },
 
 ];
 

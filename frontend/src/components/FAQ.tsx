@@ -8,7 +8,7 @@ const faqs = [
     },
     {
         q: 'Which chains do you support?',
-        a: 'We are currently live on Ethereum Mainnet, Arbitrum, and Optimism. Polygon and Base support is coming in Q3 2026.',
+        a: 'FlowFi is built on Stellar using Soroban smart contracts. We currently run on Stellar Testnet, with mainnet support planned as the protocol matures.',
     },
     {
         q: 'Can recipients withdraw at any time?',

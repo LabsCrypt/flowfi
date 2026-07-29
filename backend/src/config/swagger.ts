@@ -37,16 +37,16 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         url: 'https://opensource.org/licenses/MIT',
       },
     },
-    servers: [
-      {
-        url: 'http://localhost:3001/v1',
-        description: 'Development server (v1)',
-      },
-      {
-        url: 'https://api.flowfi.io/v1',
-        description: 'Production server (v1)',
-      },
-    ],
+    servers: (() => {
+      const baseUrl = process.env.API_BASE_URL;
+      if (baseUrl) {
+        return [{ url: `${baseUrl}/v1`, description: 'API server' }];
+      }
+      return [
+        { url: 'http://localhost:3001/v1', description: 'Development server (v1)' },
+        { url: 'https://api.flowfi.io/v1', description: 'Production server (v1)' },
+      ];
+    })(),
     tags: [
       {
         name: 'Health',

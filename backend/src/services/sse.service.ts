@@ -4,24 +4,96 @@ import { isRedisAvailable, getPublisher, getSubscriber } from '../lib/redis.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_WRITABLE_BUFFER = 64 * 1024;
+const MAX_CONNECTIONS_PER_IP = 5;
+const RETRY_AFTER_SECONDS = 60;
 
 interface SSEClient {
   id: string;
   res: Response;
   subscriptions: Set<string>;
   paused: boolean;
+  ip: string;
+}
+
+interface SSECapacityCheckResult {
+  allowed: boolean;
+  status?: number;
+  retryAfterSeconds?: number;
+  message?: string;
 }
 
 export class SSEService {
   private clients: Map<string, SSEClient> = new Map();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowClientsDropped = 0;
+  private readonly ipConnectionCounts: Map<string, number> = new Map();
+  private shuttingDown = false;
+  private perIpPeakConnections = 0;
+
+  private readonly maxConnections: number = (() => {
+    const parsed = Number.parseInt(process.env.MAX_SSE_CONNECTIONS ?? '10000', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 10000;
+    return parsed;
+  })();
+
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  async initRedisSubscription(): Promise<void> {
+    const sub = getSubscriber();
+    if (!sub) return;
+
+    await sub.psubscribe('sse:stream:*', 'sse:user:*');
+    sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
+      try {
+        const { event, data } = JSON.parse(message) as { event: string; data: unknown };
+        if (channel.startsWith('sse:stream:')) {
+          this._localBroadcastToStream(channel.slice('sse:stream:'.length), event, data);
+        } else if (channel.startsWith('sse:user:')) {
+          this._localBroadcastToUser(channel.slice('sse:user:'.length), event, data);
+        }
+      } catch (err) {
+        logger.warn('[Redis SSE] Failed to handle pub/sub message:', err);
+      }
+    });
+
+    logger.info('[SSEService] Redis pub/sub subscription active.');
+  }
+
+  checkCapacity(ip: string): SSECapacityCheckResult {
+    if (this.clients.size >= this.maxConnections) {
+      return {
+        allowed: false,
+        status: 503,
+        message: 'SSE capacity reached. Please try again shortly.',
+      };
+    }
+
+    const currentIpConnections = this.ipConnectionCounts.get(ip) ?? 0;
+    if (currentIpConnections >= MAX_CONNECTIONS_PER_IP) {
+      return {
+        allowed: false,
+        status: 429,
+        retryAfterSeconds: RETRY_AFTER_SECONDS,
+        message: `Too many SSE connections from this IP. Max ${MAX_CONNECTIONS_PER_IP}.`,
+      };
+    }
+
+    return { allowed: true };
+  }
+
+  addClient(clientId: string, res: Response, subscriptions: string[] = [], ip = 'unknown'): void {
+    const nextIpCount = (this.ipConnectionCounts.get(ip) ?? 0) + 1;
+    this.ipConnectionCounts.set(ip, nextIpCount);
+    this.perIpPeakConnections = Math.max(this.perIpPeakConnections, nextIpCount);
 
     const client: SSEClient = {
       id: clientId,
       res,
       subscriptions: new Set(subscriptions),
       paused: false,
+      ip,
     };
 
     this.clients.set(clientId, client);
@@ -44,6 +116,19 @@ export class SSEService {
     }
   }
 
+  sendReconnectToAll(): void {
+    this.shuttingDown = true;
+    const message = 'event: reconnect\ndata: {}\n\n';
+    for (const client of this.clients.values()) {
+      try {
+        client.res.write(message);
+      } catch {
+        // ignore write errors during shutdown
+      }
+    }
+    logger.info(`[SSEService] Sent reconnect to ${this.clients.size} client(s).`);
+  }
+
   broadcast(event: string, data: unknown, filter?: (client: SSEClient) => boolean): void {
     const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
@@ -55,12 +140,35 @@ export class SSEService {
   }
 
   broadcastToStream(streamId: string, event: string, data: unknown): void {
+    if (isRedisAvailable()) {
+      getPublisher()?.publish(`sse:stream:${streamId}`, JSON.stringify({ event, data }));
+    } else {
+      this._localBroadcastToStream(streamId, event, data);
+    }
+  }
+
+  broadcastToUser(publicKey: string, event: string, data: unknown): void {
+    if (isRedisAvailable()) {
+      getPublisher()?.publish(`sse:user:${publicKey}`, JSON.stringify({ event, data }));
+    } else {
+      this._localBroadcastToUser(publicKey, event, data);
+    }
+  }
+
+  broadcastToAdmin(event: string, data: unknown): void {
+    const adminKey = process.env.ADMIN_PUBLIC_KEY;
+    if (adminKey) {
+      this.broadcastToUser(adminKey, event, data);
+    }
+  }
+
+  private _localBroadcastToStream(streamId: string, event: string, data: unknown): void {
     this.broadcast(event, data, (client) =>
       client.subscriptions.has(streamId) || client.subscriptions.has('*')
     );
   }
 
-  broadcastToUser(publicKey: string, event: string, data: unknown): void {
+  private _localBroadcastToUser(publicKey: string, event: string, data: unknown): void {
     this.broadcast(event, data, (client) =>
       client.subscriptions.has(`user:${publicKey}`) || client.subscriptions.has('*')
     );
@@ -72,6 +180,18 @@ export class SSEService {
 
   getSlowClientsDropped(): number {
     return this.slowClientsDropped;
+  }
+
+  getMaxConnections(): number {
+    return this.maxConnections;
+  }
+
+  getPerIpPeakConnections(): number {
+    return this.perIpPeakConnections;
+  }
+
+  getActiveIpCount(): number {
+    return this.ipConnectionCounts.size;
   }
 
   stopHeartbeat(): void {
@@ -107,6 +227,13 @@ export class SSEService {
     }
 
     this.clients.delete(clientId);
+
+    const currentIpCount = this.ipConnectionCounts.get(client.ip) ?? 0;
+    if (currentIpCount <= 1) {
+      this.ipConnectionCounts.delete(client.ip);
+    } else {
+      this.ipConnectionCounts.set(client.ip, currentIpCount - 1);
+    }
 
     try {
       if (!client.res.writableEnded) {

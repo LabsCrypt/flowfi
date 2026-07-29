@@ -29,6 +29,18 @@ flowfi/
 │   └── DEVELOPMENT.md    # Local development guide
 ```
 
+
+
+For full step-by-step instructions, see our [Development Guide](docs/DEVELOPMENT.md).
+
+### Prerequisites
+
+- Node.js & npm
+- Rust & Cargo
+- Stellar CLI (optional but recommended)
+- Docker & Docker Compose (for containerized setup)
+
+
 ## Architecture
 
 FlowFi consists of three main components that work together:
@@ -43,14 +55,6 @@ For full local setup and contributor onboarding, see the [Development Guide](doc
 
 ## Getting Started
 
-For full step-by-step instructions, see our [Development Guide](docs/DEVELOPMENT.md).
-
-### Prerequisites
-
-- Node.js & npm
-- Rust & Cargo
-- Stellar CLI (optional but recommended)
-- Docker & Docker Compose (for containerized setup)
 
 ### Docker (Recommended)
 
@@ -83,18 +87,19 @@ To reset the database:
 docker compose down -v
 ```
 
-### Backend (Manual)
 
-```bash
-cd backend
-npm install
-npm run dev
-```
 
 ### Frontend
 
 ```bash
 cd frontend
+npm install
+npm run dev
+```
+### Backend (Manual)
+
+```bash
+cd backend
 npm install
 npm run dev
 ```

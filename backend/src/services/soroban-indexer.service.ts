@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import logger from '../logger.js';
+import { withRpcRetry, withRpcTimeout } from './sorobanService.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -84,11 +85,16 @@ export class SorobanIndexerService {
       },
     };
 
-    const response = await fetch(RPC_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const response = await withRpcRetry('getEvents', () =>
+      withRpcTimeout('getEvents', (signal) =>
+        fetch(RPC_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal,
+        }),
+      ),
+    );
 
     if (!response.ok) {
       throw new Error(`getEvents failed: ${response.status}`);

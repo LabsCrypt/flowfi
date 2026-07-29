@@ -240,6 +240,106 @@
               "body": "{\n  \"streamId\": 1,\n  \"claimableAmount\": \"5000\",\n  \"actionable\": true,\n  \"calculatedAt\": \"2024-02-21T14:30:00.000Z\",\n  \"cached\": false\n}"
             }
           ]
+        },
+        {
+          "name": "Get user stream summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/summary/{{senderPublicKey}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "streams", "summary", "{{senderPublicKey}}"]
+            },
+            "description": "Get an aggregated stream summary for a Stellar public key."
+          },
+          "response": []
+        },
+        {
+          "name": "Pause stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/{{streamId}}/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "streams", "{{streamId}}", "pause"]
+            },
+            "description": "Pause an active stream. Only the sender can pause their own stream."
+          },
+          "response": []
+        },
+        {
+          "name": "Resume stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/{{streamId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "streams", "{{streamId}}", "resume"]
+            },
+            "description": "Resume a paused stream. Only the sender can resume their own stream."
+          },
+          "response": []
+        },
+        {
+          "name": "Withdraw from stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/{{streamId}}/withdraw",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "streams", "{{streamId}}", "withdraw"]
+            },
+            "description": "Withdraw the currently claimable amount. Only the recipient can withdraw."
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/{{streamId}}/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "streams", "{{streamId}}", "cancel"]
+            },
+            "description": "Cancel an active stream. Only the original sender can cancel. Accrued tokens go to the recipient, remainder is refunded to the sender."
+          },
+          "response": []
+        },
+        {
+          "name": "Top up stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": \"5000\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/{{streamId}}/top-up",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "streams", "{{streamId}}", "top-up"]
+            },
+            "description": "Add additional funds to an existing active stream. Only the original sender can top up."
+          },
+          "response": []
         }
       ]
     },

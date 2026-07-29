@@ -19,7 +19,10 @@ DATABASE_URL=postgresql://user:password@localhost:5433/flowfi?schema=public
 PORT=3001
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org
 NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+API_BASE_URL=https://api.staging.flowfi.io
 ```
+
+- `API_BASE_URL`: Overrides the Swagger UI server URL for the deployed environment (e.g., staging or production). When set, Swagger UI targets `<API_BASE_URL>/v1` instead of the hardcoded defaults.
 
 ## Prisma Database
 

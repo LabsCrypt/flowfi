@@ -60,7 +60,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning> {/* TODO: revisit if i18n is introduced */}
       <head />
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
         <ThemeProvider

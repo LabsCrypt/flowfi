@@ -87,12 +87,4 @@ model StreamEvent {
   @@index([transactionHash])
   @@index([createdAt])
   @@index([streamId, createdAt])
-  @@unique([transactionHash, eventType])
-}
-
-// IndexerState model - tracks indexer cursor for resumable event processing
-model IndexerState {
-  id         String   @id @default("singleton")
-  lastLedger Int      @default(0)
-  updatedAt  DateTime @updatedAt
 }

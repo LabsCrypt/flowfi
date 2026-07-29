@@ -39,7 +39,13 @@ export const registerUser = async (req: Request, res: Response, next: NextFuncti
  */
 export const getUser = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const publicKey = req.params.publicKey as string;
+        const { publicKey } = req.params;
+        if (typeof publicKey !== 'string') {
+            return res.status(400).json({ error: 'Invalid publicKey parameter' });
+        }
+        if (!/^G[A-Z2-7]{55}$/.test(publicKey)) {
+            return res.status(400).json({ error: 'Invalid Stellar public key format' });
+        }
 
         const user = await prisma.user.findUnique({
             where: { publicKey },

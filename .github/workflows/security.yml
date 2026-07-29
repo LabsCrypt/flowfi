@@ -41,6 +41,9 @@ jobs:
     - name: Check for known vulnerabilities in backend (production dependencies)
       run: npm audit --workspace=backend --omit=dev --audit-level=critical
 
+    - name: Verify security setup
+      run: npm run verify-security
+
   codeql-analysis:
     name: CodeQL Analysis
     runs-on: ubuntu-latest

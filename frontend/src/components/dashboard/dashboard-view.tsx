@@ -18,6 +18,8 @@ import toast from "react-hot-toast";
 import {
   getDashboardAnalytics,
   fetchDashboardData,
+  useDashboard,
+  dashboardQueryKey,
   type DashboardSnapshot,
   type Stream,
 } from "@/lib/dashboard";
@@ -107,13 +109,10 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
 /** Shimmer card used as a placeholder while data loads */
 function SkeletonCard({ className = "" }: { className?: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl ${className}`}>
-      <Skeleton className="absolute inset-0" aria-hidden="true" />
     <div
       className={`relative overflow-hidden rounded-2xl ${className}`}
       aria-hidden="true"
     >
-      {/* <Skeleton className="w-full h-full" /> */}
       {/* shimmer sweep */}
       <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent" />
     </div>
@@ -507,6 +506,7 @@ function renderRecentActivity(
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = React.useState("overview");
   const [showWizard, setShowWizard] = React.useState(false);
   const [modal, setModal] = React.useState<ModalState>(null);
@@ -553,7 +553,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         }
       }
     }
-  }, [streamEvents, session.publicKey]);
+  }, [streamEvents, session.publicKey, queryClient]);
 
   const [streamForm, setStreamForm] =
     React.useState<StreamFormValues>(EMPTY_STREAM_FORM);
@@ -764,7 +764,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   // ── Optimistic helpers ────────────────────────────────────────────────────
 
   const removeStreamLocally = (streamId: string) => {
-    setSnapshot((prev) => {
+    queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => {
       if (!prev) return prev;
       return {
         ...prev,

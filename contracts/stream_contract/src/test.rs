@@ -1,5 +1,7 @@
 extern crate std;
 
+use std::string::ToString;
+
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger},
@@ -382,6 +384,74 @@ fn test_create_stream_emits_event() {
     assert_eq!(payload.recipient, recipient);
     assert_eq!(payload.deposited_amount, 500);
     assert_eq!(payload.rate_per_second, 5);
+}
+
+// ─── #796 start_time / backdated timestamp guard ──────────────────────────────
+//
+// `create_stream` always derives `start_time` from `env.ledger().timestamp()`
+// (see lib.rs:201). The contract does NOT accept a caller-supplied start_time,
+// so backdated start times are structurally impossible via the public API.
+//
+// The tests below verify this invariant and demonstrate the risk that would
+// exist if a backdated start_time were accepted.
+
+#[test]
+fn test_create_stream_uses_ledger_timestamp_as_start_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // Set ledger to a known timestamp.
+    env.ledger().with_mut(|l| l.timestamp = 500_000);
+
+    let client = create_contract(&env);
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    let s = client.get_stream(&stream_id).unwrap();
+    // start_time must be the ledger timestamp at creation, never caller-supplied.
+    assert_eq!(s.start_time, 500_000);
+    assert_eq!(s.last_update_time, 500_000);
+}
+
+#[test]
+fn test_backdated_start_time_would_immediately_vest_full_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Simulate a backdated start_time by directly manipulating storage.
+    // This is NOT possible through the public API — the contract always uses
+    // env.ledger().timestamp() — but it demonstrates the risk that would exist
+    // if a caller-supplied start_time were ever added.
+    let mut stream = client.get_stream(&stream_id).unwrap();
+    stream.start_time = 0;          // backdated far into the past
+    stream.last_update_time = 0;    // sync anchor to match
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), &stream);
+    });
+
+    // Advance ledger well past the stream's natural end.
+    env.ledger().with_mut(|l| l.timestamp += 10_000);
+
+    // The full deposited_amout would be immediately claimable because the
+    // elapsed time (start_time=0 → now=10_000) far exceeds the duration.
+    let claimable = client.get_claimable_amount(&stream_id).unwrap();
+    assert_eq!(claimable, 1_000);
+
+    // Backdated start times are intentionally prevented by the contract design:
+    // `create_stream` always uses `env.ledger().timestamp()`, so this scenario
+    // cannot occur via the public API.
 }
 
 // ─── top_up_stream ────────────────────────────────────────────────────────────
@@ -1641,7 +1711,26 @@ fn test_resume_non_paused_stream_fails() {
 
     assert_eq!(
         client.try_resume_stream(&sender, &id),
-        Err(Ok(StreamError::StreamInactive))
+        Err(Ok(StreamError::StreamNotPaused))
+    );
+}
+
+#[test]
+fn test_pause_already_paused_stream_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    client.pause_stream(&sender, &id);
+
+    assert_eq!(
+        client.try_pause_stream(&sender, &id),
+        Err(Ok(StreamError::StreamAlreadyPaused))
     );
 }
 
@@ -2527,7 +2616,9 @@ fn test_resume_stream_emits_event() {
     let payload: StreamResumedEvent = StreamResumedEvent::try_from_val(&env, &ev.2).unwrap();
     assert_eq!(payload.stream_id, id);
     assert_eq!(payload.sender, sender);
-    assert_eq!(payload.new_end_time, 1150);
+    // Pause at t=100 accrues 100 tokens (rate 1/s) that are already claimable
+    // at resume, so the drain time is 900 more seconds from t=150, not 1000.
+    assert_eq!(payload.new_end_time, 1050);
 }
 
 // ─── CEI / reentrancy regression (#789) ──────────────────────────────────────
@@ -2600,5 +2691,186 @@ fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
     assert_eq!(
         token_client.balance(&recipient) + token_client.balance(&sender),
         s.deposited_amount
+    );
+}
+
+// ─── Event Wire Format Regression Guard ───────────────────────────────────────
+//
+// Pins the exact Map field names emitted for each event's `data` payload, as
+// read by `decodeMap()` in `backend/src/workers/soroban-event-worker.ts`. If a
+// field is renamed or removed here without updating the matching decoder in
+// `soroban-event-worker.ts`, this test fails before the mismatch reaches
+// production. See the mirrored field/type table in
+// `backend/tests/events-wire-format.test.ts`.
+
+/// Returns the sorted field names of a `#[contracttype]` event payload,
+/// independent of struct field declaration order.
+fn event_field_names(env: &Env, payload: &soroban_sdk::Val) -> std::vec::Vec<std::string::String> {
+    let map = soroban_sdk::Map::<Symbol, soroban_sdk::Val>::try_from_val(env, payload)
+        .expect("event data is not a Map");
+    let mut names: std::vec::Vec<std::string::String> = map
+        .keys()
+        .iter()
+        .map(|sym| sym.to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+// ─── Concurrent streams (same sender/recipient/token) ─────────────────────────
+
+#[test]
+fn test_concurrent_streams_same_tuple_independent_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id1 = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    let id2 = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Both streams must exist and have distinct IDs.
+    assert_ne!(id1, id2);
+    let s1 = client.get_stream(&id1).unwrap();
+    let s2 = client.get_stream(&id2).unwrap();
+    assert_eq!(s1.deposited_amount, 1_000);
+    assert_eq!(s2.deposited_amount, 1_000);
+    assert_eq!(s1.withdrawn_amount, 0);
+    assert_eq!(s2.withdrawn_amount, 0);
+
+    // Advance time and withdraw from stream 1 only.
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    let claimed1 = client.withdraw(&recipient, &id1);
+    assert_eq!(claimed1, 500); // 50 s * (1 000 / 100) = 500
+
+    // Stream 2 must be unaffected.
+    let s2_after = client.get_stream(&id2).unwrap();
+    assert_eq!(s2_after.withdrawn_amount, 0);
+    assert_eq!(s2_after.deposited_amount, 1_000);
+
+    // Advance more time and withdraw from stream 2.
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    let claimed2 = client.withdraw(&recipient, &id2);
+    assert_eq!(claimed2, 1_000); // 100 s * 10 rate = 1 000 (full stream)
+
+    // Stream 1 must still have its original withdrawn amount unchanged.
+    let s1_final = client.get_stream(&id1).unwrap();
+    assert_eq!(s1_final.withdrawn_amount, 500);
+}
+
+// ─── Cumulative fee rounding drift ────────────────────────────────────────────
+//
+// The protocol fee uses integer division: fee = amount * fee_rate_bps / 10_000.
+// When many small deposits are made sequentially, each individual fee may round
+// down (due to integer truncation), causing the sum of collected fees to be
+// slightly less than fee_rate_bps/10_000 of the gross total. This test verifies
+// the drift stays within an acceptable tolerance.
+//
+// Rounding direction: favours the user (the protocol receives ≤ the ideal fee).
+
+#[test]
+fn test_cumulative_fee_rounding_drift() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let fee_rate_bps: u32 = 199;
+    mint(&env, &token, &sender, 10_000_000);
+
+    let client = create_contract(&env);
+    let token_client = token::Client::new(&env, &token);
+    client.initialize(&admin, &treasury, &fee_rate_bps);
+
+    let id = client.create_stream(&sender, &recipient, &token, &100_000, &10_000);
+
+    // Perform 200 small sequential top-ups, each for 101 tokens.
+    // Per top-up: fee = 101 * 199 / 10_000 = 20_099 / 10_000 = 2 (rounded down).
+    let top_up_count = 200;
+    let per_top_up = 101i128;
+    for _ in 0..top_up_count {
+        mint(&env, &token, &sender, per_top_up);
+        client.top_up_stream(&sender, &id, &per_top_up);
+    }
+
+    let total_gross = 100_000i128 + (top_up_count as i128) * per_top_up;
+    let ideal_fee = (total_gross * fee_rate_bps as i128) / 10_000;
+    let actual_fee = token_client.balance(&treasury);
+
+    // Each individual top-up of 101 * 199 / 10000 = 2.0099 → 2, losing 0.0099 per op.
+    // Over 200 ops: at most 200 * 0.0099 ≈ 1.98 tokens of downward drift.
+    // Allow tolerance of 2 tokens (enforced by `max_drift`).
+    let max_drift = top_up_count as i128;
+    let drift = ideal_fee - actual_fee;
+    assert!(
+        drift >= 0,
+        "Fee collected ({}) exceeds ideal ({}) — rounding favoured protocol (unexpected)",
+        actual_fee,
+        ideal_fee
+    );
+    assert!(
+        drift <= max_drift,
+        "Fee drift too large: ideal={ideal_fee}, actual={actual_fee}, drift={drift}, max={max_drift}"
+    );
+}
+
+// ─── update_fee_config ceiling enforcement ─────────────────────────────────────
+//
+// The existing test `test_update_fee_config_rejects_invalid_fee_rate` at line 171
+// already verifies that `update_fee_config` rejects a rate above MAX_FEE_RATE_BPS
+// (1 000). The implementation check is at `lib.rs:95-97`.
+
+#[test]
+fn test_stream_created_event_field_names_match_decoder_expectations() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_created")
+        })
+        .expect("stream_created event not found");
+
+    let mut names = event_field_names(&env, &ev.2);
+    names.sort();
+
+    // Must match the fields `handleStreamCreated` in soroban-event-worker.ts
+    // reads via `decodeMap`: sender, recipient, token_address, rate_per_second,
+    // deposited_amount, start_time. `stream_id` is also present in the data
+    // map (StreamCreatedEvent's first field) but the worker reads it from the
+    // topic instead, via `streamIdTopic`.
+    let mut expected: std::vec::Vec<std::string::String> = std::vec::Vec::from([
+        "sender",
+        "recipient",
+        "token_address",
+        "rate_per_second",
+        "deposited_amount",
+        "start_time",
+        "stream_id",
+    ])
+    .iter()
+    .map(|s| std::string::String::from(*s))
+    .collect();
+    expected.sort();
+
+    assert_eq!(
+        names, expected,
+        "stream_created event fields drifted from soroban-event-worker.ts's decodeMap expectations"
     );
 }

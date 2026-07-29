@@ -1,4 +1,5 @@
 
+import Link from 'next/link';
 import { Button } from './ui/Button';
 import { MobileMockup } from './MobileMockup';
 
@@ -26,27 +27,20 @@ export const Hero = () => {
                 </p>
 
                 <div className="mt-12 flex animate-slide-up flex-col gap-5 sm:flex-row [animation-delay:0.2s] w-full justify-center lg:justify-start">
-                    <Button variant="primary" size="lg" glow className="min-w-[200px]">
-                        Start Streaming
-                        <svg className="ml-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                        </svg>
-                    </Button>
-                    <Button variant="outline" size="lg" className="min-w-[200px]">
-                        Governance App
-                    </Button>
+                    <Link href="/dashboard">
+                        <Button variant="primary" size="lg" glow className="min-w-[200px]">
+                            Start Streaming
+                            <svg className="ml-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                            </svg>
+                        </Button>
+                    </Link>
                 </div>
 
-                <div className="mt-20 flex items-center gap-4 animate-fade-in [animation-delay:0.4s]">
-                    <div className="flex -space-x-2">
-                        {[1, 2, 3, 4].map((i) => (
-                            <div key={i} className="h-10 w-10 rounded-full border-2 border-background bg-slate-800 flex items-center justify-center overflow-hidden">
-                                <div className={`h-full w-full bg-gradient-to-br from-slate-700 to-slate-900 border border-white/5`}></div>
-                            </div>
-                        ))}
-                    </div>
+                <div className="mt-20 flex items-center gap-2 animate-fade-in [animation-delay:0.4s]">
+                    <span className="flex h-2 w-2 rounded-full bg-accent animate-pulse"></span>
                     <p className="text-sm font-medium text-slate-500">
-                        Trusted by <span className="text-white font-bold">12,000+</span> protocol builders
+                        Now in early access — <span className="text-white font-bold">join us</span> in shaping the protocol
                     </p>
                 </div>
             </div>

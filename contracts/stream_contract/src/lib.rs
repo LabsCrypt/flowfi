@@ -1,3 +1,16 @@
+//! # `stream_contract` — Soroban Payment-Streaming Contract
+//!
+//! ## Module responsibilities
+//!
+//! | Module | Responsibility |
+//! |--------|---------------|
+//! | [`lib.rs`](./lib.rs) | Public contract interface (`StreamContract`) — entrypoints exposed via `#[contractimpl]` |
+//! | [`storage.rs`](./storage.rs) | Persistent state — read/write `ProtocolConfig` and `Stream` records to Soroban storage |
+//! | [`types.rs`](./types.rs) | Data types — `Stream`, `ProtocolConfig`, `StreamStatus`, `DataKey` |
+//! | [`errors.rs`](./errors.rs) | Error types — `StreamError` enum with all contract error variants |
+//! | [`events.rs`](./events.rs) | Event payloads — typed structs emitted by each entrypoint |
+//! | [`test.rs`](./test.rs) | Unit & integration tests — module gated behind `#[cfg(test)]` |
+
 #![no_std]
 #![doc = include_str!("../README.md")]
 
@@ -551,9 +564,10 @@ impl StreamContract {
     /// Pause an active stream. Only the sender may pause.
     ///
     /// # Errors
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is already inactive.
+    /// - `StreamNotFound`     — no stream exists with `stream_id`.
+    /// - `Unauthorized`       — caller is not the stream's sender.
+    /// - `StreamInactive`     — stream is inactive (cancelled or completed).
+    /// - `StreamAlreadyPaused` — stream is already paused.
     pub fn pause_stream(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
         sender.require_auth();
 
@@ -562,7 +576,7 @@ impl StreamContract {
         Self::validate_stream_active(&stream)?;
 
         if stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamAlreadyPaused);
         }
 
         let now = env.ledger().timestamp();
@@ -592,7 +606,7 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
     /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream is not paused (already active or cancelled).
+    /// - `StreamNotPaused` — stream is active but not currently paused.
     pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
         sender.require_auth();
 
@@ -600,19 +614,26 @@ impl StreamContract {
         Self::validate_stream_ownership(&stream, &sender)?;
 
         if !stream.paused {
-            return Err(StreamError::StreamInactive);
+            return Err(StreamError::StreamNotPaused);
         }
 
         let now = env.ledger().timestamp();
         let paused_at = stream.paused_at.unwrap_or(now);
         let pause_duration = now.saturating_sub(paused_at);
 
+        // Amount already accrued (and claimable) as of the pause point. Computed
+        // before last_update_time is advanced below, while `stream.paused` is
+        // still true so `calculate_claimable` stops accrual at `paused_at`.
+        let claimable_at_resume = Self::calculate_claimable(&stream, now);
+
         // Advance last_update_time by pause duration so accrual resumes from now.
         stream.last_update_time = stream.last_update_time.saturating_add(pause_duration);
-        // new_end_time represents when the stream will fully drain from now.
+        // new_end_time represents when the stream will fully drain from now,
+        // net of the amount already accrued (and claimable) at the pause point.
         let remaining = stream
             .deposited_amount
-            .saturating_sub(stream.withdrawn_amount);
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(claimable_at_resume);
         // rate_per_second is guaranteed >= 1 due to create_stream's InvalidRate guard
         let new_end_time = now + (remaining / stream.rate_per_second) as u64;
 

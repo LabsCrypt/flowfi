@@ -75,8 +75,26 @@ describe('User Controller', () => {
   });
 
   describe('getUser', () => {
+    it('should return 400 if publicKey is missing', async () => {
+      req.params = {};
+
+      await getUser(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid publicKey parameter' });
+    });
+
+    it('should return 400 if publicKey is malformed', async () => {
+      req.params = { publicKey: 'invalid-key' };
+
+      await getUser(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar public key format' });
+    });
+
     it('should return 404 if user not found', async () => {
-      req.params = { publicKey: 'GNOTFOUND' };
+      req.params = { publicKey: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ' };
       (prisma.user.findUnique as any).mockResolvedValue(null);
 
       await getUser(req as Request, res as Response, next);
@@ -85,8 +103,9 @@ describe('User Controller', () => {
     });
 
     it('should return user if found', async () => {
-      req.params = { publicKey: 'GUSER1' };
-      const mockUser = { publicKey: 'GUSER1', sentStreams: [], receivedStreams: [] };
+      const publicKey = 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ';
+      req.params = { publicKey };
+      const mockUser = { publicKey, sentStreams: [], receivedStreams: [] };
       (prisma.user.findUnique as any).mockResolvedValue(mockUser);
 
       await getUser(req as Request, res as Response, next);

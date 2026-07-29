@@ -59,11 +59,36 @@ export class SorobanCallError extends Error {
       | "NotInitialized"
       | "WalletRejected"
       | "NetworkError"
+      | "ContractNotFound"
       | "Unknown",
   ) {
     super(message);
     this.name = "SorobanCallError";
   }
+}
+
+const CONTRACT_NOT_FOUND_PATTERN =
+  /(contract.*(not exist|not found|does not exist))|(missingvalue)|(no contract (code|instance) for)/i;
+
+/**
+ * Detects the specific Soroban RPC response shape that indicates there is no
+ * contract deployed at the configured address, as opposed to a generic
+ * simulation/network failure.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function isContractNotFoundError(simResult: any): boolean {
+  const message: string =
+    typeof simResult?.error === "string"
+      ? simResult.error
+      : (simResult?.error?.message ?? "");
+  return CONTRACT_NOT_FOUND_PATTERN.test(message);
+}
+
+function contractNotFoundError(contractAddress: string): SorobanCallError {
+  return new SorobanCallError(
+    `No contract is deployed at address ${contractAddress} on this network. Check that NEXT_PUBLIC_STREAM_CONTRACT_ID (or the relevant token address) is configured correctly for this environment.`,
+    "ContractNotFound",
+  );
 }
 
 export type DurationUnit = "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
@@ -141,6 +166,9 @@ export async function fetchTokenBalance(
 
   const simResult = await server.simulateTransaction(tx);
   if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+    if (isContractNotFoundError(simResult)) {
+      throw contractNotFoundError(tokenAddress);
+    }
     throw new SorobanCallError(`Failed to fetch token balance: ${simResult.error}`, "NetworkError");
   }
 
@@ -216,6 +244,9 @@ async function freighterCall(
 
   const simResult = await server.simulateTransaction(tx);
   if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+    if (isContractNotFoundError(simResult)) {
+      throw contractNotFoundError(CONTRACT_ID);
+    }
     throw new SorobanCallError(`Simulation failed: ${simResult.error}`, "NetworkError");
   }
 

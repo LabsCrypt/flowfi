@@ -21,6 +21,8 @@ updates:
           - "patch"
 
   # ── Cargo: contracts ───────────────────────────────────────────────────────
+  # Rust/soroban-sdk crate updates (including security patches) for the
+  # Soroban contracts under /contracts. Schedule mirrors the npm entry above.
   - package-ecosystem: "cargo"
     directory: "/contracts"
     schedule:

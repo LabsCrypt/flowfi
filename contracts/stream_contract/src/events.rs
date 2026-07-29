@@ -1,5 +1,18 @@
 use soroban_sdk::{contracttype, Address};
 
+// ─── Wire Format ─────────────────────────────────────────────────────────────
+//
+// Each event below is emitted via `env.events().publish(topics, data)`.
+// `data` is the `#[contracttype]` struct serialized as a Soroban `Map`, keyed
+// by field name (not positional) — so `soroban-event-worker.ts`'s `decodeMap`
+// reads fields by name and is order-independent. The one invariant the
+// backend decoder DOES depend on is the **field name and scalar type** of
+// every field listed here; renaming or retyping a field without updating the
+// matching `decode*`/`handle*` pair in `soroban-event-worker.ts` will silently
+// break event processing. See `backend/tests/events-wire-format.test.ts` for
+// the pinned field/type table and `test_*_emits_event` tests in `test.rs` for
+// the raw topic/data capture.
+
 /// Emitted when a new stream is created.
 ///
 /// Topic: `("stream_created", stream_id)`

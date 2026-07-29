@@ -31,4 +31,8 @@ pub enum StreamError {
     InvalidRate = 11,
     /// Operation requires an active stream, but the stream is currently paused.
     StreamPaused = 12,
+    /// `resume_stream` was called on a stream that is active but not paused.
+    StreamNotPaused = 13,
+    /// `pause_stream` was called on a stream that is already paused.
+    StreamAlreadyPaused = 14,
 }

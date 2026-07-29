@@ -17,11 +17,15 @@ We take the security of FlowFi seriously. If you discover a security vulnerabili
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please report security vulnerabilities by:
+The preferred and fastest way to report a vulnerability is **GitHub Security Advisories**:
 
-1. **Email**: Send details to `security@flowfi.dev` (if available) or create a private security advisory on GitHub
-2. **GitHub Security Advisory**: Use GitHub's [private vulnerability reporting](https://github.com/LabsCrypt/flowfi/security/advisories/new) feature
-3. **Direct Contact**: Reach out to the maintainers directly through GitHub
+1. Go to the [Security tab](https://github.com/LabsCrypt/flowfi/security) of this repository.
+2. Click **"Report a vulnerability"** (or use the direct link: [Report a vulnerability](https://github.com/LabsCrypt/flowfi/security/advisories/new)).
+3. Fill in the private advisory form with as much detail as possible (see "What to Include" below).
+
+This opens a private channel between you and the maintainers — nothing is visible publicly until we agree on a disclosure timeline.
+
+If you cannot use GitHub Security Advisories for any reason, you may instead reach out to the maintainers directly through the [community Telegram](https://t.me/+DOylgFv1jyJlNzM0) and request a private contact, or send a message via GitHub Discussions asking to be contacted privately (do not include vulnerability details in the public message).
 
 ### What to Include
 

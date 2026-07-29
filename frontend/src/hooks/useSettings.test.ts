@@ -4,7 +4,8 @@ import {
   useSettings,
   STORAGE_KEYS,
   formatAmountWithPreference,
-  DEFAULT_SETTINGS
+  DEFAULT_SETTINGS,
+  _resetSharedSettings
 } from './useSettings';
 
 const localStorageMock = (() => {
@@ -29,6 +30,7 @@ describe('useSettings and formatAmountWithPreference', () => {
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.className = '';
+    _resetSharedSettings();
   });
 
   afterEach(() => {
@@ -118,6 +120,43 @@ describe('useSettings and formatAmountWithPreference', () => {
 
       expect(result.current.amountFormat).toBe('compact');
       expect(localStorage.getItem(STORAGE_KEYS.amountFormat)).toBe('compact');
+    });
+
+    it('syncs state across multiple consumers without remount', async () => {
+      const { result: consumerA } = renderHook(() => useSettings());
+      const { result: consumerB } = renderHook(() => useSettings());
+      
+      await waitFor(() => {
+        expect(consumerA.current.isHydrated).toBe(true);
+        expect(consumerB.current.isHydrated).toBe(true);
+      });
+
+      act(() => {
+        consumerA.current.setDecimalPlaces(2);
+      });
+
+      expect(consumerA.current.decimalPlaces).toBe(2);
+      expect(consumerB.current.decimalPlaces).toBe(2);
+    });
+
+    it('syncs state across tabs using storage event', async () => {
+      const { result } = renderHook(() => useSettings());
+      
+      await waitFor(() => expect(result.current.isHydrated).toBe(true));
+
+      act(() => {
+        // Simulate other tab changing local storage
+        localStorage.setItem(STORAGE_KEYS.theme, 'light');
+        
+        // Dispatch storage event
+        const event = new StorageEvent('storage', {
+          key: STORAGE_KEYS.theme,
+          newValue: 'light'
+        });
+        window.dispatchEvent(event);
+      });
+
+      expect(result.current.theme).toBe('light');
     });
   });
 

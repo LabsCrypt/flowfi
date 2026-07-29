@@ -104,6 +104,10 @@ Error codes from `src/errors.rs`:
 | 10 | `InvalidTokenAddress` | Token address is not a token contract |
 | 11 | `InvalidRate` | `amount / duration` rounds to zero |
 
+## Test Snapshots
+
+The Soroban test runner can generate storage snapshots under `test_snapshots/` when `SOROBAN_TEST_SNAPSHOTS=1` is set. See [`test_snapshots/README.md`](test_snapshots/README.md) for what they are, when they regenerate, and how to handle a snapshot diff in your PR.
+
 ## Typical flow
 
 1. Admin calls `initialize` with treasury and fee rate.

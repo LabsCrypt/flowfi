@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
 import { TOKEN_ADDRESSES } from "./soroban";
@@ -78,13 +79,15 @@ function mapStreamStatus(s: BackendStream): Stream["status"] {
 async function fetchStreams(
   publicKey: string,
   role: "sender" | "recipient",
+  signal?: AbortSignal
 ): Promise<BackendStream[]> {
   const endpoints = getStreamsEndpointCandidates();
   const params = new URLSearchParams({ [role]: publicKey });
   let lastError: Error | null = null;
 
   for (const endpoint of endpoints) {
-    const response = await fetch(`${endpoint}?${params.toString()}`);
+    try {
+      const response = await fetch(`${endpoint}?${params.toString()}`, { signal });
     if (response.ok) {
       const payload = (await response.json()) as
         | BackendStream[]
@@ -98,6 +101,14 @@ async function fetchStreams(
     }
 
     lastError = new Error(`Failed to fetch streams (${response.status}) from ${endpoint}`);
+  }
+
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw err;
+      }
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
   }
 
   throw lastError ?? new Error("Failed to fetch streams from backend.");
@@ -129,11 +140,11 @@ export function mapBackendStreamToFrontend(s: BackendStream, counterparty: strin
 /**
  * Fetches dashboard data for a given public key by querying both outgoing and incoming streams.
  */
-export async function fetchDashboardData(publicKey: string): Promise<DashboardSnapshot> {
+export async function fetchDashboardData(publicKey: string, signal?: AbortSignal): Promise<DashboardSnapshot> {
   try {
     const [outgoing, incoming] = await Promise.all([
-      fetchStreams(publicKey, "sender"),
-      fetchStreams(publicKey, "recipient"),
+      fetchStreams(publicKey, "sender", signal),
+      fetchStreams(publicKey, "recipient", signal),
     ]);
 
     const outgoingStreams = outgoing.map((stream) =>
@@ -308,4 +319,16 @@ export function getDashboardAnalytics(
       unavailableText: "No withdrawal data",
     },
   ];
+}
+
+export function dashboardQueryKey(publicKey: string) {
+  return ["dashboard", publicKey] as const;
+}
+
+export function useDashboard(publicKey: string) {
+  return useQuery({
+    queryKey: dashboardQueryKey(publicKey),
+    queryFn: ({ signal }) => fetchDashboardData(publicKey, signal),
+    enabled: Boolean(publicKey),
+  });
 }

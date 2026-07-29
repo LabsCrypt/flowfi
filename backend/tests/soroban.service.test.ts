@@ -261,4 +261,74 @@ describe('Soroban Service', () => {
       expect(mocks.server.sendTransaction).not.toHaveBeenCalled();
     });
   });
+
+  describe('withRpcTimeout', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('rejects with RpcTimeoutError and aborts the signal when the call hangs past the deadline', async () => {
+      const { withRpcTimeout, RpcTimeoutError } = await importService();
+      let observedSignal: AbortSignal | undefined;
+
+      const promise = withRpcTimeout(
+        'slowCall',
+        (signal) => {
+          observedSignal = signal;
+          return new Promise(() => {});
+        },
+        1000
+      );
+      const assertion = expect(promise).rejects.toBeInstanceOf(RpcTimeoutError);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+      expect(observedSignal?.aborted).toBe(true);
+    });
+
+    it('resolves normally when the call finishes before the deadline', async () => {
+      const { withRpcTimeout } = await importService();
+
+      await expect(withRpcTimeout('fastCall', async () => 'ok', 1000)).resolves.toBe('ok');
+    });
+  });
+
+  describe('withRpcRetry', () => {
+    it('retries a transient failure with backoff and returns the eventual success', async () => {
+      const { withRpcRetry } = await importService();
+      let calls = 0;
+      const fn = vi.fn(async () => {
+        calls += 1;
+        if (calls < 3) throw new Error('ECONNRESET');
+        return 'ok';
+      });
+
+      await expect(withRpcRetry('flaky', fn, 3)).resolves.toBe('ok');
+      expect(fn).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not retry a non-transient error', async () => {
+      const { withRpcRetry } = await importService();
+      const fn = vi.fn(async () => {
+        throw new Error('Invalid amount: must be a valid integer');
+      });
+
+      await expect(withRpcRetry('validation', fn, 3)).rejects.toThrow('Invalid amount');
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up after exceeding the max retry count for a persistently transient error', async () => {
+      const { withRpcRetry } = await importService();
+      const fn = vi.fn(async () => {
+        throw new Error('ECONNRESET');
+      });
+
+      await expect(withRpcRetry('flaky', fn, 2)).rejects.toThrow('ECONNRESET');
+      expect(fn).toHaveBeenCalledTimes(3);
+    });
+  });
 });
