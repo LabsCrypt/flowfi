@@ -5,6 +5,7 @@ const I128_MIN = -(1n << 127n);
 
 export interface ClaimableStreamState {
   streamId: number;
+  tokenAddress: string;
   ratePerSecond: string;
   depositedAmount: string;
   withdrawnAmount: string;
@@ -102,7 +103,7 @@ export class ClaimableAmountService {
         ? Math.floor(requestedAt)
         : Math.floor(this.nowMs() / 1000);
 
-    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
+    const cacheKey = `claimable:${stream.tokenAddress}:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
     const cachedEntry = cache.get<Omit<ClaimableAmountResult, 'cached'>>(cacheKey);
 
     if (cachedEntry) {

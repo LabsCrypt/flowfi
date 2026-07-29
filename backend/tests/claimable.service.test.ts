@@ -4,6 +4,7 @@ import { ClaimableAmountService } from '../src/services/claimable.service.js';
 function makeStreamState(overrides: Partial<Parameters<ClaimableAmountService['getClaimableAmount']>[0]> = {}) {
   return {
     streamId: 1,
+    tokenAddress: 'TEST_TOKEN_ADDRESS',
     ratePerSecond: '10',
     depositedAmount: '100',
     withdrawnAmount: '0',
@@ -195,5 +196,49 @@ describe('ClaimableAmountService', () => {
       expect(claimable <= remaining, `iteration ${iteration}: claimable exceeded remaining`).toBe(true);
       expect(cancelRefund + withdrawn + claimable <= deposited, `iteration ${iteration}: cancel settlement exceeded deposit`).toBe(true);
     }
+  });
+
+  it('maintains independent cache entries for same streamId across different tokens', () => {
+    vi.setSystemTime(5_000);
+    const service = new ClaimableAmountService({
+      cacheTtlMs: 10_000,
+    });
+
+    // Two streams with the same numeric ID but different token contracts
+    const streamTokenA = makeStreamState({
+      streamId: 42,
+      tokenAddress: 'TOKEN_A',
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '0',
+    });
+
+    const streamTokenB = makeStreamState({
+      streamId: 42,
+      tokenAddress: 'TOKEN_B',
+      ratePerSecond: '5',
+      depositedAmount: '2000',
+      withdrawnAmount: '500',
+    });
+
+    const resultA = service.getClaimableAmount(streamTokenA, 100);
+    const resultB = service.getClaimableAmount(streamTokenB, 100);
+
+    // Both should be cache misses (different token = different cache key)
+    expect(resultA.cached).toBe(false);
+    expect(resultB.cached).toBe(false);
+
+    // The values should differ because the streams have different parameters
+    expect(resultA.claimableAmount).not.toBe(resultB.claimableAmount);
+
+    // Second call for Token A should be a cache hit
+    const resultA2 = service.getClaimableAmount(streamTokenA, 100);
+    expect(resultA2.cached).toBe(true);
+    expect(resultA2.claimableAmount).toBe(resultA.claimableAmount);
+
+    // Second call for Token B should also be a cache hit (independent of A)
+    const resultB2 = service.getClaimableAmount(streamTokenB, 100);
+    expect(resultB2.cached).toBe(true);
+    expect(resultB2.claimableAmount).toBe(resultB.claimableAmount);
   });
 });
