@@ -74,16 +74,20 @@ describe("useIncomingStreams hooks", () => {
       );
 
       await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         result.current.mutateAsync({} as any)
       ).rejects.toThrow("Please connect your wallet first");
       expect(withdrawFromStream).not.toHaveBeenCalled();
     });
 
     it("invalidates incomingStreamsQueryKey(publicKey) on success", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (withdrawFromStream as any).mockResolvedValue({ status: "success" });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (fetchIncomingStreams as any).mockResolvedValue([]);
       
       const { result } = renderHook(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         () => useWithdrawIncomingStream({} as any, "pubkey"),
         { wrapper }
       );
@@ -99,6 +103,7 @@ describe("useIncomingStreams hooks", () => {
           ratePerSecond: 1,
           isPaused: false,
           lastUpdateTime: Date.now() / 1000,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any);
       });
 
