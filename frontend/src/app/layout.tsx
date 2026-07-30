@@ -59,9 +59,50 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // suppressHydrationWarning allows the blocking inline script in <head> to
+  // mutate the `dark` class on <html> without React logging a hydration
+  // mismatch warning. See theme-provider.tsx for the full strategy.
   return (
-    <html lang="en" suppressHydrationWarning> {/* TODO: revisit if i18n is introduced */}
-      <head />
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/*
+          Blocking inline script that reads the user's stored theme preference
+          from localStorage and applies the `dark` class to <html> BEFORE the
+          browser paints a single pixel. This prevents the flash-of-wrong-theme
+          (FART) when the server renders a default theme class that differs from
+          the user's persisted preference.
+
+          The `suppressHydrationWarning` prop on <html> is the companion measure:
+          after this script mutates the class, React will see a mismatch between
+          server-rendered <html> (no `dark` class) and the client DOM (possibly
+          `dark` class) and would normally emit a console warning.
+          suppressHydrationWarning tells React to skip that check for this
+          element because the discrepancy is intentional and resolved before
+          hydration completes.
+
+          Flow: inline script runs → class set → browser paints → React hydrates
+          (suppressHydrationWarning) → next-themes ThemeProvider takes over.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var theme = localStorage.getItem('flowfi-theme') || 'dark';
+                  if (theme === 'system') {
+                    theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                  }
+                  if (theme === 'dark') {
+                    document.documentElement.classList.add('dark');
+                  } else {
+                    document.documentElement.classList.remove('dark');
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
         <ThemeProvider
           attribute="class"
