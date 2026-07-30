@@ -88,7 +88,7 @@ function createStreamCreatedEvent(
   ];
 
   const overrideEntries: [string, xdr.ScVal][] = Object.entries(overrides).map(
-    ([k, v]) => [k, nativeToScVal(v)],
+    ([k, v]) => [k, typeof v === 'bigint' ? scvI128(v) : nativeToScVal(v)],
   );
 
   return {
