@@ -96,7 +96,7 @@ jobs:
       - name: Run Backend Tests
         run: |
           ls -la src/generated/prisma
-          npx vitest run --coverage --reporter=basic
+          npx vitest run --coverage --reporter=basic --no-file-parallelism
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test

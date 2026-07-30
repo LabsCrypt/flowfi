@@ -65,7 +65,7 @@ jobs:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
 
       - name: Run backend tests
-        run: npm test
+        run: npm test -- --no-file-parallelism
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test

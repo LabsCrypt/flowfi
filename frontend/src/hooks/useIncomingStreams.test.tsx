@@ -111,6 +111,10 @@ describe("useIncomingStreams hooks", () => {
         } as any);
       });
 
+      // Clear any calls made during mutation (e.g. optimistic update in
+      // onMutate) so we only assert on the poll's setQueryData call.
+      setQueryDataSpy.mockClear();
+
       // Poll should find the updated stream (withdrawn 100 > 0) and call
       // setQueryData after ~1 s of simulated delay.
       await waitFor(() => {

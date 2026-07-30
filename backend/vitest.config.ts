@@ -43,8 +43,5 @@ export default defineConfig({
         // Run each test file in its own forked process so vi.mock() doesn't leak
         pool: 'forks',
         isolate: true,
-        // Run files sequentially so integration tests sharing the same DB
-        // don't clobber each other's cleanup (foreign key violations).
-        fileParallelism: false,
     },
 });
