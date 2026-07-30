@@ -81,10 +81,14 @@ describe("useIncomingStreams hooks", () => {
     });
 
     it("invalidates incomingStreamsQueryKey(publicKey) on success", async () => {
+      // Return a matching stream so pollIndexerForWithdraw exits on the first
+      // attempt (1 s delay) by finding updatedStream.withdrawn > oldWithdrawn.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (withdrawFromStream as any).mockResolvedValue({ status: "success" });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (fetchIncomingStreams as any).mockResolvedValue([]);
+      (fetchIncomingStreams as any).mockResolvedValue([
+        { streamId: 1, withdrawn: 100 },
+      ]);
       
       const { result } = renderHook(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -92,7 +96,7 @@ describe("useIncomingStreams hooks", () => {
         { wrapper }
       );
 
-      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
 
       await act(async () => {
         await result.current.mutateAsync({
@@ -107,12 +111,14 @@ describe("useIncomingStreams hooks", () => {
         } as any);
       });
 
-      // Wait for pollIndexerForWithdraw to complete and call invalidateQueries
+      // Poll should find the updated stream (withdrawn 100 > 0) and call
+      // setQueryData after ~1 s of simulated delay.
       await waitFor(() => {
-        expect(invalidateSpy).toHaveBeenCalledWith({
-          queryKey: incomingStreamsQueryKey("pubkey"),
-        });
-      }, { timeout: 10000 });
+        expect(setQueryDataSpy).toHaveBeenCalledWith(
+          incomingStreamsQueryKey("pubkey"),
+          expect.any(Array),
+        );
+      }, { timeout: 5000 });
     });
   });
 });
