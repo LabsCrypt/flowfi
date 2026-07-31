@@ -246,7 +246,7 @@ describe("Stream Lifecycle Integration Tests", () => {
         include: { senderUser: true, recipientUser: true },
       });
       expect(dbStream).toBeTruthy();
-      expect(dbStream?.streamId).toBe(streamId);
+      expect(dbStream?.streamId).toBe(BigInt(streamId));
       expect(dbStream?.sender).toBe(SENDER);
       expect(dbStream?.recipient).toBe(RECIPIENT);
       expect(dbStream?.isActive).toBe(true);
@@ -513,7 +513,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(response.body.cached).toBe(false);
 
       // Verify RPC was called
-      expect(getClaimableFromChain).toHaveBeenCalledWith(streamId);
+      expect(getClaimableFromChain).toHaveBeenCalledWith(BigInt(streamId));
     });
 
     it("returns fresh data when not stale", async () => {
