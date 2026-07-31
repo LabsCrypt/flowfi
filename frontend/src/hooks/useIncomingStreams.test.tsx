@@ -113,6 +113,7 @@ describe("useIncomingStreams hooks", () => {
     it("invalidates incomingStreamsQueryKey(publicKey) on success", async () => {
       vi.mocked(withdrawFromStream).mockResolvedValue({ success: true, txHash: "tx-hash" });
       vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+      vi.useFakeTimers();
 
       const { result } = renderHook(
         () => useWithdrawIncomingStream({} as unknown as WalletSession, "pubkey"),
@@ -134,11 +135,15 @@ describe("useIncomingStreams hooks", () => {
       });
 
       // Wait for pollIndexerForWithdraw to complete and call invalidateQueries
-      await waitFor(() => {
-        expect(invalidateSpy).toHaveBeenCalledWith({
-          queryKey: incomingStreamsQueryKey("pubkey"),
-        });
-      }, { timeout: 10000 });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(70000); // 63s max retries delay
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: incomingStreamsQueryKey("pubkey"),
+      });
+
+      vi.useRealTimers();
     });
   });
 });

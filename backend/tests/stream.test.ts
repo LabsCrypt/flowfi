@@ -58,7 +58,7 @@ describe('POST /v1/streams', () => {
   it('should return 201 when stream is created successfully', async () => {
     const mockStream = {
       id: 'uuid-123',
-      streamId: 1,
+      streamId: 1n,
       sender: 'GTEST_USER_PUBLIC_KEY',
       recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
       tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
@@ -95,7 +95,7 @@ describe('POST /v1/streams', () => {
 
     expect(response.status).toBe(201);
     expect(response.body).toMatchObject({
-      streamId: 1,
+      streamId: 1n,
       sender: validData.sender,
       recipient: validData.recipient,
     });
@@ -240,7 +240,7 @@ describe('GET /v1/users/:address/summary', () => {
           id: '1',
           createdAt: new Date(),
           updatedAt: new Date(),
-          streamId: 1,
+          streamId: 1n,
           sender: 'GSENDER',
           recipient: 'GRECIPIENT',
           tokenAddress: 'TOKEN',
@@ -259,7 +259,7 @@ describe('GET /v1/users/:address/summary', () => {
           id: '2',
           createdAt: new Date(),
           updatedAt: new Date(),
-          streamId: 2,
+          streamId: 2n,
           sender: 'GSENDER2',
           recipient: 'GRECIPIENT2',
           tokenAddress: 'TOKEN2',
@@ -280,7 +280,7 @@ describe('GET /v1/users/:address/summary', () => {
           id: '3',
           createdAt: new Date(),
           updatedAt: new Date(),
-          streamId: 11,
+          streamId: 11n,
           sender: 'GSENDER3',
           recipient: 'GRECIPIENT3',
           tokenAddress: 'TOKEN3',
@@ -299,7 +299,7 @@ describe('GET /v1/users/:address/summary', () => {
           id: '4',
           createdAt: new Date(),
           updatedAt: new Date(),
-          streamId: 12,
+          streamId: 12n,
           sender: 'GSENDER4',
           recipient: 'GRECIPIENT4',
           tokenAddress: 'TOKEN4',
@@ -337,7 +337,7 @@ describe('GET /v1/users/:address/summary', () => {
         id: '5',
         createdAt: new Date(),
         updatedAt: new Date(),
-        streamId: 13,
+        streamId: 13n,
         sender: 'GSENDER5',
         recipient: 'GRECIPIENT5',
         tokenAddress: 'TOKEN5',

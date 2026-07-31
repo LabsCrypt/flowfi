@@ -1,9 +1,8 @@
-import { randomUUID } from "crypto";
 import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
-import logger, { requestContext } from "../logger.js";
+import logger from "../logger.js";
 import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
 
@@ -113,12 +112,7 @@ export class SorobanEventWorker {
   /** Recent attempt outcomes for sliding-window spike detection. */
   private recentOutcomes: { ok: boolean; at: number }[] = [];
 
-  /**
-   * Stable id attached to every log line emitted by the background poll
-   * loop, since these callbacks fire outside of any HTTP request and would
-   * otherwise have no requestContext (and thus no correlation id) at all.
-   */
-  private readonly workerId = `soroban-worker:${randomUUID()}`;
+
 
   constructor() {
     const rpcUrl =
