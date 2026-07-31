@@ -77,7 +77,7 @@ describe('Action Controller vs Worker Event Write Race Guard (Issue #831)', () =
         },
       },
       create: expect.objectContaining({
-        streamId: 100,
+        streamId: BigInt(100),
         eventType: 'WITHDRAWN',
         transactionHash: 'tx_race_123',
       }),
