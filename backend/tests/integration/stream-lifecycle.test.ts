@@ -229,6 +229,9 @@ describe("Stream Lifecycle Integration Tests", () => {
       });
     }
     await cleanupDatabase();
+  });
+
+  afterAll(async () => {
     await testPrisma.$disconnect();
   });
 
