@@ -88,7 +88,7 @@ function createStreamCreatedEvent(
   ];
 
   const overrideEntries: [string, xdr.ScVal][] = Object.entries(overrides).map(
-    ([k, v]) => [k, nativeToScVal(v)],
+    ([k, v]) => [k, (v && typeof v === "object" && "switch" in v) ? v : nativeToScVal(v)],
   );
 
   return {
@@ -629,8 +629,8 @@ describe("Stream Lifecycle Integration Tests", () => {
 
       // ── Step 1: Create ──────────────────────────────────────────────────
       const createEvent = createStreamCreatedEvent(streamId, {
-        deposited_amount: BigInt(100_000),
-        rate_per_second: BigInt(100),
+        deposited_amount: scvI128(BigInt(100_000)),
+        rate_per_second: scvI128(BigInt(100)),
       });
       await worker.processEvent(createEvent);
 
@@ -768,7 +768,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.created",
-        expect.objectContaining({ streamId }),
+        expect.objectContaining({ streamId: BigInt(streamId) }),
       );
 
       // Verify event was received by client (if SSE service is real)
@@ -819,7 +819,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.topped_up",
-        expect.objectContaining({ streamId, amount: "1000" }),
+        expect.objectContaining({ streamId: BigInt(streamId), amount: "1000" }),
       );
     });
 
@@ -866,7 +866,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.cancelled",
-        expect.objectContaining({ streamId }),
+        expect.objectContaining({ streamId: BigInt(streamId) }),
       );
     });
   });
