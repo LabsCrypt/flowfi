@@ -7,8 +7,9 @@ import {
   useWithdrawIncomingStream,
   incomingStreamsQueryKey,
 } from "./useIncomingStreams";
-import { fetchIncomingStreams } from "@/lib/api/streams";
+import { fetchIncomingStreams, type IncomingStreamRecord } from "@/lib/api/streams";
 import { withdrawFromStream } from "@/lib/soroban";
+import type { WalletSession } from "@/lib/wallet";
 
 vi.mock("@/lib/api/streams", () => ({
   fetchIncomingStreams: vi.fn(),
@@ -64,6 +65,37 @@ describe("useIncomingStreams hooks", () => {
       expect(result.current.fetchStatus).toBe("idle");
       expect(fetchIncomingStreams).not.toHaveBeenCalled();
     });
+
+    it("does not poll by default", async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
+      renderHook(() => useIncomingStreams("pubkey"), { wrapper });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(fetchIncomingStreams).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    });
+
+    it("polls at the provided refetchInterval when overridden", async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
+      renderHook(
+        () => useIncomingStreams("pubkey", { refetchInterval: 5000 }),
+        { wrapper },
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      expect(vi.mocked(fetchIncomingStreams).mock.calls.length).toBeGreaterThan(1);
+      vi.useRealTimers();
+    });
   });
 
   describe("useWithdrawIncomingStream", () => {
@@ -74,17 +106,17 @@ describe("useIncomingStreams hooks", () => {
       );
 
       await expect(
-        result.current.mutateAsync({} as any)
+        result.current.mutateAsync({} as unknown as IncomingStreamRecord)
       ).rejects.toThrow("Please connect your wallet first");
       expect(withdrawFromStream).not.toHaveBeenCalled();
     });
 
     it("invalidates incomingStreamsQueryKey(publicKey) on success", async () => {
-      (withdrawFromStream as any).mockResolvedValue({ status: "success" });
-      (fetchIncomingStreams as any).mockResolvedValue([]);
-      
+      vi.mocked(withdrawFromStream).mockResolvedValue({ success: true, txHash: "tx-hash" });
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
       const { result } = renderHook(
-        () => useWithdrawIncomingStream({} as any, "pubkey"),
+        () => useWithdrawIncomingStream({} as unknown as WalletSession, "pubkey"),
         { wrapper }
       );
 
@@ -92,14 +124,14 @@ describe("useIncomingStreams hooks", () => {
 
       await act(async () => {
         await result.current.mutateAsync({
-          id: 1,
+          id: "1",
           streamId: 1,
           withdrawn: 0,
           deposited: 100,
           ratePerSecond: 1,
           isPaused: false,
           lastUpdateTime: Date.now() / 1000,
-        } as any);
+        } as unknown as IncomingStreamRecord);
       });
 
       // Wait for pollIndexerForWithdraw to complete and call invalidateQueries

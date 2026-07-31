@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useRef, useEffect } from "react";
-import { hasValidPrecision } from "@/lib/amount";
+import { hasValidPrecision } from "@/utils/amount";
 import { SECONDS_PER_UNIT, DurationUnit } from "@/lib/soroban";
 
 interface ScheduleStepProps {

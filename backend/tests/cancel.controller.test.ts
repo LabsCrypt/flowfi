@@ -77,8 +77,8 @@ describe('Cancel Stream Controller', () => {
 
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
-    expect(sorobanService.cancelStream).toHaveBeenCalledWith(123, 'SABC123');
-    expect(streamRepository.updateStatus).toHaveBeenCalledWith(123, 'CANCELLED');
+    expect(sorobanService.cancelStream).toHaveBeenCalledWith(123n, 'SABC123');
+    expect(streamRepository.updateStatus).toHaveBeenCalledWith(123n, 'CANCELLED');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED', txHash: 'tx_hash_123' }));
   });

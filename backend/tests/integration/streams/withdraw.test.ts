@@ -103,12 +103,12 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
     });
 
     // Verify service call with new signature (streamId, recipientAddress)
-    expect(mockWithdraw).toHaveBeenCalledWith(streamId, recipient.publicKey());
+    expect(mockWithdraw).toHaveBeenCalledWith(BigInt(streamId), recipient.publicKey());
     
     // Verify DB update
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId },
+        where: { streamId: BigInt(streamId) },
         data: expect.objectContaining({
           withdrawnAmount: expect.any(String),
         }),
@@ -120,7 +120,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           eventType: 'WITHDRAWN',
-          streamId,
+          streamId: BigInt(streamId),
           transactionHash: 'withdraw-tx-hash',
         }),
       })

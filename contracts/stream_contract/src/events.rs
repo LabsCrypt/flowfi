@@ -42,6 +42,8 @@ pub struct StreamToppedUpEvent {
     pub amount: i128,
     /// Total deposited amount on the stream after this top-up.
     pub new_deposited_amount: i128,
+    /// Ledger timestamp at which the stream will fully drain after this top-up, in Unix epoch seconds.
+    pub new_end_time: u64,
 }
 
 /// Emitted when the recipient withdraws accrued tokens.

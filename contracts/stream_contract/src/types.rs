@@ -34,29 +34,30 @@ pub enum DataKey {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stream {
-    /// Address that created and funds this stream.
+    /// Address that created and funds this stream. Always set.
     pub sender: Address,
-    /// Address entitled to withdraw from this stream.
+    /// Address entitled to withdraw from this stream. Always set.
     pub recipient: Address,
-    /// Token being streamed.
+    /// Token being streamed. Always set.
     pub token_address: Address,
-    /// Net tokens dripped per ledger-second (after fee deduction).
+    /// Net tokens dripped per second (after fee deduction), in stroops.
     pub rate_per_second: i128,
-    /// Net deposited amount available to the stream (after fee deduction).
+    /// Net deposited amount available to the stream (after fee deduction), in stroops.
     pub deposited_amount: i128,
-    /// Cumulative amount already withdrawn by the recipient.
+    /// Cumulative amount already withdrawn by the recipient, in stroops.
     pub withdrawn_amount: i128,
-    /// Ledger timestamp at stream creation.
+    /// Ledger timestamp at stream creation, in Unix epoch seconds.
     pub start_time: u64,
-    /// Ledger timestamp of the last state mutation.
+    /// Ledger timestamp of the last state mutation, in Unix epoch seconds.
     pub last_update_time: u64,
-    /// `false` once fully withdrawn or cancelled.
+    /// `false` once fully withdrawn or cancelled. Always set.
     pub is_active: bool,
-    /// `true` while the stream is paused; accrual is frozen at `paused_at`.
+    /// `true` while the stream is paused; accrual is frozen at `paused_at`. Always set.
     pub paused: bool,
-    /// Ledger timestamp when the stream was paused, `None` if not paused.
+    /// Ledger timestamp when the stream was paused (`None` if not paused), in Unix epoch seconds.
+    /// Only meaningful while `paused` is true.
     pub paused_at: Option<u64>,
-    /// Current status of the stream.
+    /// Current status of the stream. Always set.
     pub status: StreamStatus,
 }
 

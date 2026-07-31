@@ -17,11 +17,24 @@ export function incomingStreamsQueryKey(publicKey: string | null | undefined) {
   return ["incoming-streams", publicKey] as const;
 }
 
-export function useIncomingStreams(publicKey: string | null | undefined) {
+// Current production behavior: no automatic polling. Tests can override this
+// via `options.refetchInterval` instead of having to mock timers globally.
+const DEFAULT_INCOMING_STREAMS_REFETCH_INTERVAL: number | false = false;
+
+export interface UseIncomingStreamsOptions {
+  refetchInterval?: number | false;
+}
+
+export function useIncomingStreams(
+  publicKey: string | null | undefined,
+  options?: UseIncomingStreamsOptions,
+) {
   return useQuery({
     queryKey: incomingStreamsQueryKey(publicKey),
     queryFn: () => fetchIncomingStreams(publicKey!),
     enabled: Boolean(publicKey),
+    refetchInterval:
+      options?.refetchInterval ?? DEFAULT_INCOMING_STREAMS_REFETCH_INTERVAL,
   });
 }
 

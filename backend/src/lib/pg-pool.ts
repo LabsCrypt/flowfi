@@ -19,3 +19,17 @@ export const createPgPoolConfig = (): pg.PoolConfig => ({
 });
 
 export const createPgPool = () => new pg.Pool(createPgPoolConfig());
+
+export interface PoolMetrics {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+}
+
+export function getPoolMetrics(pool: pg.Pool): PoolMetrics {
+  return {
+    totalCount: pool.totalCount,
+    idleCount: pool.idleCount,
+    waitingCount: pool.waitingCount,
+  };
+}

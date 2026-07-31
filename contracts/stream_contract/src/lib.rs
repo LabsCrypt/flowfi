@@ -1,3 +1,16 @@
+//! # `stream_contract` — Soroban Payment-Streaming Contract
+//!
+//! ## Module responsibilities
+//!
+//! | Module | Responsibility |
+//! |--------|---------------|
+//! | [`lib.rs`](./lib.rs) | Public contract interface (`StreamContract`) — entrypoints exposed via `#[contractimpl]` |
+//! | [`storage.rs`](./storage.rs) | Persistent state — read/write `ProtocolConfig` and `Stream` records to Soroban storage |
+//! | [`types.rs`](./types.rs) | Data types — `Stream`, `ProtocolConfig`, `StreamStatus`, `DataKey` |
+//! | [`errors.rs`](./errors.rs) | Error types — `StreamError` enum with all contract error variants |
+//! | [`events.rs`](./events.rs) | Event payloads — typed structs emitted by each entrypoint |
+//! | [`test.rs`](./test.rs) | Unit & integration tests — module gated behind `#[cfg(test)]` |
+
 #![no_std]
 #![doc = include_str!("../README.md")]
 
@@ -295,6 +308,14 @@ impl StreamContract {
         // `now` would discard any already-vested, unwithdrawn tokens.
         stream.deposited_amount += net_amount;
 
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(claimable);
+        let new_end_time = now + (remaining / stream.rate_per_second) as u64;
+
         save_stream(&env, stream_id, &stream);
 
         // Emit top-up event
@@ -305,6 +326,7 @@ impl StreamContract {
                 sender,
                 amount: net_amount,
                 new_deposited_amount: stream.deposited_amount,
+                new_end_time,
             },
         );
 

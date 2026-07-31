@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Button } from "@/components/ui/Button";
 import { useStreamingAmount } from "@/hooks/useStreamingAmount";
 import type {
@@ -32,7 +33,7 @@ function badgeClassName(status: IncomingStreamStatus): string {
   }
 }
 
-export function IncomingStreamCard({
+export const IncomingStreamCard = React.memo(function IncomingStreamCard({
   stream,
   withdrawing,
   onWithdraw,
@@ -124,4 +125,17 @@ export function IncomingStreamCard({
       </div>
     </article>
   );
-}
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.stream.deposited === nextProps.stream.deposited &&
+    prevProps.stream.withdrawn === nextProps.stream.withdrawn &&
+    prevProps.stream.ratePerSecond === nextProps.stream.ratePerSecond &&
+    prevProps.stream.lastUpdateTime === nextProps.stream.lastUpdateTime &&
+    prevProps.stream.isActive === nextProps.stream.isActive &&
+    prevProps.stream.isPaused === nextProps.stream.isPaused &&
+    prevProps.stream.pausedAt === nextProps.stream.pausedAt &&
+    prevProps.stream.totalPausedDuration === nextProps.stream.totalPausedDuration &&
+    prevProps.stream.status === nextProps.stream.status &&
+    prevProps.withdrawing === nextProps.withdrawing
+  );
+});

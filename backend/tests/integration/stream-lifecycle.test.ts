@@ -623,6 +623,112 @@ describe("Stream Lifecycle Integration Tests", () => {
     });
   });
 
+  describe("Full lifecycle: create → top up → partial withdraw → cancel", () => {
+    it("walks a single stream through every phase and verifies indexer state", async () => {
+      const streamId = 100;
+
+      // ── Step 1: Create ──────────────────────────────────────────────────
+      const createEvent = createStreamCreatedEvent(streamId, {
+        deposited_amount: BigInt(100_000),
+        rate_per_second: BigInt(100),
+      });
+      await worker.processEvent(createEvent);
+
+      let dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream).toBeTruthy();
+      expect(dbStream?.depositedAmount).toBe("100000");
+      expect(dbStream?.withdrawnAmount).toBe("0");
+      expect(dbStream?.isActive).toBe(true);
+
+      // ── Step 2: Top up ──────────────────────────────────────────────────
+      // Add 50 000 more → deposited becomes 150 000
+      const topUpEvent = createStreamToppedUpEvent(streamId, 50_000, 150_000);
+      topUpEvent.txHash = "topup-tx-hash";
+      await worker.processEvent(topUpEvent);
+
+      dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream?.depositedAmount).toBe("150000");
+      expect(dbStream?.withdrawnAmount).toBe("0");
+      expect(dbStream?.isActive).toBe(true);
+
+      // ── Step 3: Partial withdraw ─────────────────────────────────────────
+      // Recipient withdraws 30 000 → withdrawn becomes 30 000
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      const withdrawEvent = {
+        id: `evt-stream-withdrawn-${streamId}`,
+        type: "contract" as const,
+        ledger: 12350,
+        ledgerClosedAt: "2023-01-01T00:00:00Z",
+        transactionIndex: 0,
+        operationIndex: 0,
+        txHash: "withdraw-tx-hash",
+        topic: [scvSymbol("tokens_withdrawn"), scvU64(BigInt(streamId))],
+        value: scvMap([
+          ["recipient", scvAccountAddress(RECIPIENT)],
+          ["amount", scvI128(BigInt(30_000))],
+          ["timestamp", scvU64(BigInt(currentTimestamp))],
+        ]),
+        inSuccessfulContractCall: true,
+      };
+      await worker.processEvent(withdrawEvent);
+
+      dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream?.withdrawnAmount).toBe("30000");
+      expect(dbStream?.depositedAmount).toBe("150000");
+      // Stream should still be active after partial withdrawal
+      expect(dbStream?.isActive).toBe(true);
+
+      // Verify the withdraw event was recorded
+      const withdrawEventRecord = await testPrisma.streamEvent.findFirst({
+        where: { streamId, eventType: "WITHDRAWN" },
+      });
+      expect(withdrawEventRecord).toBeTruthy();
+      expect(withdrawEventRecord?.amount).toBe("30000");
+
+      // ── Step 4: Cancel ───────────────────────────────────────────────────
+      // Cancel settles the remaining claimable. Withdrawn in the cancel event
+      // includes the 30 000 already withdrawn + newly accrued.
+      // For this test we use a cancel that settles 40 000 to recipient and
+      // refunds the rest (150 000 - 40 000 = 110 000) to sender.
+      const cancelEvent = createStreamCancelledEvent(
+        streamId,
+        40_000,
+        110_000,
+      );
+      cancelEvent.txHash = "cancel-tx-hash";
+      await worker.processEvent(cancelEvent);
+
+      dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream?.withdrawnAmount).toBe("40000");
+      expect(dbStream?.isActive).toBe(false);
+
+      // Verify the cancel event was recorded
+      const cancelEventRecord = await testPrisma.streamEvent.findFirst({
+        where: { streamId, eventType: "CANCELLED" },
+      });
+      expect(cancelEventRecord).toBeTruthy();
+      expect(cancelEventRecord?.amount).toBe("110000");
+
+      // ── Verify that the final API response shows the completed stream ────
+      const response = await request(app)
+        .get(`/v1/streams/${streamId}`)
+        .expect(200);
+
+      expect(response.body.streamId).toBe(streamId);
+      expect(response.body.isActive).toBe(false);
+      expect(response.body.depositedAmount).toBe("150000");
+      expect(response.body.withdrawnAmount).toBe("40000");
+    });
+  });
+
   describe("SSE client receives broadcast for each stream event", () => {
     let eventSource: EventSource;
 

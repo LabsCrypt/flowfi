@@ -122,12 +122,18 @@ export class SorobanIndexerService {
     return null;
   }
 
-  private parseStreamId(record: JsonRecord): number | null {
+  private parseStreamId(record: JsonRecord): bigint | null {
     const raw = record.stream_id ?? record.streamId;
-    if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
-    if (typeof raw === 'string' && raw.trim()) {
-      const parsed = Number(raw);
-      if (Number.isInteger(parsed)) return parsed;
+    if (typeof raw === 'bigint' && raw >= 0n) return raw;
+    if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 && Number.isSafeInteger(raw)) {
+      return BigInt(raw);
+    }
+    if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) {
+      try {
+        return BigInt(raw.trim());
+      } catch {
+        return null;
+      }
     }
     return null;
   }
@@ -179,7 +185,8 @@ export class SorobanIndexerService {
       const ratePerSecond = this.readString(value, 'rate_per_second', 'ratePerSecond');
       const depositedAmount = this.readString(value, 'deposited_amount', 'depositedAmount');
       const startTimeRaw = value.start_time ?? value.startTime ?? timestamp;
-      const startTime = Number(startTimeRaw);
+      const startTime = BigInt(startTimeRaw ?? timestamp);
+      const timestampBigInt = BigInt(timestamp);
 
       if (!sender || !recipient || !tokenAddress || !ratePerSecond || !depositedAmount) return;
 
@@ -194,7 +201,7 @@ export class SorobanIndexerService {
           tokenAddress,
           ratePerSecond,
           depositedAmount,
-          lastUpdateTime: Number.isFinite(startTime) ? startTime : timestamp,
+          lastUpdateTime: startTime,
           isActive: true,
         },
         create: {
@@ -205,15 +212,15 @@ export class SorobanIndexerService {
           ratePerSecond,
           depositedAmount,
           withdrawnAmount: '0',
-          startTime: Number.isFinite(startTime) ? startTime : timestamp,
-          lastUpdateTime: Number.isFinite(startTime) ? startTime : timestamp,
+          startTime,
+          lastUpdateTime: startTime,
           isActive: true,
         },
       });
     } else if (eventType === 'CANCELLED') {
       await prisma.stream.updateMany({
         where: { streamId },
-        data: { isActive: false, lastUpdateTime: timestamp },
+        data: { isActive: false, lastUpdateTime: BigInt(timestamp) },
       });
     } else if (eventType === 'WITHDRAWN') {
       const stream = await prisma.stream.findUnique({ where: { streamId } });
@@ -224,7 +231,7 @@ export class SorobanIndexerService {
           where: { streamId },
           data: {
             withdrawnAmount: nextWithdrawn,
-            lastUpdateTime: timestamp,
+            lastUpdateTime: BigInt(timestamp),
             isActive: BigInt(nextWithdrawn) < BigInt(stream.depositedAmount),
           },
         });
@@ -232,7 +239,7 @@ export class SorobanIndexerService {
     } else if (eventType === 'COMPLETED') {
       await prisma.stream.updateMany({
         where: { streamId },
-        data: { isActive: false, lastUpdateTime: timestamp },
+        data: { isActive: false, lastUpdateTime: BigInt(timestamp) },
       });
     }
 
@@ -243,7 +250,7 @@ export class SorobanIndexerService {
         amount: this.readString(value, 'amount'),
         transactionHash: txHash,
         ledgerSequence,
-        timestamp,
+        timestamp: BigInt(timestamp),
         metadata: JSON.stringify({ topic: event.topic, value: event.value }),
       },
     });

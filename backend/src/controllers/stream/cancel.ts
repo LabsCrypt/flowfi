@@ -4,6 +4,7 @@ import logger from '../../logger.js';
 import * as sorobanService from '../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import * as streamRepository from '../../repositories/stream.repository.js';
+import { parseStreamId } from '../../lib/stream-id.js';
 
 /**
  * @openapi
@@ -55,7 +56,10 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
       return res.status(400).json({ error: 'Missing streamId parameter' });
     }
 
-    const parsedStreamId = parseInt(streamId, 10);
+    const parsedStreamId = parseStreamId(streamId);
+    if (parsedStreamId === null) {
+      return res.status(400).json({ error: 'Invalid streamId parameter' });
+    }
 
     // 1. Fetch stream from DB
     const stream = await prisma.stream.findUnique({

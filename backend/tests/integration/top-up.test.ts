@@ -97,7 +97,7 @@ describe('POST /v1/streams/:streamId/top-up', () => {
     expect(res.status).toBe(200);
     expect(res.body.txHash).toBe('abc123txhash');
     expect(res.body.streamId).toBe(42);
-    expect(topUpStream).toHaveBeenCalledWith(42, 1000n, SENDER);
+    expect(topUpStream).toHaveBeenCalledWith(42n, 1000n, SENDER);
   });
 
   it('returns 400 when amount is missing', async () => {
@@ -156,7 +156,7 @@ describe('POST /v1/streams/:streamId/top-up', () => {
 
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId: 42 },
+        where: { streamId: 42n },
         data: expect.objectContaining({ depositedAmount: '87400' }),
       }),
     );

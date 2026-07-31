@@ -29,6 +29,8 @@ export default function ProgressBar({ percentage, label }: ProgressBarProps) {
         aria-valuenow={clamped}
         aria-valuemin={0}
         aria-valuemax={100}
+        aria-valuetext={`${clamped}%`}
+        aria-label={label ?? "Progress"}
         style={{
           width: "100%",
           height: "0.6rem",

@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { hasValidPrecision } from "@/lib/amount";
+import { hasValidPrecision } from "@/utils/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
 import { logger } from "@/lib/logger";
 import { Stepper } from "../ui/Stepper";

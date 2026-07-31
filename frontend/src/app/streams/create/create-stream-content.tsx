@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { logger } from "@/lib/logger";
 import {
   createStream,
@@ -12,7 +12,7 @@ import {
 } from "@/lib/soroban";
 import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
 import { toast } from "react-hot-toast";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
@@ -22,6 +22,7 @@ const TOKEN_DECIMALS = 7;
 export default function CreateStreamContent() {
   const { status, session } = useWallet();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [nowTimestamp] = useState(() => Date.now());
   const [loading, setLoading] = useState(false);
   const [txState, setTxState] = useState<"idle" | "signing" | "submitted" | "confirming">("idle");
@@ -31,6 +32,19 @@ export default function CreateStreamContent() {
     amount: "",
     duration: "30",
   });
+
+  useEffect(() => {
+    const recipientParam = searchParams.get("recipient");
+    if (!recipientParam) return;
+
+    import("@stellar/stellar-sdk").then(({ StrKey }) => {
+      if (StrKey.isValidEd25519PublicKey(recipientParam)) {
+        setFormData((prev) => ({ ...prev, recipient: recipientParam }));
+      } else {
+        logger.warn("Ignoring malformed recipient query param", { recipientParam });
+      }
+    });
+  }, [searchParams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

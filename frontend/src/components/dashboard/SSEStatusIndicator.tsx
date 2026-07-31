@@ -58,7 +58,11 @@ export function SSEStatusIndicator({
       {/* Disconnect Banner */}
       {showDisconnectBanner && isDisconnected && (
         <div
-          className="fixed top-0 left-0 right-0 z-50 bg-red-500/90 text-white p-4 flex items-center justify-between gap-4 animate-in slide-in-from-top"
+          className={`fixed top-0 left-0 right-0 z-50 ${
+            isReconnecting
+              ? "bg-yellow-500/90"
+              : "bg-red-500/90"
+          } text-white p-4 flex items-center justify-between gap-4 animate-in slide-in-from-top`}
           role="alert"
         >
           <div className="flex items-center gap-3 max-w-2xl">
