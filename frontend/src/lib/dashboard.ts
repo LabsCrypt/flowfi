@@ -88,21 +88,19 @@ async function fetchStreams(
   for (const endpoint of endpoints) {
     try {
       const response = await fetch(`${endpoint}?${params.toString()}`, { signal });
-    if (response.ok) {
-      const payload = (await response.json()) as
-        | BackendStream[]
-        | { data?: BackendStream[] };
-      return Array.isArray(payload) ? payload : payload.data ?? [];
-    }
+      if (response.ok) {
+        const payload = (await response.json()) as
+          | BackendStream[]
+          | { data?: BackendStream[] };
+        return Array.isArray(payload) ? payload : payload.data ?? [];
+      }
 
-    if (response.status === 404) {
-      lastError = new Error(`Endpoint not found: ${endpoint}`);
-      continue;
-    }
+      if (response.status === 404) {
+        lastError = new Error(`Endpoint not found: ${endpoint}`);
+        continue;
+      }
 
-    lastError = new Error(`Failed to fetch streams (${response.status}) from ${endpoint}`);
-  }
-
+      lastError = new Error(`Failed to fetch streams (${response.status}) from ${endpoint}`);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         throw err;

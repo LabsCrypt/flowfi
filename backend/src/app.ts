@@ -17,6 +17,13 @@ import v1Routes from "./routes/v1/index.js";
 
 import healthRoutes from "./routes/health.routes.js";
 
+// Patch BigInt serialization for JSON.stringify globally
+if (!('toJSON' in BigInt.prototype)) {
+  (BigInt.prototype as any).toJSON = function () {
+    return Number(this.toString());
+  };
+}
+
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
 const rawCors = process.env.CORS_ALLOWED_ORIGINS ?? "";

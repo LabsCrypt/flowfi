@@ -18,7 +18,6 @@ import toast from "react-hot-toast";
 import {
   getDashboardAnalytics,
   fetchDashboardData,
-  useDashboard,
   dashboardQueryKey,
   type DashboardSnapshot,
   type Stream,

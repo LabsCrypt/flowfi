@@ -1024,13 +1024,13 @@ export class SorobanEventWorker {
       });
 
       // Calculate the duration of this pause interval
-      let additionalPausedDuration = 0;
+      let additionalPausedDuration = 0n;
       if (currentStream.pausedAt) {
-        additionalPausedDuration = timestamp - currentStream.pausedAt;
+        additionalPausedDuration = BigInt(timestamp) - BigInt(currentStream.pausedAt);
       }
 
       const newTotalPausedDuration =
-        currentStream.totalPausedDuration + additionalPausedDuration;
+        Number(BigInt(currentStream.totalPausedDuration) + additionalPausedDuration);
 
       await tx.stream.update({
         where: { streamId },
@@ -1073,7 +1073,7 @@ export class SorobanEventWorker {
             metadata: JSON.stringify({
               sender,
               newEndTime,
-              pausedDuration: additionalPausedDuration,
+              pausedDuration: Number(additionalPausedDuration),
               totalPausedDuration: newTotalPausedDuration,
             }),
           },
