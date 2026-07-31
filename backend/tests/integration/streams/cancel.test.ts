@@ -86,9 +86,9 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       status: 'CANCELLED',
     });
 
-    expect(sorobanService.cancelStream).toHaveBeenCalledWith(streamId, 'S_SECRET_123');
+    expect(sorobanService.cancelStream).toHaveBeenCalledWith(BigInt(streamId), 'S_SECRET_123');
     expect(prisma.stream.update).toHaveBeenCalledWith({
-      where: { streamId },
+      where: { streamId: BigInt(streamId) },
       data: { isActive: false },
     });
   });

@@ -45,4 +45,22 @@ describe('pg-pool', () => {
       }),
     );
   });
+
+  it('getPoolMetrics returns totalCount, idleCount, and waitingCount from the pool', async () => {
+    const { getPoolMetrics } = await import('../src/lib/pg-pool.js');
+
+    const mockPool = {
+      totalCount: 10,
+      idleCount: 5,
+      waitingCount: 2,
+    } as any;
+
+    const metrics = getPoolMetrics(mockPool);
+
+    expect(metrics).toEqual({
+      totalCount: 10,
+      idleCount: 5,
+      waitingCount: 2,
+    });
+  });
 });

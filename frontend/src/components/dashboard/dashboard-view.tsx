@@ -47,6 +47,7 @@ import {
   type StreamFormData,
 } from "../stream-creation/StreamCreationWizard";
 import { TopUpModal } from "../stream-creation/TopUpModal";
+import { useQueryClient } from "@tanstack/react-query";
 import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";

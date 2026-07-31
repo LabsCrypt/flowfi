@@ -41,3 +41,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# manually-triggered API type codegen output (see src/lib/api-types.ts)
+src/lib/api-types.generated.ts

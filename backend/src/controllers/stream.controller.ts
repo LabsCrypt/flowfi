@@ -13,6 +13,7 @@ import {
   resumeStream as sorobanResumeStream,
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
+import { parseStreamId } from "../lib/stream-id.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
@@ -128,10 +129,10 @@ export const createStream = async (req: Request, res: Response) => {
       });
     }
 
-    const parsedStreamId = Number.parseInt(streamId, 10);
+    const parsedStreamId = parseStreamId(streamId);
     const parsedStartTime = Number.parseInt(startTime, 10);
 
-    if (!Number.isFinite(parsedStreamId)) {
+    if (parsedStreamId === null) {
       return res
         .status(400)
         .json({ error: "Invalid streamId: must be a valid integer" });
@@ -347,9 +348,8 @@ export const getStream = async (req: Request, res: Response) => {
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? "", 10);
-
-    if (!Number.isFinite(parsedStreamId)) {
+    const parsedStreamId = parseStreamId(streamIdParam);
+    if (parsedStreamId === null) {
       return res.status(400).json({ error: "Invalid streamId parameter" });
     }
 
@@ -398,9 +398,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? "", 10);
-
-    if (!Number.isFinite(parsedStreamId)) {
+    const parsedStreamId = parseStreamId(streamIdParam);
+    if (parsedStreamId === null) {
       return res.status(400).json({ error: "Invalid streamId parameter" });
     }
 
@@ -489,9 +488,8 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? "", 10);
-
-    if (!Number.isFinite(parsedStreamId)) {
+    const parsedStreamId = parseStreamId(streamIdParam);
+    if (parsedStreamId === null) {
       return res.status(400).json({ error: "Invalid streamId parameter" });
     }
 
@@ -686,13 +684,12 @@ const topUpBodySchema = z.object({
  * Adds tokens to a running stream. Only the stream sender may call this.
  */
 export const topUpStreamHandler = async (req: Request, res: Response) => {
-  const streamId = parseInt(
+  const streamId = parseStreamId(
     Array.isArray(req.params.streamId)
-      ? req.params.streamId[0]!
-      : (req.params.streamId ?? ""),
-    10,
+      ? req.params.streamId[0]
+      : req.params.streamId,
   );
-  if (isNaN(streamId)) {
+  if (streamId === null) {
     return res.status(400).json({ error: "Invalid streamId" });
   }
 
@@ -769,9 +766,8 @@ export const pauseStream = async (req: Request, res: Response) => {
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? "", 10);
-
-    if (!Number.isFinite(parsedStreamId)) {
+    const parsedStreamId = parseStreamId(streamIdParam);
+    if (parsedStreamId === null) {
       return res.status(400).json({ error: "Invalid streamId parameter" });
     }
 
@@ -861,9 +857,8 @@ export const resumeStream = async (req: Request, res: Response) => {
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? "", 10);
-
-    if (!Number.isFinite(parsedStreamId)) {
+    const parsedStreamId = parseStreamId(streamIdParam);
+    if (parsedStreamId === null) {
       return res.status(400).json({ error: "Invalid streamId parameter" });
     }
 

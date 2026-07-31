@@ -152,6 +152,86 @@ describe('useStreamEvents', () => {
     expect(MockEventSource.instance).not.toBeNull();
   });
 
+  it('grows the reconnect delay exponentially across consecutive failures', () => {
+    // Keep `streamIds` referentially stable across re-renders (an inline
+    // array literal would change identity on every render and cause the
+    // hook to reconnect on its own, independent of the backoff timer).
+    const streamIds = ['1'];
+    renderHook(() =>
+      useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+    );
+
+    const first = MockEventSource.instance;
+    act(() => { first?.triggerError(); });
+
+    // First retry is scheduled after the initial 1000ms delay.
+    act(() => { vi.advanceTimersByTime(999); });
+    expect(MockEventSource.instance).toBe(first);
+    act(() => { vi.advanceTimersByTime(1); });
+    const second = MockEventSource.instance;
+    expect(second).not.toBe(first);
+    expect(second).not.toBeNull();
+
+    act(() => { second?.triggerError(); });
+
+    // Second retry should wait ~2000ms (doubled), not repeat the 1000ms delay.
+    act(() => { vi.advanceTimersByTime(1999); });
+    expect(MockEventSource.instance).toBe(second);
+    act(() => { vi.advanceTimersByTime(1); });
+    const third = MockEventSource.instance;
+    expect(third).not.toBe(second);
+    expect(third).not.toBeNull();
+
+    act(() => { third?.triggerError(); });
+
+    // Third retry should wait ~4000ms.
+    act(() => { vi.advanceTimersByTime(3999); });
+    expect(MockEventSource.instance).toBe(third);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(MockEventSource.instance).not.toBe(third);
+  });
+
+  it('caps the reconnect delay at maxRetryDelay', () => {
+    const streamIds = ['1'];
+    renderHook(() =>
+      useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 1500 }),
+    );
+
+    const first = MockEventSource.instance;
+    act(() => { first?.triggerError(); });
+    act(() => { vi.advanceTimersByTime(1000); }); // capped delay is min(1000, 1500) = 1000
+    const second = MockEventSource.instance;
+    expect(second).not.toBe(first);
+
+    act(() => { second?.triggerError(); });
+    // Next delay would be 2000 uncapped, but maxRetryDelay caps it at 1500.
+    act(() => { vi.advanceTimersByTime(1499); });
+    expect(MockEventSource.instance).toBe(second);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(MockEventSource.instance).not.toBe(second);
+  });
+
+  it('resets the backoff delay to the initial value after a successful connection', () => {
+    const streamIds = ['1'];
+    renderHook(() =>
+      useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+    );
+
+    const first = MockEventSource.instance;
+    act(() => { first?.triggerError(); });
+    act(() => { vi.advanceTimersByTime(1000); }); // reconnect after initial 1000ms
+
+    const second = MockEventSource.instance;
+    act(() => { second?.open(); }); // successful connection resets the counter
+    act(() => { second?.triggerError(); });
+
+    // Backoff should restart at 1000ms, not continue growing to 2000ms.
+    act(() => { vi.advanceTimersByTime(999); });
+    expect(MockEventSource.instance).toBe(second);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(MockEventSource.instance).not.toBe(second);
+  });
+
   it('clearEvents empties the events array', () => {
     const { result } = renderHook(() =>
       useStreamEvents({ streamIds: ['1'], autoReconnect: false }),

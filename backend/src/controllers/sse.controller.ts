@@ -31,7 +31,8 @@ export const subscribe = async (req: Request, res: Response) => {
 
   try {
     const sourceIp = getClientIp(req);
-    const capacity = sseService.checkCapacity(sourceIp);
+    const authUserId = (req as AuthenticatedRequest).user?.publicKey;
+    const capacity = sseService.checkCapacity(sourceIp, authUserId);
     if (!capacity.allowed) {
       if (capacity.retryAfterSeconds) {
         res.setHeader('Retry-After', String(capacity.retryAfterSeconds));
@@ -51,7 +52,7 @@ export const subscribe = async (req: Request, res: Response) => {
       where: { OR: [{ sender: publicKey }, { recipient: publicKey }] },
       select: { streamId: true, sender: true, recipient: true },
     });
-    const ownedIds = new Set(ownedStreams.map((s: { streamId: number }) => String(s.streamId)));
+    const ownedIds = new Set(ownedStreams.map((s: { streamId: bigint }) => String(s.streamId)));
     const allowedUserKeys = new Set<string>([publicKey]);
     for (const stream of ownedStreams) {
       allowedUserKeys.add(stream.sender);
@@ -87,7 +88,7 @@ export const subscribe = async (req: Request, res: Response) => {
     const requestId = requestContext.getStore()?.requestId;
     res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
 
-    sseService.addClient(clientId, res, subscriptions, sourceIp);
+    sseService.addClient(clientId, res, subscriptions, sourceIp, publicKey);
     return;
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {

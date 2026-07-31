@@ -108,13 +108,14 @@ export function useStreamEvents(
 
       if (autoReconnect) {
         setReconnecting(true);
+        // Cap the delay we're about to wait on, and precompute the next
+        // (doubled, capped) delay up front so consecutive failures keep
+        // growing the backoff even if the next attempt fails immediately.
+        const delay = Math.min(retryDelayRef.current, maxRetryDelay);
+        retryDelayRef.current = Math.min(retryDelayRef.current * 2, maxRetryDelay);
         reconnectTimeoutRef.current = setTimeout(() => {
           connectRef.current();
-          retryDelayRef.current = Math.min(
-            retryDelayRef.current * 2,
-            maxRetryDelay
-          );
-        }, retryDelayRef.current);
+        }, delay);
       }
     };
   }, [buildUrl, autoReconnect, maxRetryDelay]);
