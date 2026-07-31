@@ -15,9 +15,9 @@ export const adminRateLimiter = rateLimit({
     // Use x-forwarded-for or remote address as key
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string' && forwarded.trim()) {
-      return forwarded.split(',')[0]?.trim() || ipKeyGenerator(req, res);
+      return forwarded.split(',')[0]?.trim() || ipKeyGenerator(req.ip ?? 'unknown');
     }
-    return ipKeyGenerator(req, res);
+    return ipKeyGenerator(req.ip ?? 'unknown');
   },
   skip: (req: Request): boolean => {
     // Skip rate limiting in test environment
