@@ -4,7 +4,7 @@
  * These tests use real Postgres database and verify the complete pipeline:
  * event worker → DB update → controller response → SSE broadcast
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 import request from "supertest";
 import { PrismaClient } from "../../src/generated/prisma/index.js";
 import pg from "pg";
