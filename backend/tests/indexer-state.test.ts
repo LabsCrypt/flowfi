@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mockFindUnique = vi.fn();
-const mockCreate = vi.fn();
+const { mockFindUnique, mockCreate } = vi.hoisted(() => ({
+  mockFindUnique: vi.fn(),
+  mockCreate: vi.fn(),
+}));
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {

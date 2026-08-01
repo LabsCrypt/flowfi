@@ -71,6 +71,7 @@ vi.mock('../../src/lib/redis.js', () => ({
 vi.mock('../../src/lib/prisma.js', () => ({
   default: mocks.prisma,
   prisma: mocks.prisma,
+  pool: { totalCount: 0, idleCount: 0, waitingCount: 0 },
 }));
 
 vi.mock('../../src/middleware/auth.js', async () => {

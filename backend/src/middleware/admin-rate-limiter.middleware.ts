@@ -1,4 +1,4 @@
-import { rateLimit } from 'express-rate-limit';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import type { Request, Response } from 'express';
 
 export const adminRateLimiter = rateLimit({
@@ -11,13 +11,13 @@ export const adminRateLimiter = rateLimit({
     message: 'You have exceeded the admin rate limit. Please try again later.',
     status: 429,
   },
-  keyGenerator: (req: Request): string => {
+  keyGenerator: (req: Request, res: Response): string => {
     // Use x-forwarded-for or remote address as key
     const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      return forwarded.split(',')[0]?.trim() || ipKeyGenerator(req.ip ?? 'unknown');
     }
-    return req.ip ?? 'unknown';
+    return ipKeyGenerator(req.ip ?? 'unknown');
   },
   skip: (req: Request): boolean => {
     // Skip rate limiting in test environment

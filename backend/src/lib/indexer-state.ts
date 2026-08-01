@@ -7,7 +7,6 @@ export interface IndexerStateRow {
   id: string;
   lastLedger: number;
   lastCursor: string | null;
-  createdAt: Date;
   updatedAt: Date;
 }
 

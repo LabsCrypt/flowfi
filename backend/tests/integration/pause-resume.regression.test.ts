@@ -144,7 +144,7 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
     expect(mockPrisma.stream.update).toHaveBeenCalledTimes(1);
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId },
+        where: { streamId: BigInt(77) },
         data: expect.objectContaining({ isPaused: true }),
       }),
     );
