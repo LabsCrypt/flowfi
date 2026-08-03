@@ -27,7 +27,7 @@ model User {
 // Stream model - mirrors on-chain stream state for fast querying
 model Stream {
   id                String    @id @default(uuid())
-  streamId          Int       @unique // On-chain stream ID
+  streamId          BigInt    @unique // On-chain stream ID (Soroban u64)
   sender            String    // Sender's Stellar public key
   recipient         String    // Recipient's Stellar public key
   tokenAddress      String    // Token contract address
@@ -68,7 +68,7 @@ model IndexerState {
 // StreamEvent model - indexer events for tracking all on-chain stream activities
 model StreamEvent {
   id              String   @id @default(uuid())
-  streamId        Int      // Reference to on-chain stream ID
+  streamId        BigInt   // Reference to on-chain stream ID (Soroban u64)
   eventType       String   // EventType: "CREATED", "TOPPED_UP", "WITHDRAWN", "CANCELLED", "COMPLETED", "PAUSED", "RESUMED"
   amount          String?  // Amount involved in the event (for top-ups, withdrawals)
   transactionHash String   // Stellar transaction hash
@@ -86,5 +86,6 @@ model StreamEvent {
   @@index([timestamp])
   @@index([transactionHash])
   @@index([createdAt])
-  @@index([streamId, createdAt])
+  @@index([streamId, timestamp])
+  @@unique([transactionHash, eventType])
 }

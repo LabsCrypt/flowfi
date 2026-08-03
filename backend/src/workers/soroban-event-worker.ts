@@ -1,9 +1,11 @@
+import { randomUUID } from "crypto";
 import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
-import { INDEXER_STATE_ID } from "../lib/indexer-state.js";
+import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
-import logger from "../logger.js";
+import logger, { requestContext } from "../logger.js";
 import { Prisma } from "../generated/prisma/index.js";
+import "../lib/stream-id.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -67,6 +69,23 @@ export function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
   return result;
 }
 
+// ─── Event-processing counters / degraded signal ─────────────────────────────
+
+/** Sliding window used to decide whether recent failures count as a "spike". */
+const FAILURE_WINDOW_MS = 5 * 60 * 1000;
+/** Need at least this many attempts in the window before marking degraded. */
+const MIN_SAMPLES_FOR_DEGRADED = 3;
+/** Degraded when recent failure rate is at or above this threshold. */
+const FAILURE_RATE_THRESHOLD = 0.5;
+
+export interface IndexerEventCounters {
+  eventsProcessed: number;
+  eventsFailed: number;
+  lastErrorAt: string | null;
+  /** True when recent failure rate indicates a spike (not just lifetime totals). */
+  degraded: boolean;
+}
+
 // ─── Worker Class ─────────────────────────────────────────────────────────────
 
 export class SorobanEventWorker {
@@ -77,7 +96,29 @@ export class SorobanEventWorker {
 
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | undefined;
+  /**
+   * In-flight fetch/process work from either the scheduler or `triggerPoll`.
+   * `waitForDrain()` awaits this so graceful shutdown covers replay batches too.
+   */
   private activeBatch: Promise<void> | null = null;
+  /** Promise chain that serializes all `fetchAndProcessEvents` invocations. */
+  private batchMutex: Promise<void> = Promise.resolve();
+
+  /** Lifetime count of events that processed without throwing. */
+  private eventsProcessed = 0;
+  /** Lifetime count of events that threw during processing. */
+  private eventsFailed = 0;
+  /** Timestamp of the most recent per-event processing failure. */
+  private lastErrorAt: Date | null = null;
+  /** Recent attempt outcomes for sliding-window spike detection. */
+  private recentOutcomes: { ok: boolean; at: number }[] = [];
+
+  /**
+   * Stable id attached to every log line emitted by the background poll
+   * loop, since these callbacks fire outside of any HTTP request and would
+   * otherwise have no requestContext (and thus no correlation id) at all.
+   */
+  private readonly workerId = `soroban-worker:${randomUUID()}`;
 
   constructor() {
     const rpcUrl =
@@ -89,6 +130,44 @@ export class SorobanEventWorker {
     );
     this.startLedger = parseInt(process.env.INDEXER_START_LEDGER ?? "0", 10);
     this.server = new rpc.Server(rpcUrl, { allowHttp: true });
+  }
+
+  /**
+   * Snapshot of event-processing counters for /health and admin metrics.
+   * `degraded` is true when ≥50% of attempts in the last 5 minutes failed
+   * (with at least 3 samples), so a broken indexer fails the health check
+   * even when lag stays low because `updatedAt` is bumped every poll.
+   */
+  getEventCounters(): IndexerEventCounters {
+    return {
+      eventsProcessed: this.eventsProcessed,
+      eventsFailed: this.eventsFailed,
+      lastErrorAt: this.lastErrorAt?.toISOString() ?? null,
+      degraded: this.isFailureSpike(),
+    };
+  }
+
+  /** @internal Reset counters — used by unit tests. */
+  resetEventCounters(): void {
+    this.eventsProcessed = 0;
+    this.eventsFailed = 0;
+    this.lastErrorAt = null;
+    this.recentOutcomes = [];
+  }
+
+  private recordOutcome(ok: boolean): void {
+    const now = Date.now();
+    this.recentOutcomes.push({ ok, at: now });
+    const cutoff = now - FAILURE_WINDOW_MS;
+    this.recentOutcomes = this.recentOutcomes.filter((o) => o.at >= cutoff);
+  }
+
+  private isFailureSpike(): boolean {
+    const cutoff = Date.now() - FAILURE_WINDOW_MS;
+    const recent = this.recentOutcomes.filter((o) => o.at >= cutoff);
+    if (recent.length < MIN_SAMPLES_FOR_DEGRADED) return false;
+    const failed = recent.filter((o) => !o.ok).length;
+    return failed / recent.length >= FAILURE_RATE_THRESHOLD;
   }
 
   /**
@@ -118,23 +197,49 @@ export class SorobanEventWorker {
     logger.info("[SorobanWorker] Stopped.");
   }
 
-  /** Wait for the currently-running poll batch to finish (no-op if idle). */
+  /** Wait for the currently-running poll/replay batch to finish (no-op if idle). */
   async waitForDrain(): Promise<void> {
     if (this.activeBatch) await this.activeBatch;
   }
 
-  /** Trigger an immediate poll cycle (used for replay and manual updates). */
+  /**
+   * Trigger an immediate poll cycle (used for replay and manual updates).
+   * Serialized with the scheduled poll via `runExclusive` so two cursor writes
+   * cannot overlap and regress `lastCursor` (#843).
+   */
   async triggerPoll(): Promise<void> {
     if (!this.isRunning) return;
 
     try {
-      await this.fetchAndProcessEvents();
+      await this.runExclusive(() => this.fetchAndProcessEvents());
     } catch (err) {
       logger.error("[SorobanWorker] Manual poll error:", err);
     }
   }
 
   // ─── Internal ──────────────────────────────────────────────────────────────
+
+  /**
+   * Run `fn` exclusively with any other poll/replay batch.
+   * Registers the work on `activeBatch` so `waitForDrain` awaits replays too.
+   */
+  private runExclusive(fn: () => Promise<void>): Promise<void> {
+    const run = this.batchMutex.then(fn);
+    // Keep the mutex chain alive even when a batch rejects.
+    const gate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.batchMutex = gate;
+    this.activeBatch = gate;
+    // Clear only if nothing newer registered on activeBatch after this gate.
+    void gate.then(() => {
+      if (this.activeBatch === gate) {
+        this.activeBatch = null;
+      }
+    });
+    return run;
+  }
 
   private scheduleNext(): void {
     if (!this.isRunning) return;
@@ -152,9 +257,9 @@ export class SorobanEventWorker {
       update: {},
     });
     await tx.stream.upsert({
-      where: { streamId: 0 },
+      where: { streamId: 0n },
       create: {
-        streamId: 0,
+        streamId: 0n,
         sender: systemUser,
         recipient: systemUser,
         tokenAddress:
@@ -172,13 +277,13 @@ export class SorobanEventWorker {
   }
 
   private async poll(): Promise<void> {
-    this.activeBatch = this.fetchAndProcessEvents().catch((err) => {
-      logger.error("[SorobanWorker] Unhandled error during poll:", err);
-    });
     try {
-      await this.activeBatch;
+      await this.runExclusive(() =>
+        this.fetchAndProcessEvents().catch((err) => {
+          logger.error("[SorobanWorker] Unhandled error during poll:", err);
+        }),
+      );
     } finally {
-      this.activeBatch = null;
       this.scheduleNext();
     }
   }
@@ -189,15 +294,7 @@ export class SorobanEventWorker {
    */
   private async fetchAndProcessEvents(): Promise<void> {
     // Ensure an IndexerState row exists on first run.
-    const state = await prisma.indexerState.upsert({
-      where: { id: INDEXER_STATE_ID },
-      create: {
-        id: INDEXER_STATE_ID,
-        lastLedger: this.startLedger,
-        lastCursor: null,
-      },
-      update: {},
-    });
+    const state = await ensureIndexerState(this.startLedger);
 
     const baseFilter = {
       filters: [
@@ -242,10 +339,15 @@ export class SorobanEventWorker {
 
       try {
         await this.processEvent(event);
+        this.eventsProcessed += 1;
+        this.recordOutcome(true);
         // Use the event ID as the cursor if pagingToken is not available
         lastCursor = event.id;
         lastLedger = event.ledger;
       } catch (err) {
+        this.eventsFailed += 1;
+        this.lastErrorAt = new Date();
+        this.recordOutcome(false);
         logger.error(
           `[SorobanWorker] Failed to process event ${event.id}:`,
           err,
@@ -364,7 +466,7 @@ export class SorobanEventWorker {
           },
         },
         create: {
-          streamId: 0,
+          streamId: 0n,
           eventType: "FEE_CONFIG_UPDATED",
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
@@ -420,7 +522,7 @@ export class SorobanEventWorker {
           },
         },
         create: {
-          streamId: 0,
+          streamId: 0n,
           eventType: "ADMIN_TRANSFERRED",
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
@@ -453,7 +555,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (
@@ -573,7 +675,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["amount"] || !body["new_deposited_amount"]) {
@@ -654,7 +756,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["recipient"] || !body["amount"] || !body["timestamp"]) {
@@ -726,7 +828,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["amount_withdrawn"] || !body["refunded_amount"]) {
@@ -799,7 +901,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["recipient"] || !body["total_withdrawn"]) {
@@ -872,7 +974,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["treasury"] || !body["fee_amount"] || !body["token"]) {
@@ -933,7 +1035,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["sender"] || !body["paused_at"]) {
@@ -1005,7 +1107,7 @@ export class SorobanEventWorker {
     event: rpc.Api.EventResponse,
     streamIdTopic: xdr.ScVal,
   ): Promise<void> {
-    const streamId = Number(decodeU64(streamIdTopic));
+    const streamId = decodeU64(streamIdTopic);
     const body = decodeMap(event.value);
 
     if (!body["sender"] || !body["new_end_time"]) {

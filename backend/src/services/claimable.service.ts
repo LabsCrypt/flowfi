@@ -4,7 +4,7 @@ const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
 export interface ClaimableStreamState {
-  streamId: number;
+  streamId: bigint;
   ratePerSecond: string;
   depositedAmount: string;
   withdrawnAmount: string;
@@ -18,7 +18,7 @@ export interface ClaimableStreamState {
 }
 
 export interface ClaimableAmountResult {
-  streamId: number;
+  streamId: bigint;
   claimableAmount: string;
   actionable: boolean;
   calculatedAt: number;

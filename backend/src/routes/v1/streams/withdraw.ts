@@ -4,6 +4,7 @@ import logger from '../../../logger.js';
 import { claimableAmountService } from '../../../services/claimable.service.js';
 import { withdraw as sorobanWithdraw } from '../../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../../types/auth.types.js';
+import { parseStreamId } from '../../../lib/stream-id.js';
 
 /**
  * @openapi
@@ -56,9 +57,9 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
-    const parsedStreamId = Number.parseInt(streamIdParam ?? '', 10);
+    const parsedStreamId = parseStreamId(streamIdParam);
 
-    if (!Number.isFinite(parsedStreamId)) {
+    if (parsedStreamId === null) {
       return res.status(400).json({ error: 'Invalid streamId parameter' });
     }
 

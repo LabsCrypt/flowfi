@@ -326,7 +326,7 @@ describe('SorobanEventWorker', () => {
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           create: expect.objectContaining({
-            streamId: 0,
+            streamId: 0n,
             eventType: 'FEE_CONFIG_UPDATED',
             transactionHash: txHash,
             ledgerSequence: 1005,
@@ -490,7 +490,7 @@ describe('SorobanEventWorker', () => {
       await expect((worker as any).handleTokensWithdrawn(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
       expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
       expect(mockTx.stream.update).toHaveBeenCalledWith({
-        where: { streamId },
+        where: { streamId: BigInt(streamId) },
         data: { withdrawnAmount: '1500', lastUpdateTime: 1700002000 },
       });
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
@@ -604,7 +604,7 @@ describe('SorobanEventWorker', () => {
 
       const mockTx = {
         user: { upsert: vi.fn().mockResolvedValue({}) },
-        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0, isActive: false }) },
+        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0n, isActive: false }) },
         streamEvent: {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: vi.fn().mockResolvedValue({ id: 'event-admin-transferred' }),
@@ -622,13 +622,147 @@ describe('SorobanEventWorker', () => {
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           create: expect.objectContaining({
-            streamId: 0,
+            streamId: 0n,
             eventType: 'ADMIN_TRANSFERRED',
             transactionHash: txHash,
             ledgerSequence: 1006,
           }),
         })
       );
+    });
+
+    it('persists a u64 streamId above int4 max (2^31-1) without Number coercion (#829)', async () => {
+      // int4 max is 2_147_483_647; this value would previously fail with
+      // "value out of range for type integer" on insert.
+      const streamId = 3_000_000_000n;
+      const txHash = 'large-u64-stream-id-tx';
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'large-u64-event-1',
+        type: 'contract',
+        ledger: 5000,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
+          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+        ],
+        value: {
+          switch: () => ({ value: 4 }),
+          map: () => [
+            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
+            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '100' }) }) }) },
+            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '86400' }) }) }) },
+            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
+          ] as any,
+        } as any,
+      };
+
+      let capturedStreamUpsert: any = null;
+      let capturedEventUpsert: any = null;
+      const mockTx = {
+        user: { upsert: vi.fn().mockResolvedValue({}) },
+        stream: {
+          upsert: vi.fn().mockImplementation((args) => {
+            capturedStreamUpsert = args;
+            return Promise.resolve({ streamId, isActive: true });
+          }),
+        },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockImplementation((args) => {
+            capturedEventUpsert = args;
+            return Promise.resolve({ id: 'event-large-u64' });
+          }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      await expect(
+        (worker as any).handleStreamCreated(mockEvent, mockEvent.topic![1]),
+      ).resolves.not.toThrow();
+
+      expect(capturedStreamUpsert?.where?.streamId).toBe(streamId);
+      expect(capturedStreamUpsert?.create?.streamId).toBe(streamId);
+      expect(typeof capturedStreamUpsert?.create?.streamId).toBe('bigint');
+      expect(capturedStreamUpsert.create.streamId > 2_147_483_647n).toBe(true);
+
+      expect(capturedEventUpsert?.create?.streamId).toBe(streamId);
+      expect(typeof capturedEventUpsert?.create?.streamId).toBe('bigint');
+    });
+  });
+
+  describe('poll / triggerPoll serialization (#843)', () => {
+    it('does not run fetchAndProcessEvents concurrently for overlapping poll and triggerPoll', async () => {
+      let concurrent = 0;
+      let maxConcurrent = 0;
+      const releases: Array<() => void> = [];
+
+      const fetchSpy = vi
+        .spyOn(worker as any, 'fetchAndProcessEvents')
+        .mockImplementation(async () => {
+          concurrent += 1;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await new Promise<void>((resolve) => {
+            releases.push(resolve);
+          });
+          concurrent -= 1;
+        });
+
+      // Avoid scheduling real timers from poll()'s finally
+      vi.spyOn(worker as any, 'scheduleNext').mockImplementation(() => {});
+      (worker as any).isRunning = true;
+
+      const pollPromise = (worker as any).poll();
+      const triggerPromise = worker.triggerPoll();
+
+      await vi.waitFor(() => expect(releases.length).toBe(1));
+      expect(concurrent).toBe(1);
+
+      releases[0]!();
+      await vi.waitFor(() => expect(releases.length).toBe(2));
+      expect(concurrent).toBe(1);
+
+      releases[1]!();
+      await Promise.all([pollPromise, triggerPromise]);
+
+      expect(maxConcurrent).toBe(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('waitForDrain awaits an in-flight triggerPoll batch', async () => {
+      let resolveFetch!: () => void;
+      vi.spyOn(worker as any, 'fetchAndProcessEvents').mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      );
+      vi.spyOn(worker as any, 'scheduleNext').mockImplementation(() => {});
+      (worker as any).isRunning = true;
+
+      const triggerPromise = worker.triggerPoll();
+      // activeBatch is registered synchronously in runExclusive
+      expect((worker as any).activeBatch).not.toBeNull();
+
+      let drained = false;
+      const drainPromise = worker.waitForDrain().then(() => {
+        drained = true;
+      });
+
+      await Promise.resolve();
+      expect(drained).toBe(false);
+
+      resolveFetch();
+      await Promise.all([triggerPromise, drainPromise]);
+      expect(drained).toBe(true);
+      expect((worker as any).activeBatch).toBeNull();
     });
   });
 });

@@ -123,7 +123,7 @@ describe('stream action routes', () => {
       streamId: 7,
       txHash: 'pause-tx-hash',
     });
-    expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7);
+    expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7n);
   });
 
   it('rejects a raw signed transaction bearer token without a JWT', async () => {
@@ -173,7 +173,7 @@ describe('stream action routes', () => {
       streamId: 9,
       txHash: 'resume-tx-hash',
     });
-    expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9);
+    expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9n);
   });
 
   it('POST /v1/streams/:streamId/withdraw withdraws the claimable amount for the recipient', async () => {
@@ -213,7 +213,7 @@ describe('stream action routes', () => {
       txHash: 'withdraw-tx-hash',
       amount: '100',
     });
-    expect(mockWithdraw).toHaveBeenCalledWith(11, recipient.publicKey());
+    expect(mockWithdraw).toHaveBeenCalledWith(11n, recipient.publicKey());
     expect(mockPrisma.streamEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

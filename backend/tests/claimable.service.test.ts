@@ -131,6 +131,57 @@ describe('ClaimableAmountService', () => {
     expect(third.cached).toBe(false);
   });
 
+  it('reflects an indexed withdrawal immediately, without waiting for the cache TTL', () => {
+    // The cache key is derived from getStateFingerprint(), which folds in
+    // withdrawnAmount and lastUpdateTime (see claimable.service.ts). When the
+    // indexer processes a TokensWithdrawn event it updates those fields on the
+    // Stream row, so the *next* read (which is always given the freshly
+    // reloaded stream from the DB, see stream.controller.ts / withdraw.ts)
+    // naturally lands on a different cache key and can never return the
+    // pre-withdrawal cached value — invalidation falls out of the key design
+    // rather than needing an explicit "on withdrawal, delete this key" hook.
+    vi.setSystemTime(50_000);
+    const service = new ClaimableAmountService({
+      cacheTtlMs: 60_000, // deliberately long TTL to prove this isn't just a TTL expiry
+    });
+
+    const preWithdrawalState = makeStreamState({
+      streamId: 7,
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '0',
+      lastUpdateTime: 0,
+    });
+
+    // Prime the cache with the pre-withdrawal state.
+    const primed = service.getClaimableAmount(preWithdrawalState, 40);
+    expect(primed.cached).toBe(false);
+    expect(primed.claimableAmount).toBe('400'); // 40s * 10/s
+
+    // A repeated read with the identical state still hits the cache.
+    const repeated = service.getClaimableAmount(preWithdrawalState, 40);
+    expect(repeated.cached).toBe(true);
+
+    // Simulate the indexer processing a TokensWithdrawn event: withdrawnAmount
+    // and lastUpdateTime are advanced on the stream row, exactly as
+    // handleTokensWithdrawn does in soroban-event-worker.ts.
+    const postWithdrawalState = makeStreamState({
+      streamId: 7,
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '400',
+      lastUpdateTime: 40,
+    });
+
+    // Well within the 60s TTL, so this only passes if the state change (not
+    // TTL expiry) is what causes the fresh calculation.
+    vi.advanceTimersByTime(1_000);
+    const afterWithdrawal = service.getClaimableAmount(postWithdrawalState, 40);
+
+    expect(afterWithdrawal.cached).toBe(false);
+    expect(afterWithdrawal.claimableAmount).toBe('0'); // fully withdrawn as of lastUpdateTime=40
+  });
+
   it('caps multiplication overflow at the remaining balance', () => {
     const i128Max = ((1n << 127n) - 1n).toString();
     vi.setSystemTime(1_000_000);

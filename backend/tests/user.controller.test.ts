@@ -113,6 +113,24 @@ describe('User Controller', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(mockUser);
     });
+
+    it('should query with an explicit select clause excluding internal-only fields', async () => {
+      const publicKey = 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ';
+      req.params = { publicKey };
+      const mockUser = { id: 'uuid-1', publicKey, createdAt: new Date(), updatedAt: new Date(), sentStreams: [], receivedStreams: [] };
+      (prisma.user.findUnique as any).mockResolvedValue(mockUser);
+
+      await getUser(req as Request, res as Response, next);
+
+      const call = (prisma.user.findUnique as any).mock.calls[0][0];
+      expect(call.select).toBeDefined();
+      expect(call.include).toBeUndefined();
+
+      const jsonArg = (res.json as any).mock.calls[0][0];
+      expect(jsonArg).not.toHaveProperty('passwordHash');
+      expect(jsonArg).not.toHaveProperty('internalNotes');
+      expect(jsonArg).not.toHaveProperty('apiSecret');
+    });
   });
 
   describe('getUserEvents', () => {
@@ -149,6 +167,11 @@ describe('User Controller', () => {
       await getUserEvents(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.streamEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: { timestamp: 'desc' },
+        }),
+      );
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
         data: [],
         total: 0,

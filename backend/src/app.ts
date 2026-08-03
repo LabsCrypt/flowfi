@@ -16,6 +16,7 @@ import { requestIdMiddleware } from "./middleware/requestId.js";
 import v1Routes from "./routes/v1/index.js";
 
 import healthRoutes from "./routes/health.routes.js";
+import "./lib/stream-id.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";

@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma.js';
 /**
  * Update the status and active flag of a stream in the database.
  */
-export const updateStatus = async (streamId: number, status: 'ACTIVE' | 'CANCELLED' | 'COMPLETED' | 'PAUSED') => {
+export const updateStatus = async (streamId: bigint, status: 'ACTIVE' | 'CANCELLED' | 'COMPLETED' | 'PAUSED') => {
   return prisma.stream.update({
     where: { streamId },
     data: {
