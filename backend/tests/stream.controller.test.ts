@@ -43,6 +43,13 @@ vi.mock("../src/logger.js", () => ({
   },
 }));
 
+type TestRequest = {
+  body: Record<string, unknown>;
+  query: Record<string, unknown>;
+  params: Record<string, unknown>;
+  user?: { publicKey?: string };
+};
+
 describe("Stream Controller", () => {
   let req: TestRequest;
   let res: Partial<Response>;
@@ -247,8 +254,8 @@ describe("Stream Controller", () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(prisma.streamEvent.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { streamId: 123 },
-          orderBy: { timestamp: 'desc' },
+          where: { streamId: 123n },
+          orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
           take: 10,
           skip: 0,
         }),

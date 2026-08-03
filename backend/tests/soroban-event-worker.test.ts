@@ -575,7 +575,7 @@ describe('SorobanEventWorker', () => {
       // Sanity check: depositedAmount/endTime from the (only) applied update
       // match what a single application should produce.
       expect(firstUpdateArgs.data.depositedAmount).toBe('1200');
-      expect(expectedEndTime).toBe(1700000000 + Math.floor(1200 / 10) + 0);
+      expect(expectedEndTime).toBe(1700000000n + BigInt(Math.floor(1200 / 10)));
     });
 
     it('should process admin_transferred events successfully', async () => {

@@ -54,7 +54,7 @@ describe('Action Controller vs Worker Event Write Race Guard (Issue #831)', () =
 
   it('withdrawHandler uses upsert on transactionHash_eventType preventing P2002 duplicate crashes when worker processes event first', async () => {
     const mockStream = {
-      streamId: 100,
+      streamId: 100n,
       recipient: 'GRECIPIENT',
       withdrawnAmount: '0',
       depositedAmount: '1000',
@@ -77,7 +77,7 @@ describe('Action Controller vs Worker Event Write Race Guard (Issue #831)', () =
         },
       },
       create: expect.objectContaining({
-        streamId: 100,
+        streamId: 100n,
         eventType: 'WITHDRAWN',
         transactionHash: 'tx_race_123',
       }),

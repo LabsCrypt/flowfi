@@ -1,9 +1,8 @@
-import { randomUUID } from "crypto";
 import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
-import logger, { requestContext } from "../logger.js";
+import logger from "../logger.js";
 import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
 
@@ -112,13 +111,6 @@ export class SorobanEventWorker {
   private lastErrorAt: Date | null = null;
   /** Recent attempt outcomes for sliding-window spike detection. */
   private recentOutcomes: { ok: boolean; at: number }[] = [];
-
-  /**
-   * Stable id attached to every log line emitted by the background poll
-   * loop, since these callbacks fire outside of any HTTP request and would
-   * otherwise have no requestContext (and thus no correlation id) at all.
-   */
-  private readonly workerId = `soroban-worker:${randomUUID()}`;
 
   constructor() {
     const rpcUrl =
@@ -1125,11 +1117,9 @@ export class SorobanEventWorker {
         select: { pausedAt: true, totalPausedDuration: true },
       });
 
-      // Calculate the duration of this pause interval
-      let additionalPausedDuration = 0;
-      if (currentStream.pausedAt) {
-        additionalPausedDuration = timestamp - currentStream.pausedAt;
-      }
+      const additionalPausedDuration = currentStream.pausedAt
+        ? timestamp - Number(currentStream.pausedAt)
+        : 0;
 
       const newTotalPausedDuration =
         currentStream.totalPausedDuration + additionalPausedDuration;

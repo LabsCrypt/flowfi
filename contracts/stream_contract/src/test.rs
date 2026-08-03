@@ -433,8 +433,8 @@ fn test_backdated_start_time_would_immediately_vest_full_amount() {
     // env.ledger().timestamp() — but it demonstrates the risk that would exist
     // if a caller-supplied start_time were ever added.
     let mut stream = client.get_stream(&stream_id).unwrap();
-    stream.start_time = 0;          // backdated far into the past
-    stream.last_update_time = 0;    // sync anchor to match
+    stream.start_time = 0; // backdated far into the past
+    stream.last_update_time = 0; // sync anchor to match
     env.as_contract(&client.address, || {
         env.storage()
             .persistent()
@@ -2709,11 +2709,8 @@ fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
 fn event_field_names(env: &Env, payload: &soroban_sdk::Val) -> std::vec::Vec<std::string::String> {
     let map = soroban_sdk::Map::<Symbol, soroban_sdk::Val>::try_from_val(env, payload)
         .expect("event data is not a Map");
-    let mut names: std::vec::Vec<std::string::String> = map
-        .keys()
-        .iter()
-        .map(|sym| sym.to_string())
-        .collect();
+    let mut names: std::vec::Vec<std::string::String> =
+        map.keys().iter().map(|sym| sym.to_string()).collect();
     names.sort();
     names
 }

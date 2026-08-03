@@ -20,6 +20,7 @@ const {
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
     },
@@ -214,9 +215,9 @@ describe('stream action routes', () => {
       amount: '100',
     });
     expect(mockWithdraw).toHaveBeenCalledWith(11n, recipient.publicKey());
-    expect(mockPrisma.streamEvent.create).toHaveBeenCalledWith(
+    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        create: expect.objectContaining({
           eventType: 'WITHDRAWN',
           amount: '100',
           transactionHash: 'withdraw-tx-hash',

@@ -1,4 +1,4 @@
-import { renderHook, waitFor, act } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import React from "react";
@@ -33,6 +33,7 @@ describe("useIncomingStreams hooks", () => {
 
   afterEach(() => {
     queryClient.clear();
+    vi.useRealTimers();
   });
 
   const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -112,9 +113,9 @@ describe("useIncomingStreams hooks", () => {
     });
 
     it("invalidates incomingStreamsQueryKey(publicKey) on success", async () => {
+      vi.useFakeTimers();
       vi.mocked(withdrawFromStream).mockResolvedValue({ success: true, txHash: "tx-hash" });
       vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
-
       const { result } = renderHook(
         () => useWithdrawIncomingStream({} as unknown as WalletSession, "pubkey"),
         { wrapper }
@@ -134,12 +135,16 @@ describe("useIncomingStreams hooks", () => {
         } as unknown as IncomingStreamRecord);
       });
 
-      // Wait for pollIndexerForWithdraw to complete and call invalidateQueries
-      await waitFor(() => {
-        expect(invalidateSpy).toHaveBeenCalledWith({
-          queryKey: incomingStreamsQueryKey("pubkey"),
-        });
-      }, { timeout: 10000 });
+      // pollIndexerForWithdraw retries with exponential backoff
+      // (1+2+4+8+16+32s) before falling back to invalidateQueries, so
+      // fast-forward the fake clock past all retries.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(63_000);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: incomingStreamsQueryKey("pubkey"),
+      });
     });
   });
 });

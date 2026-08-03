@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mockFindUnique = vi.fn();
-const mockCreate = vi.fn();
+const mocks = vi.hoisted(() => ({
+  mockFindUnique: vi.fn(),
+  mockCreate: vi.fn(),
+}));
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     indexerState: {
-      findUnique: mockFindUnique,
-      create: mockCreate,
+      findUnique: mocks.mockFindUnique,
+      create: mocks.mockCreate,
     },
   },
 }));
@@ -35,12 +37,12 @@ describe('ensureIndexerState', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    mockFindUnique.mockResolvedValueOnce(existing);
+    mocks.mockFindUnique.mockResolvedValueOnce(existing);
 
     const result = await ensureIndexerState(0);
 
     expect(result).toEqual(existing);
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mocks.mockCreate).not.toHaveBeenCalled();
   });
 
   it('creates and returns a new row when none exists', async () => {
@@ -51,13 +53,13 @@ describe('ensureIndexerState', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    mockFindUnique.mockResolvedValueOnce(null);
-    mockCreate.mockResolvedValueOnce(created);
+    mocks.mockFindUnique.mockResolvedValueOnce(null);
+    mocks.mockCreate.mockResolvedValueOnce(created);
 
     const result = await ensureIndexerState(10);
 
     expect(result).toEqual(created);
-    expect(mockCreate).toHaveBeenCalledWith({
+    expect(mocks.mockCreate).toHaveBeenCalledWith({
       data: { id: 'singleton', lastLedger: 10, lastCursor: null },
     });
   });
@@ -72,26 +74,26 @@ describe('ensureIndexerState', () => {
     };
 
     // First findUnique returns null (no row yet)
-    mockFindUnique.mockResolvedValueOnce(null);
+    mocks.mockFindUnique.mockResolvedValueOnce(null);
     // Create throws P2002 (race condition duplicate insert)
     const p2002Error = Object.assign(new Error('Unique constraint failed'), {
       code: 'P2002',
     });
-    mockCreate.mockRejectedValueOnce(p2002Error);
+    mocks.mockCreate.mockRejectedValueOnce(p2002Error);
     // Second findUnique returns the existing row created by the concurrent caller
-    mockFindUnique.mockResolvedValueOnce(existingRow);
+    mocks.mockFindUnique.mockResolvedValueOnce(existingRow);
 
     const result = await ensureIndexerState(0);
 
     expect(result).toEqual(existingRow);
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockFindUnique).toHaveBeenCalledTimes(2);
+    expect(mocks.mockCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.mockFindUnique).toHaveBeenCalledTimes(2);
   });
 
   it('re-throws non-P2002 errors', async () => {
-    mockFindUnique.mockResolvedValueOnce(null);
+    mocks.mockFindUnique.mockResolvedValueOnce(null);
     const genericError = new Error('connection refused');
-    mockCreate.mockRejectedValueOnce(genericError);
+    mocks.mockCreate.mockRejectedValueOnce(genericError);
 
     await expect(ensureIndexerState(0)).rejects.toThrow('connection refused');
   });

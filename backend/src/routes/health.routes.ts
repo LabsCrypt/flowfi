@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
+import { isRedisAvailable } from '../lib/redis.js';
+import { checkRpcHealth } from '../services/sorobanService.js';
 import { sorobanEventWorker } from '../workers/soroban-event-worker.js';
 
 const router = Router();
@@ -161,7 +163,7 @@ router.get('/', async (_req: Request, res: Response) => {
         status: dbStatus === 'connected' ? 'ok' : 'down',
       },
       indexer: {
-        status: !indexerEnabled ? 'disabled' : indexerDegraded ? 'degraded' : 'ok',
+        status: !indexerEnabled ? 'disabled' : indexerFailureDegraded ? 'degraded' : 'ok',
         enabled: indexerEnabled,
         lagSeconds: indexerLag === -1 ? null : indexerLag,
       },
