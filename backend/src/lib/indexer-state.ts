@@ -1,15 +1,10 @@
 import { prisma } from './prisma.js';
+import type { IndexerState } from '../generated/prisma/index.js';
 import logger from '../logger.js';
 
 export const INDEXER_STATE_ID = 'singleton';
 
-export interface IndexerStateRow {
-  id: string;
-  lastLedger: number;
-  lastCursor: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IndexerStateRow = IndexerState;
 
 /**
  * Ensure the singleton indexer_state row exists.

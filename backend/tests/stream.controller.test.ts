@@ -1,24 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  createStream,
-  listStreams,
-  getStream,
-  getStreamClaimableAmount,
-  pauseStream,
-  resumeStream,
-} from "../src/controllers/stream.controller.js";
-import { prisma } from "../src/lib/prisma.js";
-import { claimableAmountService } from "../src/services/claimable.service.js";
-import * as sorobanService from "../src/services/sorobanService.js";
-import type { Request, Response } from "express";
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, pauseStream, resumeStream } from '../src/controllers/stream.controller.js';
+import { prisma } from '../src/lib/prisma.js';
+import { claimableAmountService } from '../src/services/claimable.service.js';
+import * as sorobanService from '../src/services/sorobanService.js';
+import type { Request, Response } from 'express';
 
-type TestRequest = Partial<Request> & {
-  user?: {
-    publicKey: string;
-  };
-};
-
-vi.mock("../src/lib/prisma.js", () => ({
+vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     stream: {
       upsert: vi.fn(),
@@ -29,6 +16,8 @@ vi.mock("../src/lib/prisma.js", () => ({
     },
     streamEvent: {
       create: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
     },
   },
 }));
@@ -53,6 +42,13 @@ vi.mock("../src/logger.js", () => ({
     warn: vi.fn(),
   },
 }));
+
+type TestRequest = {
+  body: Record<string, unknown>;
+  query: Record<string, unknown>;
+  params: Record<string, unknown>;
+  user?: { publicKey?: string };
+};
 
 describe("Stream Controller", () => {
   let req: TestRequest;
@@ -235,8 +231,34 @@ describe("Stream Controller", () => {
       await getStream(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(200);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ streamId: 123 }),
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ streamId: 123 }));
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            events: { orderBy: { timestamp: 'desc' } },
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('getStreamEvents', () => {
+    it('should paginate stream events ordered by timestamp desc', async () => {
+      req.params = { streamId: '123' };
+      req.query = { limit: '10', offset: '0' };
+      (prisma.streamEvent.findMany as any).mockResolvedValue([]);
+      (prisma.streamEvent.count as any).mockResolvedValue(0);
+
+      await getStreamEvents(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.streamEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { streamId: 123n },
+          orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+          take: 10,
+          skip: 0,
+        }),
       );
     });
   });

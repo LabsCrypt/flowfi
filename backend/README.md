@@ -6,6 +6,8 @@ This is the Node.js / Express backend for FlowFi. It provides the REST API for t
 
 - `npm install`: Installs dependencies.
 - `npm run dev`: Starts the development server using nodemon.
+  
+  > **Note:** nodemon watches only the `src/` directory for changes. Tests live in the `tests/` directory (outside the watch scope), so they never trigger server reloads. If tests were ever colocated inside `src/` in the future, add ignore patterns (e.g. `src/**/*.test.ts`) to nodemon.json to prevent unwanted restarts.
 - `npm run build`: Compiles TypeScript to JavaScript.
 - `npm start`: Runs the compiled server.
 - `npm run db:push`: Pushes Prisma schema changes to the database.
@@ -32,6 +34,23 @@ We use Prisma as our ORM to interact with PostgreSQL.
 - Configuration (schema path, migrations path, datasource URL) is defined in `prisma.config.ts`.
 - Run `npx prisma studio` to view the database through a web UI.
 
+### `prisma.config.ts` vs `prisma/schema.prisma`
+
+There are two Prisma files, and they do different jobs:
+
+| File | Owns |
+| ---- | ---- |
+| `prisma/schema.prisma` | The **data model** — models, enums, relations, the `datasource` and `generator` blocks. This is what `prisma generate` turns into the client. |
+| `prisma.config.ts` | The **Prisma CLI configuration** — where the CLI looks for things and how it connects when you run `prisma generate`, `prisma migrate`, `prisma db push`, or `prisma studio`. |
+
+`prisma.config.ts` exists as a separate file because it is TypeScript that Node evaluates before the CLI runs, so it can do things `schema.prisma` cannot — most importantly read environment variables. Prisma 7 (this project is on `prisma@^7.4.1`) no longer auto-loads `.env` for CLI commands, which is why the file starts with `import "dotenv/config"`.
+
+What it currently sets:
+
+- `schema: "prisma/schema.prisma"` — path to the schema, so CLI commands work from the `backend/` directory without a `--schema` flag.
+- `migrations.path: "prisma/migrations"` — where migration folders are read from and written to.
+- `datasource.url: process.env["DATABASE_URL"]` — the connection string the CLI uses.
+
 ### Seeding the database
 
 `prisma/seed.ts` populates the database with demo fixtures for local development. Run it with:
@@ -49,6 +68,14 @@ The script is idempotent (it uses `upsert`/fixed IDs), so it's safe to run multi
 - One demo `StreamEvent` (`eventType: 'CREATED'`) attached to that stream, with sample transaction hash, ledger sequence, and metadata.
 
 These fixtures are intended purely for local development/demo purposes so the frontend has data to render out of the box; they are not used in automated tests.
+
+### Troubleshooting
+
+If a `prisma generate` / `prisma migrate` command misbehaves, check `prisma.config.ts` before assuming the schema is at fault:
+
+- **"Environment variable not found: DATABASE_URL"** or the CLI connecting to the wrong database — the config resolves `DATABASE_URL` at load time via `dotenv/config`, so it reads `backend/.env`. A variable exported only in your shell after the process starts, or set in a `.env` outside `backend/`, will not be picked up.
+- **CLI can't find the schema or migrations** — these paths are relative to `backend/`. Running `prisma` from the repo root will not resolve them.
+- **`npm run prisma:seed` not running the seed script** — the seed command is declared in the legacy `prisma.seed` field in `package.json`. Prisma 7 expects it as `migrations.seed` in `prisma.config.ts`, so if seeding silently does nothing, check both places.
 
 ## /v1 API
 

@@ -68,6 +68,8 @@ npm run prisma:generate
 npm run prisma:migrate
 ```
 
+These commands read their paths and connection string from `backend/prisma.config.ts`, which configures the Prisma CLI separately from the data model in `backend/prisma/schema.prisma`. See [Prisma Database](../backend/README.md#prismaconfigts-vs-prismaschemaprisma) in the backend README for what each file owns and what to check when a `generate`/`migrate` command misbehaves.
+
 Start backend:
 
 ```bash
@@ -199,6 +201,7 @@ Configure in `.env`:
 * Check `DATABASE_URL`
 * Run `prisma generate`
 * Reset DB if schema drift occurs
+* Check `backend/prisma.config.ts` — it sets the schema path, migrations path, and the `DATABASE_URL` the CLI uses ([details](../backend/README.md#troubleshooting))
 
 ---
 

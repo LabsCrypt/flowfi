@@ -61,7 +61,7 @@ describe('Stream Validator', () => {
     };
     const result = createStreamSchema.safeParse(data);
     expect(result.success).toBe(false);
-    expect(result.error?.issues[0].message).toBe('Rate exceeds maximum allowed value');
+    expect(result.error!.issues[0]!.message).toBe('Rate exceeds maximum allowed value');
   });
 
   it('should accept ratePerSecond at i128 max', () => {

@@ -16,14 +16,14 @@ describe('JWT helpers', () => {
 
   it('round-trips through verifyJwt', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'flowfi-api' });
 
     expect(verifyJwt(token)).toEqual({ publicKey: 'GTESTPUBLICKEY123' });
   });
 
   it('returns null for a tampered header', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'flowfi-api' });
     const parts = token.split('.') as [string, string, string];
     parts[0] = parts[0].slice(0, -1) + (parts[0].slice(-1) === 'A' ? 'B' : 'A');
 
@@ -32,7 +32,7 @@ describe('JWT helpers', () => {
 
   it('returns null for a tampered body', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'flowfi-api' });
     const parts = token.split('.') as [string, string, string];
     parts[1] = parts[1].slice(0, -1) + (parts[1].slice(-1) === 'A' ? 'B' : 'A');
 
@@ -41,7 +41,7 @@ describe('JWT helpers', () => {
 
   it('returns null for a tampered signature', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'flowfi-api' });
     const parts = token.split('.') as [string, string, string];
     // Replace the signature with invalid data to ensure verification fails
     parts[2] = 'invalid-signature-data-1234567890abcdef';
@@ -51,7 +51,21 @@ describe('JWT helpers', () => {
 
   it('returns null for an expired token', async () => {
     const now = Math.floor(Date.now() / 1000);
-    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now - 3600, exp: now - 1 });
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now - 3600, exp: now - 1, iss: 'flowfi-api', aud: 'flowfi-api' });
+
+    expect(verifyJwt(token)).toBeNull();
+  });
+
+  it('returns null for a token with wrong audience', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'wrong-audience' });
+
+    expect(verifyJwt(token)).toBeNull();
+  });
+
+  it('returns null for a token with wrong issuer', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'wrong-issuer', aud: 'flowfi-api' });
 
     expect(verifyJwt(token)).toBeNull();
   });

@@ -15,7 +15,7 @@ export const adminRateLimiter = rateLimit({
     // Use x-forwarded-for or remote address as key
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0].trim();
+      return forwarded.split(',')[0]?.trim() ?? 'unknown';
     }
     return req.ip ?? 'unknown';
   },
