@@ -246,7 +246,7 @@ describe("Stream Lifecycle Integration Tests", () => {
         include: { senderUser: true, recipientUser: true },
       });
       expect(dbStream).toBeTruthy();
-      expect(dbStream?.streamId).toBe(streamId);
+      expect(dbStream?.streamId).toBe(BigInt(streamId));
       expect(dbStream?.sender).toBe(SENDER);
       expect(dbStream?.recipient).toBe(RECIPIENT);
       expect(dbStream?.isActive).toBe(true);
@@ -513,7 +513,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(response.body.cached).toBe(false);
 
       // Verify RPC was called
-      expect(getClaimableFromChain).toHaveBeenCalledWith(streamId);
+      expect(getClaimableFromChain).toHaveBeenCalledWith(BigInt(streamId));
     });
 
     it("returns fresh data when not stale", async () => {
@@ -629,8 +629,8 @@ describe("Stream Lifecycle Integration Tests", () => {
 
       // ── Step 1: Create ──────────────────────────────────────────────────
       const createEvent = createStreamCreatedEvent(streamId, {
-        deposited_amount: BigInt(100_000),
-        rate_per_second: BigInt(100),
+        deposited_amount: scvI128(BigInt(100_000)),
+        rate_per_second: scvI128(BigInt(100)),
       });
       await worker.processEvent(createEvent);
 
@@ -768,7 +768,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.created",
-        expect.objectContaining({ streamId }),
+        expect.objectContaining({ streamId: BigInt(streamId) }),
       );
 
       // Verify event was received by client (if SSE service is real)
@@ -819,7 +819,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.topped_up",
-        expect.objectContaining({ streamId, amount: "1000" }),
+        expect.objectContaining({ streamId: BigInt(streamId), amount: "1000" }),
       );
     });
 
@@ -866,7 +866,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.cancelled",
-        expect.objectContaining({ streamId }),
+        expect.objectContaining({ streamId: BigInt(streamId) }),
       );
     });
   });

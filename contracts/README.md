@@ -57,6 +57,13 @@ cargo build
 cargo test
 ```
 
+## Rust Toolchain
+
+CI runs on the **stable** Rust toolchain (via `dtolnay/rust-toolchain@stable`)
+with the `wasm32-unknown-unknown` target installed and the `rustfmt` / `clippy`
+components. The workspace and member crates declare `rust-version = "1.81.0"` as
+the minimum supported Rust version.
+
 ## WASM Target
 
 To compile the contract to the `wasm32-unknown-unknown` target for Soroban deployment:

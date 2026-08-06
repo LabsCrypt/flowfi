@@ -308,6 +308,14 @@ impl StreamContract {
         // `now` would discard any already-vested, unwithdrawn tokens.
         stream.deposited_amount += net_amount;
 
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(claimable);
+        let new_end_time = now + (remaining / stream.rate_per_second) as u64;
+
         save_stream(&env, stream_id, &stream);
 
         // Emit top-up event
@@ -318,6 +326,7 @@ impl StreamContract {
                 sender,
                 amount: net_amount,
                 new_deposited_amount: stream.deposited_amount,
+                new_end_time,
             },
         );
 

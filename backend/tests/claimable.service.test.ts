@@ -3,12 +3,12 @@ import { ClaimableAmountService } from '../src/services/claimable.service.js';
 
 function makeStreamState(overrides: Partial<Parameters<ClaimableAmountService['getClaimableAmount']>[0]> = {}) {
   return {
-    streamId: 1,
+    streamId: 1n,
     ratePerSecond: '10',
     depositedAmount: '100',
     withdrawnAmount: '0',
     lastUpdateTime: 0,
-    startTime: 0,
+    startTime: 0n,
     isActive: true,
     isPaused: false,
     pausedAt: null,
@@ -35,7 +35,7 @@ describe('ClaimableAmountService', () => {
 
     const result = service.getClaimableAmount({
       ...makeStreamState({
-        streamId: 1,
+        streamId: 1n,
         ratePerSecond: '5',
         depositedAmount: '500',
         withdrawnAmount: '100',
@@ -61,7 +61,7 @@ describe('ClaimableAmountService', () => {
 
     const result = service.getClaimableAmount({
       ...makeStreamState({
-        streamId: 2,
+        streamId: 2n,
         depositedAmount: '1000',
         withdrawnAmount: '900',
       }),
@@ -80,7 +80,7 @@ describe('ClaimableAmountService', () => {
 
     const result = service.getClaimableAmount({
       ...makeStreamState({
-        streamId: 3,
+        streamId: 3n,
         withdrawnAmount: '100',
         isActive: false,
       }),
@@ -98,7 +98,7 @@ describe('ClaimableAmountService', () => {
 
     const result = service.getClaimableAmount({
       ...makeStreamState({
-        streamId: 4,
+        streamId: 4n,
         withdrawnAmount: '150',
       }),
     });
@@ -114,7 +114,7 @@ describe('ClaimableAmountService', () => {
     });
 
     const input = makeStreamState({
-      streamId: 5,
+      streamId: 5n,
       ratePerSecond: '7',
       depositedAmount: '700',
     });
@@ -131,6 +131,57 @@ describe('ClaimableAmountService', () => {
     expect(third.cached).toBe(false);
   });
 
+  it('reflects an indexed withdrawal immediately, without waiting for the cache TTL', () => {
+    // The cache key is derived from getStateFingerprint(), which folds in
+    // withdrawnAmount and lastUpdateTime (see claimable.service.ts). When the
+    // indexer processes a TokensWithdrawn event it updates those fields on the
+    // Stream row, so the *next* read (which is always given the freshly
+    // reloaded stream from the DB, see stream.controller.ts / withdraw.ts)
+    // naturally lands on a different cache key and can never return the
+    // pre-withdrawal cached value — invalidation falls out of the key design
+    // rather than needing an explicit "on withdrawal, delete this key" hook.
+    vi.setSystemTime(50_000);
+    const service = new ClaimableAmountService({
+      cacheTtlMs: 60_000, // deliberately long TTL to prove this isn't just a TTL expiry
+    });
+
+    const preWithdrawalState = makeStreamState({
+      streamId: 7n,
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '0',
+      lastUpdateTime: 0,
+    });
+
+    // Prime the cache with the pre-withdrawal state.
+    const primed = service.getClaimableAmount(preWithdrawalState, 40);
+    expect(primed.cached).toBe(false);
+    expect(primed.claimableAmount).toBe('400'); // 40s * 10/s
+
+    // A repeated read with the identical state still hits the cache.
+    const repeated = service.getClaimableAmount(preWithdrawalState, 40);
+    expect(repeated.cached).toBe(true);
+
+    // Simulate the indexer processing a TokensWithdrawn event: withdrawnAmount
+    // and lastUpdateTime are advanced on the stream row, exactly as
+    // handleTokensWithdrawn does in soroban-event-worker.ts.
+    const postWithdrawalState = makeStreamState({
+      streamId: 7n,
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '400',
+      lastUpdateTime: 40,
+    });
+
+    // Well within the 60s TTL, so this only passes if the state change (not
+    // TTL expiry) is what causes the fresh calculation.
+    vi.advanceTimersByTime(1_000);
+    const afterWithdrawal = service.getClaimableAmount(postWithdrawalState, 40);
+
+    expect(afterWithdrawal.cached).toBe(false);
+    expect(afterWithdrawal.claimableAmount).toBe('0'); // fully withdrawn as of lastUpdateTime=40
+  });
+
   it('caps multiplication overflow at the remaining balance', () => {
     const i128Max = ((1n << 127n) - 1n).toString();
     vi.setSystemTime(1_000_000);
@@ -140,7 +191,7 @@ describe('ClaimableAmountService', () => {
 
     const result = service.getClaimableAmount({
       ...makeStreamState({
-        streamId: 6,
+        streamId: 6n,
         ratePerSecond: i128Max,
         depositedAmount: i128Max,
         withdrawnAmount: '42',
@@ -177,7 +228,7 @@ describe('ClaimableAmountService', () => {
 
       const result = service.getClaimableAmount({
         ...makeStreamState({
-          streamId: 10_000 + iteration,
+          streamId: BigInt(10_000 + iteration),
           ratePerSecond: rate.toString(),
           depositedAmount: deposited.toString(),
           withdrawnAmount: withdrawn.toString(),

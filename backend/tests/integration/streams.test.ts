@@ -51,6 +51,7 @@ const { mockSseService, mockPrisma } = vi.hoisted(() => ({
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
     },
@@ -231,6 +232,17 @@ describe('GET /v1/streams/:id/events — pagination and eventType filter', () =>
     expect(res.body).toHaveProperty('hasMore');
     expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body.hasMore).toBe(false);
+
+    const callArgs = mockPrisma.streamEvent.findMany.mock.calls[0]![0] as {
+      where: { streamId: bigint };
+      orderBy: { timestamp: string; id: string }[];
+      take: number;
+      skip: number;
+    };
+    expect(callArgs.where.streamId).toBe(1n);
+    expect(callArgs.orderBy).toEqual([{ timestamp: 'desc' }, { id: 'desc' }]);
+    expect(callArgs.take).toBe(10);
+    expect(callArgs.skip).toBe(0);
   });
 
   it('enforces default limit of 50', async () => {

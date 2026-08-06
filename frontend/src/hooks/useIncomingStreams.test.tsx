@@ -1,4 +1,4 @@
-import { renderHook, waitFor, act } from "@testing-library/react";
+import { renderHook, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import React from "react";
@@ -7,8 +7,9 @@ import {
   useWithdrawIncomingStream,
   incomingStreamsQueryKey,
 } from "./useIncomingStreams";
-import { fetchIncomingStreams } from "@/lib/api/streams";
+import { fetchIncomingStreams, type IncomingStreamRecord } from "@/lib/api/streams";
 import { withdrawFromStream } from "@/lib/soroban";
+import type { WalletSession } from "@/lib/wallet";
 
 vi.mock("@/lib/api/streams", () => ({
   fetchIncomingStreams: vi.fn(),
@@ -32,6 +33,7 @@ describe("useIncomingStreams hooks", () => {
 
   afterEach(() => {
     queryClient.clear();
+    vi.useRealTimers();
   });
 
   const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -64,6 +66,37 @@ describe("useIncomingStreams hooks", () => {
       expect(result.current.fetchStatus).toBe("idle");
       expect(fetchIncomingStreams).not.toHaveBeenCalled();
     });
+
+    it("does not poll by default", async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
+      renderHook(() => useIncomingStreams("pubkey"), { wrapper });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+
+      expect(fetchIncomingStreams).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    });
+
+    it("polls at the provided refetchInterval when overridden", async () => {
+      vi.useFakeTimers();
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
+      renderHook(
+        () => useIncomingStreams("pubkey", { refetchInterval: 5000 }),
+        { wrapper },
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      expect(vi.mocked(fetchIncomingStreams).mock.calls.length).toBeGreaterThan(1);
+      vi.useRealTimers();
+    });
   });
 
   describe("useWithdrawIncomingStream", () => {
@@ -74,55 +107,44 @@ describe("useIncomingStreams hooks", () => {
       );
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        result.current.mutateAsync({} as any)
+        result.current.mutateAsync({} as unknown as IncomingStreamRecord)
       ).rejects.toThrow("Please connect your wallet first");
       expect(withdrawFromStream).not.toHaveBeenCalled();
     });
 
     it("invalidates incomingStreamsQueryKey(publicKey) on success", async () => {
-      // Return a matching stream so pollIndexerForWithdraw exits on the first
-      // attempt (1 s delay) by finding updatedStream.withdrawn > oldWithdrawn.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (withdrawFromStream as any).mockResolvedValue({ status: "success" });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (fetchIncomingStreams as any).mockResolvedValue([
-        { streamId: 1, withdrawn: 100 },
-      ]);
-      
+      vi.useFakeTimers();
+      vi.mocked(withdrawFromStream).mockResolvedValue({ success: true, txHash: "tx-hash" });
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
       const { result } = renderHook(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        () => useWithdrawIncomingStream({} as any, "pubkey"),
+        () => useWithdrawIncomingStream({} as unknown as WalletSession, "pubkey"),
         { wrapper }
       );
 
-      const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
       await act(async () => {
         await result.current.mutateAsync({
-          id: 1,
+          id: "1",
           streamId: 1,
           withdrawn: 0,
           deposited: 100,
           ratePerSecond: 1,
           isPaused: false,
           lastUpdateTime: Date.now() / 1000,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } as any);
+        } as unknown as IncomingStreamRecord);
       });
 
-      // Clear any calls made during mutation (e.g. optimistic update in
-      // onMutate) so we only assert on the poll's setQueryData call.
-      setQueryDataSpy.mockClear();
+      // pollIndexerForWithdraw retries with exponential backoff
+      // (1+2+4+8+16+32s) before falling back to invalidateQueries, so
+      // fast-forward the fake clock past all retries.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(63_000);
+      });
 
-      // Poll should find the updated stream (withdrawn 100 > 0) and call
-      // setQueryData after ~1 s of simulated delay.
-      await waitFor(() => {
-        expect(setQueryDataSpy).toHaveBeenCalledWith(
-          incomingStreamsQueryKey("pubkey"),
-          expect.any(Array),
-        );
-      }, { timeout: 5000 });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: incomingStreamsQueryKey("pubkey"),
+      });
     });
   });
 });

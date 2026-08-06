@@ -116,6 +116,12 @@ A glass-morphism card container with optional hover and glow effects.
 | `glow` | `boolean` | `false` | Adds a glowing shadow effect |
 | `hover` | `boolean` | `true` | Enables hover lift effect |
 
+### Behavior Notes
+
+- **glow**: Applies the `glow-card` class for an accent-colored ambient glow around the card
+- **hover** (default `true`): Lifts the card 1px on hover and adds an accent-tinted border/shadow; set `hover={false}` for static cards
+- `children` is required — `Card` renders only the passed content inside the glass container
+
 ### Usage Examples
 
 ```tsx

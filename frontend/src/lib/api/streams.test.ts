@@ -166,4 +166,28 @@ describe('fetchIncomingStreams', () => {
       /Endpoint not found:/
     );
   });
+
+  it('aborts a hung request after the timeout and surfaces a clear error', async () => {
+    vi.useFakeTimers();
+
+    // Simulate a backend that never responds: fetch only settles when the
+    // AbortController tied to the timeout fires.
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const abortError = new Error('The operation was aborted.');
+          abortError.name = 'AbortError';
+          reject(abortError);
+        });
+      });
+    });
+
+    const pending = fetchIncomingStreams(recipientPublicKey, 5000);
+    const assertion = expect(pending).rejects.toThrow(/timed out after 5000ms/);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await assertion;
+
+    vi.useRealTimers();
+  });
 });

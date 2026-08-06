@@ -165,7 +165,7 @@ describe('Soroban Service', () => {
         simulationSuccess(nativeToScVal(99n, { type: 'i128' }))
       );
       
-      await getStreamFromChain(1);
+      await getStreamFromChain(1n);
       
       expect(mocks.server.simulateTransaction).toHaveBeenCalled();
     });
@@ -191,7 +191,7 @@ describe('Soroban Service', () => {
         )
       );
 
-      await expect(getStreamFromChain(7)).resolves.toEqual({
+      await expect(getStreamFromChain(7n)).resolves.toEqual({
         streamId: 7,
         sender,
         recipient,
@@ -211,7 +211,7 @@ describe('Soroban Service', () => {
         simulationSuccess(mapVal([['sender', nativeToScVal('not-an-address')]]))
       );
 
-      await expect(getStreamFromChain(8)).resolves.toBeNull();
+      await expect(getStreamFromChain(8n)).resolves.toBeNull();
     });
 
     it.skip('decodes getClaimableFromChain response', async () => {
@@ -221,7 +221,7 @@ describe('Soroban Service', () => {
         simulationSuccess(nativeToScVal(99n, { type: 'i128' }))
       );
 
-      await expect(getClaimableFromChain(9)).resolves.toBe('99');
+      await expect(getClaimableFromChain(9n)).resolves.toBe('99');
     });
 
     it('returns null when getClaimableFromChain decoding fails', async () => {
@@ -229,7 +229,7 @@ describe('Soroban Service', () => {
 
       mocks.server.simulateTransaction.mockResolvedValue(simulationSuccess(nativeToScVal(true)));
 
-      await expect(getClaimableFromChain(10)).resolves.toBeNull();
+      await expect(getClaimableFromChain(10n)).resolves.toBeNull();
     });
   });
 
@@ -255,7 +255,7 @@ describe('Soroban Service', () => {
     it('throws when KEEPER_SECRET_KEY is unset', async () => {
       const { topUpStream } = await importService({ KEEPER_SECRET_KEY: undefined });
 
-      await expect(topUpStream(1, 100n, Keypair.random().publicKey())).rejects.toThrow(
+      await expect(topUpStream(1n, 100n, Keypair.random().publicKey())).rejects.toThrow(
         'KEEPER_SECRET_KEY not configured'
       );
       expect(mocks.server.sendTransaction).not.toHaveBeenCalled();

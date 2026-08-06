@@ -60,7 +60,7 @@
               "code": 200,
               "_postman_previewlanguage": "json",
               "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
-              "body": "{\n  \"status\": \"healthy\",\n  \"timestamp\": \"2024-02-21T14:30:00.000Z\",\n  \"uptime\": 3600,\n  \"version\": \"1.0.0\",\n  \"api\": {\n    \"supported\": [\"v1\"],\n    \"default\": \"v1\"\n  }\n}"
+              "body": "{\n  \"status\": \"ok\",\n  \"db\": \"connected\",\n  \"indexerEnabled\": true,\n  \"indexerLag\": 5,\n  \"uptime\": 3600,\n  \"checks\": {\n    \"database\": { \"status\": \"ok\" },\n    \"indexer\": { \"status\": \"ok\", \"enabled\": true, \"lagSeconds\": 5 },\n    \"redis\": { \"status\": \"ok\" },\n    \"sorobanRpc\": { \"status\": \"ok\" }\n  }\n}"
             }
           ]
         },

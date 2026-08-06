@@ -51,6 +51,11 @@ const mocks = vi.hoisted(() => {
       },
       $disconnect: vi.fn(),
     },
+    pool: {
+      totalCount: 0,
+      idleCount: 0,
+      waitingCount: 0,
+    },
   };
 });
 
@@ -71,6 +76,7 @@ vi.mock('../../src/lib/redis.js', () => ({
 vi.mock('../../src/lib/prisma.js', () => ({
   default: mocks.prisma,
   prisma: mocks.prisma,
+  pool: mocks.pool,
 }));
 
 vi.mock('../../src/middleware/auth.js', async () => {
@@ -90,9 +96,22 @@ vi.mock('../../src/services/indexerService.js', () => ({
   replayFromLedger: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../src/workers/soroban-event-worker.js', () => ({
+  sorobanEventWorker: {
+    getEventCounters: vi.fn().mockReturnValue({
+      eventsProcessed: 0,
+      eventsFailed: 0,
+      lastErrorAt: null,
+      degraded: false,
+    }),
+  },
+  SorobanEventWorker: vi.fn(),
+}));
+
 // ─── Import app after mocks are registered ────────────────────────────────────
 
 import app from '../../src/app.js';
+import { sorobanEventWorker } from '../../src/workers/soroban-event-worker.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -183,6 +202,15 @@ describe('GET /v1/admin/metrics', () => {
       completed_streams: 30,
       cancelled_streams: 14,
       total_volume_streamed: '123456789',
+      indexer: {
+        lastLedger: 10,
+        lagSeconds: 1,
+        lastUpdated: null,
+        eventsProcessed: 0,
+        eventsFailed: 0,
+        lastErrorAt: null,
+        degraded: false,
+      },
     };
     mocks.cache.get.mockReturnValueOnce(cachedPayload);
 
@@ -193,5 +221,58 @@ describe('GET /v1/admin/metrics', () => {
     expect(res.body).toMatchObject(cachedPayload);
     expect(mocks.prisma.stream.count).not.toHaveBeenCalled();
     expect(mocks.prisma.stream.findMany).not.toHaveBeenCalled();
+  });
+
+  it('exposes indexer event-processing counters and degraded signal (#844)', async () => {
+    setupCounts();
+    vi.mocked(sorobanEventWorker.getEventCounters).mockReturnValueOnce({
+      eventsProcessed: 40,
+      eventsFailed: 12,
+      lastErrorAt: '2026-07-27T08:00:00.000Z',
+      degraded: true,
+    });
+
+    const res = await request(app).get('/v1/admin/metrics');
+
+    expect(res.status).toBe(200);
+    expect(res.body.indexer).toMatchObject({
+      eventsProcessed: 40,
+      eventsFailed: 12,
+      lastErrorAt: '2026-07-27T08:00:00.000Z',
+      degraded: true,
+    });
+  });
+
+  it('merges live indexer counters into a cached metrics response', async () => {
+    mocks.cache.get.mockReturnValueOnce({
+      total_streams: 1,
+      indexer: {
+        lastLedger: 5,
+        lagSeconds: 2,
+        lastUpdated: null,
+        eventsProcessed: 0,
+        eventsFailed: 0,
+        lastErrorAt: null,
+        degraded: false,
+      },
+    });
+    vi.mocked(sorobanEventWorker.getEventCounters).mockReturnValueOnce({
+      eventsProcessed: 9,
+      eventsFailed: 3,
+      lastErrorAt: '2026-07-27T09:00:00.000Z',
+      degraded: true,
+    });
+
+    const res = await request(app).get('/v1/admin/metrics');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['x-cache']).toBe('HIT');
+    expect(res.body.indexer).toMatchObject({
+      lastLedger: 5,
+      eventsProcessed: 9,
+      eventsFailed: 3,
+      lastErrorAt: '2026-07-27T09:00:00.000Z',
+      degraded: true,
+    });
   });
 });

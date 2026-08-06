@@ -579,6 +579,7 @@ fn test_top_up_emits_event() {
     assert_eq!(payload.stream_id, id);
     assert_eq!(payload.amount, 5_000);
     assert_eq!(payload.new_deposited_amount, 15_000);
+    assert_eq!(payload.new_end_time, 150);
 }
 
 #[test]

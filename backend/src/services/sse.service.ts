@@ -1,10 +1,12 @@
+import { randomUUID } from 'crypto';
 import type { Response } from 'express';
-import logger from '../logger.js';
+import logger, { requestContext } from '../logger.js';
 import { isRedisAvailable, getPublisher, getSubscriber } from '../lib/redis.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_WRITABLE_BUFFER = 64 * 1024;
 const MAX_CONNECTIONS_PER_IP = 5;
+const MAX_CONNECTIONS_PER_USER = 10;
 const RETRY_AFTER_SECONDS = 60;
 
 interface SSEClient {
@@ -13,6 +15,7 @@ interface SSEClient {
   subscriptions: Set<string>;
   paused: boolean;
   ip: string;
+  userId?: string;
 }
 
 interface SSECapacityCheckResult {
@@ -27,8 +30,17 @@ export class SSEService {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private slowClientsDropped = 0;
   private readonly ipConnectionCounts: Map<string, number> = new Map();
+  private readonly userConnectionCounts: Map<string, number> = new Map();
   private shuttingDown = false;
   private perIpPeakConnections = 0;
+  private perUserPeakConnections = 0;
+
+  /**
+   * Stable id attached to every log line emitted by the heartbeat
+   * setInterval callback, since it fires outside of any HTTP request and
+   * would otherwise have no requestContext (and thus no correlation id).
+   */
+  private readonly heartbeatWorkerId = `sse-heartbeat:${randomUUID()}`;
 
   private readonly maxConnections: number = (() => {
     const parsed = Number.parseInt(process.env.MAX_SSE_CONNECTIONS ?? '10000', 10);
@@ -61,7 +73,7 @@ export class SSEService {
     logger.info('[SSEService] Redis pub/sub subscription active.');
   }
 
-  checkCapacity(ip: string): SSECapacityCheckResult {
+  checkCapacity(ip: string, userId?: string): SSECapacityCheckResult {
     if (this.clients.size >= this.maxConnections) {
       return {
         allowed: false,
@@ -80,13 +92,40 @@ export class SSEService {
       };
     }
 
+    // Independent of the per-IP cap: bounds how many concurrent SSE
+    // subscriptions a single authenticated user can hold regardless of which
+    // IP(s) they connect from (e.g. multiple tabs/devices behind different NATs).
+    if (userId) {
+      const currentUserConnections = this.userConnectionCounts.get(userId) ?? 0;
+      if (currentUserConnections >= MAX_CONNECTIONS_PER_USER) {
+        return {
+          allowed: false,
+          status: 429,
+          retryAfterSeconds: RETRY_AFTER_SECONDS,
+          message: `Too many concurrent SSE connections for this user. Max ${MAX_CONNECTIONS_PER_USER}.`,
+        };
+      }
+    }
+
     return { allowed: true };
   }
 
-  addClient(clientId: string, res: Response, subscriptions: string[] = [], ip = 'unknown'): void {
+  addClient(
+    clientId: string,
+    res: Response,
+    subscriptions: string[] = [],
+    ip = 'unknown',
+    userId?: string,
+  ): void {
     const nextIpCount = (this.ipConnectionCounts.get(ip) ?? 0) + 1;
     this.ipConnectionCounts.set(ip, nextIpCount);
     this.perIpPeakConnections = Math.max(this.perIpPeakConnections, nextIpCount);
+
+    if (userId) {
+      const nextUserCount = (this.userConnectionCounts.get(userId) ?? 0) + 1;
+      this.userConnectionCounts.set(userId, nextUserCount);
+      this.perUserPeakConnections = Math.max(this.perUserPeakConnections, nextUserCount);
+    }
 
     const client: SSEClient = {
       id: clientId,
@@ -94,11 +133,12 @@ export class SSEService {
       subscriptions: new Set(subscriptions),
       paused: false,
       ip,
+      ...(userId !== undefined && { userId }),
     };
 
     this.clients.set(clientId, client);
     logger.info(
-      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, subscriptions: ${subscriptions.join(', ')}`
+      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, userId: ${userId ?? 'n/a'}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
@@ -194,6 +234,18 @@ export class SSEService {
     return this.ipConnectionCounts.size;
   }
 
+  getPerUserPeakConnections(): number {
+    return this.perUserPeakConnections;
+  }
+
+  getActiveUserCount(): number {
+    return this.userConnectionCounts.size;
+  }
+
+  getUserConnectionCount(userId: string): number {
+    return this.userConnectionCounts.get(userId) ?? 0;
+  }
+
   stopHeartbeat(): void {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
@@ -207,7 +259,9 @@ export class SSEService {
     }
 
     this.heartbeatTimer = setInterval(() => {
-      this.sendHeartbeat();
+      requestContext.run({ requestId: this.heartbeatWorkerId }, () => {
+        this.sendHeartbeat();
+      });
     }, HEARTBEAT_INTERVAL_MS);
   }
 
@@ -233,6 +287,15 @@ export class SSEService {
       this.ipConnectionCounts.delete(client.ip);
     } else {
       this.ipConnectionCounts.set(client.ip, currentIpCount - 1);
+    }
+
+    if (client.userId) {
+      const currentUserCount = this.userConnectionCounts.get(client.userId) ?? 0;
+      if (currentUserCount <= 1) {
+        this.userConnectionCounts.delete(client.userId);
+      } else {
+        this.userConnectionCounts.set(client.userId, currentUserCount - 1);
+      }
     }
 
     try {
