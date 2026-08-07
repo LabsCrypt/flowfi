@@ -16,6 +16,7 @@ import {
   useIncomingStreams,
   useWithdrawIncomingStream,
 } from "@/hooks/useIncomingStreams";
+import { useAsyncPageData } from "@/hooks/useAsyncPageData";
 
 interface TrackerState {
   status: TransactionStatus;
@@ -40,12 +41,20 @@ function LoadingCard() {
 }
 
 export default function IncomingContent() {
-  const { session, status, isHydrated } = useWallet();
+  const { session, status } = useWallet();
   const [tracker, setTracker] = React.useState<TrackerState>({
     status: "idle",
   });
 
   const incomingStreamsQuery = useIncomingStreams(session?.publicKey);
+
+  const pageState = useAsyncPageData({
+    isLoading: incomingStreamsQuery.isLoading,
+    isError: incomingStreamsQuery.isError,
+    error: incomingStreamsQuery.error,
+    data: incomingStreamsQuery.data ?? [],
+  });
+
   const withdrawMutation = useWithdrawIncomingStream(
     session,
     session?.publicKey,
@@ -91,9 +100,6 @@ export default function IncomingContent() {
     }
   };
 
-  const isLoading =
-    !isHydrated ||
-    (status === "connected" && incomingStreamsQuery.isLoading);
   const streams = incomingStreamsQuery.data ?? [];
 
   return (
@@ -124,13 +130,13 @@ export default function IncomingContent() {
           </div>
         </div>
 
-        {!isHydrated ? (
+        {!pageState.isHydrated ? (
           <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <LoadingCard />
             <LoadingCard />
             <LoadingCard />
           </section>
-        ) : status !== "connected" ? (
+        ) : !pageState.isConnected ? (
           <section className="mt-8 rounded-[2rem] border border-white/45 bg-white/75 p-10 text-center shadow-[0_24px_50px_rgba(15,23,42,0.07)]">
             <h2 className="text-2xl font-semibold text-slate-950">
               Connect a wallet to view incoming streams
@@ -140,24 +146,22 @@ export default function IncomingContent() {
               where you are the recipient and keep the claimable balance fresh.
             </p>
           </section>
-        ) : incomingStreamsQuery.isError ? (
+        ) : pageState.isError ? (
           <section className="mt-8 rounded-[2rem] border border-rose-200 bg-rose-50/80 p-8 shadow-[0_18px_36px_rgba(190,24,93,0.08)]">
             <h2 className="text-xl font-semibold text-rose-900">
               We couldn&apos;t load your incoming streams
             </h2>
             <p className="mt-2 text-sm text-rose-700">
-              {incomingStreamsQuery.error instanceof Error
-                ? incomingStreamsQuery.error.message
-                : "Please try again in a moment."}
+              {pageState.errorMessage || "Please try again in a moment."}
             </p>
           </section>
-        ) : isLoading ? (
+        ) : pageState.isLoading ? (
           <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <LoadingCard />
             <LoadingCard />
             <LoadingCard />
           </section>
-        ) : streams.length === 0 ? (
+        ) : pageState.isEmpty ? (
           <section className="mt-8 rounded-[2rem] border border-white/45 bg-white/75 p-10 text-center shadow-[0_24px_50px_rgba(15,23,42,0.07)]">
             <h2 className="text-2xl font-semibold text-slate-950">
               No incoming streams yet
