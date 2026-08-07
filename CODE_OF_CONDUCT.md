@@ -62,10 +62,12 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement on Telegram at
-**https://t.me/+DOylgFv1jyJlNzM0**.
+reported directly to the LabsCrypt moderation team via email at
+**conduct@labscrypt.org** or privately through the [FlowFi Community Telegram](https://t.me/+DOylgFv1jyJlNzM0).
 
-All complaints will be reviewed and investigated promptly and fairly.
+For security vulnerabilities or overlapping security incidents, please refer to our [Security Policy](SECURITY.md) to submit a report through GitHub Private Security Advisories.
+
+All complaints will be reviewed and investigated promptly and fairly by LabsCrypt community leads.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
