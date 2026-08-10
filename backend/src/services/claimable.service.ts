@@ -102,7 +102,7 @@ export class ClaimableAmountService {
         ? Math.floor(requestedAt)
         : Math.floor(this.nowMs() / 1000);
 
-    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
+    const cacheKey = `claimable:${stream.tokenAddress}:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
     const cachedEntry = cache.get<Omit<ClaimableAmountResult, 'cached'>>(cacheKey);
 
     if (cachedEntry) {
