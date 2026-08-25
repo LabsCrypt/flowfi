@@ -5,14 +5,9 @@
  * indexer. It is the admin/control-plane helper for the source-of-truth
  * indexer, `SorobanEventWorker` (backend/src/workers/soroban-event-worker.ts).
  * The functions here only read/reset the shared `IndexerState` cursor row and
- * trigger the worker's poll loop. It is intentionally named like the legacy
- * indexer below to document that this helper is the "other" indexer entry
- * point — see backend/src/services/soroban-indexer.service.ts, which is the
- * LEGACY indexer being phased out. See docs/ARCHITECTURE.md for the full
- * indexer ownership model.
+ * trigger the worker's poll loop.
  *
- * NAMING CONVENTION PLAN: once the functional consolidation of the two
- * indexers lands (issue #801), this file is expected to be renamed to
+ * NAMING CONVENTION PLAN: this file is expected to be renamed to
  * `indexer.service.ts` so every service is kebab-case with a `.service.ts`
  * suffix.
  */

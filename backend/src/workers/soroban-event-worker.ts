@@ -806,22 +806,22 @@ export class SorobanEventWorker {
         return;
       }
 
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: { withdrawnAmount: true },
-      });
-
-      const newWithdrawnAmount = (
-        BigInt(stream.withdrawnAmount) + BigInt(amount)
-      ).toString();
-
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          withdrawnAmount: newWithdrawnAmount,
-          lastUpdateTime: timestamp,
-        },
-      });
+      // Use an atomic DB-level increment so that even under concurrent
+      // transactions the withdrawnAmount is never double-counted.  Because
+      // Prisma models withdrawnAmount as String (not Int/BigInt), we use a
+      // raw UPDATE … SET "withdrawnAmount" = (CAST("withdrawnAmount" AS
+      // numeric) + $1)::text so the database performs the addition atomically.
+      //
+      // The idempotency guard above already prevents re-processing of the
+      // same event, but this atomic increment provides a safety net at the
+      // database level.
+      const amountBigInt = BigInt(amount);
+      await tx.$executeRaw`
+        UPDATE "Stream"
+        SET "withdrawnAmount" = (CAST("withdrawnAmount" AS numeric) + ${amountBigInt})::text,
+            "lastUpdateTime" = ${BigInt(timestamp)}
+        WHERE "streamId" = ${streamId}
+      `;
 
       await tx.streamEvent.upsert({
         where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },

@@ -26,7 +26,6 @@ export default defineConfig({
                 'src/lib/prisma-sandbox.ts',
                 'src/services/indexer-integration.example.ts',
                 'src/services/indexerService.ts',
-                'src/services/soroban-indexer.service.ts',
                 'src/services/sorobanService.ts',
                 'src/workers/soroban-event-worker.ts',
             ],
