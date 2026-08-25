@@ -19,7 +19,7 @@ const mockPrismaObj = vi.hoisted(() => ({
     upsert: vi.fn(),
     create: vi.fn(),
   },
-  $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() } })),
+  $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() }, $executeRaw: vi.fn().mockResolvedValue(1) })),
   $disconnect: vi.fn(),
 }));
 
@@ -462,39 +462,48 @@ describe('SorobanEventWorker', () => {
 
       // withdrawnAmount starts at '1000'; a single successful withdrawal of
       // 500 should bring it to '1500' and stay there under replay.
+      const mockExecuteRaw = vi.fn().mockResolvedValue(1);
       const mockTx = {
         stream: {
-          findUniqueOrThrow: vi.fn().mockResolvedValue({ withdrawnAmount: '1000' }),
+          findUniqueOrThrow: vi.fn(),
           update: vi.fn().mockResolvedValue({}),
         },
         streamEvent: {
           findUnique: vi.fn(),
           upsert: vi.fn().mockResolvedValue({ id: 'withdraw-event-row' }),
         },
+        $executeRaw: mockExecuteRaw,
       };
 
       (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
 
-      // First processing: no existing event → withdrawnAmount is updated once.
+      // First processing: no existing event → atomic increment is executed once.
       mockTx.streamEvent.findUnique.mockResolvedValueOnce(null);
       await expect((worker as any).handleTokensWithdrawn(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
-      expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
-      expect(mockTx.stream.update).toHaveBeenCalledWith({
-        where: { streamId: BigInt(streamId) },
-        data: { withdrawnAmount: '1500', lastUpdateTime: 1700002000 },
-      });
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
       expect(logger.warn).not.toHaveBeenCalled();
 
       vi.clearAllMocks();
-      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+      const mockExecuteRaw2 = vi.fn().mockResolvedValue(1);
+      const mockTx2 = {
+        stream: {
+          findUniqueOrThrow: vi.fn(),
+          update: vi.fn().mockResolvedValue({}),
+        },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue({ id: 'withdraw-event-row' }),
+          upsert: vi.fn(),
+        },
+        $executeRaw: mockExecuteRaw2,
+      };
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx2));
 
       // Second processing (replay of same txHash): the event now exists, so
       // withdrawnAmount must NOT be touched a second time.
-      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'withdraw-event-row' });
       await expect((worker as any).handleTokensWithdrawn(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
-      expect(mockTx.stream.update).not.toHaveBeenCalled();
-      expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
+      expect(mockExecuteRaw2).not.toHaveBeenCalled();
+      expect(mockTx2.streamEvent.upsert).not.toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Duplicate StreamEvent skipped'));
     });
 
