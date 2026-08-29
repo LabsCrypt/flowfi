@@ -623,7 +623,10 @@ impl StreamContract {
 
         let mut stream = load_stream(&env, stream_id)?;
         Self::validate_stream_ownership(&stream, &sender)?;
-        Self::validate_stream_active(&stream)?;
+
+        if !stream.is_active {
+            return Err(StreamError::StreamNotActive);
+        }
 
         if !stream.paused {
             return Err(StreamError::StreamNotPaused);
