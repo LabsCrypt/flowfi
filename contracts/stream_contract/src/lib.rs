@@ -535,6 +535,8 @@ impl StreamContract {
 
         stream.is_active = false;
         stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = None;
         stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
@@ -616,11 +618,12 @@ impl StreamContract {
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
     /// - `Unauthorized`    — caller is not the stream's sender.
     /// - `StreamNotPaused` — stream is active but not currently paused.
-    pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
+pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
         sender.require_auth();
 
         let mut stream = load_stream(&env, stream_id)?;
         Self::validate_stream_ownership(&stream, &sender)?;
+        Self::validate_stream_active(&stream)?;
 
         if !stream.paused {
             return Err(StreamError::StreamNotPaused);
