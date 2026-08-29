@@ -5,7 +5,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import app from '../src/app.js';
-import { __authChallengeTestUtils, requireAdmin, signJwt } from '../src/middleware/auth.js';
+import { __authChallengeTestUtils, requireAdmin, requireAuth, requireScopes, signJwt } from '../src/middleware/auth.js';
 
 // Mocking prisma for any downstream dependency
 vi.mock('../src/lib/prisma.js', () => ({
@@ -370,6 +370,61 @@ describe('Authentication & Middleware Tests', () => {
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('Forbidden');
       expect(res.body.message).toMatch(/Admin access required/i);
+    });
+  });
+
+  describe('requireScopes', () => {
+    it('rejects requests missing a required scope', async () => {
+      const keypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
+      const token = signJwt({
+        sub: keypair.publicKey(),
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
+        scopes: ['read:profile'],
+      });
+
+      const appWithScopeGate = express();
+      appWithScopeGate.use(express.json());
+      appWithScopeGate.get('/scoped', requireAuth, requireScopes(['read:profile', 'write:profile']), (_req, res) => {
+        res.status(200).json({ ok: true });
+      });
+
+      const res = await request(appWithScopeGate)
+        .get('/scoped')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('Forbidden');
+      expect(res.body.message).toMatch(/Missing required scope/i);
+    });
+
+    it('allows requests when all required scopes are present', async () => {
+      const keypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
+      const token = signJwt({
+        sub: keypair.publicKey(),
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
+        scopes: ['read:profile', 'write:profile'],
+      });
+
+      const appWithScopeGate = express();
+      appWithScopeGate.use(express.json());
+      appWithScopeGate.get('/scoped', requireAuth, requireScopes(['read:profile', 'write:profile']), (_req, res) => {
+        res.status(200).json({ ok: true });
+      });
+
+      const res = await request(appWithScopeGate)
+        .get('/scoped')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
     });
   });
 

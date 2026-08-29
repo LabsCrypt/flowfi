@@ -6,6 +6,7 @@ import type { Request } from 'express';
 export interface AuthUser {
   publicKey: string;
   id?: string;
+  scopes?: string[];
 }
 
 /**

@@ -97,7 +97,7 @@ export function signJwt(payload: object): string {
   return `${header}.${body}.${b64url(sig)}`;
 }
 
-export function verifyJwt(token: string): { publicKey: string } | null {
+export function verifyJwt(token: string): { publicKey: string; scopes: string[] } | null {
   try {
     const [header, body, sig] = token.split('.');
     if (!header || !body || !sig) return null;
@@ -138,7 +138,13 @@ export function verifyJwt(token: string): { publicKey: string } | null {
       return null;
     }
 
-    return { publicKey: payload.sub };
+    const scopes = Array.isArray(payload.scopes)
+      ? payload.scopes.map((scope: unknown) => String(scope).trim()).filter(Boolean)
+      : typeof payload.scopes === 'string'
+        ? payload.scopes.split(',').map((scope: string) => scope.trim()).filter(Boolean)
+        : [];
+
+    return { publicKey: payload.sub, scopes };
   } catch {
     return null;
   }
@@ -234,8 +240,27 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     res.status(401).json({ error: 'Unauthorized', message: 'Invalid or expired token' });
     return;
   }
-  (req as AuthenticatedRequest).user = { publicKey: payload.publicKey };
+  (req as AuthenticatedRequest).user = { publicKey: payload.publicKey, scopes: payload.scopes };
   next();
+}
+
+export function requireScopes(requiredScopes: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    requireAuth(req, res, () => {
+      const grantedScopes = (req as AuthenticatedRequest).user.scopes ?? [];
+      const missingScopes = requiredScopes.filter((scope) => !grantedScopes.includes(scope));
+
+      if (missingScopes.length > 0) {
+        res.status(403).json({
+          error: 'Forbidden',
+          message: `Missing required scope${missingScopes.length > 1 ? 's' : ''}: ${missingScopes.join(', ')}`,
+        });
+        return;
+      }
+
+      next();
+    });
+  };
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
