@@ -2101,6 +2101,41 @@ fn test_fuzz_cancel_early_refunds() {
 }
 
 #[test]
+fn test_resume_on_cancelled_stream_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Advance time and pause the stream.
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    // Cancel the paused stream — this should set is_active=false and status=Cancelled,
+    // but previously would leave paused=true, allowing a subsequent resume to corrupt state.
+    client.cancel_stream(&sender, &id);
+
+    // Resume on a cancelled stream must fail.
+    let result = client.try_resume_stream(&sender, &id);
+    assert_eq!(
+        result,
+        Err(Ok(StreamError::StreamNotActive)),
+        "resume_stream must return StreamNotActive on an inactive stream"
+    );
+
+    // Stream state must be unchanged: still cancelled, not resumed.
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    assert!(s.paused);
+}
+
+#[test]
 fn test_fuzz_pause_resume_maintains_active_state() {
     let env = Env::default();
     env.mock_all_auths();

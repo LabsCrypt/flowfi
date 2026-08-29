@@ -35,4 +35,6 @@ pub enum StreamError {
     StreamNotPaused = 13,
     /// `pause_stream` was called on a stream that is already paused.
     StreamAlreadyPaused = 14,
+    /// Operation requires an active stream, but the stream is inactive (cancelled or completed).
+    StreamNotActive = 15,
 }
