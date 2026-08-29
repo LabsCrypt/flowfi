@@ -144,6 +144,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                         {unreadCount > 9 ? "9+" : unreadCount}
                     </span>
                 )}
+                <span aria-live="polite" aria-atomic="true" className="sr-only">{unreadCount > 0 ? `${unreadCount} new notifications` : ""}</span>
 
                 {!connected && unreadCount === 0 && (
                     <span className="absolute bottom-0 right-0 h-2 w-2 bg-red-500 rounded-full border-2 border-background" />
