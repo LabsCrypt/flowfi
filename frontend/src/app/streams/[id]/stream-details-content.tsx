@@ -6,6 +6,7 @@ import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";
 import { ArrowLeft, Pause, Play, X, Plus, Download, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { LiveValue } from "@/components/ui/LiveValue";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/wallet-context";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
@@ -731,6 +732,7 @@ function StatCard({
         {value}
         {live && <span className="ml-2 text-xs animate-pulse">●</span>}
       </p>
+      {live && <LiveValue value={value} prefix={label} />}
     </div>
   );
 }
