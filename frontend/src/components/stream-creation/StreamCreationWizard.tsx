@@ -324,10 +324,11 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     if (validateStep(currentStep)) {
       if (currentStep < STEPS.length) {
         setCurrentStep(currentStep + 1);
-        // Scroll to top when moving to next step
-        const modal = document.querySelector('.glass-card');
-        if (modal && typeof modal.scrollTo === 'function') {
-          modal.scrollTo({ top: 0, behavior: 'smooth' });
+        // Scroll to top when moving to next step.
+        // Use the scoped dialogRef instead of a global .glass-card
+        // querySelector so we never accidentally scroll a different element.
+        if (dialogRef.current && typeof dialogRef.current.scrollTo === 'function') {
+          dialogRef.current.scrollTo({ top: 0, behavior: 'smooth' });
         }
       }
     } else {
