@@ -110,19 +110,49 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
       const now = BigInt(Math.floor(Date.now() / 1000));
       const withdrawAmount = BigInt(claimable.claimableAmount);
 
-      // Use raw SQL atomic increment to prevent concurrent withdraw requests
-      // from losing updates (Issue #1217 — read-compute-write race).
-      // Prisma's built-in { increment } is unavailable on String-typed columns,
-      // so we use $transaction with $executeRawUnsafe for atomic SQL updates.
+      // Gate the balance increment on whether the event was newly inserted.
+      // The unique constraint on (transactionHash, eventType) makes the INSERT
+      // a no-op for retries: RETURNING returns null and we skip the balance
+      // update. This guarantees idempotency for both sequential retries and
+      // concurrent duplicates — the withdrawal is counted exactly once per
+      // claimable window (Issue #1216).
       const updatedStream = await prisma.$transaction(async (tx) => {
-        // Atomically increment withdrawnAmount in a single SQL statement so
-        // concurrent requests compound rather than overwrite each other.
-        await tx.$executeRawUnsafe(
-          `UPDATE "Stream" SET "withdrawnAmount" = ("withdrawnAmount"::bigint + $1::bigint)::text, "lastUpdateTime" = $2 WHERE "streamId" = $3`,
-          withdrawAmount.toString(),
-          now,
+        // 1. Attempt to insert the event. On conflict (duplicate retry) the
+        //    INSERT is skipped and RETURNING yields null.
+        const inserted = await tx.$executeRawUnsafe(
+          `INSERT INTO "StreamEvent"
+             ("id", "streamId", "eventType", "amount", "transactionHash",
+              "ledgerSequence", "timestamp", "metadata", "createdAt")
+           SELECT
+             gen_random_uuid()::text, $1::bigint, 'WITHDRAWN', $2::text,
+             $3::text, 0, $4::bigint, $5::text, NOW()
+           WHERE NOT EXISTS (
+             SELECT 1 FROM "StreamEvent"
+             WHERE "transactionHash" = $3::text AND "eventType" = 'WITHDRAWN'
+           )
+           RETURNING "id"`,
           parsedStreamId,
+          claimable.claimableAmount,
+          result.txHash,
+          now,
+          JSON.stringify({ withdrawnBy: req.user.publicKey }),
         );
+
+        // inserted = 1 → new event, proceed with balance increment
+        // inserted = 0 → duplicate, skip balance update
+        if (inserted > 0) {
+          // 2. Atomically increment withdrawnAmount in a single SQL statement
+          //    so concurrent requests compound rather than overwrite each other.
+          await tx.$executeRawUnsafe(
+            `UPDATE "Stream"
+             SET "withdrawnAmount" = ("withdrawnAmount"::bigint + $1::bigint)::text,
+                 "lastUpdateTime" = $2
+             WHERE "streamId" = $3`,
+            withdrawAmount.toString(),
+            now,
+            parsedStreamId,
+          );
+        }
 
         // Re-read the stream to get post-increment values.
         const refreshed = await tx.stream.findUnique({
@@ -131,6 +161,7 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
 
         // Conditionally deactivate if fully withdrawn.
         if (
+          inserted > 0 &&
           stream.isActive &&
           refreshed &&
           BigInt(refreshed.withdrawnAmount) >= BigInt(refreshed.depositedAmount)
@@ -145,25 +176,11 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
         return refreshed;
       });
 
-      // Create or update a WITHDRAWN event
-      await prisma.streamEvent.upsert({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: result.txHash,
-            eventType: 'WITHDRAWN',
-          },
-        },
-        create: {
-          streamId: parsedStreamId,
-          eventType: 'WITHDRAWN',
-          amount: claimable.claimableAmount,
-          transactionHash: result.txHash,
-          ledgerSequence: 0,
-          timestamp: now,
-          metadata: JSON.stringify({ withdrawnBy: req.user.publicKey }),
-        },
-        update: {},
-      });
+      // If the event already existed this was a duplicate request — the
+      // handler still succeeds (idempotent) but skips the balance update.
+      // A 409 is not appropriate here because the client may have retried
+      // after a network timeout; returning 200 with the current stream
+      // state lets the client confirm the withdrawal was already applied.
 
       logger.info(`Stream ${parsedStreamId} withdrawn by ${req.user.publicKey}`);
 
