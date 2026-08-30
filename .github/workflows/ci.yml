@@ -192,8 +192,16 @@ jobs:
         run: cargo test
         working-directory: contracts
 
+      - name: Cache cargo-tarpaulin
+        id: tarpaulin-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: cargo-tarpaulin-${{ runner.os }}-0.37.2
+
       - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin --locked
+        if: steps.tarpaulin-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-tarpaulin@0.37.2 --locked
 
       - name: Run Contract Coverage
         run: cargo tarpaulin --workspace --out Xml --output-dir coverage --fail-under 70
