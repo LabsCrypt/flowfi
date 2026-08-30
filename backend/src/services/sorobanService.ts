@@ -359,6 +359,14 @@ export async function getClaimableFromChain(streamId: bigint): Promise<string | 
   }
 }
 
+/**
+ * Cancels a stream on-chain.
+ * @param streamId - The on-chain stream ID
+ * @param senderSecret - The sender's private key used for cryptographic authorization.
+ *   This should be the secret key of the stream's sender wallet, NOT the keeper key.
+ *   Using the keeper key here defeats the purpose of per-action authorization.
+ * @returns Transaction hash of the cancellation transaction
+ */
 export async function cancelStream(streamId: bigint, senderSecret: string): Promise<string> {
   return submitContractCall('cancel_stream', [
     nativeToScVal(streamId, { type: 'u64' }),
