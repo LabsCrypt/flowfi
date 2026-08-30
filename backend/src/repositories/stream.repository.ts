@@ -15,6 +15,48 @@ export const updateStatus = async (streamId: bigint, status: 'ACTIVE' | 'CANCELL
   });
 };
 
+/**
+ * Cancel a stream and create a provisional CANCELLED StreamEvent in the same transaction.
+ * This ensures the stream immediately appears under the "cancelled" filter.
+ * The indexer will later reconcile/deduplicate this event when it processes the on-chain event.
+ */
+export const cancelStreamWithEvent = async (
+  streamId: bigint,
+  txHash: string,
+): Promise<void> => {
+  const timestamp = Math.floor(Date.now() / 1000);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.stream.update({
+      where: { streamId },
+      data: { isActive: false },
+    });
+
+    await tx.streamEvent.upsert({
+      where: {
+        transactionHash_eventType: {
+          transactionHash: txHash,
+          eventType: 'CANCELLED',
+        },
+      },
+      create: {
+        streamId,
+        eventType: 'CANCELLED',
+        amount: null,
+        transactionHash: txHash,
+        ledgerSequence: 0,
+        timestamp,
+        metadata: JSON.stringify({ provisional: true }),
+      },
+      update: {
+        ledgerSequence: 0,
+        timestamp,
+        metadata: JSON.stringify({ provisional: true }),
+      },
+    });
+  });
+};
+
 type StreamWhere = {
   sender?: string;
   recipient?: string;

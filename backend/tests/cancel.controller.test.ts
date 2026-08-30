@@ -19,7 +19,7 @@ vi.mock('../src/services/sorobanService.js', () => ({
 }));
 
 vi.mock('../src/repositories/stream.repository.js', () => ({
-  updateStatus: vi.fn(),
+  cancelStreamWithEvent: vi.fn(),
 }));
 
 vi.mock('../src/logger.js', () => ({
@@ -78,7 +78,7 @@ describe('Cancel Stream Controller', () => {
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
     expect(sorobanService.cancelStream).toHaveBeenCalledWith(123n, 'SABC123');
-    expect(streamRepository.updateStatus).toHaveBeenCalledWith(123n, 'CANCELLED');
+    expect(streamRepository.cancelStreamWithEvent).toHaveBeenCalledWith(123n, 'tx_hash_123');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED', txHash: 'tx_hash_123' }));
   });
@@ -101,7 +101,7 @@ describe('Cancel Stream Controller', () => {
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
     expect(sorobanService.cancelStream).toHaveBeenCalledWith(123n, 'SABC123');
-    expect(streamRepository.updateStatus).not.toHaveBeenCalled();
+    expect(streamRepository.cancelStreamWithEvent).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(500);
   });
 });

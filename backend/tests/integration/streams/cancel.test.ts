@@ -28,8 +28,16 @@ vi.mock('../../../src/lib/prisma.js', () => {
       update: vi.fn(),
     },
     streamEvent: {
-      create: vi.fn(),
+      upsert: vi.fn(),
     },
+    $transaction: vi.fn((fn) => fn({
+      stream: {
+        update: vi.fn(),
+      },
+      streamEvent: {
+        upsert: vi.fn(),
+      },
+    })),
   };
   return {
     prisma: mockPrisma,
@@ -74,7 +82,12 @@ describe('POST /v1/streams/:streamId/cancel', () => {
     };
 
     (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
-    (prisma.stream.update as any).mockResolvedValue({ ...mockStream, isActive: false });
+
+    const mockTx = {
+      stream: { update: vi.fn().mockResolvedValue({ ...mockStream, isActive: false }) },
+      streamEvent: { upsert: vi.fn() },
+    };
+    (prisma.$transaction as any).mockImplementation(async (fn) => fn(mockTx));
 
     const res = await request(app)
       .post(`/v1/streams/${streamId}/cancel`)
@@ -87,9 +100,28 @@ describe('POST /v1/streams/:streamId/cancel', () => {
     });
 
     expect(sorobanService.cancelStream).toHaveBeenCalledWith(BigInt(streamId), 'S_SECRET_123');
-    expect(prisma.stream.update).toHaveBeenCalledWith({
+    expect(mockTx.stream.update).toHaveBeenCalledWith({
       where: { streamId: BigInt(streamId) },
       data: { isActive: false },
+    });
+    expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith({
+      where: {
+        transactionHash_eventType: {
+          transactionHash: 'tx_hash_123',
+          eventType: 'CANCELLED',
+        },
+      },
+      create: expect.objectContaining({
+        streamId: BigInt(streamId),
+        eventType: 'CANCELLED',
+        transactionHash: 'tx_hash_123',
+        ledgerSequence: 0,
+        metadata: JSON.stringify({ provisional: true }),
+      }),
+      update: expect.objectContaining({
+        ledgerSequence: 0,
+        metadata: JSON.stringify({ provisional: true }),
+      }),
     });
   });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { updateStatus, findStreams } from '../src/repositories/stream.repository.js';
+import { updateStatus, findStreams, cancelStreamWithEvent } from '../src/repositories/stream.repository.js';
 import { prisma } from '../src/lib/prisma.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -9,6 +9,17 @@ vi.mock('../src/lib/prisma.js', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    streamEvent: {
+      upsert: vi.fn(),
+    },
+    $transaction: vi.fn((fn) => fn({
+      stream: {
+        update: vi.fn(),
+      },
+      streamEvent: {
+        upsert: vi.fn(),
+      },
+    })),
   },
 }));
 
@@ -47,6 +58,43 @@ describe('Stream Repository', () => {
       expect(prisma.stream.update).toHaveBeenCalledWith({
         where: { streamId: 123n },
         data: { isActive: true },
+      });
+    });
+  });
+
+  describe('cancelStreamWithEvent', () => {
+    it('should update stream isActive to false and create provisional CANCELLED event', async () => {
+      const mockTx = {
+        stream: { update: vi.fn() },
+        streamEvent: { upsert: vi.fn() },
+      };
+      (prisma.$transaction as any).mockImplementation(async (fn) => fn(mockTx));
+
+      await cancelStreamWithEvent(123n, 'tx_hash_123');
+
+      expect(mockTx.stream.update).toHaveBeenCalledWith({
+        where: { streamId: 123n },
+        data: { isActive: false },
+      });
+
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'tx_hash_123',
+            eventType: 'CANCELLED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId: 123n,
+          eventType: 'CANCELLED',
+          transactionHash: 'tx_hash_123',
+          ledgerSequence: 0,
+          metadata: JSON.stringify({ provisional: true }),
+        }),
+        update: expect.objectContaining({
+          ledgerSequence: 0,
+          metadata: JSON.stringify({ provisional: true }),
+        }),
       });
     });
   });
