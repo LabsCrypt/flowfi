@@ -97,7 +97,7 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
       .post(`/v1/streams/${streamId}/pause`)
       .set('Authorization', `Bearer ${token}`);
 
-    expect(pauseRes.status).toBe(200);
+    expect(pauseRes.status).toBe(501);
 
     // Controller should NOT write to DB for PAUSED event
     expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();

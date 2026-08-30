@@ -283,36 +283,37 @@ describe("Stream Controller", () => {
     });
   });
 
-  describe("pauseStream", () => {
-    it("should pause stream", async () => {
+    describe("pauseStream", () => {
+    it("should return 501 when pausing is not implemented", async () => {
       req.params = { streamId: "123" };
-      req.body = { secret: "S123" };
       (req as any).user = { publicKey: "GUSER1" };
+
       (prisma.stream.findUnique as any).mockResolvedValue({
         streamId: 123,
         sender: "GUSER1",
         isPaused: false,
         isActive: true,
       });
-      (sorobanService.pauseStream as any).mockResolvedValue({
-        txHash: "tx123",
-      });
-      (prisma.stream.update as any).mockResolvedValue({
-        streamId: 123,
-        isPaused: true,
-      });
 
       await pauseStream(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.status).toHaveBeenCalledWith(501);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Not Implemented",
+        message:
+          "Pausing streams is not currently supported because the on-chain transaction is not yet submitted.",
+      });
+
+      expect(sorobanService.pauseStream).not.toHaveBeenCalled();
+      expect(prisma.stream.update).not.toHaveBeenCalled();
     });
   });
 
   describe("resumeStream", () => {
-    it("should resume stream", async () => {
+    it("should return 501 when resuming is not implemented", async () => {
       req.params = { streamId: "123" };
-      req.body = { secret: "S123" };
       (req as any).user = { publicKey: "GUSER1" };
+
       (prisma.stream.findUnique as any).mockResolvedValue({
         streamId: 123,
         sender: "GUSER1",
@@ -320,17 +321,18 @@ describe("Stream Controller", () => {
         isActive: true,
         pausedAt: Math.floor(Date.now() / 1000),
       });
-      (sorobanService.resumeStream as any).mockResolvedValue({
-        txHash: "tx123",
-      });
-      (prisma.stream.update as any).mockResolvedValue({
-        streamId: 123,
-        isPaused: false,
-      });
 
       await resumeStream(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.status).toHaveBeenCalledWith(501);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Not Implemented",
+        message:
+          "Resuming streams is not currently supported because the on-chain transaction is not yet submitted.",
+      });
+
+      expect(sorobanService.resumeStream).not.toHaveBeenCalled();
+      expect(prisma.stream.update).not.toHaveBeenCalled();
     });
   });
 });
