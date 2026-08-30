@@ -6,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "prebuild": "prisma generate",
+    "pretest": "prisma generate",
     "test": "vitest run",
     "test:unit": "vitest run --exclude='tests/integration/**'",
     "test:integration": "vitest run tests/integration",
