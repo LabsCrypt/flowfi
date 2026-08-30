@@ -171,10 +171,9 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
     const deposited = BigInt(stream.depositedAmount);
     const lastUpdate = stream.lastUpdateTime;
 
-    const updateClaimable = () => {
+    const computeClaimable = (): bigint => {
       if (!stream.isActive || stream.isPaused) {
-        setLiveClaimable(deposited - withdrawn);
-        return;
+        return deposited - withdrawn;
       }
 
       const now = Math.floor(Date.now() / 1000);
@@ -182,13 +181,30 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       const accrued = elapsed * ratePerSecond;
       const totalClaimable = deposited - withdrawn + accrued;
 
-      setLiveClaimable(totalClaimable > deposited ? deposited : totalClaimable);
+      return totalClaimable > deposited ? deposited : totalClaimable;
+    };
+
+    const updateClaimable = () => {
+      if (document.hidden) return;
+      setLiveClaimable(computeClaimable());
     };
 
     updateClaimable();
     const interval = setInterval(updateClaimable, 1000);
 
-    return () => clearInterval(interval);
+    // Resync claimable immediately when the tab becomes visible again,
+    // matching the pattern used by the useStreamingAmount hook.
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        setLiveClaimable(computeClaimable());
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [stream]);
 
   const isSender = useMemo(() => {
