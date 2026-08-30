@@ -142,3 +142,58 @@ describe('POST /v1/streams/:streamId/cancel', () => {
     expect(res.body.message).toContain('already cancelled');
   });
 });
+  it('handles concurrent cancel requests correctly', async () => {
+    const streamId = 123;
+    const mockStream = {
+      streamId,
+      sender: 'G_SENDER_123',
+      isActive: true,
+    };
+
+    // Mock findUnique to return the stream initially
+    (prisma.stream.findUnique as any).mockResolvedValueOnce(mockStream);
+    
+    // Mock update to return cancelled stream - first call wins
+    (prisma.stream.update as any)
+      .mockResolvedValueOnce({ ...mockStream, isActive: false })
+      .mockResolvedValueOnce({ ...mockStream, isActive: false });
+
+    // Mock cancelStream to resolve once (only first call should proceed)
+    (sorobanService.cancelStream as any).mockResolvedValueOnce('tx_hash_123');
+    (sorobanService.cancelStream as any).mockResolvedValueOnce('tx_hash_123');
+
+    // Run two concurrent cancel requests
+    const promise1 = request(app)
+      .post(`/v1/streams/${streamId}/cancel`)
+      .set('Authorization', 'Bearer dummy_token');
+    const promise2 = request(app)
+      .post(`/v1/streams/${streamId}/cancel`)
+      .set('Authorization', 'Bearer dummy_token');
+
+    const [res1, res2] = await Promise.all([promise1, promise2]);
+
+    // Both should return 200 with CANCELLED status
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
+    expect(res1.body).toEqual({
+      txHash: 'tx_hash_123',
+      status: 'CANCELLED',
+    });
+    expect(res2.body).toEqual({
+      txHash: 'tx_hash_123',
+      status: 'CANCELLED',
+    });
+
+    // Only one on-chain cancel call should be made (race protection)
+    expect(sorobanService.cancelStream).toHaveBeenCalledTimes(1);
+    expect(sorobanService.cancelStream).toHaveBeenCalledWith(BigInt(streamId), 'S_SECRET_123');
+
+    // Stream should be marked as inactive
+    expect(prisma.stream.update).toHaveBeenCalledWith({
+      where: { streamId: BigInt(streamId) },
+      data: { isActive: false },
+    });
+
+    // Both responses should reference the same single transaction
+    expect(res1.body.txHash).toBe(res2.body.txHash);
+  });
