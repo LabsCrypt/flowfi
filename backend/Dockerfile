@@ -11,7 +11,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 
-RUN npm install
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY prisma.config.ts ./
@@ -25,7 +25,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Order matters here for layer caching: COPY package*.json + npm install
+# Order matters here for layer caching: COPY package*.json + npm ci
 # stay pinned together so that pure source-only changes do NOT invalidate
 # the dependency install. --ignore-scripts skips the @prisma/client
 # postinstall (we already COPY the generated client from the builder
@@ -34,7 +34,7 @@ ENV NODE_ENV=production
 # `npx prisma db push` step the workflow runs against this container,
 # while keeping the install layer cached whenever prisma/ is unchanged.
 COPY package*.json ./
-RUN npm install --omit=dev --ignore-scripts
+RUN npm ci --omit=dev --ignore-scripts
 
 # Copy the prisma schema into the runner. The boot-and-check-health step
 # in .github/workflows/ci.yml runs `npx prisma db push` against this

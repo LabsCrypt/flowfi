@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { logger } from '@/lib/logger';
 
 interface StreamEvent {
   type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed' | 'paused' | 'resumed';
@@ -100,8 +101,12 @@ export function useStreamEvents(
           { type, data, timestamp: Date.now() },
           ...prev.slice(0, 99),
         ]);
-      } catch {
-        // Silently ignore malformed event messages
+      } catch (err) {
+        logger.error('SSE payload parse failure:', {
+          type,
+          raw: e.data,
+          error: err,
+        });
       }
     };
 

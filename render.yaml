@@ -5,7 +5,7 @@ services:
     entrypoint: npm run start
     rootDir: backend
     autoDeploy: true
-    buildCommand: npm install && npm run prisma:generate && npm run build
+    buildCommand: npm ci && npm run prisma:generate && npm run build
     startCommand: npm run prisma:deploy && npm run start
     healthCheckPath: /health
     envVars:
