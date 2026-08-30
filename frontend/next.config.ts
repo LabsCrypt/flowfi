@@ -1,12 +1,15 @@
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
+
+const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   // The workspace root lives one level above this directory. Pinning it here
   // prevents Turbopack from inferring a wrong root when stray package-lock
-  // files exist outside the repo (e.g. ~/package-lock.json).
+  // files exist outside the repo.
   turbopack: {
-    root: path.join(path.dirname(new URL(import.meta.url).pathname), ".."),
+    root: path.join(configDirectory, ".."),
   },
   // Enable tree-shaking for icon/utility libraries to reduce per-route
   // bundle sizes (Issue #1254).

@@ -8,6 +8,7 @@ import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/context/theme-provider";
 import { Navbar } from "@/components/Navbar";
 import { QueryProvider } from "@/components/providers/query-provider";
+import { AppDataSync } from "@/components/providers/app-data-sync";
 
 const sora = Sora({
   variable: "--font-display",
@@ -60,17 +61,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    /*
-      `suppressHydrationWarning` is the companion to next-themes' built-in
-      blocking pre-paint script (rendered by <ThemeProvider> below). The
-      server renders <html> without a theme class; that script then reads the
-      persisted theme from localStorage and adds/removes the theme class
-      (`light`/`dark`) on <html> before the first paint, so the client DOM
-      class list can legitimately differ from what the server rendered. This
-      prop tells React to skip the hydration-difference check for this
-      element because the divergence is intentional and resolved before paint.
-      See `theme-provider.tsx` for the full strategy.
-    */
     <html lang="en" suppressHydrationWarning>
       <head />
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
@@ -83,6 +73,7 @@ export default function RootLayout({
         >
           <QueryProvider>
             <WalletProvider>
+              <AppDataSync />
               <Navbar />
               <Toaster
                 position="top-right"
