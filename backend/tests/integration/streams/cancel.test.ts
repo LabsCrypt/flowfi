@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+import { Prisma } from '@prisma/client';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -87,7 +88,7 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       stream: { update: vi.fn().mockResolvedValue({ ...mockStream, isActive: false }) },
       streamEvent: { upsert: vi.fn() },
     };
-    (prisma.$transaction as any).mockImplementation(async (fn) => fn(mockTx));
+    (prisma.$transaction as any).mockImplementation(async (fn: Prisma.TransactionClient) => fn(mockTx));
 
     const res = await request(app)
       .post(`/v1/streams/${streamId}/cancel`)

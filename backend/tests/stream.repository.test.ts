@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { updateStatus, findStreams, cancelStreamWithEvent } from '../src/repositories/stream.repository.js';
 import { prisma } from '../src/lib/prisma.js';
+import { Prisma } from '@prisma/client';
 
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
@@ -68,7 +69,7 @@ describe('Stream Repository', () => {
         stream: { update: vi.fn() },
         streamEvent: { upsert: vi.fn() },
       };
-      (prisma.$transaction as any).mockImplementation(async (fn) => fn(mockTx));
+      (prisma.$transaction as any).mockImplementation(async (fn: Prisma.TransactionClient) => fn(mockTx));
 
       await cancelStreamWithEvent(123n, 'tx_hash_123');
 
