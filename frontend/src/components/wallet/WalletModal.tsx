@@ -44,10 +44,12 @@ export function WalletModal({ onClose }: WalletModalProps) {
 
   // The Freighter extension injects itself asynchronously.
   // We need to poll briefly after mount to reliably detect it.
+  const cancelled = React.useRef(false);
   useEffect(() => {
     let attempts = 0;
     const interval = setInterval(async () => {
       const res = await isConnected();
+      if (cancelled.current) return;
       if (res.isConnected) {
         setFreighterInstalled(true);
         clearInterval(interval);
@@ -60,7 +62,10 @@ export function WalletModal({ onClose }: WalletModalProps) {
       }
     }, 100);
 
-    return () => clearInterval(interval);
+    return () => {
+      cancelled.current = true;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleConnect = async (walletId: WalletId) => {

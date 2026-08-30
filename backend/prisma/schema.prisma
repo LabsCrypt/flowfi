@@ -52,7 +52,6 @@ model Stream {
   @@index([sender])
   @@index([recipient])
   @@index([tokenAddress])
-  @@index([streamId])
   @@index([isActive])
   @@index([isPaused])
 }

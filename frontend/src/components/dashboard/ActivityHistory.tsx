@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { BackendStreamEvent } from "@/lib/api-types";
@@ -31,7 +31,10 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
     enabled: shouldVirtualize,
   });
 
-  const exportToCSV = () => {
+  const [exportStatus, setExportStatus] = useState<"idle" | "exporting" | "complete">("idle");
+
+  const exportToCSV = useCallback(() => {
+    setExportStatus("exporting");
     const headers = [
       "Stream ID",
       "Event Type",
@@ -60,7 +63,10 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
+    setExportStatus("complete");
+    // Reset after screen readers have had time to announce
+    setTimeout(() => setExportStatus("idle"), 3000);
+  }, [events]);
 
   const renderEventMessage = (event: BackendStreamEvent): React.ReactNode => {
     const amount = event.amount ? formatAmount(BigInt(event.amount), 7) : "0";
@@ -141,6 +147,12 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Visually hidden live region for screen readers to announce export status */}
+      <div aria-live="polite" className="sr-only">
+        {exportStatus === "exporting" && "Exporting activity to CSV…"}
+        {exportStatus === "complete" && "Export complete."}
+      </div>
+
       <div className="flex justify-end">
         <Button
           onClick={exportToCSV}
@@ -148,6 +160,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
           size="sm"
           className="flex items-center gap-2"
           disabled={events.length === 0}
+          aria-busy={exportStatus === "exporting"}
         >
           <Download className="h-4 w-4" /> Export CSV
         </Button>
@@ -156,6 +169,8 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
       {shouldVirtualize ? (
         <div
           ref={parentRef}
+          role="list"
+          aria-label="Activity timeline"
           className="relative h-[600px] overflow-auto before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-700 before:to-transparent"
         >
           <div
@@ -170,6 +185,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                   key={`${event.id}-${virtualRow.index}`}
                   ref={virtualizer.measureElement}
                   data-index={virtualRow.index}
+                  role="listitem"
                   style={{
                     position: "absolute",
                     top: 0,
@@ -225,10 +241,11 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
           </div>
         </div>
       ) : (
-        <div className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-700 before:to-transparent">
+        <div role="list" aria-label="Activity timeline" className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-700 before:to-transparent">
           {events.map((event, index) => (
             <div
               key={`${event.id}-${index}`}
+              role="listitem"
               className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group"
             >
               {/* Dot */}

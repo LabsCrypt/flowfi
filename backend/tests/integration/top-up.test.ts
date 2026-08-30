@@ -36,6 +36,8 @@ const { mockPrisma } = vi.hoisted(() => ({
       count: vi.fn().mockResolvedValue(0),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    $transaction: vi.fn(async (fn: any) => fn(mockPrisma)),
     $disconnect: vi.fn(),
   },
 }));
@@ -149,17 +151,16 @@ describe('POST /v1/streams/:streamId/top-up', () => {
   });
 
   it('updates depositedAmount in DB on success', async () => {
+    // After $executeRawUnsafe, findUnique returns the updated stream
+    vi.mocked(mockPrisma.stream.findUnique).mockResolvedValue({ ...mockStream, depositedAmount: '87400' } as any);
+
     await request(app)
       .post('/v1/streams/42/top-up')
       .set('Authorization', 'Bearer dummy')
       .send({ amount: '1000' });
 
-    expect(mockPrisma.stream.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { streamId: 42n },
-        data: expect.objectContaining({ depositedAmount: '87400' }),
-      }),
-    );
+    // Verify the atomic SQL increment was called
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalled();
   });
 
   it('returns 409 when stream is inactive', async () => {

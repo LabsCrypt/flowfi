@@ -17,6 +17,8 @@ const {
       create: vi.fn(),
       upsert: vi.fn(),
     },
+    $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    $transaction: vi.fn(async (fn: any) => fn(mockPrisma)),
   },
   currentUser: { publicKey: '' },
 }));
@@ -87,9 +89,14 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
 
     mockPrisma.stream.findUnique.mockResolvedValue(stream);
     mockWithdraw.mockResolvedValue({ txHash: 'withdraw-tx-hash' });
-    mockPrisma.stream.update.mockResolvedValue({
-      ...stream,
-      withdrawnAmount: '200',
+    // Mock $transaction to simulate the withdraw handler's transaction
+    mockPrisma.$transaction.mockImplementation(async (fn: any) => {
+      // After $executeRawUnsafe, the handler re-reads the stream
+      mockPrisma.stream.findUnique.mockResolvedValueOnce({
+        ...stream,
+        withdrawnAmount: '200',
+      });
+      return fn(mockPrisma);
     });
 
     const response = await request(app)
@@ -106,15 +113,8 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
     // Verify service call with new signature (streamId, recipientAddress)
     expect(mockWithdraw).toHaveBeenCalledWith(BigInt(streamId), recipient.publicKey());
     
-    // Verify DB update
-    expect(mockPrisma.stream.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { streamId: BigInt(streamId) },
-        data: expect.objectContaining({
-          withdrawnAmount: expect.any(String),
-        }),
-      })
-    );
+    // Verify the atomic SQL increment was called
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalled();
 
     // Verify event creation
     expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
