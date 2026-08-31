@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTheme } from "next-themes";
 import { Copy, Check, LogOut, Moon, Sun, Bell, Globe } from "lucide-react";
 import { STELLAR_NETWORK, shortenPublicKey } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
@@ -24,20 +25,7 @@ export default function SettingsContent() {
   const { session, disconnect, isHydrated } = useWallet();
 
   const [browserPush, setBrowserPush] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark" | "system">(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("flowfi-theme") as
-        | "light"
-        | "dark"
-        | "system"
-        | null;
-      if (saved) {
-        document.documentElement.classList.toggle("dark", saved === "dark");
-        return saved;
-      }
-    }
-    return "dark";
-  });
+  const { theme, setTheme } = useTheme();
 
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>(() => {
     if (typeof window !== "undefined") {
@@ -65,17 +53,6 @@ export default function SettingsContent() {
 
   const [copied, setCopied] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
-
-  const toggleTheme = (newTheme: "light" | "dark" | "system") => {
-    setTheme(newTheme);
-    localStorage.setItem("flowfi-theme", newTheme);
-    if (newTheme === "system") {
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      document.documentElement.classList.toggle("dark", prefersDark);
-    } else {
-      document.documentElement.classList.toggle("dark", newTheme === "dark");
-    }
-  };
 
   const copyAddress = async () => {
     if (session?.publicKey) {
@@ -209,13 +186,12 @@ export default function SettingsContent() {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              {(["light", "dark", "system"] as const).map((t) => (
+            <div className="flex gap-2">                  {(["light", "dark", "system"] as const).map((t) => (
                 <button
                   key={t}
-                  onClick={() => toggleTheme(t)}
+                  onClick={() => setTheme(t)}
                   className={`px-4 py-2 text-sm rounded-xl border transition-all ${
-                    theme === t
+                    (theme ?? "dark") === t
                       ? "border-purple-500 bg-purple-500/20 text-white"
                       : "border-white/10 dark:border-black/10 text-white/60 dark:text-black/60 hover:border-white/20"
                   }`}
