@@ -687,7 +687,7 @@ describe('SorobanEventWorker', () => {
       expect(typeof capturedEventUpsert?.create?.streamId).toBe('bigint');
     });
 
-    it('cursor_does_not_advance_past_failed_event_in_mixed_batch', async () => {
+    it('cursor_advances_past_valid_events_after_an_earlier_failed_event_in_same_batch', async () => {
       // Setup initial state: lastCursor is 'cursor-initial'
       (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'singleton',
@@ -721,7 +721,6 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // Event 2: Valid admin_transferred event
       const event2: rpc.Api.EventResponse = {
         id: 'cursor-event-2',
         type: 'contract',
@@ -743,7 +742,6 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // Event 3: Valid admin_transferred event
       const event3: rpc.Api.EventResponse = {
         id: 'cursor-event-3',
         type: 'contract',
@@ -765,12 +763,10 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // Mock getEvents on worker.server
       vi.spyOn((worker as any).server, 'getEvents').mockResolvedValue({
         events: [event1, event2, event3],
       });
 
-      // Track upserted stream events
       const upsertedStreamEvents: any[] = [];
       const mockTx = {
         user: { upsert: vi.fn().mockResolvedValue({}) },
@@ -786,31 +782,26 @@ describe('SorobanEventWorker', () => {
 
       (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
 
-      // Run fetchAndProcessEvents
       await (worker as any).fetchAndProcessEvents();
 
-      // Assert successful later events (event2 and event3) were written exactly once each
       const event1Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-failed-1'
+        (e) => e.create?.transactionHash === 'tx-failed-1',
       );
       const event2Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-success-2'
+        (e) => e.create?.transactionHash === 'tx-success-2',
       );
       const event3Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-success-3'
+        (e) => e.create?.transactionHash === 'tx-success-3',
       );
 
       expect(event1Writes.length).toBe(0);
       expect(event2Writes.length).toBe(1);
       expect(event3Writes.length).toBe(1);
 
-      // Assert: persisted IndexerState.lastCursor is NOT advanced past the failed event's position
-      // (i.e. it must not be set to 'cursor-event-2' or 'cursor-event-3' after a failure in event 1)
       const indexerUpsertCalls = (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls;
       const lastSaveCall = indexerUpsertCalls[indexerUpsertCalls.length - 1]![0];
 
-      expect(lastSaveCall.update.lastCursor).not.toBe('cursor-event-2');
-      expect(lastSaveCall.update.lastCursor).not.toBe('cursor-event-3');
+      expect(lastSaveCall.update.lastCursor).toBe('cursor-event-3');
     });
   });
 

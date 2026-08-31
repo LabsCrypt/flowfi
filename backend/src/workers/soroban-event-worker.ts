@@ -342,7 +342,7 @@ export class SorobanEventWorker {
 
     let lastCursor: string | null = state.lastCursor;
     let lastLedger: number = state.lastLedger;
-    let hasError = false;
+    let sawSuccess = false;
 
     // Sort events so that 'stream_created' events are processed first in the batch.
     // This ensures that subsequent events (like 'fee_collected') that depend on
@@ -363,13 +363,12 @@ export class SorobanEventWorker {
         await this.processEvent(event);
         this.eventsProcessed += 1;
         this.recordOutcome(true);
-        if (!hasError) {
-          // Use the event ID as the cursor if pagingToken is not available
-          lastCursor = event.id;
-          lastLedger = event.ledger;
-        }
+        sawSuccess = true;
+        // Advance the cursor to the most recent event that was successfully processed.
+        // This keeps a single malformed event from pinning the entire batch forever.
+        lastCursor = event.id;
+        lastLedger = event.ledger;
       } catch (err) {
-        hasError = true;
         this.eventsFailed += 1;
         this.lastErrorAt = new Date();
         this.recordOutcome(false);
@@ -381,10 +380,11 @@ export class SorobanEventWorker {
       }
     }
 
-    // Use the response's final cursor if provided and no error occurred, otherwise the last valid event's ID
-    const finalCursor = hasError
-      ? lastCursor
-      : ((response as any).latestCursor || lastCursor);
+    // If we successfully processed any events in the batch, advance to the last
+    // successful event so a single poison-pill failure cannot freeze the cursor.
+    const finalCursor = sawSuccess
+      ? ((response as any).latestCursor || lastCursor)
+      : lastCursor;
 
     await prisma.indexerState.upsert({
       where: { id: INDEXER_STATE_ID },
