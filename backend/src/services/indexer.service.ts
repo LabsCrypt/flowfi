@@ -1,3 +1,12 @@
+/**
+ * Indexer control-plane helpers (status / reset / replay).
+ *
+ * This module does **not** poll the chain — it manages the singleton
+ * `IndexerState` cursor and triggers `SorobanEventWorker`. See
+ * `backend/docs/ARCHITECTURE.md` (Indexer Ownership, SSE Broadcast Flow,
+ * Keeper-Key Authorization) and `docs/ARCHITECTURE.md` for the full
+ * indexer ownership model (Architecture #67).
+ */
 import { randomUUID } from 'crypto';
 import { prisma } from '../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';

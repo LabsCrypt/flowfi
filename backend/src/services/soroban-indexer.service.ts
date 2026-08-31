@@ -10,7 +10,12 @@ const POLL_MS = Number(process.env.SOROBAN_INDEXER_POLL_MS ?? 15000);
 const START_LEDGER = Number(process.env.SOROBAN_INDEXER_START_LEDGER ?? 0);
 const CONTRACT_ID = process.env.STREAM_CONTRACT_ID ?? '';
 
-/** @deprecated Production indexing is owned by SorobanEventWorker. Kept for API/test compatibility. */
+/**
+ * @deprecated Production indexing is owned by SorobanEventWorker.
+ * Kept for API/test compatibility. See `backend/docs/ARCHITECTURE.md`
+ * (Indexer Ownership) and `docs/ARCHITECTURE.md` for the full indexer
+ * ownership model and the dual-indexer race (Architecture #67).
+ */
 export class SorobanIndexerService {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
