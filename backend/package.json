@@ -6,6 +6,7 @@
   "main": "index.js",
   "scripts": {
     "prebuild": "prisma generate",
+    "pretest": "prisma generate",
     "test": "vitest run",
     "test:unit": "vitest run --exclude='tests/integration/**'",
     "test:integration": "vitest run tests/integration",
@@ -17,7 +18,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "codegen:openapi": "tsx scripts/export-openapi.mts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

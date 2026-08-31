@@ -1,7 +1,10 @@
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
-import { registerUserSchema } from "../validators/user.validator.js";
+import {
+  registerUserSchema,
+  STELLAR_PUBLIC_KEY_REGEX,
+} from "../validators/user.validator.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
@@ -103,7 +106,7 @@ export const getUser = async (
     if (typeof publicKey !== "string") {
       return res.status(400).json({ error: "Invalid publicKey parameter" });
     }
-    if (!/^G[A-Z2-7]{55}$/.test(publicKey)) {
+    if (!STELLAR_PUBLIC_KEY_REGEX.test(publicKey)) {
       return res
         .status(400)
         .json({ error: "Invalid Stellar public key format" });
@@ -137,7 +140,7 @@ export const getUserEvents = async (
     if (typeof publicKey !== "string") {
       return res.status(400).json({ error: "Invalid publicKey parameter" });
     }
-    if (!/^G[A-Z2-7]{55}$/.test(publicKey)) {
+    if (!STELLAR_PUBLIC_KEY_REGEX.test(publicKey)) {
       return res
         .status(400)
         .json({ error: "Invalid Stellar public key format" });
@@ -251,7 +254,7 @@ export const exportTransactions = async (
       ? addressParam[0]
       : addressParam;
 
-    if (!address || !/^G[A-Z2-7]{55}$/.test(address)) {
+    if (!address || !STELLAR_PUBLIC_KEY_REGEX.test(address)) {
       return res.status(400).json({ error: "Invalid Stellar address" });
     }
 

@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "codegen:api-types": "openapi-typescript http://localhost:3001/api-docs.json -o src/lib/api-types.generated.ts"
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "codegen:api-types": "openapi-typescript ../backend/swagger/flowfi.openapi.json -o src/lib/api-types.generated.ts"
   },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
@@ -41,6 +43,7 @@
     "happy-dom": "^20.10.3",
     "jsdom": "^27.0.1",
     "openapi-typescript": "^7.13.0",
+    "@playwright/test": "^1.55.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.7"

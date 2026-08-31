@@ -35,4 +35,9 @@ pub enum StreamError {
     StreamNotPaused = 13,
     /// `pause_stream` was called on a stream that is already paused.
     StreamAlreadyPaused = 14,
+    /// An amount or timestamp calculation exceeded the range of its type.
+    ///
+    /// Returned instead of letting `overflow-checks` panic and abort the whole
+    /// transaction, so callers get a typed failure they can handle.
+    ArithmeticOverflow = 15,
 }

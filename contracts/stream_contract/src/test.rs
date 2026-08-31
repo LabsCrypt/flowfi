@@ -68,6 +68,7 @@ fn test_datakey_stream_serializes_deterministically() {
         withdrawn_amount: 0,
         start_time: 1,
         last_update_time: 1,
+        cliff_time: None,
         is_active: true,
         paused: false,
         paused_at: None,
@@ -2222,6 +2223,7 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             withdrawn_amount: withdrawn,
             start_time: 0,
             last_update_time: 0,
+            cliff_time: None,
             is_active: true,
             paused,
             paused_at: if paused {
@@ -2870,5 +2872,210 @@ fn test_stream_created_event_field_names_match_decoder_expectations() {
     assert_eq!(
         names, expected,
         "stream_created event fields drifted from soroban-event-worker.ts's decodeMap expectations"
+    );
+}
+
+// ─── #1297 Overflow regressions for the #1224 unchecked arithmetic sites ──────
+//
+// Issue #1224 ("Functional Edge Case #22") identified five call sites that used
+// plain `+=` / `*` / `+` while the rest of the file uses checked or saturating
+// arithmetic. `overflow-checks` is on for both the release profile the WASM
+// ships with and the dev profile these tests run under, so an overflow at any
+// of them panicked and aborted the whole transaction instead of returning a
+// `StreamError`. The tests below pin each site at its boundary and assert the
+// typed `ArithmeticOverflow` error.
+//
+//   1. `collect_fee`      — `amount * fee_rate_bps`
+//   2. `top_up_stream`    — `deposited_amount +=`
+//   3. `apply_withdrawal` — `withdrawn_amount +=`
+//   4. `top_up_stream`    — `now + (remaining / rate) as u64`
+//   5. `resume_stream`    — `now + (remaining / rate) as u64`
+
+/// Overwrites a stream record in place.
+///
+/// Reaching an i128 boundary through the public API alone would take an
+/// impractical number of calls, so these tests park the stream one step below
+/// the ceiling and then drive the real entrypoint across it. Same technique as
+/// `test_claimable_max_i128_rate_overflow` and
+/// `test_calculate_claimable_underflow_returns_zero` above.
+fn force_stream(env: &Env, client: &StreamContractClient<'_>, stream_id: u64, stream: &Stream) {
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), stream);
+    });
+}
+
+/// Site 1 — `collect_fee`: `amount * (cfg.fee_rate_bps as i128)`.
+///
+/// At the maximum fee rate the multiplication overflows for any amount above
+/// `i128::MAX / 1_000`, so `i128::MAX` is well past the boundary.
+#[test]
+fn test_create_stream_rejects_fee_multiplication_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, i128::MAX);
+
+    let client = create_contract(&env);
+    client.initialize(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &MAX_FEE_RATE_BPS,
+    );
+
+    assert_eq!(
+        client.try_create_stream(&sender, &recipient, &token, &i128::MAX, &1_000),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+/// Site 2 — `top_up_stream`: `stream.deposited_amount += net_amount`.
+///
+/// The stream is parked one unit below `i128::MAX`, so any positive top-up
+/// pushes the deposited total out of range.
+#[test]
+fn test_top_up_rejects_deposited_amount_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = i128::MAX - 1;
+    force_stream(&env, &client, id, &stream);
+
+    assert_eq!(
+        client.try_top_up_stream(&sender, &id, &5_000),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+/// Site 3 — `apply_withdrawal`: `stream.withdrawn_amount += amount`.
+///
+/// Exercised at the boundary rather than past it. `calculate_claimable` clamps
+/// its result to `deposited_amount - withdrawn_amount`, which makes
+/// `withdrawn_amount + claimable <= deposited_amount <= i128::MAX` an invariant
+/// of every reachable call, so no input can push this site over. The test pins
+/// the exact state where the sum lands on `i128::MAX`: the checked add must
+/// succeed and the withdrawal must complete, so a future change to that clamp
+/// which does let this site overflow surfaces here as a test failure instead of
+/// as an aborted transaction in production.
+#[test]
+fn test_withdraw_at_i128_max_withdrawn_boundary_does_not_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &10_000, &100);
+
+    // 1 000 units still claimable, and withdrawn + claimable lands exactly on
+    // i128::MAX. The huge rate makes `streamed` exceed `remaining`, so the
+    // clamp rather than the elapsed time decides the amount.
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = i128::MAX;
+    stream.withdrawn_amount = i128::MAX - 1_000;
+    stream.rate_per_second = i128::MAX;
+    force_stream(&env, &client, id, &stream);
+
+    env.ledger().with_mut(|l| l.timestamp += 10);
+
+    assert_eq!(client.try_withdraw(&recipient, &id), Ok(Ok(1_000)));
+
+    let settled = client.get_stream(&id).unwrap();
+    assert_eq!(settled.withdrawn_amount, i128::MAX);
+    assert!(!settled.is_active);
+    assert_eq!(settled.status, StreamStatus::Completed);
+}
+
+/// Remaining balance whose drain time cannot be represented as a `u64`.
+///
+/// `Q = 3 * 2^64 - 101`. At one unit per second the stream needs `Q` seconds to
+/// drain, which is past `u64::MAX`. The pre-fix code truncated that quotient
+/// with `as u64`, giving `2^64 - 101`, then panicked on `now + (2^64 - 101)`
+/// for any `now > 100`. The fixed code rejects the quotient before it is ever
+/// truncated.
+const END_TIME_OVERFLOW_REMAINING: i128 = 3 * (1_i128 << 64) - 101;
+
+/// Ledger timestamp for the two end-time tests. Any value above 100 makes the
+/// pre-fix truncated addition overflow.
+const END_TIME_OVERFLOW_NOW: u64 = 1_000;
+
+/// Site 4 — `top_up_stream`: `now + (remaining / rate_per_second) as u64`.
+#[test]
+fn test_top_up_rejects_end_time_projection_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    env.ledger()
+        .with_mut(|l| l.timestamp = END_TIME_OVERFLOW_NOW);
+
+    // A 10-unit top-up brings the deposited balance to exactly Q. Anchoring
+    // last_update_time at `now` keeps the claimable amount at 0, so the whole
+    // balance counts as remaining.
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = END_TIME_OVERFLOW_REMAINING - 10;
+    stream.withdrawn_amount = 0;
+    stream.rate_per_second = 1;
+    stream.last_update_time = END_TIME_OVERFLOW_NOW;
+    force_stream(&env, &client, id, &stream);
+
+    assert_eq!(
+        client.try_top_up_stream(&sender, &id, &10),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+/// Site 5 — `resume_stream`: `now + (remaining / rate_per_second) as u64`.
+#[test]
+fn test_resume_rejects_end_time_projection_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    env.ledger()
+        .with_mut(|l| l.timestamp = END_TIME_OVERFLOW_NOW);
+
+    // Paused with paused_at == last_update_time, so nothing accrued while
+    // paused and the full balance is still remaining at resume.
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = END_TIME_OVERFLOW_REMAINING;
+    stream.withdrawn_amount = 0;
+    stream.rate_per_second = 1;
+    stream.last_update_time = 500;
+    stream.paused = true;
+    stream.paused_at = Some(500);
+    stream.status = StreamStatus::Paused;
+    force_stream(&env, &client, id, &stream);
+
+    assert_eq!(
+        client.try_resume_stream(&sender, &id),
+        Err(Ok(StreamError::ArithmeticOverflow))
     );
 }

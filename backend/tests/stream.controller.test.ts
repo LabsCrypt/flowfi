@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, pauseStream, resumeStream } from '../src/controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS } from '../src/controllers/stream.controller.js';
 import { prisma } from '../src/lib/prisma.js';
 import { claimableAmountService } from '../src/services/claimable.service.js';
 import * as sorobanService from '../src/services/sorobanService.js';
@@ -280,6 +280,121 @@ describe("Stream Controller", () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ claimableAmount: "100" }),
       );
+    });
+  });
+
+  describe("getUserStreamSummary", () => {
+    it("should return 400 when address is missing", async () => {
+      req.params = {} as any;
+
+      await getUserStreamSummary(req as any, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it("should cap outgoing and incoming streams to MAX_USER_STREAMS (Issue #1246)", async () => {
+      req.params = { address: "GUSER1" };
+
+      // Simulate a wallet with more streams than the cap
+      const manyStreams = Array.from({ length: MAX_USER_STREAMS + 100 }, (_, i) => ({
+        streamId: i,
+        ratePerSecond: "10",
+        depositedAmount: "1000",
+        withdrawnAmount: "500",
+        startTime: BigInt(1000 + i),
+        lastUpdateTime: BigInt(2000 + i),
+        isActive: true,
+        isPaused: false,
+        pausedAt: null,
+        totalPausedDuration: null,
+        updatedAt: new Date(),
+      }));
+
+      // findMany is called twice (outgoing + incoming), each returns at most MAX_USER_STREAMS
+      const cappedStreams = manyStreams.slice(0, MAX_USER_STREAMS);
+      (prisma.stream.findMany as any)
+        .mockResolvedValueOnce(cappedStreams)  // outgoing
+        .mockResolvedValueOnce(cappedStreams); // incoming
+
+      (claimableAmountService.getClaimableAmount as any).mockReturnValue({
+        claimableAmount: "0",
+      });
+
+      await getUserStreamSummary(req as any, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const body = (res.json as any).mock.calls[0][0];
+      // The response should reflect only the capped result set
+      expect(body.totalStreamsCreated).toBe(MAX_USER_STREAMS);
+      // Both findMany calls should have received take: MAX_USER_STREAMS
+      const findManyCalls = (prisma.stream.findMany as any).mock.calls;
+      for (const call of findManyCalls) {
+        expect(call[0].take).toBe(MAX_USER_STREAMS);
+      }
+    });
+
+    it("should not set truncated flag when under the cap (Issue #1246)", async () => {
+      req.params = { address: "GUSER_NO_TRUNC" };
+
+      const fewStreams = Array.from({ length: 5 }, (_, i) => ({
+        streamId: i,
+        ratePerSecond: "10",
+        depositedAmount: "1000",
+        withdrawnAmount: "500",
+        startTime: BigInt(1000 + i),
+        lastUpdateTime: BigInt(2000 + i),
+        isActive: true,
+        isPaused: false,
+        pausedAt: null,
+        totalPausedDuration: null,
+        updatedAt: new Date(),
+      }));
+
+      (prisma.stream.findMany as any)
+        .mockResolvedValueOnce(fewStreams)
+        .mockResolvedValueOnce(fewStreams);
+
+      (claimableAmountService.getClaimableAmount as any).mockReturnValue({
+        claimableAmount: "0",
+      });
+
+      await getUserStreamSummary(req as any, res as Response);
+
+      const body = (res.json as any).mock.calls[0][0];
+      expect(body.truncated).toBeUndefined();
+    });
+
+    it("should set truncated=true when either direction hits the cap (Issue #1246)", async () => {
+      req.params = { address: "GUSER_TRUNC" };
+
+      const atCap = Array.from({ length: MAX_USER_STREAMS }, (_, i) => ({
+        streamId: i,
+        ratePerSecond: "10",
+        depositedAmount: "1000",
+        withdrawnAmount: "0",
+        startTime: BigInt(1000 + i),
+        lastUpdateTime: BigInt(2000 + i),
+        isActive: true,
+        isPaused: false,
+        pausedAt: null,
+        totalPausedDuration: null,
+        updatedAt: new Date(),
+      }));
+      const empty: any[] = [];
+
+      // Outgoing hits cap, incoming is empty
+      (prisma.stream.findMany as any)
+        .mockResolvedValueOnce(atCap)
+        .mockResolvedValueOnce(empty);
+
+      (claimableAmountService.getClaimableAmount as any).mockReturnValue({
+        claimableAmount: "0",
+      });
+
+      await getUserStreamSummary(req as any, res as Response);
+
+      const body = (res.json as any).mock.calls[0][0];
+      expect(body.truncated).toBe(true);
     });
   });
 

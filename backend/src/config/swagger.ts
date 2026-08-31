@@ -2,7 +2,7 @@ import swaggerJsdoc from 'swagger-jsdoc';
 
 const options: swaggerJsdoc.Options = {
   definition: {
-    openapi: '3.0.0',
+    openapi: '3.1.0',
     info: {
       title: 'FlowFi API',
       version: '1.0.0',
@@ -259,6 +259,224 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             },
           },
         },
+        StreamListResponse: {
+          type: 'object',
+          required: ['data', 'total', 'hasMore', 'limit', 'offset'],
+          properties: {
+            data: {
+              type: 'array',
+              description: 'Streams matching the filter, sorted and paginated',
+              items: { $ref: '#/components/schemas/Stream' },
+            },
+            total: { type: 'integer', description: 'Total number of streams matching the filter' },
+            hasMore: { type: 'boolean', description: 'Whether more results are available past this page' },
+            limit: { type: 'integer', description: 'Page size applied (capped at MAX_STREAM_PAGE_SIZE)' },
+            offset: { type: 'integer', description: 'Number of results skipped' },
+          },
+        },
+        StreamEventListResponse: {
+          type: 'object',
+          required: ['data', 'total', 'hasMore'],
+          properties: {
+            data: {
+              type: 'array',
+              description: 'Events for the stream, sorted by timestamp (tie-broken by id)',
+              items: { $ref: '#/components/schemas/StreamEvent' },
+            },
+            total: { type: 'integer', description: 'Total number of events matching the filter' },
+            hasMore: { type: 'boolean', description: 'Whether more results are available past this page' },
+          },
+        },
+        EventListResponse: {
+          type: 'object',
+          required: ['events', 'total', 'limit', 'offset', 'hasMore'],
+          properties: {
+            events: {
+              type: 'array',
+              description: 'Reverse-chronological stream events for the wallet',
+              items: { $ref: '#/components/schemas/StreamEvent' },
+            },
+            total: { type: 'integer', description: 'Total number of matching events' },
+            limit: { type: 'integer', description: 'Page size applied (capped at 200)' },
+            offset: { type: 'integer', description: 'Number of events skipped' },
+            hasMore: { type: 'boolean', description: 'Whether more results are available past this page' },
+          },
+        },
+        UserEventListResponse: {
+          type: 'object',
+          required: ['data', 'total', 'hasMore', 'limit', 'offset'],
+          properties: {
+            data: {
+              type: 'array',
+              description: 'Events associated with the user, newest first',
+              items: { $ref: '#/components/schemas/StreamEvent' },
+            },
+            total: { type: 'integer', description: 'Total number of matching events' },
+            hasMore: { type: 'boolean', description: 'Whether more results are available past this page' },
+            limit: { type: 'integer', description: 'Page size applied (capped at 200)' },
+            offset: { type: 'integer', description: 'Number of events skipped' },
+          },
+        },
+        UserStreamSummary: {
+          type: 'object',
+          required: [
+            'address',
+            'totalStreamsCreated',
+            'totalStreamedOut',
+            'totalStreamedIn',
+            'currentClaimable',
+            'activeOutgoingCount',
+            'activeIncomingCount',
+          ],
+          properties: {
+            address: { type: 'string', description: 'Stellar public key' },
+            totalStreamsCreated: { type: 'integer', description: 'Number of streams this wallet sent' },
+            totalStreamedOut: { type: 'string', description: 'Sum of withdrawn amounts on outgoing streams (i128 as string)' },
+            totalStreamedIn: { type: 'string', description: 'Sum of withdrawn amounts on incoming streams (i128 as string)' },
+            currentClaimable: { type: 'string', description: 'Total currently claimable across active incoming streams (i128 as string)' },
+            activeOutgoingCount: { type: 'integer' },
+            activeIncomingCount: { type: 'integer' },
+            truncated: { type: 'boolean', description: 'True when the number of streams was capped at MAX_USER_STREAMS per direction', example: false },
+          },
+        },
+        ClaimableResponse: {
+          type: 'object',
+          required: ['claimableAmount', 'actionable', 'calculatedAt'],
+          properties: {
+            streamId: { type: 'integer', description: 'On-chain stream ID' },
+            ratePerSecond: { type: 'string', description: 'Payment rate per second (i128 as string)' },
+            depositedAmount: { type: 'string', description: 'Total deposited amount (i128 as string)' },
+            withdrawnAmount: { type: 'string', description: 'Total withdrawn amount (i128 as string)' },
+            startTime: { type: 'integer', description: 'Stream start time (Unix timestamp)' },
+            lastUpdateTime: { type: 'integer', description: 'Last state update time (Unix timestamp)' },
+            claimableAmount: { type: 'string', description: 'Amount claimable at the requested time (i128 as string)' },
+            actionable: { type: 'boolean', description: 'Whether the claimable amount is positive' },
+            calculatedAt: { type: 'integer', description: 'Unix timestamp of the calculation' },
+            cached: { type: 'boolean', description: 'Whether the value came from cache or a fresh computation' },
+            source: { type: 'string', enum: ['db', 'chain'], description: 'Where the value was computed from' },
+          },
+        },
+        PauseResumeResponse: {
+          type: 'object',
+          required: ['success', 'streamId', 'txHash'],
+          properties: {
+            success: { type: 'boolean', example: true },
+            streamId: { type: 'integer' },
+            txHash: { type: 'string', description: 'Stellar transaction hash of the pause/resume simulation' },
+            stream: { $ref: '#/components/schemas/Stream' },
+          },
+        },
+        TopUpResponse: {
+          type: 'object',
+          required: ['streamId', 'txHash', 'depositedAmount'],
+          properties: {
+            streamId: { type: 'integer' },
+            txHash: { type: 'string', description: 'Stellar transaction hash' },
+            depositedAmount: { type: 'string', description: 'New total deposited amount after the top-up (i128 as string)' },
+          },
+        },
+        WithdrawResponse: {
+          type: 'object',
+          required: ['success', 'streamId', 'txHash', 'amount'],
+          properties: {
+            success: { type: 'boolean', example: true },
+            streamId: { type: 'integer' },
+            txHash: { type: 'string', description: 'Stellar transaction hash of the withdrawal' },
+            amount: { type: 'string', description: 'Amount withdrawn (i128 as string)' },
+            stream: { $ref: '#/components/schemas/Stream' },
+          },
+        },
+        CancelResponse: {
+          type: 'object',
+          required: ['txHash', 'status'],
+          properties: {
+            txHash: { type: 'string', description: 'Stellar transaction hash of the cancel' },
+            status: { type: 'string', enum: ['CANCELLED'], example: 'CANCELLED' },
+          },
+        },
+        AuthChallengeResponse: {
+          type: 'object',
+          required: ['nonce', 'expiresAt'],
+          properties: {
+            nonce: { type: 'string', description: 'Hex-encoded nonce to sign via a Stellar manage_data operation' },
+            expiresAt: { type: 'integer', description: 'Unix timestamp (ms) when the challenge expires (60s)' },
+          },
+        },
+        AuthVerifyResponse: {
+          type: 'object',
+          required: ['token', 'expiresIn'],
+          properties: {
+            token: { type: 'string', description: 'JWT to use in the Authorization: Bearer header' },
+            expiresIn: { type: 'integer', description: 'Token lifetime in seconds (3600)' },
+          },
+        },
+        SseStats: {
+          type: 'object',
+          required: ['activeConnections', 'activeIps', 'perIpPeakConnections', 'maxConnections', 'timestamp'],
+          properties: {
+            activeConnections: { type: 'integer', example: 42 },
+            activeIps: { type: 'integer', example: 8 },
+            perIpPeakConnections: { type: 'integer', example: 5 },
+            maxConnections: { type: 'integer', example: 10000 },
+            timestamp: { type: 'string', format: 'date-time' },
+          },
+        },
+        WebhookSubscription: {
+          type: 'object',
+          required: ['id', 'userAddress', 'targetUrl', 'eventTypes', 'active', 'createdAt'],
+          properties: {
+            id: { type: 'string', description: 'Webhook subscription id' },
+            userAddress: { type: 'string', description: 'Stellar public key the subscription belongs to' },
+            targetUrl: { type: 'string', description: 'HTTPS endpoint receiving the events' },
+            eventTypes: {
+              type: 'array',
+              items: { type: 'string', enum: ['CREATED', 'TOPPED_UP', 'WITHDRAWN', 'CANCELLED', 'COMPLETED', 'PAUSED', 'RESUMED', 'FEE_COLLECTED'] },
+            },
+            active: { type: 'boolean' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        HealthResponse: {
+          type: 'object',
+          required: ['status', 'db', 'indexerEnabled', 'uptime', 'checks'],
+          properties: {
+            status: { type: 'string', enum: ['ok', 'degraded'], example: 'ok' },
+            db: { type: 'string', enum: ['connected', 'disconnected'], example: 'connected' },
+            indexerEnabled: { type: 'boolean', description: 'Whether the event indexer is configured' },
+            indexerLag: { type: 'integer', nullable: true, description: 'Seconds since last indexer update, or null when no state row exists yet' },
+            eventsProcessed: { type: 'integer', description: 'Lifetime count of successfully processed indexer events' },
+            eventsFailed: { type: 'integer', description: 'Lifetime count of indexer events that threw during processing' },
+            lastErrorAt: { type: 'string', format: 'date-time', nullable: true, description: 'Most recent per-event processing failure' },
+            indexerDegraded: { type: 'boolean', description: 'True when recent event-processing failure rate spikes' },
+            uptime: { type: 'number', description: 'Server uptime in seconds' },
+            checks: {
+              type: 'object',
+              description: 'Per-subsystem status breakdown',
+              properties: {
+                database: {
+                  type: 'object',
+                  properties: { status: { type: 'string', enum: ['ok', 'down'] } },
+                },
+                indexer: {
+                  type: 'object',
+                  properties: {
+                    status: { type: 'string', enum: ['ok', 'degraded', 'disabled'] },
+                    enabled: { type: 'boolean' },
+                    lagSeconds: { type: 'integer', nullable: true },
+                  },
+                },
+                redis: {
+                  type: 'object',
+                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'not_configured'] } },
+                },
+                sorobanRpc: {
+                  type: 'object',
+                  properties: { status: { type: 'string', enum: ['ok', 'down'] } },
+                },
+              },
+            },
+          },
+        },
         Error: {
           type: 'object',
           properties: {
@@ -271,6 +489,17 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               type: 'string',
               description: 'Error code',
               example: 'NOT_FOUND',
+            },
+            message: {
+              type: 'string',
+              nullable: true,
+              description: 'Human-readable detail (present on many error responses)',
+            },
+            details: {
+              type: 'array',
+              nullable: true,
+              description: 'Structured validation issues (zod) when the error is a 400',
+              items: { type: 'object' },
             },
           },
         },

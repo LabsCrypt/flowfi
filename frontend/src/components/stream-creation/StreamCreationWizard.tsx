@@ -119,7 +119,10 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   
   const router = useRouter();
 
-  const dialogRef = useModalDialog({ onClose });
+  const dialogRef = useModalDialog({ 
+    onClose,
+    isCloseDisabled: isSubmitting || isPolling
+  });
 
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -542,7 +545,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
                       </div>
                     </div>
                     <div className="flex items-center gap-4">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-accent animate-pulse">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-accent motion-reduce:animate-none">
                         <div className="h-2 w-2 rounded-full bg-accent" />
                       </div>
                       <div className="flex-1">
@@ -553,9 +556,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
                   </div>
                   <div className="mt-12 flex flex-col items-center gap-2">
                     <div className="flex gap-1">
-                      <div className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0s" }} />
-                      <div className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0.2s" }} />
-                      <div className="w-2 h-2 rounded-full bg-accent animate-bounce" style={{ animationDelay: "0.4s" }} />
+                      <div className="w-2 h-2 rounded-full bg-accent motion-reduce:animate-none" style={{ animationDelay: "0s" }} />
+                      <div className="w-2 h-2 rounded-full bg-accent motion-reduce:animate-none" style={{ animationDelay: "0.2s" }} />
+                      <div className="w-2 h-2 rounded-full bg-accent motion-reduce:animate-none" style={{ animationDelay: "0.4s" }} />
                     </div>
                     <p className="text-sm text-slate-400">This usually takes 5-10 seconds</p>
                   </div>
@@ -627,7 +630,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
               )}
             </div>
             <div className="flex gap-4">
-              <Button variant="outline" onClick={onClose}>
+              <Button variant="outline" onClick={onClose} disabled={isSubmitting || isPolling}>
                 Cancel
               </Button>
               {currentStep < STEPS.length ? (

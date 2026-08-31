@@ -30,6 +30,17 @@ pub struct StreamCreatedEvent {
     pub start_time: u64,
 }
 
+/// Emitted when a recipient transfers stream control to a new address.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RecipientTransferredEvent {
+    pub stream_id: u64,
+    pub old_recipient: Address,
+    pub new_recipient: Address,
+    pub settled_amount: i128,
+    pub timestamp: u64,
+}
+
 /// Emitted when a sender tops up an active stream.
 ///
 /// Topic: `("stream_topped_up", stream_id)`
