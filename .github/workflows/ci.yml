@@ -99,7 +99,7 @@ jobs:
           git diff --exit-code -- backend/swagger/flowfi.openapi.json frontend/src/lib/api-types.generated.ts
 
       - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
+        run: npm install @rollup/rollup-linux-x64-gnu@^4.63.1 --no-save
 
       - name: Run Backend Tests
         run: |
