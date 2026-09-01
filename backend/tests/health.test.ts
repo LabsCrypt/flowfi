@@ -62,6 +62,7 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.db).toBe('connected');
     expect(res.body.indexerEnabled).toBe(false);
+    expect(res.body.checks.indexer.status).toBe('disabled');
     expect(res.body.indexerLag).toBeNull();
     expect(res.body.eventsProcessed).toBe(0);
     expect(res.body.eventsFailed).toBe(0);
@@ -78,6 +79,7 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.indexerEnabled).toBe(true);
     expect(res.body.indexerLag).toBeNull();
+    expect(res.body.checks.indexer.status).toBe('ok');
   });
 
   it('returns 200 when DB is up, indexer enabled, and lag is within threshold', async () => {
@@ -89,6 +91,7 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.indexerLag).toBeGreaterThanOrEqual(0);
     expect(res.body.indexerLag).toBeLessThanOrEqual(60);
+    expect(res.body.checks.indexer.status).toBe('ok');
   });
 
   it('returns 503 when DB is up, indexer enabled, and lag exceeds 60 s', async () => {
@@ -99,6 +102,7 @@ describe('GET /health', () => {
     expect(res.status).toBe(503);
     expect(res.body.status).toBe('degraded');
     expect(res.body.indexerLag).toBeGreaterThan(60);
+    expect(res.body.checks.indexer.status).toBe('degraded');
   });
 
   it('returns 503 when DB is down regardless of indexer state', async () => {
@@ -139,5 +143,6 @@ describe('GET /health', () => {
     expect(res.body.eventsFailed).toBe(10);
     expect(res.body.lastErrorAt).toBe('2026-07-27T08:00:00.000Z');
     expect(res.body.indexerDegraded).toBe(true);
+    expect(res.body.checks.indexer.status).toBe('degraded');
   });
 });

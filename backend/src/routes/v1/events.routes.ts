@@ -48,7 +48,7 @@ export const DEFAULT_EVENTS_PAGE_SIZE = 50;
  *         description: |
  *           Comma-separated list of event types to include. Allowed values:
  *           CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED, PAUSED,
- *           RESUMED, FEE_COLLECTED.
+ *           RESUMED, FEE_COLLECTED, FEE_CONFIG_UPDATED, ADMIN_TRANSFERRED.
  *       - in: query
  *         name: limit
  *         required: false
@@ -65,6 +65,34 @@ export const DEFAULT_EVENTS_PAGE_SIZE = 50;
  *     responses:
  *       200:
  *         description: Paginated event list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/EventListResponse'
+ *       400:
+ *         description: Missing/invalid `address` or invalid `type` filter
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - `address` must match the authenticated wallet
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -205,13 +233,16 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
  *         example: false
  *     responses:
  *       200:
- *         description: SSE connection established
+ *         description: SSE connection established. Events are emitted as `data:` frames of type stream.created, stream.topped_up, stream.withdrawn, stream.cancelled, stream.completed, stream.paused, stream.resumed, fee.collected.
  *         content:
  *           text/event-stream:
  *             schema:
  *               type: string
+ *               description: Server-Sent Events stream; each event carries a JSON payload matching the StreamEvent schema
  *       400:
  *         description: Invalid subscription parameters
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
  */
 router.get('/subscribe', requireAuth, subscribe);
 
@@ -222,30 +253,34 @@ router.get('/subscribe', requireAuth, subscribe);
  *     tags:
  *       - Events
  *     summary: Get SSE connection statistics
- *     description: Returns current SSE connection metrics for monitoring
+ *     description: Returns current SSE connection metrics for monitoring (admin only)
+ *     security:
+ *       - adminAuth: []
  *     responses:
  *       200:
  *         description: Connection statistics
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 activeConnections:
- *                   type: number
- *                   example: 42
- *                 activeIps:
- *                   type: number
- *                   example: 8
- *                 perIpPeakConnections:
- *                   type: number
- *                   example: 5
- *                 maxConnections:
- *                   type: number
- *                   example: 10000
- *                 timestamp:
- *                   type: string
- *                   format: date-time
+ *               $ref: '#/components/schemas/SseStats'
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - admin access required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/stats', requireAdmin, (req: Request, res: Response) => {
   res.json({

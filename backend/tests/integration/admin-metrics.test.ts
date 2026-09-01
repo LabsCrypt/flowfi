@@ -333,6 +333,72 @@ describe('GET /v1/admin/metrics', () => {
       degraded: true,
     });
   });
+
+  it('includes a calculatedAt timestamp in valid ISO 8601 format (#1240)', async () => {
+    setupCounts({ total: 5, active: 3 });
+    mocks.cache.getMetadata.mockReturnValue({
+      createdAt: '2026-08-01T00:00:00.000Z',
+      expiresAt: '2026-08-01T00:01:00.000Z',
+    });
+
+    const res = await request(app)
+      .get('/v1/admin/metrics')
+      .set('Authorization', `Bearer ${createToken()}`);
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.calculatedAt).toBe('string');
+    expect(res.body.calculatedAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+    expect(Date.parse(res.body.calculatedAt)).not.toBeNaN();
+    // Reflects when the aggregation ran, not when the response was serialized.
+    expect(res.body.calculatedAt).toBe('2026-08-01T00:00:00.000Z');
+    expect(res.body.calculatedAt).not.toBe(new Date().toISOString());
+  });
+
+  it('keeps calculatedAt stable across responses served from the same cache entry (#1240)', async () => {
+    const cachedPayload = {
+      total_streams: 99,
+      active_streams: 50,
+      paused_streams: 5,
+      completed_streams: 30,
+      cancelled_streams: 14,
+      total_volume_streamed: '123456789',
+      indexer: {
+        lastLedger: 10,
+        lagSeconds: 1,
+        lastUpdated: null,
+        eventsProcessed: 0,
+        eventsFailed: 0,
+        lastErrorAt: null,
+        degraded: false,
+      },
+    };
+    const aggregationTime = '2026-08-01T00:00:00.000Z';
+    mocks.cache.get.mockReturnValue(cachedPayload);
+    mocks.cache.getMetadata.mockReturnValue({
+      createdAt: aggregationTime,
+      expiresAt: '2026-08-01T00:01:00.000Z',
+    });
+
+    const first = await request(app)
+      .get('/v1/admin/metrics')
+      .set('Authorization', `Bearer ${createToken()}`);
+    const second = await request(app)
+      .get('/v1/admin/metrics')
+      .set('Authorization', `Bearer ${createToken()}`);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.headers['x-cache']).toBe('HIT');
+    expect(second.headers['x-cache']).toBe('HIT');
+    // Both requests served from the same cache entry: calculatedAt must equal
+    // the aggregation time and must NOT drift to "now" on each call.
+    expect(first.body.calculatedAt).toBe(aggregationTime);
+    expect(second.body.calculatedAt).toBe(aggregationTime);
+    expect(second.body.calculatedAt).toEqual(first.body.calculatedAt);
+    expect(second.body.calculatedAt).not.toBe(new Date().toISOString());
+  });
 });
 
 describe('GET /v1/admin/indexer/status', () => {

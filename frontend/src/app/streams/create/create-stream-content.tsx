@@ -178,18 +178,19 @@ export default function CreateStreamContent() {
 
       if (result.success) {
         setTxState("confirming");
-        clearDraft(); // Clear draft on successful submission
+        clearDraft();
         toast.success("Stream created successfully!");
         setTimeout(() => {
+          setLoading(false);
+          setTxState("idle");
           router.push("/dashboard");
         }, 2000);
       }
     } catch (error) {
-      logger.error("Stream creation failed:", error);
-      toast.error(toSorobanErrorMessage(error));
-    } finally {
       setLoading(false);
       setTxState("idle");
+      logger.error("Stream creation failed:", error);
+      toast.error(toSorobanErrorMessage(error));
     }
   };
 

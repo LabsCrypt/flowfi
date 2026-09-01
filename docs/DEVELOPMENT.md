@@ -147,6 +147,8 @@ Frontend:
 ```bash
 cd frontend
 npm run lint
+npm test
+npm run test:coverage
 ```
 
 Contracts:

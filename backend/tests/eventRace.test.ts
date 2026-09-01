@@ -6,6 +6,14 @@ import { withdraw as sorobanWithdraw } from '../src/services/sorobanService.js';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../src/types/auth.types.js';
 
+const mockTx = {
+  $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+  stream: {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  },
+};
+
 vi.mock('../src/lib/prisma.js', () => ({
   prisma: {
     stream: {
@@ -15,6 +23,8 @@ vi.mock('../src/lib/prisma.js', () => ({
     streamEvent: {
       upsert: vi.fn(),
     },
+    $transaction: vi.fn(async (fn: any) => fn(mockTx)),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -63,7 +73,11 @@ describe('Action Controller vs Worker Event Write Race Guard (Issue #831)', () =
     (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
     (claimableAmountService.getClaimableAmount as any).mockReturnValue({ actionable: true, claimableAmount: '500' });
     (sorobanWithdraw as any).mockResolvedValue({ txHash: 'tx_race_123' });
-    (prisma.stream.update as any).mockResolvedValue({ ...mockStream, withdrawnAmount: '500' });
+    // Mock the $transaction to return the refreshed stream
+    vi.mocked(prisma.$transaction as any).mockImplementation(async (fn: any) => {
+      mockTx.stream.findUnique.mockResolvedValue({ ...mockStream, withdrawnAmount: '500' });
+      return fn(mockTx);
+    });
     (prisma.streamEvent.upsert as any).mockResolvedValue({ id: 'evt_1' });
 
     await withdrawHandler(req as AuthenticatedRequest, res as Response);

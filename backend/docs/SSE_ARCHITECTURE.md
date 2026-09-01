@@ -3,27 +3,27 @@
 ## System Flow
 
 ```
-┌─────────────────┐
-│  Blockchain     │
-│  Indexer        │
-│  (Stellar)      │
-└────────┬────────┘
-         │ Events
-         ▼
+┌─────────────────────────────────────────────────────────┐
+│              Stellar Blockchain / Soroban                │
+│  - On-chain stream contract executions & ledger events   │
+└────────────────────────────┬────────────────────────────┘
+                             │ On-Chain Events (via Soroban RPC poll)
+                             ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    Backend Server                        │
 │                                                          │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │  Stream Controller                                │  │
-│  │  - Creates/updates streams                        │  │
-│  │  - Calls sseService.broadcast()                   │  │
+│  │  Soroban Event Worker (Indexer)                  │  │
+│  │  - Polls Soroban RPC for confirmed events        │  │
+│  │  - Persists stream state & events to Database    │  │
+│  │  - Calls sseService.broadcastToStream/Admin()     │  │
 │  └──────────────┬───────────────────────────────────┘  │
-│                 │                                        │
+│                 │ Dispatch events (indexer-driven)       │
 │                 ▼                                        │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │  SSE Service                                      │  │
 │  │  - Manages client connections                     │  │
-│  │  - Filters by subscription                        │  │
+│  │  - Filters by subscription (stream/user/admin)    │  │
 │  │  - Broadcasts to matching clients                 │  │
 │  └──────────────┬───────────────────────────────────┘  │
 │                 │                                        │
@@ -39,6 +39,8 @@
     │  └──────────┘  └──────────┘       │
     └─────────────────────────────────────┘
 ```
+
+> **Note on Indexer-Driven Event Origin**: SSE broadcast events originate asynchronously from the background indexer worker (`SorobanEventWorker`) only after transaction confirmation on the Stellar ledger, not synchronously from HTTP API controllers (`stream.controller.ts`, etc.). When a user submits an action (create, pause, withdraw, top-up, cancel), API controllers do not broadcast SSE events directly; events are dispatched once the Soroban event is polled and confirmed on-chain. Additionally, background workers like `StreamRunwayWorker` may dispatch computed alerts (e.g. `STREAM_LOW_BALANCE`).
 
 ## Connection Flow
 
@@ -72,7 +74,7 @@ Client                          Server
   │  [Auto Reconnect - 1s]        │
   │                               │
   │  GET /events/subscribe        │
-  ├──────────────────────────────>│
+  │  ├──────────────────────────────>│
   │                               │
   │  200 OK                       │
   │<──────────────────────────────┤
@@ -122,9 +124,9 @@ Client                          Server
                     └─────────────────┘
 
 Flow:
-1. Backend 1 receives stream creation
+1. Backend 1 (SorobanEventWorker) indexes confirmed on-chain event
 2. Backend 1 publishes to Redis: "stream-events"
-3. All backends (1, 2, 3) receive message
+3. All backends (1, 2, 3) receive message via Redis subscriber
 4. Each backend broadcasts to its connected clients
 5. Total: 33 clients receive the event
 ```
@@ -132,17 +134,24 @@ Flow:
 ## Event Broadcasting Logic
 
 ```typescript
-// Broadcast to specific stream
+// Broadcast to specific stream (called by SorobanEventWorker / StreamRunwayWorker)
 sseService.broadcastToStream("123", "stream.created", data)
   ↓
   Filter clients: subscription includes "123" or "*"
   ↓
   Send to matching clients
 
-// Broadcast to user
-sseService.broadcastToUser("GABC...", "stream.created", data)
+// Broadcast to user (called by StreamRunwayWorker)
+sseService.broadcastToUser("GABC...", "STREAM_LOW_BALANCE", data)
   ↓
   Filter clients: subscription includes "user:GABC..." or "*"
+  ↓
+  Send to matching clients
+
+// Broadcast to admin (called by SorobanEventWorker for admin/fee events)
+sseService.broadcastToAdmin("stream.fee_config_updated", data)
+  ↓
+  Filter clients: admin subscribers ("admin" or "*")
   ↓
   Send to matching clients
 

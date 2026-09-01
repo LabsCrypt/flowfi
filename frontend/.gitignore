@@ -42,5 +42,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# manually-triggered API type codegen output (see src/lib/api-types.ts)
-src/lib/api-types.generated.ts
+# playwright e2e artifacts
+test-results/
+playwright-report/
+e2e/.e2e-certs/

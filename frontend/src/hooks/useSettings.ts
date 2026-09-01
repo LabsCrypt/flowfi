@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 
 export type Theme = "light" | "dark" | "system";
-export type DisplayCurrency = "USD" | "XLM" | "USDC";
+export type DisplayCurrency = "USD" | "EUR" | "GBP" | "XLM" | "USDC";
 export type AmountFormat = "full" | "compact";
 export type DecimalPlaces = 2 | 4 | 7;
 

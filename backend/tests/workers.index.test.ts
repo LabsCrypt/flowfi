@@ -12,6 +12,8 @@ vi.mock('../src/workers/soroban-event-worker.js', () => ({
 vi.mock('../src/logger.js', () => ({
   default: {
     info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 

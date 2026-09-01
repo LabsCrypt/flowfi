@@ -90,6 +90,15 @@ jobs:
         run: npm run build
         working-directory: backend
 
+      - name: OpenAPI spec & API types drift check
+        run: |
+          cd backend
+          npm run codegen:openapi
+          cd ../frontend
+          npm run codegen:api-types
+          cd ..
+          git diff --exit-code -- backend/swagger/flowfi.openapi.json frontend/src/lib/api-types.generated.ts
+
       - name: Install Rollup Native Binding
         run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
@@ -192,8 +201,16 @@ jobs:
         run: cargo test
         working-directory: contracts
 
+      - name: Cache cargo-tarpaulin
+        id: tarpaulin-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tarpaulin
+          key: cargo-tarpaulin-${{ runner.os }}-0.37.2
+
       - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin --locked
+        if: steps.tarpaulin-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-tarpaulin@0.37.2 --locked
 
       - name: Run Contract Coverage
         run: cargo tarpaulin --workspace --out Xml --output-dir coverage --fail-under 70
