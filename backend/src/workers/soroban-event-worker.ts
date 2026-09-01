@@ -1013,39 +1013,41 @@ export class SorobanEventWorker {
     const token = decodeAddress(body["token"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    const existingEvent = await prisma.streamEvent.findUnique({
-      where: {
-        transactionHash_eventType: {
-          transactionHash: event.txHash,
-          eventType: "FEE_COLLECTED",
-        },
-      },
-      select: { id: true },
-    });
-    if (existingEvent) {
-      logger.warn(
-        `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
-      );
-    } else {
-      await prisma.streamEvent.upsert({
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existingEvent = await tx.streamEvent.findUnique({
         where: {
           transactionHash_eventType: {
             transactionHash: event.txHash,
             eventType: "FEE_COLLECTED",
           },
         },
-        create: {
-          streamId,
-          eventType: "FEE_COLLECTED",
-          amount: feeAmount,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ treasury, token }),
-        },
-        update: {},
+        select: { id: true },
       });
-    }
+      if (existingEvent) {
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
+        );
+      } else {
+        await tx.streamEvent.upsert({
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "FEE_COLLECTED",
+            },
+          },
+          create: {
+            streamId,
+            eventType: "FEE_COLLECTED",
+            amount: feeAmount,
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({ treasury, token }),
+          },
+          update: {},
+        });
+      }
+    });
 
     // Broadcast to admin channel for treasury reporting
     sseService.broadcastToAdmin("stream.fee_collected", {

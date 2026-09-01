@@ -9,8 +9,6 @@ import {
   getClaimableFromChain,
   isStale,
   topUpStream,
-  pauseStream as sorobanPauseStream,
-  resumeStream as sorobanResumeStream,
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
@@ -831,36 +829,11 @@ export const pauseStream = async (req: Request, res: Response) => {
       });
     }
 
-    try {
-      // Call Soroban service to verify the pause operation would succeed
-      const result = await sorobanPauseStream(
-        authReq.user.publicKey,
-        parsedStreamId,
-      );
-
-      logger.info(
-        `Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`,
-      );
-
-      return res.status(200).json({
-        success: true,
-        streamId: parsedStreamId,
-        txHash: result.txHash,
-        stream,
-      });
-    } catch (sorobanError) {
-      logger.error(
-        `Soroban pause failed for stream ${parsedStreamId}:`,
-        sorobanError,
-      );
-      return res.status(400).json({
-        error: "Failed to pause stream on chain",
-        message:
-          sorobanError instanceof Error
-            ? sorobanError.message
-            : "Unknown error",
-      });
-    }
+    return res.status(501).json({
+      error: "Not Implemented",
+      message:
+        "Pausing streams is not currently supported because the on-chain transaction is not yet submitted.",
+    });
   } catch (error) {
     logger.error("Error pausing stream:", error);
     return res.status(500).json({ error: "Internal server error" });
@@ -914,36 +887,11 @@ export const resumeStream = async (req: Request, res: Response) => {
       });
     }
 
-    try {
-      // Call Soroban service to verify the resume operation would succeed
-      const result = await sorobanResumeStream(
-        authReq.user.publicKey,
-        parsedStreamId,
-      );
-
-      logger.info(
-        `Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`,
-      );
-
-      return res.status(200).json({
-        success: true,
-        streamId: parsedStreamId,
-        txHash: result.txHash,
-        stream,
-      });
-    } catch (sorobanError) {
-      logger.error(
-        `Soroban resume failed for stream ${parsedStreamId}:`,
-        sorobanError,
-      );
-      return res.status(400).json({
-        error: "Failed to resume stream on chain",
-        message:
-          sorobanError instanceof Error
-            ? sorobanError.message
-            : "Unknown error",
-      });
-    }
+    return res.status(501).json({
+      error: "Not Implemented",
+      message:
+        "Resuming streams is not currently supported because the on-chain transaction is not yet submitted.",
+    });
   } catch (error) {
     logger.error("Error resuming stream:", error);
     return res.status(500).json({ error: "Internal server error" });

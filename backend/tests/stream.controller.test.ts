@@ -295,7 +295,6 @@ describe("Stream Controller", () => {
     it("should cap outgoing and incoming streams to MAX_USER_STREAMS (Issue #1246)", async () => {
       req.params = { address: "GUSER1" };
 
-      // Simulate a wallet with more streams than the cap
       const manyStreams = Array.from({ length: MAX_USER_STREAMS + 100 }, (_, i) => ({
         streamId: i,
         ratePerSecond: "10",
@@ -310,11 +309,10 @@ describe("Stream Controller", () => {
         updatedAt: new Date(),
       }));
 
-      // findMany is called twice (outgoing + incoming), each returns at most MAX_USER_STREAMS
       const cappedStreams = manyStreams.slice(0, MAX_USER_STREAMS);
       (prisma.stream.findMany as any)
-        .mockResolvedValueOnce(cappedStreams)  // outgoing
-        .mockResolvedValueOnce(cappedStreams); // incoming
+        .mockResolvedValueOnce(cappedStreams)
+        .mockResolvedValueOnce(cappedStreams);
 
       (claimableAmountService.getClaimableAmount as any).mockReturnValue({
         claimableAmount: "0",
@@ -324,9 +322,8 @@ describe("Stream Controller", () => {
 
       expect(res.status).toHaveBeenCalledWith(200);
       const body = (res.json as any).mock.calls[0][0];
-      // The response should reflect only the capped result set
       expect(body.totalStreamsCreated).toBe(MAX_USER_STREAMS);
-      // Both findMany calls should have received take: MAX_USER_STREAMS
+
       const findManyCalls = (prisma.stream.findMany as any).mock.calls;
       for (const call of findManyCalls) {
         expect(call[0].take).toBe(MAX_USER_STREAMS);
@@ -382,7 +379,6 @@ describe("Stream Controller", () => {
       }));
       const empty: any[] = [];
 
-      // Outgoing hits cap, incoming is empty
       (prisma.stream.findMany as any)
         .mockResolvedValueOnce(atCap)
         .mockResolvedValueOnce(empty);
@@ -399,35 +395,42 @@ describe("Stream Controller", () => {
   });
 
   describe("pauseStream", () => {
+    it("should return 501 when pausing is not implemented", async () => {
+      await pauseStream(req as any, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(501);
+    });
+
     it("should pause stream", async () => {
       req.params = { streamId: "123" };
-      req.body = { secret: "S123" };
       (req as any).user = { publicKey: "GUSER1" };
+
       (prisma.stream.findUnique as any).mockResolvedValue({
         streamId: 123,
         sender: "GUSER1",
         isPaused: false,
         isActive: true,
       });
-      (sorobanService.pauseStream as any).mockResolvedValue({
-        txHash: "tx123",
-      });
-      (prisma.stream.update as any).mockResolvedValue({
-        streamId: 123,
-        isPaused: true,
-      });
 
       await pauseStream(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.status).toHaveBeenCalledWith(501);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Not Implemented",
+        message:
+          "Pausing streams is not currently supported because the on-chain transaction is not yet submitted.",
+      });
+
+      expect(sorobanService.pauseStream).not.toHaveBeenCalled();
+      expect(prisma.stream.update).not.toHaveBeenCalled();
     });
   });
 
   describe("resumeStream", () => {
-    it("should resume stream", async () => {
+    it("should return 501 when resuming is not implemented", async () => {
       req.params = { streamId: "123" };
-      req.body = { secret: "S123" };
       (req as any).user = { publicKey: "GUSER1" };
+
       (prisma.stream.findUnique as any).mockResolvedValue({
         streamId: 123,
         sender: "GUSER1",
@@ -435,17 +438,18 @@ describe("Stream Controller", () => {
         isActive: true,
         pausedAt: Math.floor(Date.now() / 1000),
       });
-      (sorobanService.resumeStream as any).mockResolvedValue({
-        txHash: "tx123",
-      });
-      (prisma.stream.update as any).mockResolvedValue({
-        streamId: 123,
-        isPaused: false,
-      });
 
       await resumeStream(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.status).toHaveBeenCalledWith(501);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Not Implemented",
+        message:
+          "Resuming streams is not currently supported because the on-chain transaction is not yet submitted.",
+      });
+
+      expect(sorobanService.resumeStream).not.toHaveBeenCalled();
+      expect(prisma.stream.update).not.toHaveBeenCalled();
     });
   });
 });

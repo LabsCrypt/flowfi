@@ -94,40 +94,34 @@ describe('stream action routes', () => {
     mockPrisma.streamEvent.count.mockResolvedValue(0);
   });
 
-  it('POST /v1/streams/:streamId/pause pauses an active sender-owned stream', async () => {
-    const sender = makeKeypair();
-    const token = await getValidJwt(sender);
+  it('POST /v1/streams/:streamId/pause returns 501 when pausing is not implemented', async () => {
+  const sender = makeKeypair();
+  const token = await getValidJwt(sender);
 
-    mockPrisma.stream.findUnique.mockResolvedValue({
-      streamId: 7,
-      sender: sender.publicKey(),
-      recipient: makeKeypair().publicKey(),
-      isActive: true,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 0,
-    });
-    mockPauseStream.mockResolvedValue({ txHash: 'pause-tx-hash' });
-    mockPrisma.stream.update.mockResolvedValue({
-      streamId: 7,
-      isActive: true,
-      isPaused: true,
-      pausedAt: 1700000000,
-      totalPausedDuration: 0,
-    });
-
-    const response = await request(app)
-      .post('/v1/streams/7/pause')
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({
-      success: true,
-      streamId: 7,
-      txHash: 'pause-tx-hash',
-    });
-    expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7n);
+  mockPrisma.stream.findUnique.mockResolvedValue({
+    streamId: 7,
+    sender: sender.publicKey(),
+    recipient: makeKeypair().publicKey(),
+    isActive: true,
+    isPaused: false,
+    pausedAt: null,
+    totalPausedDuration: 0,
   });
+
+  const response = await request(app)
+    .post('/v1/streams/7/pause')
+    .set('Authorization', `Bearer ${token}`);
+
+  expect(response.status).toBe(501);
+  expect(response.body).toMatchObject({
+    error: 'Not Implemented',
+    message:
+      'Pausing streams is not currently supported because the on-chain transaction is not yet submitted.',
+  });
+
+  expect(mockPauseStream).not.toHaveBeenCalled();
+  expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+});
 
   it('rejects a raw signed transaction bearer token without a JWT', async () => {
     const sender = makeKeypair();
@@ -144,40 +138,34 @@ describe('stream action routes', () => {
     });
   });
 
-  it('POST /v1/streams/:streamId/resume resumes a paused sender-owned stream', async () => {
-    const sender = makeKeypair();
-    const token = await getValidJwt(sender);
+  it('POST /v1/streams/:streamId/resume returns 501 when resuming is not implemented', async () => {
+  const sender = makeKeypair();
+  const token = await getValidJwt(sender);
 
-    mockPrisma.stream.findUnique.mockResolvedValue({
-      streamId: 9,
-      sender: sender.publicKey(),
-      recipient: makeKeypair().publicKey(),
-      isActive: true,
-      isPaused: true,
-      pausedAt: Math.floor(Date.now() / 1000) - 30,
-      totalPausedDuration: 10,
-    });
-    mockResumeStream.mockResolvedValue({ txHash: 'resume-tx-hash' });
-    mockPrisma.stream.update.mockResolvedValue({
-      streamId: 9,
-      isActive: true,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 40,
-    });
-
-    const response = await request(app)
-      .post('/v1/streams/9/resume')
-      .set('Authorization', `Bearer ${token}`);
-
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({
-      success: true,
-      streamId: 9,
-      txHash: 'resume-tx-hash',
-    });
-    expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9n);
+  mockPrisma.stream.findUnique.mockResolvedValue({
+    streamId: 9,
+    sender: sender.publicKey(),
+    recipient: makeKeypair().publicKey(),
+    isActive: true,
+    isPaused: true,
+    pausedAt: Math.floor(Date.now() / 1000) - 30,
+    totalPausedDuration: 10,
   });
+
+  const response = await request(app)
+    .post('/v1/streams/9/resume')
+    .set('Authorization', `Bearer ${token}`);
+
+  expect(response.status).toBe(501);
+  expect(response.body).toMatchObject({
+    error: 'Not Implemented',
+    message:
+      'Resuming streams is not currently supported because the on-chain transaction is not yet submitted.',
+  });
+
+  expect(mockResumeStream).not.toHaveBeenCalled();
+  expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+});
 
   it('POST /v1/streams/:streamId/withdraw withdraws the claimable amount for the recipient', async () => {
     const recipient = makeKeypair();
