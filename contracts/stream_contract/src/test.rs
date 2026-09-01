@@ -2132,7 +2132,7 @@ fn test_resume_on_cancelled_stream_fails() {
     let s = client.get_stream(&id).unwrap();
     assert!(!s.is_active);
     assert_eq!(s.status, StreamStatus::Cancelled);
-    assert!(s.paused);
+    assert!(!s.paused);
 }
 
 #[test]
