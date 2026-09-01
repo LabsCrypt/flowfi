@@ -37,6 +37,13 @@ vi.mock("@/hooks/useStreamEvents", () => ({
   useStreamEvents: () => ({ events: [] }),
 }));
 
+// The shared ticking hook is exercised by its own suite
+// (frontend/src/__tests__/useStreamingAmount.test.tsx); here we only verify
+// that the details page wires it into the "Claimable" stat card.
+vi.mock("@/hooks/useStreamingAmount", () => ({
+  useStreamingAmount: () => 123456789, // 12.3456789 XLM in stroops
+}));
+
 vi.mock("@/lib/soroban", () => ({
   withdrawFromStream: vi.fn(),
   cancelStream: vi.fn(),
@@ -181,5 +188,27 @@ describe("StreamDetailsContent loading skeleton", () => {
 
     // The not-found/error UI should have a back link
     expect(screen.getByText(/← back to dashboard/i)).toBeInTheDocument();
+  });
+
+  it("renders the live claimable amount from the shared useStreamingAmount hook", async () => {
+    const mockStream = createMockStream();
+
+    vi.mocked(global.fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockStream,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response);
+
+    render(<StreamDetailsContent streamId={STREAM_ID} />);
+
+    // Once the stream loads, the Claimable stat card should show the value
+    // returned by the shared hook, formatted in token units (stroops → XLM).
+    await waitFor(() => {
+      expect(screen.getByText(/12\.3456789 XLM/)).toBeInTheDocument();
+    });
   });
 });

@@ -10,6 +10,7 @@ import { LiveValue } from "@/components/ui/LiveValue";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/wallet-context";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { useStreamingAmount } from "@/hooks/useStreamingAmount";
 import TransactionTracker, {
   useTransactionTracker,
 } from "@/components/TransactionTracker";
@@ -86,7 +87,25 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
   const [showTopUp, setShowTopUp] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
 
-  const [liveClaimable, setLiveClaimable] = useState<bigint>(0n);
+  // Shared, visibility-aware claimable ticking (rAF-based, pauses when the
+  // tab is hidden) — same hook the dashboard uses, so both pages compute the
+  // "live claimable amount" through one implementation. See issue #1267.
+  const liveClaimableNumber = useStreamingAmount({
+    deposited: stream ? Number(stream.depositedAmount) : 0,
+    withdrawn: stream ? Number(stream.withdrawnAmount) : 0,
+    ratePerSecond: stream ? Number(stream.ratePerSecond) : 0,
+    lastUpdateTime: stream?.lastUpdateTime,
+    isActive: stream?.isActive ?? false,
+    isPaused: stream?.isPaused ?? false,
+    pausedAt: stream?.pausedAt != null ? Number(stream.pausedAt) : null,
+  });
+
+  // The hook operates on numbers (same as the dashboard), but this page
+  // formats raw stroop amounts, so round back to an exact bigint for display.
+  const liveClaimable = useMemo(() => {
+    if (!Number.isFinite(liveClaimableNumber)) return 0n;
+    return BigInt(Math.round(liveClaimableNumber));
+  }, [liveClaimableNumber]);
 
   const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],
@@ -159,38 +178,8 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       }
     };
 
-    refreshStreamData();
-
-    return () => controller.abort();
+    refreshStreamData();    return () => controller.abort();
   }, [streamEvents, fetchStream, fetchEvents, eventsPage]);
-
-  useEffect(() => {
-    if (!stream) return;
-
-    const ratePerSecond = BigInt(stream.ratePerSecond);
-    const withdrawn = BigInt(stream.withdrawnAmount);
-    const deposited = BigInt(stream.depositedAmount);
-    const lastUpdate = stream.lastUpdateTime;
-
-    const updateClaimable = () => {
-      if (!stream.isActive || stream.isPaused) {
-        setLiveClaimable(deposited - withdrawn);
-        return;
-      }
-
-      const now = Math.floor(Date.now() / 1000);
-      const elapsed = BigInt(now - lastUpdate);
-      const accrued = elapsed * ratePerSecond;
-      const totalClaimable = deposited - withdrawn + accrued;
-
-      setLiveClaimable(totalClaimable > deposited ? deposited : totalClaimable);
-    };
-
-    updateClaimable();
-    const interval = setInterval(updateClaimable, 1000);
-
-    return () => clearInterval(interval);
-  }, [stream]);
 
   const isSender = useMemo(() => {
     if (!session || !stream) return false;

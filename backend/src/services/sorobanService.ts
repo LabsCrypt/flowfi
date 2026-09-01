@@ -168,25 +168,25 @@ export interface ChainStream {
 }
 
 export function decodeI128(val: xdr.ScVal): string {
-  const parts = val.i128();
-  const hi = BigInt.asIntN(64, BigInt(parts.hi().toString()));
-  const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+  const parts = (val as xdr.ScValI128).i128;
+  const hi = BigInt.asIntN(64, BigInt(parts.hi.toString()));
+  const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
   return ((hi << 64n) | lo).toString();
 }
 
 export function decodeAddress(val: xdr.ScVal): string {
-  const addr = val.address();
-  if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
-    return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
+  const addr = (val as xdr.ScValAddress).address;
+  if (addr.type === 'scAddressTypeAccount') {
+    return StrKey.encodeEd25519PublicKey((addr.accountId as xdr.PublicKeyEd25519).ed25519.value);
   }
-  const hash = addr.contractId();
-  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
+  const hash = (addr as xdr.ScAddressContract).contractId;
+  return StrKey.encodeContract(Buffer.from(hash.value as unknown as Uint8Array));
 }
 
 function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
   const result: Record<string, xdr.ScVal> = {};
-  for (const entry of val.map() ?? []) {
-    result[entry.key().sym().toString()] = entry.val();
+  for (const entry of (val as xdr.ScValMap).map ?? []) {
+    result[(entry.key as xdr.ScValSymbol).sym.toString()] = entry.val;
   }
   return result;
 }
@@ -321,8 +321,8 @@ export async function getStreamFromChain(streamId: bigint): Promise<ChainStream 
 
     const isActiveVal = fields['is_active']!;
     const isActive =
-      isActiveVal.switch().value === xdr.ScValType.scvBool().value &&
-      isActiveVal.b() === true;
+      isActiveVal.type === 'scvBool' &&
+      isActiveVal.b === true;
 
     return {
       streamId,
@@ -332,7 +332,7 @@ export async function getStreamFromChain(streamId: bigint): Promise<ChainStream 
       ratePerSecond: decodeI128(fields['rate_per_second']!),
       depositedAmount: decodeI128(fields['deposited_amount']!),
       withdrawnAmount: decodeI128(fields['withdrawn_amount']!),
-      startTime: Number(fields['start_time']!.u64().toString()),
+      startTime: Number((fields['start_time']! as xdr.ScValU64).u64.toString()),
       isActive,
     };
   } catch (err) {

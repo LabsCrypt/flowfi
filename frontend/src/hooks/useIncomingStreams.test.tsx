@@ -53,16 +53,16 @@ describe("useIncomingStreams hooks", () => {
   describe("useIncomingStreams", () => {
     it("stays disabled when publicKey is null/undefined", () => {
       const { result, rerender } = renderHook(
-        (props: { publicKey: string | null | undefined }) =>
+        (props: { publicKey: string | null }) =>
           useIncomingStreams(props.publicKey),
-        { wrapper, initialProps: { publicKey: null } }
+        { wrapper, initialProps: { publicKey: null as string | null } }
       );
 
       expect(result.current.isPending).toBe(true);
       expect(result.current.fetchStatus).toBe("idle");
       expect(fetchIncomingStreams).not.toHaveBeenCalled();
 
-      rerender({ publicKey: undefined });
+      rerender({ publicKey: null });
       expect(result.current.fetchStatus).toBe("idle");
       expect(fetchIncomingStreams).not.toHaveBeenCalled();
     });

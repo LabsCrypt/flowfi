@@ -38,7 +38,8 @@ import {
   getTokenAddress,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
-import { isValidStellarPublicKey } from "@/lib/stellar";
+import { validateStreamForm, type StreamFormData as SharedStreamFormData } from "@/lib/stream-validation";
+import { useStreamForm } from "@/hooks/useStreamForm";
 import IncomingStreams from "../IncomingStreams";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { SSEStatusIndicator } from "./SSEStatusIndicator";
@@ -565,6 +566,10 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
   const [streamForm, setStreamForm] =
     React.useState<StreamFormValues>(EMPTY_STREAM_FORM);
+  const streamFormHook = useStreamForm({
+    walletPublicKey: session.publicKey,
+    initialData: { token: streamForm.token },
+  });
   const [templates, setTemplates] = React.useState<StreamTemplate[]>([]);
   const [templatesHydrated, setTemplatesHydrated] = React.useState(false);
   const [templateNameInput, setTemplateNameInput] = React.useState("");
@@ -694,6 +699,9 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const updateStreamForm = (field: keyof StreamFormValues, value: string) => {
     setStreamForm((prev) => ({ ...prev, [field]: value }));
     setStreamFormMessage(null);
+    if (field === "token") {
+      streamFormHook.updateFormData({ token: value });
+    }
   };
 
   const handleApplyTemplate = (templateId: string) => {
@@ -925,14 +933,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       return;
     }
-    const recipient = streamForm.recipient.trim();
-    if (!isValidStellarPublicKey(recipient)) {
-      setStreamFormMessage({
-        text: "Recipient must be a valid Stellar public key.",
-        tone: "error",
-      });
-      return;
-    }
+
+    // ── Date-specific validation (unique to this form layout) ────────────
     const startDate = new Date(streamForm.startsAt);
     const endDate = new Date(streamForm.endsAt);
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
@@ -952,15 +954,30 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       return;
     }
+
+    // ── Shared validation (recipient format, amount precision, balance) ──
+    const canonicalData: SharedStreamFormData = {
+      recipient: streamForm.recipient.trim(),
+      token: streamForm.token.trim(),
+      amount: streamForm.totalAmount.trim(),
+      duration: String(durationSeconds),
+      durationUnit: "seconds",
+    };
+    const sharedErrors = validateStreamForm(canonicalData, {
+      walletBalance: streamFormHook.walletBalance,
+    });
+    if (Object.keys(sharedErrors).length > 0) {
+      const firstError = Object.values(sharedErrors)[0];
+      setStreamFormMessage({
+        text: firstError ?? "Validation failed.",
+        tone: "error",
+      });
+      return;
+    }
+
     setIsFormSubmitting(true);
     try {
-      await handleCreateStream({
-        recipient,
-        token: streamForm.token.trim(),
-        amount: streamForm.totalAmount.trim(),
-        duration: String(durationSeconds),
-        durationUnit: "seconds",
-      });
+      await handleCreateStream(canonicalData);
       handleResetStreamForm();
       setStreamFormMessage({
         text: "Stream submitted to wallet and confirmed on-chain.",

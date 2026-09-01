@@ -1,6 +1,5 @@
 "use client";
 import React, { useState } from "react";
-import { hasValidPrecision } from "@/utils/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
 import { logger } from "@/lib/logger";
 import { Stepper } from "../ui/Stepper";
@@ -9,85 +8,23 @@ import { RecipientStep } from "./RecipientStep";
 import { TokenStep } from "./TokenStep";
 import { AmountStep } from "./AmountStep";
 import { ScheduleStep } from "./ScheduleStep";
-import { TemplateStep, type StreamTemplate } from "./TemplateStep";
-import { fetchTokenBalanceDisplay } from "@/lib/soroban";
-import { isValidStellarPublicKey } from "@/lib/stellar";
+import { TemplateStep } from "./TemplateStep";
 import toast from "react-hot-toast";
 import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/api/_shared";
+import {
+  useStreamForm,
+  type StreamFormData,
+} from "@/hooks/useStreamForm";
 
-export interface StreamFormData {
-  recipient: string;
-  token: string;
-  amount: string;
-  duration: string;
-  durationUnit: "seconds" | "minutes" | "hours" | "days" | "weeks" | "months";
-  descriptionTag?: string;
-}
+// Re-export StreamFormData so existing imports keep working
+export type { StreamFormData };
 
 interface StreamCreationWizardProps {
   onClose: () => void;
   onSubmit: (data: StreamFormData) => Promise<void>;
   walletPublicKey?: string;
 }
-
-// Unified storage key shared with dashboard form (Issue #699)
-const CUSTOM_TEMPLATE_STORAGE_KEY = "flowfi.stream.templates.v1";
-
-const BUILT_IN_TEMPLATES: StreamTemplate[] = [
-  {
-    id: "monthly-salary",
-    name: "Monthly Salary",
-    description: "Recurring monthly payroll stream",
-    builtIn: true,
-    values: {
-      token: "USDC",
-      amount: "5000",
-      duration: "1",
-      durationUnit: "months",
-      descriptionTag: "salary",
-    },
-  },
-  {
-    id: "weekly-subscription",
-    name: "Weekly Subscription",
-    description: "Weekly recurring subscription billing",
-    builtIn: true,
-    values: {
-      token: "USDC",
-      amount: "49",
-      duration: "1",
-      durationUnit: "weeks",
-      descriptionTag: "subscription",
-    },
-  },
-  {
-    id: "one-time-grant",
-    name: "One-time Grant",
-    description: "Short fixed-duration grant payout",
-    builtIn: true,
-    values: {
-      token: "USDC",
-      amount: "1000",
-      duration: "14",
-      durationUnit: "days",
-      descriptionTag: "grant",
-    },
-  },
-  {
-    id: "custom",
-    name: "Custom",
-    description: "Start with blank defaults",
-    builtIn: true,
-    values: {
-      token: "USDC",
-      amount: "",
-      duration: "",
-      durationUnit: "days",
-      descriptionTag: "custom",
-    },
-  },
-];
 
 const STEPS = ["Template", "Recipient", "Token", "Amount", "Schedule"];
 
@@ -98,226 +35,59 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
 }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [customTemplates, setCustomTemplates] = useState<StreamTemplate[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState("monthly-salary");
   const [customTemplateName, setCustomTemplateName] = useState("");
   const [templateSaveMessage, setTemplateSaveMessage] = useState<string | null>(null);
-  const [formData, setFormData] = useState<StreamFormData>({
-    recipient: "",
-    token: "USDC",
-    amount: "5000",
-    duration: "1",
-    durationUnit: "months",
-    descriptionTag: "salary",
-  });
-  const [errors, setErrors] = useState<Partial<Record<keyof StreamFormData, string>>>({});
-  
+
   // Tracking & Polling state (Issue #378)
   const [txHash, setTxHash] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [timeoutError, setTimeoutError] = useState(false);
-  
+
   const router = useRouter();
 
-  const dialogRef = useModalDialog({ 
-    onClose,
-    isCloseDisabled: isSubmitting || isPolling
+  // ── Shared form hook (replaces ad-hoc validation + balance + templates) ──
+  const {
+    formData,
+    errors,
+    updateFormData,
+    validateStep,
+    walletBalance,
+    walletBalanceLoading,
+    walletBalanceError,
+    setMaxAmount,
+    allTemplates,
+    selectedTemplateId,
+    applyTemplate: applyTemplateHook,
+    saveCustomTemplate,
+  } = useStreamForm({
+    walletPublicKey,
+    initialData: {
+      token: "USDC",
+      amount: "5000",
+      duration: "1",
+      durationUnit: "months",
+      descriptionTag: "salary",
+    },
   });
 
-  const [walletBalance, setWalletBalance] = useState<string | null>(null);
-  const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
-  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
+  const dialogRef = useModalDialog({
+    onClose,
+    isCloseDisabled: isSubmitting || isPolling,
+  });
 
-  React.useEffect(() => {
-    let timer: NodeJS.Timeout;
-    try {
-      const stored = localStorage.getItem(CUSTOM_TEMPLATE_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          const sanitized = parsed
-            .filter((item) => item && typeof item.id === "string" && typeof item.name === "string")
-            .map((item) => ({
-              id: item.id,
-              name: item.name,
-              description: item.description || "Saved custom template",
-              values: item.values || {},
-            } as StreamTemplate));
-          timer = setTimeout(() => {
-            setCustomTemplates(sanitized);
-          }, 0);
-        }
-      }
-    } catch {
-      timer = setTimeout(() => {
-        setCustomTemplates([]);
-      }, 0);
-    }
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  React.useEffect(() => {
-    try {
-      localStorage.setItem(CUSTOM_TEMPLATE_STORAGE_KEY, JSON.stringify(customTemplates));
-    } catch {
-      // ignore localStorage write errors
-    }
-  }, [customTemplates]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    let timer: NodeJS.Timeout;
-
-    if (!walletPublicKey || !formData.token) {
-      timer = setTimeout(() => {
-        setWalletBalance(null);
-        setWalletBalanceError(null);
-        setWalletBalanceLoading(false);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-
-    timer = setTimeout(() => {
-      setWalletBalanceLoading(true);
-      setWalletBalanceError(null);
-    }, 0);
-
-    fetchTokenBalanceDisplay(walletPublicKey, formData.token)
-      .then((balance) => {
-        if (cancelled) return;
-        setWalletBalance(balance);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setWalletBalance(null);
-        setWalletBalanceError("Unable to fetch wallet balance right now.");
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setWalletBalanceLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [walletPublicKey, formData.token]);
-
-  const updateFormData = (updates: Partial<StreamFormData>) => {
-    setFormData((prev) => ({ ...prev, ...updates }));
-    // Clear errors for updated fields
-    setErrors((prev) => {
-      const newErrors = { ...prev };
-      Object.keys(updates).forEach((key) => {
-        delete newErrors[key as keyof StreamFormData];
-      });
-      return newErrors;
-    });
+  const handleApplyTemplate = (templateId: string) => {
+    const msg = applyTemplateHook(templateId);
+    if (msg) setTemplateSaveMessage(msg);
   };
 
-  const allTemplates = React.useMemo(
-    () => [...BUILT_IN_TEMPLATES, ...customTemplates],
-    [customTemplates]
-  );
-
-  const applyTemplate = (templateId: string) => {
-    const template = allTemplates.find((item) => item.id === templateId);
-    if (!template) return;
-    setSelectedTemplateId(templateId);
-    setTemplateSaveMessage(`Applied template "${template.name}". You can still edit every field.`);
-    updateFormData({
-      token: template.values.token ?? formData.token,
-      amount: template.values.amount ?? formData.amount,
-      duration: template.values.duration ?? formData.duration,
-      durationUnit: template.values.durationUnit ?? formData.durationUnit,
-      descriptionTag: template.values.descriptionTag ?? formData.descriptionTag,
-    });
-  };
-
-  const saveCurrentAsCustomTemplate = () => {
-    const cleanedName = customTemplateName.trim();
-    if (!cleanedName) {
-      setTemplateSaveMessage("Enter a template name first.");
-      return;
+  const handleSaveCustomTemplate = () => {
+    const errorMsg = saveCustomTemplate(customTemplateName);
+    if (errorMsg) {
+      setTemplateSaveMessage(errorMsg);
+    } else {
+      setTemplateSaveMessage(`Saved custom template "${customTemplateName.trim()}".`);
+      setCustomTemplateName("");
     }
-
-    if (!formData.amount || !formData.duration || !formData.token) {
-      setTemplateSaveMessage("Set amount, duration, and token before saving a custom template.");
-      return;
-    }
-
-    const newTemplate: StreamTemplate = {
-      id: `custom-${Date.now()}`,
-      name: cleanedName,
-      description: formData.descriptionTag
-        ? `Tag: ${formData.descriptionTag}`
-        : "Saved custom template",
-      values: {
-        token: formData.token,
-        amount: formData.amount,
-        duration: formData.duration,
-        durationUnit: formData.durationUnit,
-        descriptionTag: formData.descriptionTag || "custom",
-      },
-    };
-
-    setCustomTemplates((prev) => [newTemplate, ...prev]);
-    setCustomTemplateName("");
-    setTemplateSaveMessage(`Saved custom template "${cleanedName}".`);
-    setSelectedTemplateId(newTemplate.id);
-  };
-
-  const validateStep = (step: number): boolean => {
-    const newErrors: Partial<Record<keyof StreamFormData, string>> = {};
-
-    switch (step) {
-      case 1: // Template
-        break;
-      case 2: // Recipient
-        if (!formData.recipient.trim()) {
-          newErrors.recipient = "Recipient address is required";
-        } else if (!isValidStellarPublicKey(formData.recipient.trim())) {
-          newErrors.recipient = "Invalid Stellar public key format";
-        }
-        break;
-      case 3: // Token
-        if (!formData.token) {
-          newErrors.token = "Please select a token";
-        }
-        break;
-      case 4: // Amount
-        if (!formData.amount.trim()) {
-          newErrors.amount = "Amount is required";
-        } else {
-          const amount = parseFloat(formData.amount);
-          if (isNaN(amount) || amount <= 0) {
-            newErrors.amount = "Amount must be a positive number";
-          } else if (!hasValidPrecision(formData.amount, 7)) {
-            newErrors.amount = "Amount exceeds maximum precision (7 decimal places)";
-          } else if (walletBalance) {
-            const available = parseFloat(walletBalance);
-            if (!isNaN(available) && amount > available) {
-              newErrors.amount = "Amount exceeds wallet balance";
-            }
-          }
-        }
-        break;
-      case 5: // Schedule
-        if (!formData.duration.trim()) {
-          newErrors.duration = "Duration is required";
-        } else {
-          const duration = parseFloat(formData.duration);
-          if (isNaN(duration) || duration <= 0) {
-            newErrors.duration = "Duration must be a positive number";
-          }
-        }
-        break;
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
   };
 
   const handleNext = () => {
@@ -411,11 +181,11 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         return (
           <TemplateStep
             templates={allTemplates}
-            selectedTemplateId={selectedTemplateId}
-            onSelectTemplate={applyTemplate}
+            selectedTemplateId={selectedTemplateId ?? "monthly-salary"}
+            onSelectTemplate={handleApplyTemplate}
             customTemplateName={customTemplateName}
             onCustomTemplateNameChange={setCustomTemplateName}
-            onSaveCustomTemplate={saveCurrentAsCustomTemplate}
+            onSaveCustomTemplate={handleSaveCustomTemplate}
             saveDisabled={isSubmitting}
             saveMessage={templateSaveMessage}
           />
@@ -446,10 +216,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
             availableBalance={walletBalance}
             isBalanceLoading={walletBalanceLoading}
             balanceError={walletBalanceError}
-            onSetMax={() => {
-              if (!walletBalance) return;
-              updateFormData({ amount: walletBalance });
-            }}
+            onSetMax={setMaxAmount}
           />
         );
       case 5:
