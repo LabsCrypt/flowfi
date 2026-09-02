@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Copy, Check, LogOut, Moon, Sun, Bell, Globe } from "lucide-react";
 import { STELLAR_NETWORK, shortenPublicKey } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
@@ -10,71 +10,124 @@ import { formatNetwork } from "@/lib/wallet";
 import toast from "react-hot-toast";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { DisconnectConfirmModal } from "@/components/wallet/DisconnectConfirmModal";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 
 type DisplayCurrency = "USD" | "EUR" | "GBP" | "XLM" | "USDC";
 type AmountFormat = "full" | "compact";
 type DecimalPlaces = 2 | 4 | 7;
 
+interface Settings {
+  theme: "light" | "dark" | "system";
+  displayCurrency: DisplayCurrency;
+  amountFormat: AmountFormat;
+  decimalPlaces: DecimalPlaces;
+}
+
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAMING_CONTRACT || "CDV4K...7ZQY";
 const INDEXER_URL = `${getApiBaseUrl()}/v1`;
+
+const STORAGE_KEYS = {
+  theme: "flowfi-theme",
+  displayCurrency: "flowfi-currency",
+  amountFormat: "flowfi-amount-format",
+  decimalPlaces: "flowfi-decimal-places",
+} as const;
+
+const DEFAULT_SETTINGS: Settings = {
+  theme: "dark",
+  displayCurrency: "USD",
+  amountFormat: "full",
+  decimalPlaces: 7,
+};
+
+function loadSavedSettings(): Settings {
+  if (typeof window === "undefined") return DEFAULT_SETTINGS;
+  const savedDecimals = localStorage.getItem(STORAGE_KEYS.decimalPlaces);
+  return {
+    theme:
+      (localStorage.getItem(STORAGE_KEYS.theme) as Settings["theme"]) ||
+      DEFAULT_SETTINGS.theme,
+    displayCurrency:
+      (localStorage.getItem(STORAGE_KEYS.displayCurrency) as DisplayCurrency) ||
+      DEFAULT_SETTINGS.displayCurrency,
+    amountFormat:
+      (localStorage.getItem(STORAGE_KEYS.amountFormat) as AmountFormat) ||
+      DEFAULT_SETTINGS.amountFormat,
+    decimalPlaces: savedDecimals
+      ? (parseInt(savedDecimals, 10) as DecimalPlaces)
+      : DEFAULT_SETTINGS.decimalPlaces,
+  };
+}
+
+function applyThemeClass(theme: Settings["theme"]): void {
+  if (typeof window === "undefined") return;
+  if (theme === "system") {
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.classList.toggle("dark", prefersDark);
+  } else {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }
+}
+
+function persistSettings(settings: Settings): void {
+  localStorage.setItem(STORAGE_KEYS.theme, settings.theme);
+  localStorage.setItem(STORAGE_KEYS.displayCurrency, settings.displayCurrency);
+  localStorage.setItem(STORAGE_KEYS.amountFormat, settings.amountFormat);
+  localStorage.setItem(STORAGE_KEYS.decimalPlaces, settings.decimalPlaces.toString());
+}
 
 export default function SettingsContent() {
   const router = useRouter();
   const { session, disconnect, isHydrated } = useWallet();
 
   const [browserPush, setBrowserPush] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark" | "system">(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("flowfi-theme") as
-        | "light"
-        | "dark"
-        | "system"
-        | null;
-      if (saved) {
-        document.documentElement.classList.toggle("dark", saved === "dark");
-        return saved;
-      }
-    }
-    return "dark";
-  });
-
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("flowfi-currency") as DisplayCurrency) || "USD";
-    }
-    return "USD";
-  });
-
-  const [amountFormat, setAmountFormat] = useState<AmountFormat>(() => {
-    if (typeof window !== "undefined") {
-      return (localStorage.getItem("flowfi-amount-format") as AmountFormat) || "full";
-    }
-    return "full";
-  });
-
-  const [decimalPlaces, setDecimalPlaces] = useState<DecimalPlaces>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("flowfi-decimal-places");
-      return (saved ? parseInt(saved, 10) : 7) as DecimalPlaces;
-    }
-    return 7;
-  });
-
+  const [draft, setDraft] = useState<Settings>(() => loadSavedSettings());
+  const [saved, setSaved] = useState<Settings>(() => loadSavedSettings());
   const [lastLedger, setLastLedger] = useState<string>("Loading...");
-
   const [copied, setCopied] = useState(false);
+
+  const isDirty = useMemo(
+    () =>
+      draft.theme !== saved.theme ||
+      draft.displayCurrency !== saved.displayCurrency ||
+      draft.amountFormat !== saved.amountFormat ||
+      draft.decimalPlaces !== saved.decimalPlaces,
+    [draft, saved]
+  );
+
+  // Covers tab close/refresh, internal link navigation, and back/forward
+  useUnsavedChangesGuard(isDirty);
+
+  // Apply the saved theme on mount
+  useEffect(() => {
+    applyThemeClass(draft.theme);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleThemeChange = (newTheme: Settings["theme"]) => {
+    setDraft((prev) => ({ ...prev, theme: newTheme }));
+    applyThemeClass(newTheme); // live preview; persisted on save
+  };
+
+  const handleSave = () => {
+    persistSettings(draft);
+    setSaved(draft);
+    toast.success("Settings saved");
+  };
+
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
 
-  const toggleTheme = (newTheme: "light" | "dark" | "system") => {
-    setTheme(newTheme);
-    localStorage.setItem("flowfi-theme", newTheme);
-    if (newTheme === "system") {
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      document.documentElement.classList.toggle("dark", prefersDark);
-    } else {
-      document.documentElement.classList.toggle("dark", newTheme === "dark");
+  const handleDisconnect = () => {
+    if (isDirty) {
+      const confirmed = window.confirm(
+        "You have unsaved changes. Are you sure you want to disconnect?"
+      );
+      if (!confirmed) return;
     }
+    disconnect();
+    toast.success("Wallet disconnected");
+    router.push("/");
   };
 
   const copyAddress = async () => {
@@ -84,12 +137,6 @@ export default function SettingsContent() {
       toast.success("Address copied to clipboard");
       setTimeout(() => setCopied(false), 1500);
     }
-  };
-
-  const handleDisconnect = () => {
-    disconnect();
-    toast.success("Wallet disconnected");
-    router.push("/");
   };
 
   const handleBrowserPushToggle = async () => {
@@ -197,7 +244,7 @@ export default function SettingsContent() {
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
-                {theme === "dark" ? <Moon size={18} /> : theme === "light" ? <Sun size={18} /> : <Globe size={18} />}
+                {draft.theme === "dark" ? <Moon size={18} /> : draft.theme === "light" ? <Sun size={18} /> : <Globe size={18} />}
               </div>
               <div>
                 <p className="font-medium text-white dark:text-black">
@@ -213,9 +260,9 @@ export default function SettingsContent() {
               {(["light", "dark", "system"] as const).map((t) => (
                 <button
                   key={t}
-                  onClick={() => toggleTheme(t)}
+                  onClick={() => handleThemeChange(t)}
                   className={`px-4 py-2 text-sm rounded-xl border transition-all ${
-                    theme === t
+                    draft.theme === t
                       ? "border-purple-500 bg-purple-500/20 text-white"
                       : "border-white/10 dark:border-black/10 text-white/60 dark:text-black/60 hover:border-white/20"
                   }`}
@@ -247,11 +294,10 @@ export default function SettingsContent() {
                 <label htmlFor="default-token" className="text-sm text-white/60 dark:text-black/60">Default Token</label>
                 <select
                   id="default-token"
-                  value={displayCurrency}
+                  value={draft.displayCurrency}
                   onChange={(e) => {
                     const val = e.target.value as DisplayCurrency;
-                    setDisplayCurrency(val);
-                    localStorage.setItem("flowfi-currency", val);
+                    setDraft((prev) => ({ ...prev, displayCurrency: val }));
                   }}
                   className="mt-1 block w-full px-3 py-2 rounded-lg bg-black/40 dark:bg-white/40 border border-white/10 dark:border-black/10 text-white dark:text-black text-sm"
                 >
@@ -273,12 +319,11 @@ export default function SettingsContent() {
                   {(["full", "compact"] as const).map((fmt) => (
                     <button
                       key={fmt}
-                      onClick={() => {
-                        setAmountFormat(fmt);
-                        localStorage.setItem("flowfi-amount-format", fmt);
-                      }}
+                      onClick={() =>
+                        setDraft((prev) => ({ ...prev, amountFormat: fmt }))
+                      }
                       className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
-                        amountFormat === fmt
+                        draft.amountFormat === fmt
                           ? "border-blue-500 bg-blue-500/20 text-white"
                           : "border-white/10 text-white/60 hover:border-white/20"
                       }`}
@@ -299,13 +344,11 @@ export default function SettingsContent() {
                   {([2, 4, 7] as DecimalPlaces[]).map((places) => (
                     <button
                       key={places}
-                      onClick={() => {
-                        setDecimalPlaces(places);
-                        localStorage.setItem("flowfi-decimal-places", places.toString());
-                        toast.success(`Decimal places set to ${places}`);
-                      }}
+                      onClick={() =>
+                        setDraft((prev) => ({ ...prev, decimalPlaces: places }))
+                      }
                       className={`px-3 py-1.5 text-xs rounded-lg border transition-all ${
-                        decimalPlaces === places
+                        draft.decimalPlaces === places
                           ? "border-green-500 bg-green-500/20 text-white"
                           : "border-white/10 text-white/60 hover:border-white/20"
                       }`}
@@ -316,6 +359,31 @@ export default function SettingsContent() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Save Changes */}
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 dark:border-black/10 bg-black/30 dark:bg-white/30 px-5 py-4">
+            <div>
+              <p className="text-sm font-medium text-white dark:text-black">
+                Save changes
+              </p>
+              <p className="text-xs opacity-60">
+                {isDirty
+                  ? "You have unsaved changes"
+                  : "Your preferences are up to date"}
+              </p>
+            </div>
+            <button
+              onClick={handleSave}
+              disabled={!isDirty}
+              className={`px-4 py-2 text-sm rounded-xl font-semibold transition-all ${
+                isDirty
+                  ? "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/25 cursor-pointer"
+                  : "bg-white/10 text-white/40 dark:bg-black/10 dark:text-black/40 cursor-not-allowed"
+              }`}
+            >
+              Save changes
+            </button>
           </div>
 
           {/* Wallet Section */}

@@ -6,6 +6,8 @@ import {
   getIndexerStatus,
   resetIndexer,
   replayFromLedger,
+  previewReset,
+  previewReplay,
 } from '../../services/indexerService.js';
 
 import { prisma, pool } from '../../lib/prisma.js';
@@ -133,9 +135,9 @@ async function buildAdminMetrics() {
     completedCount,
     eventsLast24h,
     indexerState,
-    feeEvents,
-    feesLast24h,
-    withdrawnSums,
+    feeRows,
+    feesLast24hRows,
+    withdrawnVolume,
   ] = await Promise.all([
     prisma.stream.count({ where: { isActive: true } }),
     prisma.stream.count({ where: { isPaused: true } }),
@@ -148,44 +150,48 @@ async function buildAdminMetrics() {
     }),
     prisma.streamEvent.count({ where: { createdAt: { gte: since24h } } }),
     prisma.indexerState.findUnique({ where: { id: INDEXER_STATE_ID } }),
-    prisma.streamEvent.findMany({
-      where: { eventType: 'FEE_COLLECTED' },
-      select: { amount: true, metadata: true },
-    }),
-    prisma.streamEvent.findMany({
-      where: { eventType: 'FEE_COLLECTED', createdAt: { gte: since24h } },
-      select: { amount: true, metadata: true },
-    }),
-    prisma.stream.findMany({ select: { withdrawnAmount: true } }),
+    // Fee totals are aggregated in Postgres (GROUP BY token) instead of
+    // shipping every FEE_COLLECTED row to Node and summing in a JS loop.
+    // Keeps the endpoint a constant number of round-trips regardless of how
+    // many historical events exist (issue #1245).
+    prisma.$queryRaw<Array<{ token: string; total: string }>>`
+      SELECT
+        COALESCE(NULLIF(metadata::json ->> 'token', ''), 'unknown') AS token,
+        SUM(CAST(amount AS numeric))::text AS total
+      FROM "StreamEvent"
+      WHERE "eventType" = 'FEE_COLLECTED'
+      GROUP BY 1
+    `,
+    prisma.$queryRaw<Array<{ token: string; total: string }>>`
+      SELECT
+        COALESCE(NULLIF(metadata::json ->> 'token', ''), 'unknown') AS token,
+        SUM(CAST(amount AS numeric))::text AS total
+      FROM "StreamEvent"
+      WHERE "eventType" = 'FEE_COLLECTED' AND "createdAt" >= ${since24h}
+      GROUP BY 1
+    `,
+    // Total volume streamed is summed in Postgres via numeric (arbitrary
+    // precision) to preserve i128 values exactly, instead of pulling every
+    // stream row into Node (issue #1245).
+    prisma.$queryRaw<Array<{ total: string }>>`
+      SELECT COALESCE(SUM(CAST("withdrawnAmount" AS numeric)), 0)::text AS total
+      FROM "Stream"
+    `,
   ]);
 
-  // Aggregate fees by token
+  // Aggregate fees by token (SQL already grouped these; just map rows to keys)
   const totalFeesCollectedByToken: Record<string, string> = {};
+  for (const row of feeRows) {
+    totalFeesCollectedByToken[row.token] = row.total;
+  }
+
   const feesLast24hByToken: Record<string, string> = {};
-
-  for (const event of feeEvents) {
-    const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-    const token = metadata.token || 'unknown';
-    const amount = BigInt(event.amount || '0');
-    totalFeesCollectedByToken[token] = (
-      BigInt(totalFeesCollectedByToken[token] || '0') + amount
-    ).toString();
+  for (const row of feesLast24hRows) {
+    feesLast24hByToken[row.token] = row.total;
   }
 
-  for (const event of feesLast24h) {
-    const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-    const token = metadata.token || 'unknown';
-    const amount = BigInt(event.amount || '0');
-    feesLast24hByToken[token] = (
-      BigInt(feesLast24hByToken[token] || '0') + amount
-    ).toString();
-  }
-
-  // Sum total volume streamed (sum of withdrawn amounts) as BigInt to preserve i128 precision.
-  let totalVolumeStreamed = BigInt(0);
-  for (const row of withdrawnSums) {
-    totalVolumeStreamed += BigInt(row.withdrawnAmount || '0');
-  }
+  // Total volume streamed (sum of withdrawn amounts) as a string to preserve i128 precision.
+  const totalVolumeStreamed = withdrawnVolume[0]?.total ?? '0';
 
   const nowSec = Math.floor(Date.now() / 1000);
   const lagSeconds = indexerState
@@ -340,8 +346,15 @@ router.get('/indexer/status', async (req: Request, res: Response) => {
  * /v1/admin/indexer/reset:
  *   post:
  *     tags: [Admin]
- *     summary: Reset indexer lastProcessedLedger
+ *     summary: Reset indexer lastProcessedLedger (supports dry-run preview)
  *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: dryRun
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: If true, return the projected reset scope without mutating state.
  *     requestBody:
  *       required: true
  *       content:
@@ -393,7 +406,15 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'ledger must be a non-negative integer' });
     return;
   }
+
+  const dryRun = req.query.dryRun === 'true';
+
   try {
+    if (dryRun) {
+      const preview = await previewReset(ledger);
+      res.json({ dryRun: true, preview });
+      return;
+    }
     await resetIndexer(ledger);
     res.json({ ok: true, lastLedger: ledger });
   } catch (err) {
@@ -406,7 +427,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
  * /v1/admin/indexer/replay:
  *   post:
  *     tags: [Admin]
- *     summary: Replay events from a given ledger (StreamEvent rows deduplicated; stream mutations not idempotent — see indexerService.ts JSDoc)
+ *     summary: Replay events from a given ledger (supports dry-run preview)
  *     security: [{ adminAuth: [] }]
  *     parameters:
  *       - in: query
@@ -414,7 +435,15 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
  *         required: true
  *         schema:
  *           type: integer
+ *       - in: query
+ *         name: dryRun
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: If true, return the projected replay scope without mutating state.
  *     responses:
+ *       200:
+ *         description: Dry-run preview of the replay scope
  *       202:
  *         description: Replay started
  *         content:
@@ -456,7 +485,15 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'from_ledger must be a non-negative integer' });
     return;
   }
+
+  const dryRun = req.query.dryRun === 'true';
+
   try {
+    if (dryRun) {
+      const preview = await previewReplay(fromLedger);
+      res.json({ dryRun: true, preview });
+      return;
+    }
     const requestId = await replayFromLedger(fromLedger);
     res.status(202).json({ ok: true, replayingFrom: fromLedger, requestId });
   } catch (err) {
