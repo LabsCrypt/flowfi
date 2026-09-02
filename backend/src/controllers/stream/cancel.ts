@@ -5,6 +5,7 @@ import * as sorobanService from '../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import * as streamRepository from '../../repositories/stream.repository.js';
 import { parseStreamId } from '../../lib/stream-id.js';
+import { sendApiError } from '../../types/api-error.js';
 
 /**
  * @openapi
@@ -53,12 +54,12 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
 
     const streamId = Array.isArray(streamIdParam) ? streamIdParam[0] : streamIdParam;
     if (!streamId) {
-      return res.status(400).json({ error: 'Missing streamId parameter' });
+      return sendApiError(res, 400, 'MISSING_STREAM_ID', 'Missing streamId parameter');
     }
 
     const parsedStreamId = parseStreamId(streamId);
     if (parsedStreamId === null) {
-      return res.status(400).json({ error: 'Invalid streamId parameter' });
+      return sendApiError(res, 400, 'INVALID_STREAM_ID', 'Invalid streamId parameter');
     }
 
     // 1. Fetch stream from DB
@@ -67,30 +68,24 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
     });
 
     if (!stream) {
-      return res.status(404).json({ error: 'Stream not found' });
+      return sendApiError(res, 404, 'NOT_FOUND', 'Stream not found');
     }
 
     // 2. Validate caller is sender
     if (stream.sender !== callerAddress) {
-      return res.status(403).json({ 
-        error: 'Forbidden', 
-        message: 'Only the sender can cancel the stream' 
-      });
+      return sendApiError(res, 403, 'FORBIDDEN', 'Only the sender can cancel the stream');
     }
 
     // 3. Check status
     if (!stream.isActive) {
-      return res.status(409).json({ 
-        error: 'Conflict', 
-        message: 'Stream is already cancelled or completed' 
-      });
+      return sendApiError(res, 409, 'CONFLICT', 'Stream is already cancelled or completed');
     }
 
     // 4. Call Soroban service to cancel on-chain
     const secretKey = process.env.KEEPER_SECRET_KEY;
     if (!secretKey) {
       logger.error('[CancelStream] KEEPER_SECRET_KEY not configured');
-      return res.status(500).json({ error: 'Internal server error', message: 'Backend not configured for on-chain calls' });
+      return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Backend not configured for on-chain calls');
     }
 
     const txHash = await sorobanService.cancelStream(parsedStreamId, secretKey);
@@ -107,8 +102,8 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
   } catch (error) {
     logger.error('Error cancelling stream:', error);
     if (error instanceof Error && error.message.includes('Simulation failed')) {
-        return res.status(400).json({ error: 'Transaction simulation failed', message: error.message });
+        return sendApiError(res, 400, 'TRANSACTION_SIMULATION_FAILED', error.message);
     }
-    return res.status(500).json({ error: 'Internal server error' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'A technical error occurred. Please try again later.');
   }
 };

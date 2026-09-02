@@ -53,6 +53,7 @@ describe('Cancel Stream Controller', () => {
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({ error: { code: 'NOT_FOUND', message: 'Stream not found' } });
   });
 
   it('should return 403 if caller is not sender', async () => {
