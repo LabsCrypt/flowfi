@@ -799,6 +799,8 @@ impl StreamContract {
 
         stream.is_active = false;
         stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = None;
         stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
@@ -894,6 +896,10 @@ impl StreamContract {
 
         let mut stream = load_stream(&env, stream_id)?;
         Self::validate_stream_ownership(&stream, &sender)?;
+
+        if !stream.is_active {
+            return Err(StreamError::StreamNotActive);
+        }
 
         if !stream.paused {
             return Err(StreamError::StreamNotPaused);

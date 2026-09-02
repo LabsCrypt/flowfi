@@ -18,6 +18,7 @@ import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
 } from "../routes/v1/events.routes.js";
+import { findStreams } from "../repositories/stream.repository.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
@@ -254,12 +255,7 @@ export const listStreams = async (req: Request, res: Response) => {
       offset = "0",
     } = req.query;
 
-    const where: Prisma.StreamWhereInput = {};
-    if (typeof sender === "string") where.sender = sender;
-    if (typeof recipient === "string") where.recipient = recipient;
-    if (typeof token === "string") where.tokenAddress = token;
-
-    // Handle status filtering
+    // Validate status parameter
     if (typeof status === "string") {
       const validStatuses = ["active", "cancelled", "completed", "paused"];
       if (!validStatuses.includes(status)) {
@@ -268,35 +264,7 @@ export const listStreams = async (req: Request, res: Response) => {
           message: `status must be one of: ${validStatuses.join(", ")}`,
         });
       }
-
-      // Map status to database conditions
-      switch (status) {
-        case "active":
-          where.isActive = true;
-          where.isPaused = false;
-          break;
-        case "cancelled":
-          where.isActive = false;
-          where.events = { some: { eventType: "CANCELLED" } };
-          break;
-        case "completed":
-          where.isActive = false;
-          where.events = { some: { eventType: "COMPLETED" } };
-          break;
-        case "paused":
-          where.isPaused = true;
-          break;
-      }
     }
-
-    // Validate and parse pagination parameters
-    const parsedLimit = Math.min(
-      typeof limit === "string"
-        ? Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE
-        : DEFAULT_STREAM_PAGE_SIZE,
-      MAX_STREAM_PAGE_SIZE,
-    );
-    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
 
     // Validate sort field
     const validSortFields = [
@@ -317,29 +285,34 @@ export const listStreams = async (req: Request, res: Response) => {
           | "endTime")
       : "createdAt";
 
-    // Validate order
-    const sortOrder = order === "asc" ? "asc" : "desc";
+    // Validate and parse pagination parameters
+    const parsedLimit = Math.min(
+      typeof limit === "string"
+        ? Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE
+        : DEFAULT_STREAM_PAGE_SIZE,
+      MAX_STREAM_PAGE_SIZE,
+    );
+    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
 
-    const [streams, total] = await Promise.all([
-      prisma.stream.findMany({
-        where,
-        orderBy: { [sortField]: sortOrder },
-        take: parsedLimit,
-        skip: parsedOffset,
-        include: {
-          senderUser: true,
-          recipientUser: true,
-        },
-      }),
-      prisma.stream.count({ where }),
-    ]);
+    const params: import("../repositories/stream.repository.js").FindStreamsParams = {
+      limit: parsedLimit,
+      offset: parsedOffset,
+      sortField,
+      sortOrder: order === "asc" ? "asc" : "desc",
+    };
+    if (typeof sender === "string") params.sender = sender;
+    if (typeof recipient === "string") params.recipient = recipient;
+    if (typeof token === "string") params.tokenAddress = token;
+    if (typeof status === "string") {
+      params.status = status as 'active' | 'cancelled' | 'completed' | 'paused';
+    }
 
-    const hasMore = parsedOffset + streams.length < total;
+    const result = await findStreams(params);
 
     return res.status(200).json({
-      data: streams,
-      total,
-      hasMore,
+      data: result.streams,
+      total: result.total,
+      hasMore: result.hasMore,
       limit: parsedLimit,
       offset: parsedOffset,
     });
@@ -695,10 +668,16 @@ export const getUserStreamSummary = async (
   }
 };
 
+const TOP_UP_AMOUNT_MAX_DIGITS = 30;
+
 const topUpBodySchema = z.object({
   amount: z
     .string()
-    .regex(/^\d+$/, "amount must be a positive integer string (XLM stroops)"),
+    .regex(/^\d+$/, "amount must be a positive integer string (XLM stroops)")
+    .max(
+      TOP_UP_AMOUNT_MAX_DIGITS,
+      `amount must be at most ${TOP_UP_AMOUNT_MAX_DIGITS} digits long`,
+    ),
 });
 
 /**

@@ -32,8 +32,8 @@ GBBDIOEJGZHV5GFZQB4T7NKZQKRVNDQYXKW6Z3VJXZAVFQKZ5HM5J2EU,100.00,86400,0`;
       expect(result.totalRows).toBe(2);
       expect(result.validRows).toBe(1);
       expect(result.invalidRows).toBe(1);
-      expect(result.entries[0].isValid).toBe(false);
-      expect(result.entries[1].isValid).toBe(true);
+      expect(result.entries[0]!.isValid).toBe(false);
+      expect(result.entries[1]!.isValid).toBe(true);
     });
 
     it("identifies invalid amounts", () => {
@@ -45,7 +45,7 @@ GBBDIOEJGZHV5GFZQB4T7NKZQKRVNDQYXKW6Z3VJXZAVFQKZ5HM5J2EU,-100,86400,0`;
       expect(result.totalRows).toBe(1);
       expect(result.validRows).toBe(0);
       expect(result.invalidRows).toBe(1);
-      expect(result.entries[0].errors).toContainEqual(
+      expect(result.entries[0]!.errors).toContainEqual(
         expect.objectContaining({ field: "amount" })
       );
     });
@@ -59,7 +59,7 @@ GBBDIOEJGZHV5GFZQB4T7NKZQKRVNDQYXKW6Z3VJXZAVFQKZ5HM5J2EU,100.00,0,0`;
       expect(result.totalRows).toBe(1);
       expect(result.validRows).toBe(0);
       expect(result.invalidRows).toBe(1);
-      expect(result.entries[0].errors).toContainEqual(
+      expect(result.entries[0]!.errors).toContainEqual(
         expect.objectContaining({ field: "durationSeconds" })
       );
     });

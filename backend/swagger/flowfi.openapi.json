@@ -3329,10 +3329,21 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Reset indexer lastProcessedLedger",
+        "summary": "Reset indexer lastProcessedLedger (supports dry-run preview)",
         "security": [
           {
             "adminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dryRun",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "If true, return the projected reset scope without mutating state."
           }
         ],
         "requestBody": {
@@ -3421,7 +3432,7 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Replay events from a given ledger (StreamEvent rows deduplicated; stream mutations not idempotent — see indexerService.ts JSDoc)",
+        "summary": "Replay events from a given ledger (supports dry-run preview)",
         "security": [
           {
             "adminAuth": []
@@ -3435,9 +3446,21 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "dryRun",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "If true, return the projected replay scope without mutating state."
           }
         ],
         "responses": {
+          "200": {
+            "description": "Dry-run preview of the replay scope"
+          },
           "202": {
             "description": "Replay started",
             "content": {
