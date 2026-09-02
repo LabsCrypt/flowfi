@@ -77,7 +77,40 @@ function sumStringI128(values: string[]): string {
 }
 
 /**
- * Create a new stream (stub for on-chain indexing)
+ * Thrown when a request body field fails presence/format validation. Kept
+ * distinct from generic errors so createStream can reliably map it to a 400
+ * response instead of falling through to the catch-all 500.
+ */
+class StreamValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StreamValidationError";
+  }
+}
+
+/**
+ * Validate presence and integer format of a required i128-style field, then
+ * coerce it to a BigInt. Any missing value or conversion failure (SyntaxError
+ * from a non-numeric string, TypeError from undefined/null/objects, etc.) is
+ * normalized into a StreamValidationError so the caller can map it to 400.
+ */
+function parseRequiredBigIntField(fieldName: string, value: unknown): bigint {
+  if (value === undefined || value === null || value === "") {
+    throw new StreamValidationError(`Missing required field: ${fieldName}`);
+  }
+  try {
+    return BigInt(value as bigint | number | string | boolean);
+  } catch {
+    throw new StreamValidationError(
+      `Invalid ${fieldName}: must be a valid integer`,
+    );
+  }
+}
+
+/**
+ * Create a stream projection only after its state has been confirmed on-chain.
+ * The API accepts the stream id as a lookup key; all persisted values come from
+ * Soroban so callers cannot inject a fabricated stream into listings.
  */
 export const createStream = async (req: Request, res: Response) => {
   try {
@@ -123,6 +156,27 @@ export const createStream = async (req: Request, res: Response) => {
         .json({ error: "Invalid depositedAmount: must be greater than zero" });
     }
 
+    const chainStream = await getStreamFromChain(parsedStreamId);
+    if (!chainStream) {
+      return res.status(409).json({
+        error: "Stream has not been confirmed on-chain",
+        message: "Submit the stream creation transaction and retry after confirmation.",
+      });
+    }
+
+    if (
+      chainStream.sender !== sender ||
+      chainStream.recipient !== recipient ||
+      chainStream.tokenAddress !== tokenAddress ||
+      chainStream.ratePerSecond !== parsedRatePerSecond.toString() ||
+      chainStream.depositedAmount !== parsedDepositedAmount.toString() ||
+      chainStream.startTime !== parsedStartTime
+    ) {
+      return res.status(409).json({
+        error: "Stream request does not match on-chain state",
+      });
+    }
+
     const endTime =
       BigInt(parsedStartTime) + (parsedDepositedAmount / parsedRatePerSecond);
 
@@ -146,15 +200,15 @@ export const createStream = async (req: Request, res: Response) => {
       },
       create: {
         streamId: parsedStreamId,
-        sender,
-        recipient,
-        tokenAddress,
-        ratePerSecond,
-        depositedAmount,
+        sender: chainStream.sender,
+        recipient: chainStream.recipient,
+        tokenAddress: chainStream.tokenAddress,
+        ratePerSecond: chainStream.ratePerSecond,
+        depositedAmount: chainStream.depositedAmount,
         withdrawnAmount: "0",
-        startTime: BigInt(parsedStartTime),
+        startTime: BigInt(chainStream.startTime),
         endTime,
-        lastUpdateTime: BigInt(parsedStartTime),
+        lastUpdateTime: BigInt(chainStream.startTime),
       },
     });
 

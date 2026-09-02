@@ -85,12 +85,32 @@ describe("Stream Controller", () => {
   describe('createStream', () => {
     it('should create a stream successfully', async () => {
       (prisma.stream.findUnique as any).mockResolvedValue(null);
+      (sorobanService.getStreamFromChain as any).mockResolvedValue({
+        streamId: 123n,
+        sender: 'GSENDER',
+        recipient: 'GRECIPIENT',
+        tokenAddress: 'T1',
+        ratePerSecond: '10',
+        depositedAmount: '1000',
+        withdrawnAmount: '0',
+        startTime: 1622505600,
+        isActive: true,
+      });
       (prisma.stream.upsert as any).mockResolvedValue({ streamId: 123 });
 
       await createStream(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(201);
       expect(prisma.stream.upsert).toHaveBeenCalled();
+    });
+
+    it('rejects a stream id that is not confirmed on-chain', async () => {
+      (sorobanService.getStreamFromChain as any).mockResolvedValue(null);
+
+      await createStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
     });
 
     it('should return 401 when the request is unauthenticated', async () => {
