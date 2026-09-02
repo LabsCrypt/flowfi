@@ -156,6 +156,14 @@ export const createStream = async (req: Request, res: Response) => {
         .json({ error: "Invalid depositedAmount: must be greater than zero" });
     }
 
+    const existing = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
+    if (existing && existing.sender !== callerPublicKey) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Cannot modify a stream owned by another wallet',
+      });
+    }
+
     const chainStream = await getStreamFromChain(parsedStreamId);
     if (!chainStream) {
       return res.status(409).json({
@@ -184,14 +192,6 @@ export const createStream = async (req: Request, res: Response) => {
     // different wallet. The caller is already proven to equal `sender` above, so
     // reject any existing row whose sender differs — this blocks reactivating or
     // overwriting someone else's (e.g. cancelled) stream.
-    const existing = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
-    if (existing && existing.sender !== callerPublicKey) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Cannot modify a stream owned by another wallet',
-      });
-    }
-
     const stream = await prisma.stream.upsert({
       where: { streamId: parsedStreamId },
       update: {
