@@ -474,6 +474,22 @@ Be constructive.
 
 # Final Notes
 
+---
+
+# 🏅 Recognizing Contributors
+
+FlowFi uses the [all-contributors](https://github.com/all-contributors/all-contributors) specification to recognize every kind of contribution. The bot synchronizes the contributor table across the root README and the READMEs for `backend/`, `contracts/`, `frontend/`, and `packages/flowfi-sdk/`.
+
+To add or update a contributor, comment on any issue or PR with:
+
+```text
+@all-contributors please add @<username> for <contribution-type>
+```
+
+Common contribution types include `code`, `doc`, `test`, `bug`, `ideas`, and `review`. See the [all-contributors emoji key](https://allcontributors.org/docs/en/emoji-key) for the full list.
+
+The bot will open a PR that updates every README listed in `.all-contributorsrc`. Maintainers can merge that PR once CI passes.
+
 - Contributions of all sizes are welcome
 - Documentation improvements are valuable
 - Ask questions in Issues if unsure

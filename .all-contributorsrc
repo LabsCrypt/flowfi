@@ -1,6 +1,10 @@
 {
   "files": [
-    "README.md"
+    "README.md",
+    "backend/README.md",
+    "contracts/README.md",
+    "frontend/README.md",
+    "packages/flowfi-sdk/README.md"
   ],
   "imageSize": 100,
   "contributorsPerLine": 7,
