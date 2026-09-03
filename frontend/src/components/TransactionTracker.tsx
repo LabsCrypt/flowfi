@@ -376,7 +376,7 @@ export default function TransactionTracker({
 }
 
 // Helper function to check if indexer has reflected the changes
-function checkConfirmation(
+export function checkConfirmation(
   current: BackendStream,
   expected?: TransactionTrackerProps["expectedChanges"]
 ): boolean {
@@ -396,7 +396,7 @@ function checkConfirmation(
 }
 
 // Helper function to render changes between stream states
-function renderChanges(prev: BackendStream, current: BackendStream) {
+export function renderChanges(prev: BackendStream, current: BackendStream) {
   const changes: React.JSX.Element[] = [];
 
   if (prev.depositedAmount !== current.depositedAmount) {

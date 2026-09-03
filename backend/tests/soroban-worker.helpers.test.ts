@@ -9,14 +9,14 @@ describe('Soroban Event Worker Helpers', () => {
   });
 
   it('should decode u64', () => {
-    const val = xdr.ScVal.scvU64(new xdr.Uint64(123n));
+    const val = xdr.ScVal.scvU64(123n);
     expect(decodeU64(val)).toBe(123n);
   });
 
   it('should decode i128', () => {
     const val = xdr.ScVal.scvI128(new xdr.Int128Parts({
-      hi: new xdr.Int64(0n),
-      lo: new xdr.Uint64(456n)
+      hi: 0n,
+      lo: 456n
     }));
     expect(decodeI128(val)).toBe('456');
   });
@@ -34,7 +34,7 @@ describe('Soroban Event Worker Helpers', () => {
     const entries = [
       new xdr.ScMapEntry({
         key: xdr.ScVal.scvSymbol('key1'),
-        val: xdr.ScVal.scvU64(new xdr.Uint64(1n))
+        val: xdr.ScVal.scvU64(1n)
       })
     ];
     const val = xdr.ScVal.scvMap(entries);

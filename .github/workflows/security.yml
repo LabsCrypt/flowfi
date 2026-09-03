@@ -33,13 +33,13 @@ jobs:
       run: npm ci
       
     - name: Run npm audit (production dependencies)
-      run: npm audit --omit=dev --audit-level=critical
+      run: npm audit --omit=dev --audit-level=high
       
     - name: Check for known vulnerabilities in frontend (production dependencies)
-      run: npm audit --workspace=frontend --omit=dev --audit-level=critical
+      run: npm audit --workspace=frontend --omit=dev --audit-level=high
         
     - name: Check for known vulnerabilities in backend (production dependencies)
-      run: npm audit --workspace=backend --omit=dev --audit-level=critical
+      run: npm audit --workspace=backend --omit=dev --audit-level=high
 
     - name: Setup Rust toolchain for contract audit
       uses: dtolnay/rust-toolchain@stable
@@ -61,6 +61,23 @@ jobs:
 
     - name: Verify security setup
       run: npm run verify-security
+
+  cargo-audit:
+    name: Cargo Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run cargo audit on contracts
+      run: cargo audit
+      working-directory: contracts
 
   codeql-analysis:
     name: CodeQL Analysis
