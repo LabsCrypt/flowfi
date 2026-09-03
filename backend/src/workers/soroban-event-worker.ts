@@ -235,8 +235,11 @@ export class SorobanEventWorker {
   /**
    * Run `fn` exclusively with any other poll/replay batch.
    * Registers the work on `activeBatch` so `waitForDrain` awaits replays too.
+   *
+   * Public so that admin reset/replay paths can acquire the same lock,
+   * preventing a concurrent poll from overwriting the reset cursor (#1221).
    */
-  private runExclusive(fn: () => Promise<void>): Promise<void> {
+  runExclusive(fn: () => Promise<void>): Promise<void> {
     const run = this.batchMutex.then(fn);
     // Keep the mutex chain alive even when a batch rejects.
     const gate = run.then(

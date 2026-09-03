@@ -44,6 +44,20 @@ function getTxPollIntervalMs(): number {
   return Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
 }
 
+const DEFAULT_RPC_HEALTH_CACHE_TTL_MS = 10_000;
+
+let rpcHealthCache: { ok: boolean; expiresAt: number } | null = null;
+let rpcHealthPromise: Promise<boolean> | null = null;
+
+function getRpcHealthCacheTtlMs(): number {
+  return Number(process.env.SOROBAN_RPC_HEALTH_CACHE_TTL_MS ?? DEFAULT_RPC_HEALTH_CACHE_TTL_MS);
+}
+
+export function resetRpcHealthCache(): void {
+  rpcHealthCache = null;
+  rpcHealthPromise = null;
+}
+
 export class RpcTimeoutError extends Error {
   constructor(label: string, timeoutMs: number) {
     super(`${label} timed out after ${timeoutMs}ms`);
@@ -139,12 +153,36 @@ async function executeRpc<T>(label: string, operation: (server: rpc.Server) => P
  * unreachable Soroban RPC endpoint can't hang the health check.
  */
 export async function checkRpcHealth(timeoutMs = 3_000): Promise<boolean> {
-  try {
-    await withRpcTimeout('soroban rpc health check', () => executeRpc('soroban rpc health check', (server) => server.getHealth()), timeoutMs);
-    return true;
-  } catch {
-    return false;
+  const now = Date.now();
+  const ttlMs = getRpcHealthCacheTtlMs();
+
+  if (rpcHealthCache && now < rpcHealthCache.expiresAt) {
+    return rpcHealthCache.ok;
   }
+
+  if (rpcHealthPromise) {
+    return rpcHealthPromise;
+  }
+
+  rpcHealthPromise = (async () => {
+    try {
+      const ok = await withRpcTimeout(
+        'soroban rpc health check',
+        () => executeRpc('soroban rpc health check', (server) => server.getHealth()),
+        timeoutMs,
+      );
+      const result = Boolean(ok);
+      rpcHealthCache = { ok: result, expiresAt: Date.now() + ttlMs };
+      return result;
+    } catch {
+      rpcHealthCache = { ok: false, expiresAt: Date.now() + ttlMs };
+      return false;
+    } finally {
+      rpcHealthPromise = null;
+    }
+  })();
+
+  return rpcHealthPromise;
 }
 
 export function setServer(server: rpc.Server): void {
