@@ -52,10 +52,6 @@ jobs:
         run: npm run lint
         working-directory: frontend
 
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
-        working-directory: frontend
-
       - name: Run Frontend Tests
         run: npm run test:coverage
         working-directory: frontend
@@ -124,9 +120,6 @@ jobs:
           npm run codegen:api-types
           cd ..
           git diff --exit-code -- backend/swagger/flowfi.openapi.json frontend/src/lib/api-types.generated.ts
-
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Run Backend Tests
         run: |
