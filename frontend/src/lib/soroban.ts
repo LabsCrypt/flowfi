@@ -138,6 +138,20 @@ export function getTokenAddress(symbol: string): string {
   return address;
 }
 
+/**
+ * Resolves a token contract address to its symbol (XLM/USDC/EURC), falling
+ * back to a shortened address when the token is unknown.
+ */
+export function resolveTokenSymbol(tokenAddress: string): string {
+  const entry = Object.entries(TOKEN_ADDRESSES).find(
+    ([, address]) => address === tokenAddress,
+  );
+  if (entry) return entry[0];
+  
+  if (!tokenAddress || tokenAddress.length < 10) return tokenAddress;
+  return `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
+}
+
 export async function fetchTokenBalance(
   publicKey: string,
   tokenSymbol: string,

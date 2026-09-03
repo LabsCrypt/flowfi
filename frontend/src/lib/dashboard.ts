@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
-import { TOKEN_ADDRESSES } from "./soroban";
+import { TOKEN_ADDRESSES, resolveTokenSymbol } from "./soroban";
 import { logger } from "./logger";
 
 export interface ActivityItem {
@@ -65,18 +65,6 @@ function shortenAddress(address: string): string {
 }
 
 /**
- * Resolves a token contract address to its symbol (XLM/USDC/EURC), falling
- * back to a shortened address when the token is unknown.
- */
-function resolveTokenLabel(tokenAddress: string): string {
-  const entry = Object.entries(TOKEN_ADDRESSES).find(
-    ([, address]) => address === tokenAddress,
-  );
-
-  return entry?.[0] ?? shortenAddress(tokenAddress);
-}
-
-/**
  * Derives the display status from the backend flags. A paused stream reads
  * "Paused"; an active one "Active". An inactive stream is "Cancelled" when a
  * CANCELLED event is present, otherwise it ran to completion ("Completed").
@@ -137,7 +125,7 @@ export function mapBackendStreamToFrontend(s: BackendStream, counterparty: strin
     id: s.streamId.toString(),
     recipient: shortenAddress(counterparty),
     amount: deposited,
-    token: resolveTokenLabel(s.tokenAddress),
+    token: resolveTokenSymbol(s.tokenAddress),
     status: mapStreamStatus(s),
     deposited,
     withdrawn,
