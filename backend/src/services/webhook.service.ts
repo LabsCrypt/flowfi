@@ -17,7 +17,7 @@ export interface WebhookSubscription {
 
 export interface WebhookPayload {
   eventType: string;
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   timestamp: string;
 }
 
@@ -238,8 +238,8 @@ export async function deliverWebhook(
       logger.warn(
         `[Webhook] Delivery failed with status ${lastStatus} (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`,
       );
-    } catch (error: any) {
-      lastError = error.message || "Network error";
+    } catch (error: unknown) {
+      lastError = error instanceof Error ? error.message : "Network error";
       logger.warn(
         `[Webhook] Delivery error: ${lastError} (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`,
       );
@@ -304,7 +304,7 @@ async function checkConsecutiveFailures(subscriptionId: string): Promise<void> {
  */
 export async function dispatchWebhookEvent(
   eventType: string,
-  data: Record<string, any>,
+  data: Record<string, unknown>,
   userAddresses: string[],
 ): Promise<void> {
   const subscriptions = await prisma.webhookSubscription.findMany({

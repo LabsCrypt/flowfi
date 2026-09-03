@@ -1,4 +1,4 @@
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { prisma } from '../../lib/prisma.js';
 import logger from '../../logger.js';
 import * as sorobanService from '../../services/sorobanService.js';
@@ -46,10 +46,11 @@ import { parseStreamId } from '../../lib/stream-id.js';
  *       409:
  *         description: Stream already cancelled or completed
  */
-export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Response) => {
+export const cancelStreamHandler = async (req: Request, res: Response) => {
   try {
+    const authReq = req as AuthenticatedRequest;
     const streamIdParam = req.params.streamId;
-    const callerAddress = req.user.publicKey;
+    const callerAddress = authReq.user.publicKey;
 
     const streamId = Array.isArray(streamIdParam) ? streamIdParam[0] : streamIdParam;
     if (!streamId) {

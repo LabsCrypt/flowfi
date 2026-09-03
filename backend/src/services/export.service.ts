@@ -3,6 +3,7 @@
  * Generates CSV/JSON exports for bookkeeping and tax filings
  */
 import type { Response } from "express";
+import type { Prisma } from "../generated/prisma/index.js";
 import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
 
@@ -68,12 +69,28 @@ function calculateProtocolFee(amount: string, eventType: string): string {
   return "0";
 }
 
+/** Structural view of the StreamEvent fields used for export. */
+interface ExportEvent {
+  amount: string | null;
+  eventType: string;
+  timestamp: bigint;
+  transactionHash: string;
+}
+
+/** Structural view of the Stream fields used for export. */
+interface ExportStream {
+  streamId: bigint;
+  sender: string;
+  recipient: string;
+  tokenAddress: string;
+}
+
 /**
  * Convert database records to transaction export format
  */
 function mapEventToTransaction(
-  event: any,
-  stream: any,
+  event: ExportEvent,
+  stream: ExportStream,
   userAddress: string,
 ): TransactionRecord {
   const isOutgoing = stream.sender === userAddress;
@@ -136,15 +153,14 @@ export async function streamTransactionCSV(
   const { direction, startDate, endDate, tokenAddress } = options;
 
   // Build where clause
-  const where: any = {
-    OR: [],
-  };
+  const or: Prisma.StreamWhereInput[] = [];
+  const where: Prisma.StreamWhereInput = { OR: or };
 
   if (direction === "outgoing" || direction === "all") {
-    where.OR.push({ sender: userAddress });
+    or.push({ sender: userAddress });
   }
   if (direction === "incoming" || direction === "all") {
-    where.OR.push({ recipient: userAddress });
+    or.push({ recipient: userAddress });
   }
 
   if (tokenAddress) {
@@ -237,15 +253,14 @@ export async function streamTransactionJSON(
   const { direction, startDate, endDate, tokenAddress } = options;
 
   // Build where clause
-  const where: any = {
-    OR: [],
-  };
+  const or: Prisma.StreamWhereInput[] = [];
+  const where: Prisma.StreamWhereInput = { OR: or };
 
   if (direction === "outgoing" || direction === "all") {
-    where.OR.push({ sender: userAddress });
+    or.push({ sender: userAddress });
   }
   if (direction === "incoming" || direction === "all") {
-    where.OR.push({ recipient: userAddress });
+    or.push({ recipient: userAddress });
   }
 
   if (tokenAddress) {

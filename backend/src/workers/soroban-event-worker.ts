@@ -398,7 +398,7 @@ export class SorobanEventWorker {
     // Use the response's final cursor if provided and no error occurred, otherwise the last valid event's ID
     const finalCursor = hasError
       ? lastCursor
-      : (response as any).latestCursor || lastCursor;
+      : ((response as { latestCursor?: string }).latestCursor || lastCursor);
 
     await prisma.indexerState.upsert({
       where: { id: INDEXER_STATE_ID },

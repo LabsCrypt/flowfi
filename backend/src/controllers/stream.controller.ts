@@ -564,17 +564,17 @@ export const getUserStreamSummary = async (
 
     const totalStreamsCreated = outgoingStreams.length;
     const totalStreamedOut = sumStringI128(
-      outgoingStreams.map((stream: any) => stream.withdrawnAmount),
+      outgoingStreams.map((stream) => stream.withdrawnAmount),
     );
     const totalStreamedIn = sumStringI128(
-      incomingStreams.map((stream: any) => stream.withdrawnAmount),
+      incomingStreams.map((stream) => stream.withdrawnAmount),
     );
 
     const activeOutgoingCount = outgoingStreams.filter(
-      (stream: any) => stream.isActive,
+      (stream) => stream.isActive,
     ).length;
     const activeIncomingCount = incomingStreams.filter(
-      (stream: any) => stream.isActive,
+      (stream) => stream.isActive,
     ).length;
 
     const truncated =
@@ -685,9 +685,9 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
     return res
       .status(200)
       .json({ streamId, txHash, depositedAmount: updatedStream!.depositedAmount });
-  } catch (error: any) {
+  } catch (error) {
     logger.error(`[topUp] stream=${streamId} error:`, error);
-    return res.status(400).json({ error: 'Failed to top up stream on chain', message: error.message ?? 'Unknown error' });
+    return res.status(400).json({ error: 'Failed to top up stream on chain', message: error instanceof Error ? error.message : 'Unknown error' });
   }
 };
 

@@ -50,7 +50,12 @@ export const errorHandler = (
     }
 
     // Default Error
-    const statusCode = (err instanceof Error && (err as any).status) || (err instanceof Error && (err as any).statusCode) || 500;
+    const statusError =
+      err instanceof Error
+        ? (err as Error & { status?: number; statusCode?: number })
+        : null;
+    const statusCode =
+      statusError?.status || statusError?.statusCode || 500;
     const message = err instanceof Error ? err.message : 'Internal Server Error';
 
     return res.status(statusCode).json({

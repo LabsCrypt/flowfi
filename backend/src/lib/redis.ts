@@ -41,7 +41,7 @@ const DEFAULT_MEMORY_CACHE_MAX_ITEMS = 10_000;
  * memory usage stays bounded regardless of key churn or sweep interval.
  */
 export class MemoryCache {
-  private cache = new Map<string, CacheItem<any>>();
+  private cache = new Map<string, CacheItem<unknown>>();
   private hits = 0;
   private misses = 0;
   private readonly maxItems: number;
@@ -74,7 +74,7 @@ export class MemoryCache {
     // the last candidate for eviction when the max-size cap is hit.
     this.cache.delete(key);
     this.cache.set(key, item);
-    return item.value;
+    return item.value as T;
   }
 
   set<T>(key: string, value: T, ttlSeconds: number): void {

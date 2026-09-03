@@ -9,11 +9,12 @@ export function getSandboxPrisma(): PrismaClient {
     return globalForSandboxPrisma.sandboxPrisma;
   }
 
-  const sandboxPrisma = new PrismaClient({
-    log: process.env.NODE_ENV === 'development'
+  const log: Array<'query' | 'info' | 'warn' | 'error'> =
+    process.env.NODE_ENV === 'development'
       ? ['query', 'error', 'warn']
-      : ['error'],
-  } as any);
+      : ['error'];
+
+  const sandboxPrisma = new PrismaClient({ log });
 
   if (process.env.NODE_ENV !== 'production') {
     globalForSandboxPrisma.sandboxPrisma = sandboxPrisma;

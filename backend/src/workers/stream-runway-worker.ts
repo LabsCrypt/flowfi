@@ -2,6 +2,7 @@
  * Stream Runway & Low-Balance Alert Engine (Issue #1190)
  * Monitors active streams and generates proactive notifications before funds run out
  */
+import type { Stream } from "../generated/prisma/index.js";
 import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
 import { claimableAmountService } from "../services/claimable.service.js";
@@ -23,7 +24,7 @@ interface RunwayCalculation {
 /**
  * Calculate remaining runway for a stream in seconds
  */
-function calculateStreamRunway(stream: any, now: number): RunwayCalculation {
+function calculateStreamRunway(stream: Stream, now: number): RunwayCalculation {
   const result = claimableAmountService.getClaimableAmount(
     {
       streamId: stream.streamId,

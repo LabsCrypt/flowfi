@@ -1,4 +1,4 @@
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import { prisma } from '../../../lib/prisma.js';
 import logger from '../../../logger.js';
 import { claimableAmountService } from '../../../services/claimable.service.js';
@@ -43,8 +43,9 @@ import { parseStreamId } from '../../../lib/stream-id.js';
  *       500:
  *         description: Internal server error
  */
-export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) => {
+export const withdrawHandler = async (req: Request, res: Response) => {
   try {
+    const authReq = req as AuthenticatedRequest;
     const streamIdParam = Array.isArray(req.params.streamId)
       ? req.params.streamId[0]
       : req.params.streamId;
@@ -78,7 +79,7 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
     }
 
     // Verify the caller is the stream recipient
-    if (stream.recipient !== req.user.publicKey) {
+    if (stream.recipient !== authReq.user.publicKey) {
       return res.status(403).json({
         error: 'Forbidden',
         message: 'Only the stream recipient can withdraw from the stream',
@@ -96,7 +97,7 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
 
     try {
       // Call Soroban service
-      const result = await sorobanWithdraw(parsedStreamId, req.user.publicKey);
+      const result = await sorobanWithdraw(parsedStreamId, authReq.user.publicKey);
       
       const now = BigInt(Math.floor(Date.now() / 1000));
       const withdrawAmount = BigInt(claimable.claimableAmount);
@@ -151,12 +152,12 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
           transactionHash: result.txHash,
           ledgerSequence: 0,
           timestamp: now,
-          metadata: JSON.stringify({ withdrawnBy: req.user.publicKey }),
+          metadata: JSON.stringify({ withdrawnBy: authReq.user.publicKey }),
         },
         update: {},
       });
 
-      logger.info(`Stream ${parsedStreamId} withdrawn by ${req.user.publicKey}`);
+      logger.info(`Stream ${parsedStreamId} withdrawn by ${authReq.user.publicKey}`);
 
       return res.status(200).json({
         success: true,

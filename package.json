@@ -21,6 +21,9 @@
   "lint-staged": {
     "frontend/**/*.{ts,tsx,js,jsx}": [
       "npm run lint --workspace=frontend --"
+    ],
+    "backend/**/*.{ts,tsx,js}": [
+      "npm run lint --workspace=backend --"
     ]
   },
   "dependencies": {
@@ -41,6 +44,9 @@
     "deepmerge-ts": "^8.0.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
+    "prisma": {
+      "mysql2": "^3.22.0"
+    },
     "mysql2": ">=3.22.0"
   }
 }

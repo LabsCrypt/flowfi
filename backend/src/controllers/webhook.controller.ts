@@ -33,11 +33,11 @@ export async function createWebhook(
       secretKey, // Only returned once on creation
       message: "Store the secret key securely - it will not be shown again",
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[Webhook Controller] Create error:", error);
-    res
-      .status(500)
-      .json({ error: error.message || "Failed to create webhook" });
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Failed to create webhook",
+    });
   }
 }
 
@@ -55,11 +55,11 @@ export async function listWebhooks(req: Request, res: Response): Promise<void> {
 
     // Don't expose secret keys
     const safeSubscriptions = subscriptions.map(
-      ({ secretKey, ...rest }) => rest,
+      ({ secretKey: _secretKey, ...rest }) => rest,
     );
 
     res.json({ subscriptions: safeSubscriptions });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[Webhook Controller] List error:", error);
     res.status(500).json({ error: "Failed to list webhooks" });
   }
@@ -82,7 +82,7 @@ export async function deleteWebhook(
     await webhookService.deleteWebhookSubscription(id, userAddress);
 
     res.status(204).send();
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[Webhook Controller] Delete error:", error);
     res.status(500).json({ error: "Failed to delete webhook" });
   }
@@ -105,10 +105,10 @@ export async function testWebhook(req: Request, res: Response): Promise<void> {
       message: "Test webhook sent",
       result,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error("[Webhook Controller] Test error:", error);
-    res
-      .status(500)
-      .json({ error: error.message || "Failed to send test webhook" });
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Failed to send test webhook",
+    });
   }
 }

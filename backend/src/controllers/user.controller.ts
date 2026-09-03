@@ -210,7 +210,7 @@ export const getCurrentUser = async (
     const { publicKey } = authReq.user;
 
     // Try to get user from database
-    let user = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { publicKey },
       include: {
         sentStreams: {

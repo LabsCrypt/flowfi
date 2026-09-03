@@ -292,8 +292,8 @@ router.get('/metrics', async (_req: Request, res: Response) => {
     cache.set(ADMIN_METRICS_CACHE_KEY, payload, ADMIN_METRICS_CACHE_TTL_SECONDS);
     res.set('X-Cache', 'MISS');
     res.json(withCalculatedAt(payload));
-  } catch (err) {
-    logger.error('Error fetching admin metrics:', err);
+  } catch (_err) {
+    logger.error('Error fetching admin metrics:', _err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -336,7 +336,7 @@ router.get('/indexer/status', async (req: Request, res: Response) => {
   try {
     const status = await getIndexerStatus();
     res.json(status);
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: 'Failed to fetch indexer status' });
   }
 });
@@ -417,7 +417,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
     }
     await resetIndexer(ledger);
     res.json({ ok: true, lastLedger: ledger });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: 'Reset failed' });
   }
 });
@@ -496,7 +496,7 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
     }
     const requestId = await replayFromLedger(fromLedger);
     res.status(202).json({ ok: true, replayingFrom: fromLedger, requestId });
-  } catch (err) {
+  } catch (_err) {
     res.status(500).json({ error: 'Replay failed' });
   }
 });
