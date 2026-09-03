@@ -7,9 +7,11 @@ import {
 } from "../validators/user.validator.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import {
-  DEFAULT_EVENTS_PAGE_SIZE,
-  MAX_EVENTS_PAGE_SIZE,
-} from "../routes/v1/events.routes.js";
+  listEventsForWallet,
+  parseEventTypeFilter,
+  resolveEventsOffset,
+  resolveEventsPageSize,
+} from "../repositories/streamEvent.repository.js";
 import * as exportService from "../services/export.service.js";
 
 /**
@@ -128,7 +130,17 @@ export const getUser = async (
 };
 
 /**
- * Get user events (history)
+ * Get user events (history) - paginated list of stream events where the
+ * given wallet was either the sender or recipient.
+ *
+ * Query params:
+ *   - type: optional comma-separated list of event types to filter by
+ *     (e.g. "PAUSED,RESUMED"); unknown values are ignored, and a filter
+ *     consisting entirely of unknown values is rejected with 400.
+ *   - limit, offset, page: pagination (see repositories/streamEvent.repository.ts)
+ *   - includeStream: set to "false" to omit the related `stream` object
+ *     from each event (included by default, matching this endpoint's
+ *     historical behavior).
  */
 export const getUserEvents = async (
   req: Request,
@@ -146,47 +158,38 @@ export const getUserEvents = async (
         .json({ error: "Invalid Stellar public key format" });
     }
 
-    const rawLimit = req.query["limit"];
-    const rawOffset = req.query["offset"];
+    const { requested, types } = parseEventTypeFilter(req.query["type"]);
+    if (requested.length > 0 && types.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "No valid event types in `type` filter" });
+    }
 
-    const limit = Math.min(
-      rawLimit && typeof rawLimit === "string"
-        ? Number.parseInt(rawLimit, 10) || DEFAULT_EVENTS_PAGE_SIZE
-        : DEFAULT_EVENTS_PAGE_SIZE,
-      MAX_EVENTS_PAGE_SIZE,
-    );
-    const offset =
-      rawOffset && typeof rawOffset === "string"
-        ? Math.max(0, Number.parseInt(rawOffset, 10) || 0)
-        : 0;
+    const limit = resolveEventsPageSize(req.query["limit"]);
+    const offset = resolveEventsOffset({
+      rawOffset: req.query["offset"],
+      rawPage: req.query["page"],
+      limit,
+    });
 
-    const whereClause = {
-      stream: {
-        OR: [{ sender: publicKey }, { recipient: publicKey }],
-      },
-    };
+    // Preserve this endpoint's historical behavior of always embedding the
+    // related stream, unless the caller opts out.
+    const includeStream = req.query["includeStream"] !== "false";
 
-    const [events, total] = await Promise.all([
-      prisma.streamEvent.findMany({
-        where: whereClause,
-        orderBy: { timestamp: "desc" },
-        take: limit,
-        skip: offset,
-        include: {
-          stream: true,
-        },
-      }),
-      prisma.streamEvent.count({ where: whereClause }),
-    ]);
-
-    const hasMore = offset + events.length < total;
-
-    return res.status(200).json({
-      data: events,
-      total,
-      hasMore,
+    const result = await listEventsForWallet({
+      address: publicKey,
+      types,
       limit,
       offset,
+      includeStream,
+    });
+
+    return res.status(200).json({
+      data: result.events,
+      total: result.total,
+      hasMore: result.hasMore,
+      limit: result.limit,
+      offset: result.offset,
     });
   } catch (error) {
     return next(error);

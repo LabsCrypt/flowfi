@@ -119,3 +119,31 @@ The Soroban test runner can generate storage snapshots under `test_snapshots/` w
 3. Sender may call `top_up_stream`, `pause_stream`, `resume_stream`, or `cancel_stream`.
 4. Recipient calls `withdraw` over time until fully drained.
 5. Final withdrawal emits `stream_completed`.
+
+## Automated deployment
+
+Deployment to Stellar Testnet/Mainnet is automated via the
+[`deploy-contracts`](../../.github/workflows/deploy-contracts.yml) GitHub Actions workflow:
+
+- **Triggers**
+  - `release` tags (`v*`) published via the GitHub Releases UI → deploys to **Mainnet**.
+  - Manual `workflow_dispatch` runs (Actions → "Deploy Soroban Contracts" → "Run workflow") → **Testnet** by default.
+- **Steps**: installs the Rust `wasm32-unknown-unknown` target and Stellar CLI, runs
+  `cargo test --package stream_contract`, builds + optimizes the WASM, asserts the
+  optimized WASM stays under the **64 KB budget** (`stellar contract inspect`),
+  then deploys and calls `initialize(admin, treasury, fee_rate_bps)` via
+  [`scripts/deploy.sh`](../../scripts/deploy.sh).
+- **Secrets** (repo → Settings → Secrets and variables → Actions):
+
+  | Secret | Description |
+  |---|---|
+  | `DEPLOYER_SECRET` | Secret key of the deployer account |
+  | `ADMIN_ADDRESS` | Admin address passed to `initialize` |
+  | `TREASURY_ADDRESS` | Fee treasury address passed to `initialize` |
+  | `FEE_RATE_BPS` | Fee rate in basis points (e.g. `25` = 0.25%) |
+
+- **Outputs**: the deployed `STREAM_CONTRACT_ID` and deployment details (network,
+  tx hash, admin, treasury, fee rate) are written to `deployment-info.json`, emitted
+  in the job summary, uploaded as GitHub artifacts, and committed to the repo on
+  release deploys so the backend/frontend can pick up `STREAM_CONTRACT_ID`.
+  The optimized `.wasm` is uploaded as a build artifact.

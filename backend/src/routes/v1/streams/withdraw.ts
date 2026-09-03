@@ -29,18 +29,7 @@ import { parseStreamId } from '../../../lib/stream-id.js';
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 streamId:
- *                   type: integer
- *                 txHash:
- *                   type: string
- *                 amount:
- *                   type: string
- *                 stream:
- *                   $ref: '#/components/schemas/Stream'
+ *               $ref: '#/components/schemas/WithdrawResponse'
  *       400:
  *         description: Invalid streamId or contract revert
  *       401:
@@ -51,6 +40,8 @@ import { parseStreamId } from '../../../lib/stream-id.js';
  *         description: Stream not found
  *       409:
  *         description: Conflict - no claimable balance available
+ *       500:
+ *         description: Internal server error
  */
 export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {

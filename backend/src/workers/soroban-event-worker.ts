@@ -8,16 +8,11 @@ import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
 import { rpcPool } from "../lib/rpc-pool.js";
 
-// ─── Config ──────────────────────────────────────────────────────────────────
-
-/** Default max failed attempts before an event is abandoned to the dead-letter table. */
-const DEAD_LETTER_MAX_RETRIES_DEFAULT = 5;
-
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
 /** Decode an ScVal symbol to a string. */
 export function decodeSymbol(val: xdr.ScVal): string {
-  return val.sym().toString();
+  return (val as xdr.ScValSymbol).sym.toString();
 }
 
 /**
@@ -25,12 +20,12 @@ export function decodeSymbol(val: xdr.ScVal): string {
  * `xdr.UInt64` extends Long; `.toString()` gives the decimal representation.
  */
 export function decodeU64(val: xdr.ScVal): bigint {
-  return BigInt(val.u64().toString());
+  return BigInt((val as xdr.ScValU64).u64.toString());
 }
 
 /** Decode an ScVal U32 to a JavaScript number. */
 export function decodeU32(val: xdr.ScVal): number {
-  return val.u32();
+  return (val as xdr.ScValU32).u32;
 }
 
 /**
@@ -39,9 +34,9 @@ export function decodeU32(val: xdr.ScVal): number {
  * Full value = hi * 2^64 + lo.
  */
 export function decodeI128(val: xdr.ScVal): string {
-  const parts = val.i128();
-  const hi = BigInt.asIntN(64, BigInt(parts.hi().toString()));
-  const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+  const parts = (val as xdr.ScValI128).i128;
+  const hi = BigInt.asIntN(64, BigInt(parts.hi.toString()));
+  const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
   return ((hi << 64n) | lo).toString();
 }
 
@@ -50,13 +45,13 @@ export function decodeI128(val: xdr.ScVal): string {
  * string.
  */
 export function decodeAddress(val: xdr.ScVal): string {
-  const addr = val.address();
-  if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
-    return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
+  const addr = (val as xdr.ScValAddress).address;
+  if (addr.type === 'scAddressTypeAccount') {
+    return StrKey.encodeEd25519PublicKey((addr.accountId as xdr.PublicKeyEd25519).ed25519.value);
   }
-  // addr.contractId() returns a Hash (Opaque[]); cast to Uint8Array for encodeContract
-  const hash = addr.contractId();
-  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
+  // addr.contractId is a Hash (Opaque[]); cast to Uint8Array for encodeContract
+  const hash = (addr as xdr.ScAddressContract).contractId;
+  return StrKey.encodeContract(Buffer.from(hash.value as unknown as Uint8Array));
 }
 
 /**
@@ -65,10 +60,10 @@ export function decodeAddress(val: xdr.ScVal): string {
  */
 export function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
   const result: Record<string, xdr.ScVal> = {};
-  const entries = val.map();
+  const entries = (val as xdr.ScValMap).map;
   if (!entries) return result;
   for (const entry of entries) {
-    result[entry.key().sym().toString()] = entry.val();
+    result[(entry.key as xdr.ScValSymbol).sym.toString()] = entry.val;
   }
   return result;
 }
@@ -121,7 +116,8 @@ export class SorobanEventWorker {
 
   constructor() {
     this.contractId = process.env.STREAM_CONTRACT_ID ?? "";
-    const rpcUrl = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
+    const rpcUrl =
+      process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
     this.server = new rpc.Server(rpcUrl, { allowHttp: true });
     this.pollIntervalMs = parseInt(
       process.env.INDEXER_POLL_INTERVAL_MS ?? "5000",
@@ -215,16 +211,22 @@ export class SorobanEventWorker {
    */
   async triggerPoll(customRequestId?: string): Promise<string> {
     if (!this.isRunning) {
-      return customRequestId || requestContext?.getStore?.()?.requestId || randomUUID();
+      return (
+        customRequestId ||
+        requestContext?.getStore?.()?.requestId ||
+        randomUUID()
+      );
     }
 
     const requestId =
-      customRequestId || requestContext?.getStore?.()?.requestId || randomUUID();
+      customRequestId ||
+      requestContext?.getStore?.()?.requestId ||
+      randomUUID();
 
     try {
       await this.runExclusive(() => {
         const runBatch = () => this.fetchAndProcessEvents();
-        return requestContext && typeof requestContext.run === 'function'
+        return requestContext && typeof requestContext.run === "function"
           ? requestContext.run({ requestId }, runBatch)
           : runBatch();
       });
@@ -240,8 +242,11 @@ export class SorobanEventWorker {
   /**
    * Run `fn` exclusively with any other poll/replay batch.
    * Registers the work on `activeBatch` so `waitForDrain` awaits replays too.
+   *
+   * Public so that admin reset/replay paths can acquire the same lock,
+   * preventing a concurrent poll from overwriting the reset cursor (#1221).
    */
-  private runExclusive(fn: () => Promise<void>): Promise<void> {
+  runExclusive(fn: () => Promise<void>): Promise<void> {
     const run = this.batchMutex.then(fn);
     // Keep the mutex chain alive even when a batch rejects.
     const gate = run.then(
@@ -302,7 +307,7 @@ export class SorobanEventWorker {
           this.fetchAndProcessEvents().catch((err) => {
             logger.error("[SorobanWorker] Unhandled error during poll:", err);
           });
-        return requestContext && typeof requestContext.run === 'function'
+        return requestContext && typeof requestContext.run === "function"
           ? requestContext.run({ requestId }, execute)
           : execute();
       });
@@ -317,7 +322,11 @@ export class SorobanEventWorker {
    */
   private async fetchAndProcessEvents(): Promise<void> {
     const currentCtx = requestContext?.getStore?.();
-    if (!currentCtx?.requestId && requestContext && typeof requestContext.run === 'function') {
+    if (
+      !currentCtx?.requestId &&
+      requestContext &&
+      typeof requestContext.run === "function"
+    ) {
       const requestId = randomUUID();
       return requestContext.run({ requestId }, () =>
         this.fetchAndProcessEvents(),
@@ -346,7 +355,9 @@ export class SorobanEventWorker {
       ? { ...baseFilter, cursor: state.lastCursor }
       : { ...baseFilter, startLedger: state.lastLedger || this.startLedger };
 
-    const response = await (this.server ? this.server.getEvents(params) : rpcPool.execute("getEvents", (server) => server.getEvents(params)));
+    const response = await (this.server
+      ? this.server.getEvents(params)
+      : rpcPool.execute("getEvents", (server) => server.getEvents(params)));
 
     if (response.events.length === 0) return;
 
@@ -408,7 +419,7 @@ export class SorobanEventWorker {
     // Use the response's final cursor if provided and no error occurred, otherwise the last valid event's ID
     const finalCursor = hasError
       ? lastCursor
-      : ((response as any).latestCursor || lastCursor);
+      : (response as any).latestCursor || lastCursor;
 
     await prisma.indexerState.upsert({
       where: { id: INDEXER_STATE_ID },
@@ -783,11 +794,18 @@ export class SorobanEventWorker {
       // Check for a duplicate BEFORE mutating any Stream fields so that a
       // replayed event never re-applies the top-up.
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "TOPPED_UP",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`,
+        );
         return;
       }
 
@@ -805,7 +823,7 @@ export class SorobanEventWorker {
         ratePerSecondBigInt === 0n
           ? null
           : BigInt(stream.startTime) +
-            (BigInt(newDepositedAmount) / ratePerSecondBigInt) +
+            BigInt(newDepositedAmount) / ratePerSecondBigInt +
             BigInt(stream.totalPausedDuration);
 
       await tx.stream.update({
@@ -818,10 +836,15 @@ export class SorobanEventWorker {
       });
 
       await tx.streamEvent.upsert({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'TOPPED_UP' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "TOPPED_UP",
+          },
+        },
         create: {
           streamId,
-          eventType: 'TOPPED_UP',
+          eventType: "TOPPED_UP",
           amount,
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
@@ -864,11 +887,18 @@ export class SorobanEventWorker {
       // Check for a duplicate BEFORE mutating any Stream fields so that a
       // replayed event never double-increments withdrawnAmount.
       const existingEvent = await tx.streamEvent.findUnique({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "WITHDRAWN",
+          },
+        },
         select: { id: true },
       });
       if (existingEvent) {
-        logger.warn(`[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`);
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=WITHDRAWN`,
+        );
         return;
       }
 
@@ -890,10 +920,15 @@ export class SorobanEventWorker {
       });
 
       await tx.streamEvent.upsert({
-        where: { transactionHash_eventType: { transactionHash: event.txHash, eventType: 'WITHDRAWN' } },
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "WITHDRAWN",
+          },
+        },
         create: {
           streamId,
-          eventType: 'WITHDRAWN',
+          eventType: "WITHDRAWN",
           amount,
           transactionHash: event.txHash,
           ledgerSequence: event.ledger,
