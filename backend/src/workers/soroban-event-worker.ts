@@ -8,6 +8,11 @@ import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
 import { rpcPool } from "../lib/rpc-pool.js";
 
+// ─── Config ──────────────────────────────────────────────────────────────────
+
+/** Default max failed processing attempts before an event is abandoned. */
+const DEAD_LETTER_MAX_RETRIES_DEFAULT = 5;
+
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
 /** Decode an ScVal symbol to a string. */
@@ -92,6 +97,8 @@ export class SorobanEventWorker {
   private readonly server: rpc.Server;
   private readonly pollIntervalMs: number;
   private readonly startLedger: number;
+  /** Max failed processing attempts before an event is abandoned (dead-lettered). */
+  private readonly deadLetterMaxRetries: number;
 
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | undefined;
@@ -122,6 +129,11 @@ export class SorobanEventWorker {
       10,
     );
     this.startLedger = parseInt(process.env.INDEXER_START_LEDGER ?? "0", 10);
+    this.deadLetterMaxRetries = parseInt(
+      process.env.INDEXER_DEAD_LETTER_MAX_RETRIES ??
+        String(DEAD_LETTER_MAX_RETRIES_DEFAULT),
+      10,
+    );
   }
 
   /**
@@ -377,11 +389,13 @@ export class SorobanEventWorker {
         await this.processEvent(event);
         this.eventsProcessed += 1;
         this.recordOutcome(true);
-        if (!hasError) {
-          // Use the event ID as the cursor if pagingToken is not available
-          lastCursor = event.id;
-          lastLedger = event.ledger;
-        }
+        // Always advance the cursor past a successfully processed event,
+        // even when an earlier event in this batch failed. The previous
+        // `!hasError` guard froze the cursor after the first failure, so a
+        // single always-failing event (e.g. malformed body) reprocessed
+        // every later event on every poll indefinitely.
+        lastCursor = event.id;
+        lastLedger = event.ledger;
       } catch (err) {
         hasError = true;
         this.eventsFailed += 1;
@@ -391,6 +405,18 @@ export class SorobanEventWorker {
           `[SorobanWorker] Failed to process event ${event.id}:`,
           err,
         );
+
+        // Record the event in the dead-letter table (raw payload preserved
+        // for manual triage). Once it has failed `deadLetterMaxRetries`
+        // times, abandon it and advance the cursor past it so the indexer
+        // is never frozen by a permanently-bad event.
+        if (await this.deadLetterEvent(event, err)) {
+          logger.warn(
+            `[SorobanWorker] Event ${event.id} exceeded ${this.deadLetterMaxRetries} attempts — abandoning (see IndexerDeadLetterEvent for triage).`,
+          );
+          lastCursor = event.id;
+          lastLedger = event.ledger;
+        }
         // Continue processing subsequent events rather than halting.
       }
     }
@@ -413,6 +439,48 @@ export class SorobanEventWorker {
     logger.info(
       `[SorobanWorker] Processed ${response.events.length} event(s) — latest ledger: ${lastLedger}`,
     );
+  }
+
+  /**
+   * Record a failed event in the dead-letter table (with its raw payload for
+   * manual triage), incrementing its attempt counter.
+   *
+   * @returns `true` when the event has reached the retry cap and should be
+   *   abandoned (cursor advanced past it); `false` to leave it for a retry
+   *   on a future poll. Never throws — a dead-letter write failure must not
+   *   abort the batch; in that case the event is simply left for the next
+   *   poll.
+   */
+  private async deadLetterEvent(
+    event: rpc.Api.EventResponse,
+    err: unknown,
+  ): Promise<boolean> {
+    try {
+      const row = await prisma.indexerDeadLetterEvent.upsert({
+        where: { eventId: event.id },
+        create: {
+          eventId: event.id,
+          ledger: event.ledger,
+          transactionHash: event.txHash,
+          rawPayload: JSON.stringify(event),
+          errorMessage: err instanceof Error ? err.message : String(err),
+          attempts: 1,
+          lastAttemptAt: new Date(),
+        },
+        update: {
+          errorMessage: err instanceof Error ? err.message : String(err),
+          attempts: { increment: 1 },
+          lastAttemptAt: new Date(),
+        },
+      });
+      return row.attempts >= this.deadLetterMaxRetries;
+    } catch (dlErr) {
+      logger.error(
+        `[SorobanWorker] Failed to write dead-letter entry for event ${event.id}:`,
+        dlErr,
+      );
+      return false;
+    }
   }
 
   /**
