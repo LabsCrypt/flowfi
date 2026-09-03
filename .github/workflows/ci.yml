@@ -248,9 +248,26 @@ jobs:
 
       - name: Install Stellar CLI
         run: |
-          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
-          echo "$HOME/.stellar-cli/bin" >> $GITHUB_PATH
+          set -euo pipefail
+          # Authenticate the release lookup through the runner's token. The
+          # upstream installer queries the unauthenticated GitHub API and can
+          # fail on shared-runner rate limits.
+          mkdir -p "$RUNNER_TEMP/stellar-cli"
+          stellar_cli_tag=$(gh release view --repo stellar/stellar-cli --json tagName --jq .tagName)
+          gh release download "$stellar_cli_tag" \
+            --repo stellar/stellar-cli \
+            --pattern 'stellar-cli-*-x86_64-unknown-linux-gnu.tar.gz' \
+            --dir "$RUNNER_TEMP/stellar-cli" \
+            --clobber
+          tar -xzf "$RUNNER_TEMP/stellar-cli/stellar-cli-"*.tar.gz \
+            -C "$RUNNER_TEMP/stellar-cli"
+          mkdir -p "$HOME/.stellar-cli/bin"
+          mv "$RUNNER_TEMP/stellar-cli/stellar" "$HOME/.stellar-cli/bin/stellar"
+          chmod +x "$HOME/.stellar-cli/bin/stellar"
+          echo "$HOME/.stellar-cli/bin" >> "$GITHUB_PATH"
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Optimize WASM files
         run: |

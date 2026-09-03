@@ -77,7 +77,9 @@ function sumStringI128(values: string[]): string {
 }
 
 /**
- * Create a new stream (stub for on-chain indexing)
+ * Create a stream projection only after its state has been confirmed on-chain.
+ * The API accepts the stream id as a lookup key; all persisted values come from
+ * Soroban so callers cannot inject a fabricated stream into listings.
  */
 export const createStream = async (req: Request, res: Response) => {
   try {
@@ -123,13 +125,6 @@ export const createStream = async (req: Request, res: Response) => {
         .json({ error: "Invalid depositedAmount: must be greater than zero" });
     }
 
-    const endTime =
-      BigInt(parsedStartTime) + (parsedDepositedAmount / parsedRatePerSecond);
-
-    // Issue #809: never let the upsert update branch touch a stream owned by a
-    // different wallet. The caller is already proven to equal `sender` above, so
-    // reject any existing row whose sender differs — this blocks reactivating or
-    // overwriting someone else's (e.g. cancelled) stream.
     const existing = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
     if (existing && existing.sender !== callerPublicKey) {
       return res.status(403).json({
@@ -138,6 +133,34 @@ export const createStream = async (req: Request, res: Response) => {
       });
     }
 
+    const chainStream = await getStreamFromChain(parsedStreamId);
+    if (!chainStream) {
+      return res.status(409).json({
+        error: "Stream has not been confirmed on-chain",
+        message: "Submit the stream creation transaction and retry after confirmation.",
+      });
+    }
+
+    if (
+      chainStream.sender !== sender ||
+      chainStream.recipient !== recipient ||
+      chainStream.tokenAddress !== tokenAddress ||
+      chainStream.ratePerSecond !== parsedRatePerSecond.toString() ||
+      chainStream.depositedAmount !== parsedDepositedAmount.toString() ||
+      chainStream.startTime !== parsedStartTime
+    ) {
+      return res.status(409).json({
+        error: "Stream request does not match on-chain state",
+      });
+    }
+
+    const endTime =
+      BigInt(parsedStartTime) + (parsedDepositedAmount / parsedRatePerSecond);
+
+    // Issue #809: never let the upsert update branch touch a stream owned by a
+    // different wallet. The caller is already proven to equal `sender` above, so
+    // reject any existing row whose sender differs — this blocks reactivating or
+    // overwriting someone else's (e.g. cancelled) stream.
     const stream = await prisma.stream.upsert({
       where: { streamId: parsedStreamId },
       update: {
@@ -146,15 +169,15 @@ export const createStream = async (req: Request, res: Response) => {
       },
       create: {
         streamId: parsedStreamId,
-        sender,
-        recipient,
-        tokenAddress,
-        ratePerSecond,
-        depositedAmount,
+        sender: chainStream.sender,
+        recipient: chainStream.recipient,
+        tokenAddress: chainStream.tokenAddress,
+        ratePerSecond: chainStream.ratePerSecond,
+        depositedAmount: chainStream.depositedAmount,
         withdrawnAmount: "0",
-        startTime: BigInt(parsedStartTime),
+        startTime: BigInt(chainStream.startTime),
         endTime,
-        lastUpdateTime: BigInt(parsedStartTime),
+        lastUpdateTime: BigInt(chainStream.startTime),
       },
     });
 
