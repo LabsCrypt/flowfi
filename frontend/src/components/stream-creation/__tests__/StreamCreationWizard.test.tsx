@@ -22,16 +22,32 @@ vi.mock("@/lib/stellar", () => ({
   isValidStellarPublicKey: vi.fn((val: string) => /^G[A-Z2-7]{55}$/.test(val)),
 }));
 
-vi.mock("@/utils/amount", () => ({
-  hasValidPrecision: vi.fn((val: string, decimals: number) => {
+vi.mock("@/utils/amount", () => {
+  const hasValidPrecision = vi.fn((val: string, decimals: number) => {
     if (!val || val.trim() === "") return true;
     if (val.includes(".")) {
       const frac = val.split(".")[1];
       return frac ? frac.length <= decimals : true;
     }
     return true;
-  }),
-}));
+  });
+
+  const validateAmountInput = vi.fn((input: string, decimals: number) => {
+    if (!input || input.trim() === "") return "Amount is required";
+    const cleanInput = input.trim();
+    if (!/^\d*\.?\d*$/.test(cleanInput)) return "Please enter a valid number";
+    if (!hasValidPrecision(cleanInput, decimals)) {
+      return `Amount cannot have more than ${decimals} decimal places`;
+    }
+    const numericValue = parseFloat(cleanInput);
+    if (isNaN(numericValue) || numericValue <= 0) {
+      return "Amount must be greater than 0";
+    }
+    return null;
+  });
+
+  return { hasValidPrecision, validateAmountInput };
+});
 
 vi.mock("@/hooks/useModalDialog", () => ({
   useModalDialog: vi.fn(() => ({ current: null })),

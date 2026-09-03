@@ -294,6 +294,9 @@ The indexer worker behavior is controlled by environment variables configured in
 | `SOROBAN_RPC_URL` | Endpoint URL for the Soroban RPC node. | `"https://soroban-testnet.stellar.org"` | Uses default public testnet RPC URL. |
 | `INDEXER_POLL_INTERVAL_MS` | Polling interval in milliseconds between event fetch cycles. | `"5000"` (5 seconds) | Uses default 5000 ms interval. |
 | `INDEXER_START_LEDGER` | Starting Stellar ledger sequence number for cold starts when no `IndexerState` record exists in the database. | `"0"` | Starts indexing from ledger 0 on initial setup. |
+| `INDEXER_DEAD_LETTER_MAX_RETRIES` | Max failed processing attempts before an event is abandoned to the `IndexerDeadLetterEvent` table and the cursor advances past it. | `"5"` | Uses default of 5 attempts. |
+
+Failed events never freeze the indexer: the cursor always advances past successfully processed events even when an earlier event in the batch failed, and each failing event is recorded (with its raw payload) in the `IndexerDeadLetterEvent` table for manual triage. After `INDEXER_DEAD_LETTER_MAX_RETRIES` attempts the event is abandoned and the cursor advances past it.
 
 ---
 
