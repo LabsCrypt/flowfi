@@ -18,7 +18,8 @@ import { createStreamSchema } from "../validators/stream.validator.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
-} from "../routes/v1/events.routes.js";
+} from "../repositories/streamEvent.repository.js";
+import { findStreams } from "../repositories/stream.repository.js";
 import { sendApiError } from "../types/api-error.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
@@ -86,20 +87,23 @@ export const createStream = async (req: Request, res: Response) => {
       return sendApiError(res, 401, 'UNAUTHORIZED', 'Authentication required');
     }
 
-    const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
-
-    // Issue #809: validate identity fields before any DB write.
-    if (typeof sender !== 'string' || sender.length === 0) {
-      return sendApiError(res, 400, 'INVALID_SENDER', 'Invalid sender: must be a non-empty string');
-    }
-    if (typeof recipient !== 'string' || recipient.length === 0) {
-      return sendApiError(res, 400, 'INVALID_RECIPIENT', 'Invalid recipient: must be a non-empty string');
-    }
-    if (typeof tokenAddress !== 'string' || tokenAddress.length === 0) {
-      return sendApiError(res, 400, 'INVALID_TOKEN_ADDRESS', 'Invalid tokenAddress: must be a non-empty string');
+    const parsed = createStreamSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || 'request'}: ${issue.message}`)
+        .join('; ');
+      return sendApiError(res, 400, 'INVALID_REQUEST', message);
     }
 
-    const { streamId: parsedStreamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime: parsedStartTime } = parsed.data;
+    const {
+      streamId: parsedStreamId,
+      sender,
+      recipient,
+      tokenAddress,
+      ratePerSecond,
+      depositedAmount,
+      startTime: parsedStartTime,
+    } = parsed.data;
 
     // Issue #809: the authenticated wallet may only create/modify streams it owns.
     // Without this, any logged-in wallet could POST an arbitrary `sender` and have
@@ -108,37 +112,8 @@ export const createStream = async (req: Request, res: Response) => {
       return sendApiError(res, 403, 'FORBIDDEN', 'sender must match the authenticated wallet');
     }
 
-    const parsedStreamId = parseStreamId(streamId);
-    const parsedStartTime = Number.parseInt(startTime, 10);
-
-    if (parsedStreamId === null) {
-      return sendApiError(res, 400, 'INVALID_STREAM_ID', 'Invalid streamId: must be a valid integer');
-    }
-
-    if (!Number.isFinite(parsedStartTime) || parsedStartTime < 0) {
-      return sendApiError(res, 400, 'INVALID_START_TIME', 'Invalid startTime: must be a non-negative integer');
-    }
-
-    // Presence/format validation happens here, before any BigInt coercion,
-    // so a malformed or missing numeric field always yields 400 rather than
-    // an uncaught SyntaxError/TypeError falling through to 500.
-    let parsedRatePerSecond: bigint;
-    let parsedDepositedAmount: bigint;
-    try {
-      parsedRatePerSecond = parseRequiredBigIntField(
-        "ratePerSecond",
-        ratePerSecond,
-      );
-      parsedDepositedAmount = parseRequiredBigIntField(
-        "depositedAmount",
-        depositedAmount,
-      );
-    } catch (validationError) {
-      if (validationError instanceof StreamValidationError) {
-        return sendApiError(res, 400, 'INVALID_REQUEST', validationError.message);
-      }
-      throw validationError;
-    }
+    const parsedRatePerSecond = BigInt(ratePerSecond);
+    const parsedDepositedAmount = BigInt(depositedAmount);
 
     if (parsedRatePerSecond <= 0n) {
       return sendApiError(res, 400, 'INVALID_RATE', 'Invalid ratePerSecond: must be greater than zero');

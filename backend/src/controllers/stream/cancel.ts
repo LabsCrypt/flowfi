@@ -82,10 +82,9 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
     }
 
     // 4. Call Soroban service to cancel on-chain
-    const secretKey = process.env.KEEPER_SECRET_KEY;
-    if (!secretKey) {
-      logger.error('[CancelStream] KEEPER_SECRET_KEY not configured');
-      return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Backend not configured for on-chain calls');
+    const senderSecret = req.body?.senderSecret;
+    if (typeof senderSecret !== 'string' || senderSecret.length === 0) {
+      return sendApiError(res, 400, 'INVALID_REQUEST', 'senderSecret is required');
     }
 
     const txHash = await sorobanService.cancelStream(parsedStreamId, senderSecret);
