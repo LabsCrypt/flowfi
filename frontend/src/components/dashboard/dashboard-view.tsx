@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 
@@ -39,9 +40,6 @@ import {
   getTokenAddress,
   toSorobanErrorMessage,
 } from "@/lib/soroban";
-import { validateStreamForm, type StreamFormData as SharedStreamFormData } from "@/lib/stream-validation";
-import { useStreamForm } from "@/hooks/useStreamForm";
-import IncomingStreams from "../IncomingStreams";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { SSEStatusIndicator } from "./SSEStatusIndicator";
 import {
@@ -51,9 +49,34 @@ import {
 import { TopUpModal } from "../stream-creation/TopUpModal";
 import { useQueryClient } from "@tanstack/react-query";
 import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
-import { ConfirmModal } from "../stream-creation/ConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
+
+// @ts-expect-error unused var
+const DashboardOverviewDynamic = dynamic(
+  () => import("./DashboardOverview").then((m) => m.DashboardOverview),
+  { ssr: false },
+);
+const DashboardIncomingDynamic = dynamic(
+  () => import("./DashboardIncoming").then((m) => m.DashboardIncoming),
+  { ssr: false },
+);
+const DashboardOutgoingDynamic = dynamic(
+  () => import("./DashboardOutgoing").then((m) => m.DashboardOutgoing),
+  { ssr: false },
+);
+const DashboardPausedDynamic = dynamic(
+  () => import("./DashboardPaused").then((m) => m.DashboardPaused),
+  { ssr: false },
+);
+const DashboardActivityDynamic = dynamic(
+  () => import("./DashboardActivity").then((m) => m.DashboardActivity),
+  { ssr: false },
+);
+const DashboardSettingsDynamic = dynamic(
+  () => import("./DashboardSettings").then((m) => m.DashboardSettings),
+  { ssr: false },
+);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,33 +94,7 @@ type ModalState =
   | null
   | { type: "topup"; stream: Stream }
   | { type: "cancel"; stream: Stream }
-  | { type: "details"; stream: Stream }
-  | { type: "deleteTemplate"; templateId: string; templateName: string };
-
-interface StreamFormValues {
-  recipient: string;
-  token: string;
-  totalAmount: string;
-  startsAt: string;
-  endsAt: string;
-  cadenceSeconds: string;
-  note: string;
-}
-
-interface StreamTemplate {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-  values: StreamFormValues;
-}
-
-type StreamFormMessageTone = "info" | "success" | "error";
-
-interface StreamFormMessageState {
-  text: string;
-  tone: StreamFormMessageTone;
-}
+  | { type: "details"; stream: Stream };
 
 const SIDEBAR_ITEMS: SidebarItem[] = [
   { id: "overview", label: "Overview" },
@@ -147,8 +144,8 @@ function DashboardSkeleton() {
   );
 }
 
-/** Generic empty state with an optional CTA */
-function EmptyState({
+/** Generic empty state with an optional CTE */
+export function EmptyState({
   icon,
   title,
   description,
@@ -211,7 +208,7 @@ function ErrorState({
 
 // ─── Icon helpers ─────────────────────────────────────────────────────────────
 
-function BoltIcon() {
+export function BoltIcon() {
   return (
     <svg
       className="h-10 w-10 text-accent"
@@ -229,7 +226,7 @@ function BoltIcon() {
   );
 }
 
-function InboxIcon() {
+export function InboxIcon() {
   return (
     <svg
       className="h-10 w-10 text-accent"
@@ -247,7 +244,7 @@ function InboxIcon() {
   );
 }
 
-function ActivityIcon() {
+export function ActivityIcon() {
   return (
     <svg
       className="h-10 w-10 text-accent"
@@ -266,18 +263,6 @@ function ActivityIcon() {
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
-
-const STREAM_TEMPLATES_STORAGE_KEY = "flowfi.stream.templates.v1";
-
-const EMPTY_STREAM_FORM: StreamFormValues = {
-  recipient: "",
-  token: "USDC",
-  totalAmount: "",
-  startsAt: "",
-  endsAt: "",
-  cadenceSeconds: "1",
-  note: "",
-};
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat("en-US", {
@@ -355,12 +340,10 @@ function renderAnalytics(snapshot: DashboardSnapshot | null) {
             >
               <p>{metric.label}</p>
               <h2>
-                {isUnavailable
-                  ? "No data"
-                  : formatAnalyticsValue(metric.value!, metric.format)}
+                {isUnavailable ? "No data" : formatAnalyticsValue(metric.value!, metric.format)}
               </h2>
               <span>
-                {isUnavailable ? metric.unavailableText : metric.detail}
+                {isUnavailable ? "No data" : metric.detail}
               </span>
             </article>
           );
@@ -575,27 +558,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   }, [streamEvents, session.publicKey, queryClient]);
 
-  const [streamForm, setStreamForm] =
-    React.useState<StreamFormValues>(EMPTY_STREAM_FORM);
-  const streamFormHook = useStreamForm({
-    walletPublicKey: session.publicKey,
-    initialData: { token: streamForm.token },
-  });
-  const [templates, setTemplates] = React.useState<StreamTemplate[]>([]);
-  const [templatesHydrated, setTemplatesHydrated] = React.useState(false);
-  const [templateNameInput, setTemplateNameInput] = React.useState("");
-  const [editingTemplateId, setEditingTemplateId] = React.useState<
-    string | null
-  >(null);
-  const [selectedTemplateId, setSelectedTemplateId] = React.useState<
-    string | null
-  >(null);
-  const [streamFormMessage, setStreamFormMessage] =
-    React.useState<StreamFormMessageState | null>(null);
-
   const [withdrawingIncomingStreamId, setWithdrawingIncomingStreamId] =
     React.useState<string | null>(null);
-  const [isFormSubmitting, setIsFormSubmitting] = React.useState(false);
 
   const handleTopUp = React.useCallback(
     (s: Stream) => setModal({ type: "topup", stream: s }),
@@ -614,157 +578,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     [],
   );
 
-  const safeLoadTemplates = (): StreamTemplate[] => {
-    try {
-      if (typeof window === "undefined") return [];
-      const stored = localStorage.getItem(STREAM_TEMPLATES_STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const persistTemplates = (items: StreamTemplate[]) => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(STREAM_TEMPLATES_STORAGE_KEY, JSON.stringify(items));
-  };
-
-  const formatTemplateUpdatedAt = (iso: string) => {
-    const d = new Date(iso);
-    return isNaN(d.getTime()) ? iso : d.toLocaleDateString();
-  };
-
-  const isTemplateNameValid = templateNameInput.trim().length > 0;
-  const saveTemplateButtonLabel = editingTemplateId
-    ? "Update Template"
-    : "Save Template";
-  const requiredFieldsCompleted = Object.values(streamForm).filter(
-    (v) => v.trim().length > 0,
-  ).length;
-
-  const handleClearTemplateEditor = () => {
-    setTemplateNameInput("");
-    setEditingTemplateId(null);
-  };
-
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setTemplates(safeLoadTemplates());
-      setTemplatesHydrated(true);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []);
-
-  React.useEffect(() => {
-    if (!templatesHydrated) return;
-    persistTemplates(templates);
-  }, [templates, templatesHydrated]);
-
-  // ── Template handlers ─────────────────────────────────────────────────────
-
-  const updateStreamForm = (field: keyof StreamFormValues, value: string) => {
-    setStreamForm((prev) => ({ ...prev, [field]: value }));
-    setStreamFormMessage(null);
-    if (field === "token") {
-      streamFormHook.updateFormData({ token: value });
-    }
-  };
-
-  const handleApplyTemplate = (templateId: string) => {
-    const template = templates.find((t) => t.id === templateId);
-    if (!template) return;
-    setStreamForm({ ...template.values });
-    setSelectedTemplateId(template.id);
-    setStreamFormMessage({
-      text: `Applied template "${template.name}". You can still adjust any field.`,
-      tone: "success",
-    });
-  };
-
-  const handleSaveTemplate = () => {
-    const cleanedName = templateNameInput.trim();
-    if (!cleanedName) {
-      setStreamFormMessage({
-        text: "Template name is required.",
-        tone: "error",
-      });
-      return;
-    }
-    const now = new Date().toISOString();
-    if (editingTemplateId) {
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.id === editingTemplateId
-            ? {
-                ...t,
-                name: cleanedName,
-                updatedAt: now,
-                values: { ...streamForm },
-              }
-            : t,
-        ),
-      );
-      setStreamFormMessage({
-        text: `Template "${cleanedName}" updated.`,
-        tone: "success",
-      });
-      setSelectedTemplateId(editingTemplateId);
-      setEditingTemplateId(null);
-      setTemplateNameInput("");
-      return;
-    }
-    const newTemplate: StreamTemplate = {
-      id: `template-${Date.now()}`,
-      name: cleanedName,
-      createdAt: now,
-      updatedAt: now,
-      values: { ...streamForm },
-    };
-    setTemplates((prev) => [newTemplate, ...prev]);
-    setSelectedTemplateId(newTemplate.id);
-    setTemplateNameInput("");
-    setStreamFormMessage({
-      text: `Template "${cleanedName}" saved.`,
-      tone: "success",
-    });
-  };
-
-  const handleEditTemplate = (templateId: string) => {
-    const template = templates.find((t) => t.id === templateId);
-    if (!template) return;
-    setEditingTemplateId(template.id);
-    setTemplateNameInput(template.name);
-    setSelectedTemplateId(template.id);
-    setStreamForm({ ...template.values });
-    setStreamFormMessage({
-      text: `Editing template "${template.name}". Save to overwrite it.`,
-      tone: "info",
-    });
-  };
-
-  const handleDeleteTemplate = (templateId: string) => {
-    const template = templates.find((t) => t.id === templateId);
-    if (!template) return;
-    setModal({ type: "deleteTemplate", templateId: template.id, templateName: template.name });
-  };
-
-  const handleDeleteTemplateConfirm = (templateId: string) => {
-    setTemplates((prev) => prev.filter((t) => t.id !== templateId));
-    if (selectedTemplateId === templateId) setSelectedTemplateId(null);
-    if (editingTemplateId === templateId) {
-      setEditingTemplateId(null);
-      setTemplateNameInput("");
-    }
-    setModal(null);
-  };
-
-  const handleResetStreamForm = () => {
-    setStreamForm(EMPTY_STREAM_FORM);
-    setSelectedTemplateId(null);
-    setStreamFormMessage(null);
-  };
-
-  // ── Optimistic helpers ────────────────────────────────────────────────────
+  // ── Optimistic helpers ─────────────────────────────────────────────────────
 
   const removeStreamLocally = (streamId: string) => {
     queryClient.setQueryData<DashboardSnapshot | undefined>(dashboardQueryKey(session.publicKey), (prev) => {
@@ -892,79 +706,6 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     }
   };
 
-  const handleFormCreateStream = async (
-    event: React.FormEvent<HTMLFormElement>,
-  ) => {
-    event.preventDefault();
-    const hasRequiredFields =
-      streamForm.recipient.trim() &&
-      streamForm.token.trim() &&
-      streamForm.totalAmount.trim() &&
-      streamForm.startsAt.trim() &&
-      streamForm.endsAt.trim();
-    if (!hasRequiredFields) {
-      setStreamFormMessage({
-        text: "Complete all required fields before creating.",
-        tone: "error",
-      });
-      return;
-    }
-
-    // ── Date-specific validation (unique to this form layout) ────────────
-    const startDate = new Date(streamForm.startsAt);
-    const endDate = new Date(streamForm.endsAt);
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-      setStreamFormMessage({
-        text: "Start and end times must be valid dates.",
-        tone: "error",
-      });
-      return;
-    }
-    const durationSeconds = Math.floor(
-      (endDate.getTime() - startDate.getTime()) / 1000,
-    );
-    if (durationSeconds <= 0) {
-      setStreamFormMessage({
-        text: "End time must be after start time.",
-        tone: "error",
-      });
-      return;
-    }
-
-    // ── Shared validation (recipient format, amount precision, balance) ──
-    const canonicalData: SharedStreamFormData = {
-      recipient: streamForm.recipient.trim(),
-      token: streamForm.token.trim(),
-      amount: streamForm.totalAmount.trim(),
-      duration: String(durationSeconds),
-      durationUnit: "seconds",
-    };
-    const sharedErrors = validateStreamForm(canonicalData, {
-      walletBalance: streamFormHook.walletBalance,
-    });
-    if (Object.keys(sharedErrors).length > 0) {
-      const firstError = Object.values(sharedErrors)[0];
-      setStreamFormMessage({
-        text: firstError ?? "Validation failed.",
-        tone: "error",
-      });
-      return;
-    }
-
-    setIsFormSubmitting(true);
-    try {
-      await handleCreateStream(canonicalData);
-      handleResetStreamForm();
-      setStreamFormMessage({
-        text: "Stream submitted to wallet and confirmed on-chain.",
-        tone: "success",
-      });
-    } catch (err) {
-      setStreamFormMessage({ text: toSorobanErrorMessage(err), tone: "error" });
-    } finally {
-      setIsFormSubmitting(false);
-    }
-  };
 
   // ── Tab content ───────────────────────────────────────────────────────────
 
@@ -1005,7 +746,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       );
     }
 
-    // ── Overview ──────────────────────────────────────────────────────────
+    // ── Overview (default tab, rendered synchronously) ─────────────────────
     if (activeTab === "overview") {
       return (
         <div className="dashboard-content-stack mt-8">
@@ -1022,354 +763,53 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       );
     }
 
-    // ── Incoming ──────────────────────────────────────────────────────────
+    // Pass required props to each tab component
     if (activeTab === "incoming") {
-      if (snapshot!.incomingStreams.length === 0) {
-        return (
-          <EmptyState
-            icon={<InboxIcon />}
-            title="No incoming streams yet"
-            description="No streams are sending you funds yet. Share your wallet address with a sender to receive streaming payments."
-          />
-        );
-      }
       return (
-        <div className="mt-8">
-          <IncomingStreams
-            streams={snapshot!.incomingStreams}
-            onWithdraw={handleIncomingWithdraw}
-            withdrawingStreamId={withdrawingIncomingStreamId}
-          />
-        </div>
+        <DashboardIncomingDynamic
+          incomingStreams={snapshot!.incomingStreams}
+          onWithdraw={handleIncomingWithdraw}
+          withdrawingStreamId={withdrawingIncomingStreamId}
+        />
       );
     }
 
-    // ── Outgoing ──────────────────────────────────────────────────────────
     if (activeTab === "outgoing") {
-      const activeOutgoing = snapshot!.outgoingStreams.filter(
-        (s) => s.status === "Active",
-      );
-      if (activeOutgoing.length === 0) {
-        return (
-          <EmptyState
-            icon={<BoltIcon />}
-            title="No active outgoing streams"
-            description="You don't have any active outgoing payment streams. Create one to start streaming tokens to a recipient."
-            action={
-              <Button onClick={() => setShowWizard(true)} glow>
-                Create a Stream
-              </Button>
-            }
-          />
-        );
-      }
       return (
-        <div className="mt-8">
-          <StreamsTable
-            snapshot={{ ...snapshot!, outgoingStreams: activeOutgoing }}
-            onTopUp={handleTopUp}
-            onCancel={handleCancel}
-            onShowDetails={handleShowDetails}
-          />
-        </div>
+        <DashboardOutgoingDynamic
+          outgoingStreams={snapshot!.outgoingStreams}
+          onTopUp={(s) => setModal({ type: "topup", stream: s })}
+          onCancel={(s) => setModal({ type: "cancel", stream: s })}
+          onShowDetails={(s) => setModal({ type: "details", stream: s })}
+          setShowWizard={() => setShowWizard(true)}
+        />
       );
     }
 
-    // ── Paused ────────────────────────────────────────────────────────────
     if (activeTab === "paused") {
-      const pausedStreams = [
-        ...snapshot!.outgoingStreams.filter((s) => s.status === "Paused"),
-        ...snapshot!.incomingStreams.filter((s) => s.status === "Paused"),
-      ];
-      if (pausedStreams.length === 0) {
-        return (
-          <div className="glass-card p-12 rounded-3xl border-slate-800 text-center text-slate-400 mt-8">
-            No paused streams found.
-          </div>
-        );
-      }
       return (
-        <div className="mt-8 glass-card rounded-3xl border-slate-800 overflow-hidden">
-          <table className="dashboard-table w-full">
-            <thead>
-              <tr>
-                <th>Stream ID</th>
-                <th>Counterparty</th>
-                <th>Token</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pausedStreams.map((s) => (
-                <tr key={s.id}>
-                  <td>#{s.id}</td>
-                  <td className="font-mono text-xs">{s.recipient}</td>
-                  <td>{s.token}</td>
-                  <td>
-                    <span className="px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 text-xs font-bold">
-                      Paused
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DashboardPausedDynamic
+          outgoingStreams={snapshot!.outgoingStreams}
+          incomingStreams={snapshot!.incomingStreams}
+        />
       );
     }
 
-    // ── Activity ──────────────────────────────────────────────────────────
     if (activeTab === "activity") {
       return (
-        <div className="mt-8">
-          <RecentActivityList snapshot={snapshot} onCreateStream={handleShowWizard} />
-        </div>
+        <DashboardActivityDynamic
+          recentActivity={snapshot!.recentActivity}
+          onCreateStream={() => setShowWizard(true)}
+        />
       );
     }
 
-    // ── Settings ──────────────────────────────────────────────────────────
     if (activeTab === "settings") {
       return (
-        <div className="dashboard-content-stack mt-8">
-          <section className="dashboard-panel dashboard-panel--stream-builder">
-            <div className="dashboard-panel__header">
-              <h3>Create Stream</h3>
-              <span>Save and reuse recurring configurations</span>
-            </div>
-
-            {streamFormMessage ? (
-              <p
-                className="stream-form-message"
-                data-tone={streamFormMessage.tone}
-              >
-                {streamFormMessage.text}
-              </p>
-            ) : null}
-
-            <div className="stream-template-layout">
-              <div className="stream-template-manager">
-                <h4>Template Library</h4>
-                <p>
-                  Save recurring stream settings once, apply instantly, then
-                  override before submitting.
-                </p>
-
-                <div className="stream-template-editor">
-                  <input
-                    value={templateNameInput}
-                    onChange={(e) => setTemplateNameInput(e.target.value)}
-                    placeholder="e.g. Monthly Contributor Payroll"
-                    aria-label="Template name"
-                  />
-                  <div className="stream-template-editor__actions">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      disabled={!isTemplateNameValid}
-                      onClick={handleSaveTemplate}
-                    >
-                      {saveTemplateButtonLabel}
-                    </button>
-                    {editingTemplateId ? (
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={handleClearTemplateEditor}
-                      >
-                        Stop Editing
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                {templates.length === 0 ? (
-                  <div className="mini-empty-state">
-                    <p>No templates yet. Save your first stream setup.</p>
-                  </div>
-                ) : (
-                  <ul className="stream-template-list">
-                    {templates.map((t) => (
-                      <li
-                        key={t.id}
-                        className="stream-template-item"
-                        data-active={
-                          selectedTemplateId === t.id ? "true" : undefined
-                        }
-                      >
-                        <div className="stream-template-item__meta">
-                          <strong>{t.name}</strong>
-                          <small>
-                            Updated {formatTemplateUpdatedAt(t.updatedAt)}
-                          </small>
-                        </div>
-                        <div className="stream-template-item__actions">
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => handleApplyTemplate(t.id)}
-                          >
-                            Apply
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => handleEditTemplate(t.id)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="secondary-button secondary-button--danger"
-                            onClick={() => handleDeleteTemplate(t.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-
-              <form className="stream-form" onSubmit={handleFormCreateStream}>
-                <div className="stream-form__meta">
-                  <div>
-                    <h4>Stream Configuration</h4>
-                    <p>
-                      {requiredFieldsCompleted} / 5 required fields completed
-                    </p>
-                  </div>
-                  <label className="stream-form__template-select">
-                    Load template
-                    <select
-                      value={selectedTemplateId ?? ""}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        if (!id) {
-                          setSelectedTemplateId(null);
-                          return;
-                        }
-                        handleApplyTemplate(id);
-                      }}
-                    >
-                      <option value="">Select saved template</option>
-                      {templates.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                <label>
-                  Recipient Address
-                  <input
-                    required
-                    type="text"
-                    value={streamForm.recipient}
-                    onChange={(e) =>
-                      updateStreamForm("recipient", e.target.value)
-                    }
-                    placeholder="G..."
-                  />
-                </label>
-                <div className="stream-form__row">
-                  <label>
-                    Token
-                    <input
-                      required
-                      type="text"
-                      value={streamForm.token}
-                      onChange={(e) =>
-                        updateStreamForm("token", e.target.value.toUpperCase())
-                      }
-                      placeholder="USDC"
-                    />
-                  </label>
-                  <label>
-                    Total Amount
-                    <input
-                      required
-                      type="number"
-                      min="0"
-                      step="0.0000001"
-                      value={streamForm.totalAmount}
-                      onChange={(e) =>
-                        updateStreamForm("totalAmount", e.target.value)
-                      }
-                      placeholder="100"
-                    />
-                  </label>
-                </div>
-                <div className="stream-form__row">
-                  <label>
-                    Starts At
-                    <input
-                      required
-                      type="datetime-local"
-                      value={streamForm.startsAt}
-                      onChange={(e) =>
-                        updateStreamForm("startsAt", e.target.value)
-                      }
-                    />
-                  </label>
-                  <label>
-                    Ends At
-                    <input
-                      required
-                      type="datetime-local"
-                      value={streamForm.endsAt}
-                      onChange={(e) =>
-                        updateStreamForm("endsAt", e.target.value)
-                      }
-                    />
-                  </label>
-                </div>
-                <div className="stream-form__row">
-                  <label>
-                    Cadence (seconds)
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={streamForm.cadenceSeconds}
-                      onChange={(e) =>
-                        updateStreamForm("cadenceSeconds", e.target.value)
-                      }
-                    />
-                  </label>
-                </div>
-                <label>
-                  Note
-                  <textarea
-                    value={streamForm.note}
-                    onChange={(e) => updateStreamForm("note", e.target.value)}
-                    placeholder="Optional internal note for this stream configuration."
-                  />
-                </label>
-
-                <div className="stream-form__actions">
-                  <button
-                    type="submit"
-                    className="wallet-button"
-                    disabled={isFormSubmitting}
-                  >
-                    {isFormSubmitting ? "Submitting..." : "Create Stream"}
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={isFormSubmitting}
-                    onClick={handleResetStreamForm}
-                  >
-                    Reset
-                  </button>
-                </div>
-              </form>
-            </div>
-          </section>
-        </div>
+        <DashboardSettingsDynamic
+          session={session}
+          onDisconnect={onDisconnect}
+        />
       );
     }
 
@@ -1489,17 +929,6 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             setModal({ type: "cancel", stream: modal.stream })
           }
           onTopUpClick={() => setModal({ type: "topup", stream: modal.stream })}
-        />
-      )}
-      {modal?.type === "deleteTemplate" && (
-        <ConfirmModal
-          title="Delete Template?"
-          message={`Are you sure you want to delete "${modal.templateName}"? This action cannot be undone.`}
-          confirmLabel="Delete Template"
-          cancelLabel="Keep Template"
-          variant="danger"
-          onConfirm={() => handleDeleteTemplateConfirm(modal.templateId)}
-          onClose={() => setModal(null)}
         />
       )}
     </main>

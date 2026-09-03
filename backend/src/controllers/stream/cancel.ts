@@ -88,7 +88,7 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
       return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Backend not configured for on-chain calls');
     }
 
-    const txHash = await sorobanService.cancelStream(parsedStreamId, secretKey);
+    const txHash = await sorobanService.cancelStream(parsedStreamId, senderSecret);
 
     // 5. Update DB record status using repository helper
     await streamRepository.updateStatus(parsedStreamId, 'CANCELLED');

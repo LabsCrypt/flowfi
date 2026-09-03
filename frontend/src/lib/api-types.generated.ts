@@ -1735,6 +1735,8 @@ export interface paths {
                     offset?: number;
                     /** @description Optional 1-based page index. Ignored when offset is set. */
                     page?: number;
+                    /** @description When true, each event includes its related `stream`. */
+                    includeStream?: boolean;
                 };
                 header?: never;
                 path?: never;

@@ -11,6 +11,11 @@ import React from "react";
 // staleTime" question this file is about. They're stubbed out below so the
 // test can focus on the useDashboard/query-cache wiring.
 
+vi.mock("next/navigation", () => ({
+  useRouter: vi.fn(() => ({ push: vi.fn() })),
+  useSearchParams: vi.fn(() => new URLSearchParams()),
+}));
+
 vi.mock("@/hooks/useStreamEvents", () => ({
   useStreamEvents: () => ({
     events: [],
@@ -37,6 +42,7 @@ vi.mock("@/lib/soroban", () => ({
   toDurationSeconds: vi.fn(() => 0),
   getTokenAddress: vi.fn((symbol: string) => symbol),
   toSorobanErrorMessage: vi.fn((e) => String(e)),
+  fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("1000"),
 }));
 
 vi.mock("@/lib/stellar", () => ({

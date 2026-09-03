@@ -2750,6 +2750,16 @@
               "default": 1
             },
             "description": "Optional 1-based page index. Ignored when offset is set."
+          },
+          {
+            "in": "query",
+            "name": "includeStream",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "When true, each event includes its related `stream`."
           }
         ],
         "responses": {

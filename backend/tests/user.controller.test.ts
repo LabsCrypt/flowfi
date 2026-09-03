@@ -189,6 +189,53 @@ describe('User Controller', () => {
         offset: 0
       }));
     });
+
+    it('includes the related stream by default', async () => {
+      req.params = { publicKey: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ' };
+      req.query = {};
+      (prisma.streamEvent.findMany as any).mockResolvedValue([]);
+      (prisma.streamEvent.count as any).mockResolvedValue(0);
+
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(prisma.streamEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { stream: true } }),
+      );
+    });
+
+    it('omits the related stream when includeStream=false', async () => {
+      req.params = { publicKey: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ' };
+      req.query = { includeStream: 'false' };
+      (prisma.streamEvent.findMany as any).mockResolvedValue([]);
+      (prisma.streamEvent.count as any).mockResolvedValue(0);
+
+      await getUserEvents(req as Request, res as Response, next);
+
+      const callArgs = (prisma.streamEvent.findMany as any).mock.calls[0][0];
+      expect(callArgs.include).toBeUndefined();
+    });
+
+    it('forwards a comma-separated type filter to the shared query helper', async () => {
+      req.params = { publicKey: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ' };
+      req.query = { type: 'PAUSED,RESUMED' };
+      (prisma.streamEvent.findMany as any).mockResolvedValue([]);
+      (prisma.streamEvent.count as any).mockResolvedValue(0);
+
+      await getUserEvents(req as Request, res as Response, next);
+
+      const callArgs = (prisma.streamEvent.findMany as any).mock.calls[0][0];
+      expect(callArgs.where.eventType).toEqual({ in: ['PAUSED', 'RESUMED'] });
+    });
+
+    it('returns 400 when the type filter has no valid values', async () => {
+      req.params = { publicKey: 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ' };
+      req.query = { type: 'BOGUS' };
+
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.streamEvent.findMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('getCurrentUser', () => {

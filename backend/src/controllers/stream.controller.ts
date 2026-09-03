@@ -14,6 +14,7 @@ import {
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
+import { createStreamSchema } from "../validators/stream.validator.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
@@ -76,37 +77,6 @@ function sumStringI128(values: string[]): string {
 }
 
 /**
- * Thrown when a request body field fails presence/format validation. Kept
- * distinct from generic errors so createStream can reliably map it to a 400
- * response instead of falling through to the catch-all 500.
- */
-class StreamValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "StreamValidationError";
-  }
-}
-
-/**
- * Validate presence and integer format of a required i128-style field, then
- * coerce it to a BigInt. Any missing value or conversion failure (SyntaxError
- * from a non-numeric string, TypeError from undefined/null/objects, etc.) is
- * normalized into a StreamValidationError so the caller can map it to 400.
- */
-function parseRequiredBigIntField(fieldName: string, value: unknown): bigint {
-  if (value === undefined || value === null || value === "") {
-    throw new StreamValidationError(`Missing required field: ${fieldName}`);
-  }
-  try {
-    return BigInt(value as bigint | number | string | boolean);
-  } catch {
-    throw new StreamValidationError(
-      `Invalid ${fieldName}: must be a valid integer`,
-    );
-  }
-}
-
-/**
  * Create a new stream (stub for on-chain indexing)
  */
 export const createStream = async (req: Request, res: Response) => {
@@ -128,6 +98,8 @@ export const createStream = async (req: Request, res: Response) => {
     if (typeof tokenAddress !== 'string' || tokenAddress.length === 0) {
       return sendApiError(res, 400, 'INVALID_TOKEN_ADDRESS', 'Invalid tokenAddress: must be a non-empty string');
     }
+
+    const { streamId: parsedStreamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime: parsedStartTime } = parsed.data;
 
     // Issue #809: the authenticated wallet may only create/modify streams it owns.
     // Without this, any logged-in wallet could POST an arbitrary `sender` and have

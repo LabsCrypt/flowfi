@@ -63,11 +63,6 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
 
-      - name: Install Native Bindings
-        run: |
-          npm install @rollup/rollup-linux-x64-gnu --no-save
-        working-directory: backend
-
       - name: Run backend tests
         run: |
           ls -la src/generated/prisma
