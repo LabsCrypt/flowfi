@@ -169,8 +169,6 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       isActive: true,
     };
 
-    // Both requests observe the active stream, so each cancels on-chain and
-    // marks the stream inactive.
     // Both requests observe the active stream, so each performs its own
     // on-chain cancel and marks the stream inactive.
     (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
@@ -186,10 +184,6 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       .post(`/v1/streams/${streamId}/cancel`)
       .set('Authorization', 'Bearer dummy_token')
       .send({ senderSecret: 'S_SECRET_123' });
-      .set('Authorization', 'Bearer dummy_token');
-    const promise2 = request(app)
-      .post(`/v1/streams/${streamId}/cancel`)
-      .set('Authorization', 'Bearer dummy_token');
 
     const [res1, res2] = await Promise.all([promise1, promise2]);
 
@@ -209,7 +203,6 @@ describe('POST /v1/streams/:streamId/cancel', () => {
     expect(sorobanService.cancelStream).toHaveBeenCalledTimes(2);
     expect(sorobanService.cancelStream).toHaveBeenCalledWith(BigInt(streamId), 'S_SECRET_123');
 
-    // Stream should be marked as inactive
     // Stream should be marked as inactive via the repository helper
     expect(prisma.stream.update).toHaveBeenCalledWith({
       where: { streamId: BigInt(streamId) },
