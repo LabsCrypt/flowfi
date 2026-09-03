@@ -8,6 +8,11 @@ import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
 import { rpcPool } from "../lib/rpc-pool.js";
 
+// ─── Config ──────────────────────────────────────────────────────────────────
+
+/** Default max failed processing attempts before an event is abandoned. */
+const DEAD_LETTER_MAX_RETRIES_DEFAULT = 5;
+
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
 /** Decode an ScVal symbol to a string. */
