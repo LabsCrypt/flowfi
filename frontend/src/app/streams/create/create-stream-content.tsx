@@ -10,86 +10,15 @@ import {
   toSorobanErrorMessage,
   TOKEN_ADDRESSES
 } from "@/lib/soroban";
-import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
+import { hasValidPrecision } from "@/utils/amount";
 import { toast } from "react-hot-toast";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileText, X } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
+import { useStreamForm } from "@/hooks/useStreamForm";
 
 const TOKEN_DECIMALS = 7;
-const DRAFT_STORAGE_KEY = "flowfi.create-stream.draft.v1";
-
-interface StreamDraft {
-  recipient: string;
-  token: string;
-  amount: string;
-  duration: string;
-  savedAt: number;
-}
-
-interface FormFields {
-  recipient: string;
-  token: string;
-  amount: string;
-  duration: string;
-}
-
-const DEFAULT_FORM: FormFields = {
-  recipient: "",
-  token: "XLM",
-  amount: "",
-  duration: "30",
-};
-
-function isPristineForm(form: FormFields): boolean {
-  return (
-    form.recipient === "" &&
-    form.token === DEFAULT_FORM.token &&
-    form.amount === "" &&
-    form.duration === DEFAULT_FORM.duration
-  );
-}
-
-function saveDraftToSession(data: StreamDraft): void {
-  try {
-    if (typeof window === "undefined") return;
-    sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(data));
-  } catch {
-    // sessionStorage may be full or unavailable
-  }
-}
-
-function loadDraftFromSession(): StreamDraft | null {
-  try {
-    if (typeof window === "undefined") return null;
-    const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StreamDraft;
-    // Reject empty drafts so a bogus "resumed draft" banner is never shown
-    // over a blank form.
-    if (
-      parsed &&
-      typeof parsed.recipient === "string" &&
-      typeof parsed.amount === "string" &&
-      (parsed.recipient.trim() !== "" || parsed.amount.trim() !== "")
-    ) {
-      return parsed;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function clearDraft(): void {
-  try {
-    if (typeof window === "undefined") return;
-    sessionStorage.removeItem(DRAFT_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
-}
 
 export default function CreateStreamContent() {
   const { status, session } = useWallet();
@@ -98,55 +27,40 @@ export default function CreateStreamContent() {
   const [nowTimestamp] = useState(() => Date.now());
   const [loading, setLoading] = useState(false);
   const [txState, setTxState] = useState<"idle" | "signing" | "submitted" | "confirming">("idle");
-  // Read the draft once at mount so the banner has a stable savedAt value
-  // instead of re-reading sessionStorage on every render.
-  const [restoredDraft, setRestoredDraft] = useState<StreamDraft | null>(
-    () => loadDraftFromSession()
-  );
   const [dismissedDraftBanner, setDismissedDraftBanner] = useState(false);
-  const draftRestored = restoredDraft !== null;
 
-  const [formData, setFormData] = useState<FormFields>(() => {
-    if (restoredDraft) {
-      return {
-        recipient: restoredDraft.recipient,
-        token: restoredDraft.token,
-        amount: restoredDraft.amount,
-        duration: restoredDraft.duration,
-      };
-    }
-    return { ...DEFAULT_FORM };
+  // ── Shared form hook ────────────────────────────────────────────────────
+  const {
+    formData,
+    errors,
+    updateFormData,
+    resetForm: _resetForm,
+    validateAll,
+    walletBalance,
+    walletBalanceLoading,
+    walletBalanceError,
+    hasDraft,
+    discardDraft,
+    draftSavedAt,
+  } = useStreamForm({
+    walletPublicKey: session?.publicKey,
+    enableDraftPersistence: true,
+    initialData: { token: "XLM", duration: "30" },
   });
-
-  // Persist form data to sessionStorage whenever it changes — but never
-  // write an empty draft for a pristine form on first mount.
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (isPristineForm(formData)) return;
-      saveDraftToSession({
-        recipient: formData.recipient,
-        token: formData.token,
-        amount: formData.amount,
-        duration: formData.duration,
-        savedAt: Date.now(),
-      });
-    }, 500); // debounce writes
-    return () => clearTimeout(timer);
-  }, [formData]);
 
   // Handle recipient prefill from search params — but only if no draft is restored
   useEffect(() => {
     const recipientParam = searchParams.get("recipient");
-    if (!recipientParam || draftRestored) return;
+    if (!recipientParam || hasDraft) return;
 
     import("@stellar/stellar-sdk").then(({ StrKey }) => {
       if (StrKey.isValidEd25519PublicKey(recipientParam)) {
-        setFormData((prev) => ({ ...prev, recipient: recipientParam }));
+        updateFormData({ recipient: recipientParam });
       } else {
         logger.warn("Ignoring malformed recipient query param", { recipientParam });
       }
     });
-  }, [searchParams, draftRestored]);
+  }, [searchParams, hasDraft, updateFormData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,9 +69,11 @@ export default function CreateStreamContent() {
       return;
     }
 
-    const validationError = validateAmountInput(formData.amount, TOKEN_DECIMALS);
-    if (validationError) {
-      toast.error(validationError);
+    // Use the shared validation (checks recipient format, amount, precision, balance)
+    if (!validateAll()) {
+      // Show the first error as a toast for flat-form UX
+      const firstError = Object.values(errors)[0];
+      if (firstError) toast.error(firstError);
       return;
     }
 
@@ -178,7 +94,7 @@ export default function CreateStreamContent() {
 
       if (result.success) {
         setTxState("confirming");
-        clearDraft();
+        discardDraft();
         toast.success("Stream created successfully!");
         setTimeout(() => {
           setLoading(false);
@@ -204,16 +120,10 @@ export default function CreateStreamContent() {
     }
   };
 
-  const amountError = formData.amount
-    ? validateAmountInput(formData.amount, TOKEN_DECIMALS)
-    : null;
-
   const handleDismissDraft = useCallback(() => {
-    clearDraft();
-    setRestoredDraft(null);
+    discardDraft();
     setDismissedDraftBanner(true);
-    setFormData({ ...DEFAULT_FORM });
-  }, []);
+  }, [discardDraft]);
 
   return (
     <div className="container mx-auto max-w-2xl px-4 py-12">
@@ -226,12 +136,12 @@ export default function CreateStreamContent() {
       </Link>
 
       {/* Resume draft banner */}
-      {restoredDraft && !dismissedDraftBanner && (
+      {hasDraft && !dismissedDraftBanner && draftSavedAt && (
         <div className="mb-6 flex items-center gap-3 rounded-2xl border border-accent/30 bg-accent/10 px-5 py-4 text-sm">
           <FileText className="h-5 w-5 text-accent flex-shrink-0" />
           <span className="flex-1">
             Resumed a saved draft from{" "}
-            {new Date(restoredDraft.savedAt).toLocaleTimeString()}
+            {new Date(draftSavedAt).toLocaleTimeString()}
             . You can continue editing or start fresh.
           </span>
           <button
@@ -261,9 +171,12 @@ export default function CreateStreamContent() {
               placeholder="G..."
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.recipient}
-              onChange={(e) => setFormData({ ...formData, recipient: e.target.value })}
+              onChange={(e) => updateFormData({ recipient: e.target.value })}
               required
             />
+            {errors.recipient && (
+              <p className="text-xs text-red-400 mt-1" role="alert">{errors.recipient}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -275,7 +188,7 @@ export default function CreateStreamContent() {
                 id="create-stream-token"
                 className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors appearance-none"
                 value={formData.token}
-                onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                onChange={(e) => updateFormData({ token: e.target.value })}
               >
                 {Object.keys(TOKEN_ADDRESSES).map((symbol) => (
                   <option key={symbol} value={symbol}>
@@ -299,14 +212,25 @@ export default function CreateStreamContent() {
                   const newValue = e.target.value;
                   if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
                     if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
-                      setFormData({ ...formData, amount: newValue });
+                      updateFormData({ amount: newValue });
                     }
                   }
                 }}
                 required
               />
-              {amountError && (
-                <p className="text-xs text-red-400 mt-1">{amountError}</p>
+              {errors.amount && (
+                <p className="text-xs text-red-400 mt-1" role="alert">{errors.amount}</p>
+              )}
+              {walletBalance && !errors.amount && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Available: {walletBalance} {formData.token}
+                </p>
+              )}
+              {walletBalanceLoading && (
+                <p className="text-xs text-slate-500 mt-1">Loading balance…</p>
+              )}
+              {walletBalanceError && (
+                <p className="text-xs text-yellow-500 mt-1">{walletBalanceError}</p>
               )}
             </div>
           </div>
@@ -321,9 +245,12 @@ export default function CreateStreamContent() {
               placeholder="30"
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.duration}
-              onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+              onChange={(e) => updateFormData({ duration: e.target.value })}
               required
             />
+            {errors.duration && (
+              <p className="text-xs text-red-400 mt-1" role="alert">{errors.duration}</p>
+            )}
           </div>
 
           <div className="rounded-2xl bg-accent/5 p-6 space-y-4">

@@ -1735,6 +1735,8 @@ export interface paths {
                     offset?: number;
                     /** @description Optional 1-based page index. Ignored when offset is set. */
                     page?: number;
+                    /** @description When true, each event includes its related `stream`. */
+                    includeStream?: boolean;
                 };
                 header?: never;
                 path?: never;
@@ -2280,10 +2282,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reset indexer lastProcessedLedger */
+        /** Reset indexer lastProcessedLedger (supports dry-run preview) */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description If true, return the projected reset scope without mutating state. */
+                    dryRun?: boolean;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2362,11 +2367,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Replay events from a given ledger (StreamEvent rows deduplicated; stream mutations not idempotent — see indexerService.ts JSDoc) */
+        /** Replay events from a given ledger (supports dry-run preview) */
         post: {
             parameters: {
                 query: {
                     from_ledger: number;
+                    /** @description If true, return the projected replay scope without mutating state. */
+                    dryRun?: boolean;
                 };
                 header?: never;
                 path?: never;
@@ -2374,6 +2381,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
+                /** @description Dry-run preview of the replay scope */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
                 /** @description Replay started */
                 202: {
                     headers: {

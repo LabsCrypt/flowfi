@@ -13,6 +13,24 @@ on:
     branches: [main, develop]
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check changed files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'package-lock.json'
+
   frontend:
     name: Frontend CI
     runs-on: ubuntu-latest
@@ -34,10 +52,6 @@ jobs:
         run: npm run lint
         working-directory: frontend
 
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
-        working-directory: frontend
-
       - name: Run Frontend Tests
         run: npm run test:coverage
         working-directory: frontend
@@ -46,9 +60,17 @@ jobs:
         run: npm run build
         working-directory: frontend
 
+      - name: Check frontend bundle size
+        run: bash ./scripts/check-bundle-size.sh
+        working-directory: frontend
+
   backend:
     name: Backend CI
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.backend == 'true'
     services:
       postgres:
         image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
@@ -98,9 +120,6 @@ jobs:
           npm run codegen:api-types
           cd ..
           git diff --exit-code -- backend/swagger/flowfi.openapi.json frontend/src/lib/api-types.generated.ts
-
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Run Backend Tests
         run: |

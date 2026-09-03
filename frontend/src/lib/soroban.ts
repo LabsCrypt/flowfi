@@ -1,5 +1,4 @@
 import type { WalletSession } from "@/lib/wallet";
-import { logger } from "@/lib/logger";
 
 const CONTRACT_ID =
   process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID ?? "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
@@ -9,8 +8,6 @@ const SOROBAN_RPC_URL =
 
 const NETWORK_PASSPHRASE =
   process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
-
-const MOCK_DELAY_MS = 1400;
 
 export interface CreateStreamParams {
   recipient: string;
@@ -204,17 +201,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function mockTxHash(): string {
-  return Array.from({ length: 64 }, () =>
-    Math.floor(Math.random() * 16).toString(16),
-  ).join("");
-}
 
-async function mockCall(label: string): Promise<SorobanResult> {
-  logger.info(`[soroban:mock] ${label}`);
-  await wait(MOCK_DELAY_MS);
-  return { success: true, txHash: mockTxHash() };
-}
 
 async function freighterCall(
   publicKey: string,
@@ -308,9 +295,6 @@ export async function createStream(
   session: WalletSession,
   params: CreateStreamParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`create_stream recipient=${params.recipient} amount=${params.amount} duration=${params.durationSeconds}s`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "create_stream", [
     new Address(session.publicKey).toScVal(),
@@ -325,9 +309,6 @@ export async function topUpStream(
   session: WalletSession,
   params: TopUpParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`top_up_stream stream_id=${params.streamId} amount=${params.amount}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "top_up_stream", [
     new Address(session.publicKey).toScVal(),
@@ -340,9 +321,6 @@ export async function cancelStream(
   session: WalletSession,
   params: CancelParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`cancel_stream stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "cancel_stream", [
     new Address(session.publicKey).toScVal(),
@@ -354,9 +332,6 @@ export async function withdrawFromStream(
   session: WalletSession,
   params: WithdrawParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`withdraw stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "withdraw", [
     new Address(session.publicKey).toScVal(),
@@ -368,9 +343,6 @@ export async function pauseStream(
   session: WalletSession,
   params: PauseParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`pause_stream stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "pause_stream", [
     new Address(session.publicKey).toScVal(),
@@ -382,9 +354,6 @@ export async function resumeStream(
   session: WalletSession,
   params: ResumeParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`resume_stream stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "resume_stream", [
     new Address(session.publicKey).toScVal(),
