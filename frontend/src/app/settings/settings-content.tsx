@@ -259,8 +259,7 @@ export default function SettingsContent() {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              {(["light", "dark", "system"] as const).map((t) => (
+            <div className="flex gap-2">                  {(["light", "dark", "system"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => handleThemeChange(t)}
