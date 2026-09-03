@@ -182,7 +182,7 @@ describe('POST /v1/streams/:streamId/top-up', () => {
       .send({ amount: '1000' });
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toMatch(/inactive stream/);
+    expect(res.body.error.message).toMatch(/inactive stream/);
   });
 
   it('returns 409 when stream is paused', async () => {
@@ -194,7 +194,7 @@ describe('POST /v1/streams/:streamId/top-up', () => {
       .send({ amount: '1000' });
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toMatch(/paused stream/);
+    expect(res.body.error.message).toMatch(/paused stream/);
   });
 
   it('leaves DB unchanged when topUpStream fails on-chain', async () => {

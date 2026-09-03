@@ -108,7 +108,7 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       .set('Authorization', 'Bearer dummy_token');
 
     expect(res.status).toBe(400);
-    expect(res.body.message).toContain('senderSecret');
+    expect(res.body.error.message).toContain('senderSecret');
     expect(sorobanService.cancelStream).not.toHaveBeenCalled();
   });
 
@@ -127,7 +127,10 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       .set('Authorization', 'Bearer dummy_token');
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe('Forbidden');
+    expect(res.body.error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only the sender can cancel the stream',
+    });
     expect(sorobanService.cancelStream).not.toHaveBeenCalled();
   });
 
@@ -158,7 +161,7 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       .set('Authorization', 'Bearer dummy_token');
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toContain('already cancelled');
+    expect(res.body.error.message).toContain('already cancelled');
   });
 
   it('handles concurrent cancel requests correctly', async () => {
