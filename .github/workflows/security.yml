@@ -8,7 +8,7 @@ on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   schedule:
     - cron: '0 2 * * 0'
 
@@ -33,16 +33,51 @@ jobs:
       run: npm ci
       
     - name: Run npm audit (production dependencies)
-      run: npm audit --omit=dev --audit-level=critical
+      run: npm audit --omit=dev --audit-level=high
       
     - name: Check for known vulnerabilities in frontend (production dependencies)
-      run: npm audit --workspace=frontend --omit=dev --audit-level=critical
+      run: npm audit --workspace=frontend --omit=dev --audit-level=high
         
     - name: Check for known vulnerabilities in backend (production dependencies)
-      run: npm audit --workspace=backend --omit=dev --audit-level=critical
+      run: npm audit --workspace=backend --omit=dev --audit-level=high
+
+    - name: Setup Rust toolchain for contract audit
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo-audit
+      id: cargo-audit-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/cargo-audit
+        key: cargo-audit-${{ runner.os }}
+
+    - name: Install cargo-audit
+      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+      run: cargo install cargo-audit --locked
+
+    - name: Check for known vulnerabilities in smart contracts (cargo audit)
+      run: cargo audit
+      working-directory: contracts
 
     - name: Verify security setup
       run: npm run verify-security
+
+  cargo-audit:
+    name: Cargo Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Run cargo audit on contracts
+      run: cargo audit
+      working-directory: contracts
 
   codeql-analysis:
     name: CodeQL Analysis
@@ -55,19 +90,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'typescript' ]
+        language: [ 'javascript', 'typescript', 'rust' ]
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
+    - name: Setup Rust toolchain
+      if: matrix.language == 'rust'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: wasm32-unknown-unknown
+        components: clippy
+
+    - name: Rust Cache
+      if: matrix.language == 'rust'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspace: "contracts -> target"
+
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
         
+    - name: Build Rust contracts for CodeQL
+      if: matrix.language == 'rust'
+      run: cargo check --workspace --all-targets
+      working-directory: contracts
+
     - name: Autobuild
+      if: matrix.language != 'rust'
       uses: github/codeql-action/autobuild@v3
       
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
+

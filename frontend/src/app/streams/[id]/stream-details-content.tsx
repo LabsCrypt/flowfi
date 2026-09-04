@@ -1,14 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";
 import { ArrowLeft, Pause, Play, X, Plus, Download, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { LiveValue } from "@/components/ui/LiveValue";
 import toast from "react-hot-toast";
 import { useWallet } from "@/context/wallet-context";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { useStreamingAmount } from "@/hooks/useStreamingAmount";
+import TransactionTracker, {
+  useTransactionTracker,
+} from "@/components/TransactionTracker";
 import {
   withdrawFromStream,
   cancelStream,
@@ -22,6 +27,7 @@ import { CancelConfirmModal } from "@/components/stream-creation/CancelConfirmMo
 import type { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount, streamProgressPercent } from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
+import { LiquidStreamVisualizer } from "@/components/LiquidStreamVisualizer";
 
 interface StreamDetail {
   id: string;
@@ -68,6 +74,7 @@ const EVENT_STYLES: Record<string, { color: string; icon: string; label: string 
 
 export default function StreamDetailsContent({ streamId }: { streamId: string }) {
   const { session, isHydrated } = useWallet();
+  const tracker = useTransactionTracker();
 
   const [stream, setStream] = useState<StreamDetail | null>(null);
   const [events, setEvents] = useState<BackendStreamEvent[]>([]);
@@ -76,36 +83,58 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [withdrawing, setWithdrawing] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [pausing, setPausing] = useState(false);
-  const [resuming, setResuming] = useState(false);
   const [topUpAmount, setTopUpAmount] = useState("");
   const [showTopUp, setShowTopUp] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
 
-  const [liveClaimable, setLiveClaimable] = useState<bigint>(0n);
+  // Shared, visibility-aware claimable ticking (rAF-based, pauses when the
+  // tab is hidden) — same hook the dashboard uses, so both pages compute the
+  // "live claimable amount" through one implementation. See issue #1267.
+  const liveClaimableNumber = useStreamingAmount({
+    deposited: stream ? Number(stream.depositedAmount) : 0,
+    withdrawn: stream ? Number(stream.withdrawnAmount) : 0,
+    ratePerSecond: stream ? Number(stream.ratePerSecond) : 0,
+    lastUpdateTime: stream?.lastUpdateTime,
+    isActive: stream?.isActive ?? false,
+    isPaused: stream?.isPaused ?? false,
+    pausedAt: stream?.pausedAt != null ? Number(stream.pausedAt) : null,
+  });
+
+  // The hook operates on numbers (same as the dashboard), but this page
+  // formats raw stroop amounts, so round back to an exact bigint for display.
+  const liveClaimable =
+    Number.isFinite(liveClaimableNumber)
+      ? BigInt(Math.round(liveClaimableNumber))
+      : 0n;
 
   const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],
     autoReconnect: true,
   });
 
+  const streamReqId = useRef(0);
   const fetchStream = useCallback(async (signal?: AbortSignal) => {
     if (!streamId) return;
+    const reqId = ++streamReqId.current;
     try {
       const response = await fetch(`${API_BASE_URL}/streams/${streamId}`, { signal });
       if (!response.ok) throw new Error("Stream not found");
       const data = await response.json();
-      setStream(data);
+      if (reqId === streamReqId.current) {
+        setStream(data);
+      }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
-      setError(err instanceof Error ? err.message : "Failed to fetch stream");
+      if (reqId === streamReqId.current) {
+        setError(err instanceof Error ? err.message : "Failed to fetch stream");
+      }
     }
   }, [streamId]);
 
+  const eventsReqId = useRef(0);
   const fetchEvents = useCallback(async (page: number, signal?: AbortSignal) => {
     if (!streamId) return;
+    const reqId = ++eventsReqId.current;
     try {
       const response = await fetch(
         `${API_BASE_URL}/streams/${streamId}/events?page=${page}&limit=${EVENTS_PER_PAGE}`,
@@ -113,8 +142,10 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       );
       if (response.ok) {
         const data = await response.json();
-        setEvents(data.events || []);
-        setEventsTotal(data.total || 0);
+        if (reqId === eventsReqId.current) {
+          setEvents(data.events || []);
+          setEventsTotal(data.total || 0);
+        }
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
@@ -147,38 +178,8 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       }
     };
 
-    refreshStreamData();
-
-    return () => controller.abort();
+    refreshStreamData();    return () => controller.abort();
   }, [streamEvents, fetchStream, fetchEvents, eventsPage]);
-
-  useEffect(() => {
-    if (!stream) return;
-
-    const ratePerSecond = BigInt(stream.ratePerSecond);
-    const withdrawn = BigInt(stream.withdrawnAmount);
-    const deposited = BigInt(stream.depositedAmount);
-    const lastUpdate = stream.lastUpdateTime;
-
-    const updateClaimable = () => {
-      if (!stream.isActive || stream.isPaused) {
-        setLiveClaimable(deposited - withdrawn);
-        return;
-      }
-
-      const now = Math.floor(Date.now() / 1000);
-      const elapsed = BigInt(now - lastUpdate);
-      const accrued = elapsed * ratePerSecond;
-      const totalClaimable = deposited - withdrawn + accrued;
-
-      setLiveClaimable(totalClaimable > deposited ? deposited : totalClaimable);
-    };
-
-    updateClaimable();
-    const interval = setInterval(updateClaimable, 1000);
-
-    return () => clearInterval(interval);
-  }, [stream]);
 
   const isSender = useMemo(() => {
     if (!session || !stream) return false;
@@ -200,15 +201,18 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       toast.error("Please connect your wallet");
       return;
     }
-    setWithdrawing(true);
+    tracker.start();
     try {
-      await withdrawFromStream(session, { streamId: BigInt(streamId) });
+      const result = await withdrawFromStream(session, { streamId: BigInt(streamId) });
+      tracker.submit(result.txHash);
+      tracker.confirm();
       toast.success("Withdrawal successful!");
       await fetchStream();
+      tracker.succeed();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setWithdrawing(false);
+      const message = toSorobanErrorMessage(err);
+      tracker.fail(message);
+      toast.error(message);
     }
   };
 
@@ -221,15 +225,21 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       toast.error("Please enter a valid amount");
       return;
     }
+    tracker.start();
     try {
       const amount = toBaseUnits(topUpAmount);
-      await topUpStream(session, { streamId: BigInt(streamId), amount });
+      const result = await topUpStream(session, { streamId: BigInt(streamId), amount });
+      tracker.submit(result.txHash);
+      tracker.confirm();
       toast.success("Stream topped up successfully!");
       setShowTopUp(false);
       setTopUpAmount("");
       await fetchStream();
+      tracker.succeed();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
+      const message = toSorobanErrorMessage(err);
+      tracker.fail(message);
+      toast.error(message);
     }
   };
 
@@ -238,15 +248,18 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       toast.error("Please connect your wallet");
       return;
     }
-    setPausing(true);
+    tracker.start();
     try {
-      await pauseStream(session, { streamId: BigInt(streamId) });
+      const result = await pauseStream(session, { streamId: BigInt(streamId) });
+      tracker.submit(result.txHash);
+      tracker.confirm();
       toast.success("Stream paused");
       await fetchStream();
+      tracker.succeed();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setPausing(false);
+      const message = toSorobanErrorMessage(err);
+      tracker.fail(message);
+      toast.error(message);
     }
   };
 
@@ -255,15 +268,18 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       toast.error("Please connect your wallet");
       return;
     }
-    setResuming(true);
+    tracker.start();
     try {
-      await resumeStream(session, { streamId: BigInt(streamId) });
+      const result = await resumeStream(session, { streamId: BigInt(streamId) });
+      tracker.submit(result.txHash);
+      tracker.confirm();
       toast.success("Stream resumed");
       await fetchStream();
+      tracker.succeed();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setResuming(false);
+      const message = toSorobanErrorMessage(err);
+      tracker.fail(message);
+      toast.error(message);
     }
   };
 
@@ -272,16 +288,19 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       toast.error("Please connect your wallet");
       return;
     }
-    setCancelling(true);
+    tracker.start();
     try {
-      await cancelStream(session, { streamId: BigInt(streamId) });
+      const result = await cancelStream(session, { streamId: BigInt(streamId) });
+      tracker.submit(result.txHash);
+      tracker.confirm();
       toast.success("Stream cancelled");
       setShowCancelModal(false);
       await fetchStream();
+      tracker.succeed();
     } catch (err) {
-      toast.error(toSorobanErrorMessage(err));
-    } finally {
-      setCancelling(false);
+      const message = toSorobanErrorMessage(err);
+      tracker.fail(message);
+      toast.error(message);
     }
   };
 
@@ -396,6 +415,17 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
           </div>
         </div>
 
+        {/* Liquid Stream Visualizer */}
+        <div className="glass-card p-4">
+          <h3 className="text-sm font-medium text-slate-400 mb-3">Live Stream Flow</h3>
+          <LiquidStreamVisualizer
+            ratePerSecond={Number(stream.ratePerSecond) / 10 ** 7}
+            status={stream.isPaused ? "paused" : stream.isActive ? "active" : "completed"}
+            senderLabel={shortenPublicKey(stream.sender)}
+            recipientLabel={shortenPublicKey(stream.recipient)}
+          />
+        </div>
+
         {/* Stream Overview */}
         <div className="glass-card p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -463,12 +493,12 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
               {isRecipient && (
                 <Button
                   onClick={handleWithdraw}
-                  disabled={withdrawing || liveClaimable <= 0n}
+                  disabled={tracker.status !== "idle" || liveClaimable <= 0n}
                   glow
                   className="flex items-center gap-2"
                 >
                   <Download className="h-4 w-4" />
-                  {withdrawing ? "Withdrawing..." : "Withdraw"}
+                  {tracker.status === "signing" ? "Signing..." : tracker.status === "submitted" || tracker.status === "confirming" ? "Processing..." : "Withdraw"}
                 </Button>
               )}
 
@@ -488,22 +518,22 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
                   {!stream.isPaused ? (
                     <Button
                       onClick={handlePause}
-                      disabled={pausing}
+                      disabled={tracker.status !== "idle"}
                       variant="outline"
                       className="flex items-center gap-2"
                     >
                       <Pause className="h-4 w-4" />
-                      {pausing ? "Pausing..." : "Pause"}
+                      {tracker.status !== "idle" ? "Processing..." : "Pause"}
                     </Button>
                   ) : (
                     <Button
                       onClick={handleResume}
-                      disabled={resuming}
+                      disabled={tracker.status !== "idle"}
                       variant="outline"
                       className="flex items-center gap-2"
                     >
                       <Play className="h-4 w-4" />
-                      {resuming ? "Resuming..." : "Resume"}
+                      {tracker.status !== "idle" ? "Processing..." : "Resume"}
                     </Button>
                   )}
                 </>
@@ -512,7 +542,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
               {isSender && (
                 <Button
                   onClick={() => setShowCancelModal(true)}
-                  disabled={cancelling}
+                  disabled={tracker.status !== "idle"}
                   variant="outline"
                   className="flex items-center gap-2 border-red-500/50 text-red-400 hover:bg-red-500/10"
                 >
@@ -535,6 +565,19 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
                 <Button onClick={handleTopUp}>Add Funds</Button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Transaction Tracker */}
+        {tracker.status !== "idle" && (
+          <div className="glass-card p-6">
+            <TransactionTracker
+              status={tracker.status}
+              action="withdraw"
+              txHash={tracker.txHash}
+              error={tracker.error}
+              streamId={streamId}
+            />
           </div>
         )}
 
@@ -678,6 +721,7 @@ function StatCard({
         {value}
         {live && <span className="ml-2 text-xs animate-pulse">●</span>}
       </p>
+      {live && <LiveValue value={value} prefix={label} />}
     </div>
   );
 }

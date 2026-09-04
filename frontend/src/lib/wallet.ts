@@ -26,7 +26,7 @@ import {
   getNetworkDetails,
 } from "@stellar/freighter-api";
 
-export type WalletId = "freighter";
+export type WalletId = "freighter" | "albedo" | "xbull" | "hana" | "walletconnect";
 
 export interface WalletDescriptor {
   id: WalletId;
@@ -63,12 +63,11 @@ export class FreighterNotInstalledError extends Error {
 // ── Wallet metadata ───────────────────────────────────────────────────────────
 
 export const SUPPORTED_WALLETS: readonly WalletDescriptor[] = [
-  {
-    id: "freighter",
-    name: "Freighter",
-    badge: "Extension",
-    description: "Direct browser wallet for Stellar accounts and Soroban apps.",
-  },
+  { id: "freighter", name: "Freighter", badge: "Extension", description: "Direct browser wallet for Stellar accounts and Soroban apps." },
+  { id: "albedo", name: "Albedo", badge: "Web / Mobile", description: "Popup wallet for browser and mobile users." },
+  { id: "xbull", name: "xBull", badge: "Extension / Web", description: "Stellar wallet for desktop and web users." },
+  { id: "hana", name: "Hana", badge: "Extension", description: "Secure Stellar browser wallet." },
+  { id: "walletconnect", name: "WalletConnect", badge: "Mobile", description: "Connect mobile wallets with WalletConnect." },
 ];
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -140,12 +139,20 @@ async function connectFreighter(): Promise<WalletSession> {
 export async function connectWallet(
   walletId: WalletId,
 ): Promise<WalletSession> {
-  switch (walletId) {
-    case "freighter":
-      return connectFreighter();
-    default:
-      throw new Error("Unsupported wallet selected.");
+  if (walletId === "freighter") return connectFreighter();
+
+  // These adapters are exposed through their wallet web bridges when installed.
+  // Fail clearly rather than creating an unverifiable/mock session.
+  const bridge = (window as unknown as Record<string, unknown>)[walletId];
+  if (!bridge || typeof bridge !== "object") {
+    throw new Error(`${SUPPORTED_WALLETS.find((wallet) => wallet.id === walletId)?.name ?? walletId} is not installed or available.`);
   }
+  const api = bridge as { connect?: () => Promise<{ publicKey?: string; address?: string }> };
+  if (!api.connect) throw new Error(`${walletId} does not expose a compatible connect API.`);
+  const result = await api.connect();
+  const publicKey = result.publicKey ?? result.address;
+  if (!publicKey) throw new Error(`${walletId} did not return a public key.`);
+  return buildSession(walletId, publicKey, STELLAR_NETWORK === "MAINNET" ? "Mainnet" : "Testnet");
 }
 
 // ── Error message mapping ─────────────────────────────────────────────────────

@@ -170,13 +170,13 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
 
     return (
         <div className="relative" ref={containerRef}>
-            <span
-                aria-live="polite"
-                aria-busy="false"
-                className="sr-only"
-            >
-                {unreadCount} new notifications
-            </span>
+<span
+    aria-live="polite"
+    aria-busy="false"
+    className="sr-only"
+>
+    {unreadCount} new notifications
+</span>
             <button
                 onClick={handleDropdownOpen}
                 aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}

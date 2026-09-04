@@ -50,6 +50,8 @@ pub struct Stream {
     pub start_time: u64,
     /// Ledger timestamp of the last state mutation, in Unix epoch seconds.
     pub last_update_time: u64,
+    /// Optional timestamp before which no tokens are claimable.
+    pub cliff_time: Option<u64>,
     /// `false` once fully withdrawn or cancelled. Always set.
     pub is_active: bool,
     /// `true` while the stream is paused; accrual is frozen at `paused_at`. Always set.
@@ -59,6 +61,17 @@ pub struct Stream {
     pub paused_at: Option<u64>,
     /// Current status of the stream. Always set.
     pub status: StreamStatus,
+}
+
+/// Input for atomic batch stream creation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchStreamInput {
+    pub recipient: Address,
+    pub token_address: Address,
+    pub amount: i128,
+    pub duration: u64,
+    pub cliff_duration: Option<u64>,
 }
 
 /// Protocol-wide fee configuration.

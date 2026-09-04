@@ -11,6 +11,14 @@ const subscribeSchema = z.object({
   all: z.boolean().optional().default(false),
 });
 
+/**
+ * Issue #1246: hard cap on the number of streams fetched per SSE session.
+ * Prevents unbounded DB queries when a wallet has thousands of streams.
+ * Users who exceed this cap still receive events for the most recent streams;
+ * the frontend can fall back to polling or pagination for the remainder.
+ */
+const MAX_SSE_STREAMS = 500;
+
 
 function getClientIp(req: Request): string {
   const forwarded = req.headers['x-forwarded-for'];
@@ -48,8 +56,13 @@ export const subscribe = async (req: Request, res: Response) => {
     // Consistent with GET /v1/events/ (which requires requireAuth and is scoped to user's address),
     // SSE subscriptions are also restricted to streams owned by the authenticated user.
     // Scope: only streams where the authenticated user is sender or recipient
+    // Issue #1246: cap the query to prevent unbounded fetches on reconnect.
+    // Ordered by startTime desc so the most recent streams are always included
+    // when the cap is reached.
     const ownedStreams = await prisma.stream.findMany({
       where: { OR: [{ sender: publicKey }, { recipient: publicKey }] },
+      orderBy: { startTime: "desc" },
+      take: MAX_SSE_STREAMS,
       select: { streamId: true, sender: true, recipient: true },
     });
     const ownedIds = new Set(ownedStreams.map((s: { streamId: bigint }) => String(s.streamId)));
