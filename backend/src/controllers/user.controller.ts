@@ -13,6 +13,7 @@ import {
   resolveEventsPageSize,
 } from "../repositories/streamEvent.repository.js";
 import * as exportService from "../services/export.service.js";
+import { sendApiError } from "../types/api-error.js";
 
 /**
  * Public shape of a Stream, used when embedding streams inside a public
@@ -106,12 +107,10 @@ export const getUser = async (
   try {
     const { publicKey } = req.params;
     if (typeof publicKey !== "string") {
-      return res.status(400).json({ error: "Invalid publicKey parameter" });
+      return sendApiError(res, 400, "INVALID_PUBLIC_KEY", "Invalid publicKey parameter");
     }
     if (!STELLAR_PUBLIC_KEY_REGEX.test(publicKey)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid Stellar public key format" });
+      return sendApiError(res, 400, "INVALID_PUBLIC_KEY", "Invalid Stellar public key format");
     }
 
     const user = await prisma.user.findUnique({
@@ -120,7 +119,7 @@ export const getUser = async (
     });
 
     if (!user) {
-      return res.status(404).json({ error: "User not found" });
+      return sendApiError(res, 404, "NOT_FOUND", "User not found");
     }
 
     return res.status(200).json(user);
@@ -150,12 +149,10 @@ export const getUserEvents = async (
   try {
     const { publicKey } = req.params;
     if (typeof publicKey !== "string") {
-      return res.status(400).json({ error: "Invalid publicKey parameter" });
+      return sendApiError(res, 400, "INVALID_PUBLIC_KEY", "Invalid publicKey parameter");
     }
     if (!STELLAR_PUBLIC_KEY_REGEX.test(publicKey)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid Stellar public key format" });
+      return sendApiError(res, 400, "INVALID_PUBLIC_KEY", "Invalid Stellar public key format");
     }
 
     const { requested, types } = parseEventTypeFilter(req.query["type"]);
@@ -258,7 +255,7 @@ export const exportTransactions = async (
       : addressParam;
 
     if (!address || !STELLAR_PUBLIC_KEY_REGEX.test(address)) {
-      return res.status(400).json({ error: "Invalid Stellar address" });
+      return sendApiError(res, 400, "INVALID_ADDRESS", "Invalid Stellar address");
     }
 
     const format = (req.query.format as string) || "csv";
@@ -273,15 +270,11 @@ export const exportTransactions = async (
     const tokenAddress = (req.query.tokenAddress as string | null) || null;
 
     if (!["csv", "json"].includes(format)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid format. Must be csv or json" });
+      return sendApiError(res, 400, "INVALID_FORMAT", "Invalid format. Must be csv or json");
     }
 
     if (!["incoming", "outgoing", "all"].includes(direction)) {
-      return res.status(400).json({
-        error: "Invalid direction. Must be incoming, outgoing, or all",
-      });
+      return sendApiError(res, 400, "INVALID_DIRECTION", "Invalid direction. Must be incoming, outgoing, or all");
     }
 
     const options: exportService.ExportOptions = {

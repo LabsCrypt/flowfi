@@ -177,7 +177,9 @@ describe("Stream Controller", () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.status).not.toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'Validation error' })
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.stringContaining('ratePerSecond') }),
+        })
       );
     });
 
@@ -187,7 +189,9 @@ describe("Stream Controller", () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.status).not.toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'Validation error' })
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.stringContaining('depositedAmount') }),
+        })
       );
     });
 
@@ -197,7 +201,9 @@ describe("Stream Controller", () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.status).not.toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'Validation error' })
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.stringContaining('ratePerSecond') }),
+        })
       );
     });
 
@@ -207,7 +213,9 @@ describe("Stream Controller", () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.status).not.toHaveBeenCalledWith(500);
       expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: 'Validation error' })
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.stringContaining('depositedAmount') }),
+        })
       );
     });
   });

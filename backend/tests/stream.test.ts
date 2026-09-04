@@ -174,7 +174,10 @@ describe('POST /v1/streams', () => {
       .set('Accept', 'application/json');
 
     expect(response.status).toBe(403);
-    expect(response.body).toHaveProperty('error', 'Forbidden');
+    expect(response.body.error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'sender must match the authenticated wallet',
+    });
     expect(prisma.stream.upsert).not.toHaveBeenCalled();
   });
 

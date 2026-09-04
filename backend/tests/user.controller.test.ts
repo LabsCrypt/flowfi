@@ -81,7 +81,9 @@ describe('User Controller', () => {
       await getUser(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid publicKey parameter' });
+      expect(res.json).toHaveBeenCalledWith({
+        error: { code: 'INVALID_PUBLIC_KEY', message: 'Invalid publicKey parameter' },
+      });
     });
 
     it('should return 400 if publicKey is malformed', async () => {
@@ -90,7 +92,9 @@ describe('User Controller', () => {
       await getUser(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar public key format' });
+      expect(res.json).toHaveBeenCalledWith({
+        error: { code: 'INVALID_PUBLIC_KEY', message: 'Invalid Stellar public key format' },
+      });
     });
 
     it('should return 404 if user not found', async () => {
@@ -139,7 +143,9 @@ describe('User Controller', () => {
       await getUserEvents(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid publicKey parameter' });
+      expect(res.json).toHaveBeenCalledWith({
+        error: { code: 'INVALID_PUBLIC_KEY', message: 'Invalid publicKey parameter' },
+      });
     });
 
     it('should return 400 if publicKey is malformed', async () => {
@@ -147,7 +153,9 @@ describe('User Controller', () => {
       await getUserEvents(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar public key format' });
+      expect(res.json).toHaveBeenCalledWith({
+        error: { code: 'INVALID_PUBLIC_KEY', message: 'Invalid Stellar public key format' },
+      });
     });
 
     it('should return 400 if publicKey has wrong format (too short)', async () => {
@@ -155,7 +163,9 @@ describe('User Controller', () => {
       await getUserEvents(req as Request, res as Response, next);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Stellar public key format' });
+      expect(res.json).toHaveBeenCalledWith({
+        error: { code: 'INVALID_PUBLIC_KEY', message: 'Invalid Stellar public key format' },
+      });
     });
 
     it('should return paginated events', async () => {
