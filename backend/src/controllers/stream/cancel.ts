@@ -87,13 +87,16 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
     }
 
     // 4. Call Soroban service to cancel on-chain
-    const secretKey = process.env.KEEPER_SECRET_KEY;
-    if (!secretKey) {
-      logger.error('[CancelStream] KEEPER_SECRET_KEY not configured');
-      return res.status(500).json({ error: 'Internal server error', message: 'Backend not configured for on-chain calls' });
+    // Use the sender's secret for cryptographic authorization instead of the
+    // single keeper key. The senderSecret should be provided in the request body
+    // and correspond to the stream's sender wallet private key.
+    const senderSecret = req.body?.senderSecret;
+    if (!senderSecret) {
+      logger.error('[CancelStream] senderSecret not provided in request body');
+      return res.status(400).json({ error: 'Bad request', message: 'senderSecret is required in request body' });
     }
 
-    const txHash = await sorobanService.cancelStream(parsedStreamId, secretKey);
+    const txHash = await sorobanService.cancelStream(parsedStreamId, senderSecret);
 
     // 5. Update DB record status using repository helper
     await streamRepository.updateStatus(parsedStreamId, 'CANCELLED');
