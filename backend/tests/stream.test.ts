@@ -22,6 +22,21 @@ vi.mock('../src/middleware/stream-rate-limiter.middleware.js', () => ({
   streamCreationRateLimiter: (_req: any, _res: any, next: any) => next(),
 }));
 
+vi.mock('../src/services/sorobanService.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/services/sorobanService.js')>()),
+  getStreamFromChain: vi.fn().mockResolvedValue({
+    streamId: 1n,
+    sender: 'GTEST_USER_PUBLIC_KEY',
+    recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
+    tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
+    ratePerSecond: '100',
+    depositedAmount: '86400',
+    withdrawnAmount: '0',
+    startTime: 1700000000,
+    isActive: true,
+  }),
+}));
+
 import app from '../src/app.js';
 
 // Mock Prisma so tests don't require a real DB connection

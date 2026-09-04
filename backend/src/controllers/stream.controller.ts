@@ -14,13 +14,24 @@ import {
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
+import { createStreamSchema } from "../validators/stream.validator.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
-} from "../routes/v1/events.routes.js";
+} from "../repositories/streamEvent.repository.js";
+import { findStreams } from "../repositories/stream.repository.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
+
+/**
+ * Hard cap on the number of streams fetched per user in the summary endpoint.
+ * Prevents unbounded DB queries when a wallet has thousands of streams.
+ * Users who exceed this cap receive a truncated summary (counts and totals
+ * reflect only the most recent streams) plus a `truncated` flag so the
+ * frontend can offer a pagination or export fallback.
+ */
+export const MAX_USER_STREAMS = 500;
 
 interface UserStreamSummary {
   address: string;
@@ -66,38 +77,9 @@ function sumStringI128(values: string[]): string {
 }
 
 /**
- * Thrown when a request body field fails presence/format validation. Kept
- * distinct from generic errors so createStream can reliably map it to a 400
- * response instead of falling through to the catch-all 500.
- */
-class StreamValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "StreamValidationError";
-  }
-}
-
-/**
- * Validate presence and integer format of a required i128-style field, then
- * coerce it to a BigInt. Any missing value or conversion failure (SyntaxError
- * from a non-numeric string, TypeError from undefined/null/objects, etc.) is
- * normalized into a StreamValidationError so the caller can map it to 400.
- */
-function parseRequiredBigIntField(fieldName: string, value: unknown): bigint {
-  if (value === undefined || value === null || value === "") {
-    throw new StreamValidationError(`Missing required field: ${fieldName}`);
-  }
-  try {
-    return BigInt(value as bigint | number | string | boolean);
-  } catch {
-    throw new StreamValidationError(
-      `Invalid ${fieldName}: must be a valid integer`,
-    );
-  }
-}
-
-/**
- * Create a new stream (stub for on-chain indexing)
+ * Create a stream projection only after its state has been confirmed on-chain.
+ * The API accepts the stream id as a lookup key; all persisted values come from
+ * Soroban so callers cannot inject a fabricated stream into listings.
  */
 export const createStream = async (req: Request, res: Response) => {
   try {
@@ -106,18 +88,17 @@ export const createStream = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized', message: 'Authentication required' });
     }
 
-    const { streamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime } = req.body;
+    // Validate request body using the Zod schema, which includes the MAX_I128
+    // upper-bound check on ratePerSecond that the manual parsing omitted.
+    const parsed = createStreamSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: 'Validation error',
+        details: parsed.error.issues,
+      });
+    }
 
-    // Issue #809: validate identity fields before any DB write.
-    if (typeof sender !== 'string' || sender.length === 0) {
-      return res.status(400).json({ error: 'Invalid sender: must be a non-empty string' });
-    }
-    if (typeof recipient !== 'string' || recipient.length === 0) {
-      return res.status(400).json({ error: 'Invalid recipient: must be a non-empty string' });
-    }
-    if (typeof tokenAddress !== 'string' || tokenAddress.length === 0) {
-      return res.status(400).json({ error: 'Invalid tokenAddress: must be a non-empty string' });
-    }
+    const { streamId: parsedStreamId, sender, recipient, tokenAddress, ratePerSecond, depositedAmount, startTime: parsedStartTime } = parsed.data;
 
     // Issue #809: the authenticated wallet may only create/modify streams it owns.
     // Without this, any logged-in wallet could POST an arbitrary `sender` and have
@@ -129,41 +110,8 @@ export const createStream = async (req: Request, res: Response) => {
       });
     }
 
-    const parsedStreamId = parseStreamId(streamId);
-    const parsedStartTime = Number.parseInt(startTime, 10);
-
-    if (parsedStreamId === null) {
-      return res
-        .status(400)
-        .json({ error: "Invalid streamId: must be a valid integer" });
-    }
-
-    if (!Number.isFinite(parsedStartTime) || parsedStartTime < 0) {
-      return res
-        .status(400)
-        .json({ error: "Invalid startTime: must be a non-negative integer" });
-    }
-
-    // Presence/format validation happens here, before any BigInt coercion,
-    // so a malformed or missing numeric field always yields 400 rather than
-    // an uncaught SyntaxError/TypeError falling through to 500.
-    let parsedRatePerSecond: bigint;
-    let parsedDepositedAmount: bigint;
-    try {
-      parsedRatePerSecond = parseRequiredBigIntField(
-        "ratePerSecond",
-        ratePerSecond,
-      );
-      parsedDepositedAmount = parseRequiredBigIntField(
-        "depositedAmount",
-        depositedAmount,
-      );
-    } catch (validationError) {
-      if (validationError instanceof StreamValidationError) {
-        return res.status(400).json({ error: validationError.message });
-      }
-      throw validationError;
-    }
+    const parsedRatePerSecond = BigInt(ratePerSecond);
+    const parsedDepositedAmount = BigInt(depositedAmount);
 
     if (parsedRatePerSecond <= 0n) {
       return res
@@ -177,13 +125,6 @@ export const createStream = async (req: Request, res: Response) => {
         .json({ error: "Invalid depositedAmount: must be greater than zero" });
     }
 
-    const endTime =
-      BigInt(parsedStartTime) + (parsedDepositedAmount / parsedRatePerSecond);
-
-    // Issue #809: never let the upsert update branch touch a stream owned by a
-    // different wallet. The caller is already proven to equal `sender` above, so
-    // reject any existing row whose sender differs — this blocks reactivating or
-    // overwriting someone else's (e.g. cancelled) stream.
     const existing = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
     if (existing && existing.sender !== callerPublicKey) {
       return res.status(403).json({
@@ -192,6 +133,34 @@ export const createStream = async (req: Request, res: Response) => {
       });
     }
 
+    const chainStream = await getStreamFromChain(parsedStreamId);
+    if (!chainStream) {
+      return res.status(409).json({
+        error: "Stream has not been confirmed on-chain",
+        message: "Submit the stream creation transaction and retry after confirmation.",
+      });
+    }
+
+    if (
+      chainStream.sender !== sender ||
+      chainStream.recipient !== recipient ||
+      chainStream.tokenAddress !== tokenAddress ||
+      chainStream.ratePerSecond !== parsedRatePerSecond.toString() ||
+      chainStream.depositedAmount !== parsedDepositedAmount.toString() ||
+      chainStream.startTime !== parsedStartTime
+    ) {
+      return res.status(409).json({
+        error: "Stream request does not match on-chain state",
+      });
+    }
+
+    const endTime =
+      BigInt(parsedStartTime) + (parsedDepositedAmount / parsedRatePerSecond);
+
+    // Issue #809: never let the upsert update branch touch a stream owned by a
+    // different wallet. The caller is already proven to equal `sender` above, so
+    // reject any existing row whose sender differs — this blocks reactivating or
+    // overwriting someone else's (e.g. cancelled) stream.
     const stream = await prisma.stream.upsert({
       where: { streamId: parsedStreamId },
       update: {
@@ -200,15 +169,15 @@ export const createStream = async (req: Request, res: Response) => {
       },
       create: {
         streamId: parsedStreamId,
-        sender,
-        recipient,
-        tokenAddress,
-        ratePerSecond,
-        depositedAmount,
+        sender: chainStream.sender,
+        recipient: chainStream.recipient,
+        tokenAddress: chainStream.tokenAddress,
+        ratePerSecond: chainStream.ratePerSecond,
+        depositedAmount: chainStream.depositedAmount,
         withdrawnAmount: "0",
-        startTime: BigInt(parsedStartTime),
+        startTime: BigInt(chainStream.startTime),
         endTime,
-        lastUpdateTime: BigInt(parsedStartTime),
+        lastUpdateTime: BigInt(chainStream.startTime),
       },
     });
 
@@ -245,12 +214,7 @@ export const listStreams = async (req: Request, res: Response) => {
       offset = "0",
     } = req.query;
 
-    const where: Prisma.StreamWhereInput = {};
-    if (typeof sender === "string") where.sender = sender;
-    if (typeof recipient === "string") where.recipient = recipient;
-    if (typeof token === "string") where.tokenAddress = token;
-
-    // Handle status filtering
+    // Validate status parameter
     if (typeof status === "string") {
       const validStatuses = ["active", "cancelled", "completed", "paused"];
       if (!validStatuses.includes(status)) {
@@ -259,35 +223,7 @@ export const listStreams = async (req: Request, res: Response) => {
           message: `status must be one of: ${validStatuses.join(", ")}`,
         });
       }
-
-      // Map status to database conditions
-      switch (status) {
-        case "active":
-          where.isActive = true;
-          where.isPaused = false;
-          break;
-        case "cancelled":
-          where.isActive = false;
-          where.events = { some: { eventType: "CANCELLED" } };
-          break;
-        case "completed":
-          where.isActive = false;
-          where.events = { some: { eventType: "COMPLETED" } };
-          break;
-        case "paused":
-          where.isPaused = true;
-          break;
-      }
     }
-
-    // Validate and parse pagination parameters
-    const parsedLimit = Math.min(
-      typeof limit === "string"
-        ? Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE
-        : DEFAULT_STREAM_PAGE_SIZE,
-      MAX_STREAM_PAGE_SIZE,
-    );
-    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
 
     // Validate sort field
     const validSortFields = [
@@ -308,29 +244,34 @@ export const listStreams = async (req: Request, res: Response) => {
           | "endTime")
       : "createdAt";
 
-    // Validate order
-    const sortOrder = order === "asc" ? "asc" : "desc";
+    // Validate and parse pagination parameters
+    const parsedLimit = Math.min(
+      typeof limit === "string"
+        ? Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE
+        : DEFAULT_STREAM_PAGE_SIZE,
+      MAX_STREAM_PAGE_SIZE,
+    );
+    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
 
-    const [streams, total] = await Promise.all([
-      prisma.stream.findMany({
-        where,
-        orderBy: { [sortField]: sortOrder },
-        take: parsedLimit,
-        skip: parsedOffset,
-        include: {
-          senderUser: true,
-          recipientUser: true,
-        },
-      }),
-      prisma.stream.count({ where }),
-    ]);
+    const params: import("../repositories/stream.repository.js").FindStreamsParams = {
+      limit: parsedLimit,
+      offset: parsedOffset,
+      sortField,
+      sortOrder: order === "asc" ? "asc" : "desc",
+    };
+    if (typeof sender === "string") params.sender = sender;
+    if (typeof recipient === "string") params.recipient = recipient;
+    if (typeof token === "string") params.tokenAddress = token;
+    if (typeof status === "string") {
+      params.status = status as 'active' | 'cancelled' | 'completed' | 'paused';
+    }
 
-    const hasMore = parsedOffset + streams.length < total;
+    const result = await findStreams(params);
 
     return res.status(200).json({
-      data: streams,
-      total,
-      hasMore,
+      data: result.streams,
+      total: result.total,
+      hasMore: result.hasMore,
       limit: parsedLimit,
       offset: parsedOffset,
     });
@@ -590,9 +531,15 @@ export const getUserStreamSummary = async (
 
     pruneUserSummaryCache(nowMs);
 
+    // Issue #1246: cap the number of streams fetched per direction to prevent
+    // unbounded DB queries.  Power users with more than MAX_USER_STREAMS
+    // streams receive a truncated summary (the `truncated` flag lets the
+    // frontend offer a pagination/export fallback).
     const [outgoingStreams, incomingStreams] = await Promise.all([
       prisma.stream.findMany({
         where: { sender: address },
+        orderBy: { startTime: "desc" },
+        take: MAX_USER_STREAMS,
         select: {
           streamId: true,
           ratePerSecond: true,
@@ -609,6 +556,8 @@ export const getUserStreamSummary = async (
       }),
       prisma.stream.findMany({
         where: { recipient: address },
+        orderBy: { startTime: "desc" },
+        take: MAX_USER_STREAMS,
         select: {
           streamId: true,
           ratePerSecond: true,
@@ -651,7 +600,11 @@ export const getUserStreamSummary = async (
       (stream: any) => stream.isActive,
     ).length;
 
-    const summary: UserStreamSummary = {
+    const truncated =
+      outgoingStreams.length >= MAX_USER_STREAMS ||
+      incomingStreams.length >= MAX_USER_STREAMS;
+
+    const summary = {
       address,
       totalStreamsCreated,
       totalStreamedOut,
@@ -659,7 +612,8 @@ export const getUserStreamSummary = async (
       currentClaimable: claimableInTotal.toString(),
       activeOutgoingCount,
       activeIncomingCount,
-    };
+      ...(truncated ? { truncated: true } : {}),
+    } satisfies UserStreamSummary & { truncated?: boolean };
 
     userSummaryCache.set(cacheKey, {
       value: summary,
@@ -673,10 +627,16 @@ export const getUserStreamSummary = async (
   }
 };
 
+const TOP_UP_AMOUNT_MAX_DIGITS = 30;
+
 const topUpBodySchema = z.object({
   amount: z
     .string()
-    .regex(/^\d+$/, "amount must be a positive integer string (XLM stroops)"),
+    .regex(/^\d+$/, "amount must be a positive integer string (XLM stroops)")
+    .max(
+      TOP_UP_AMOUNT_MAX_DIGITS,
+      `amount must be at most ${TOP_UP_AMOUNT_MAX_DIGITS} digits long`,
+    ),
 });
 
 /**
@@ -730,19 +690,24 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
 
     const txHash = await topUpStream(streamId, amount, callerAddress);
 
-    const newDeposited = (BigInt(stream.depositedAmount) + amount).toString();
-    await prisma.stream.update({
-      where: { streamId },
-      data: {
-        depositedAmount: newDeposited,
-        lastUpdateTime: BigInt(Math.floor(Date.now() / 1000)),
-      },
-    });
+    // Use raw SQL atomic increment to prevent concurrent top-ups from
+    // overwriting each other's updates (Issue #1217 — read-compute-write race).
+    // Prisma's built-in { increment } is unavailable on String-typed columns,
+    // so we perform SET deposited_amount = deposited_amount + $1::bigint
+    // directly in a single SQL statement.
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    await prisma.$executeRawUnsafe(
+      `UPDATE "Stream" SET "depositedAmount" = ("depositedAmount"::bigint + $1::bigint)::text, "lastUpdateTime" = $2 WHERE "streamId" = $3`,
+      amount.toString(),
+      now,
+      streamId,
+    );
+    const updatedStream = await prisma.stream.findUnique({ where: { streamId } });
 
     logger.info(`[topUp] stream=${streamId} amount=${amount} txHash=${txHash}`);
     return res
       .status(200)
-      .json({ streamId, txHash, depositedAmount: newDeposited });
+      .json({ streamId, txHash, depositedAmount: updatedStream!.depositedAmount });
   } catch (error: any) {
     logger.error(`[topUp] stream=${streamId} error:`, error);
     return res.status(400).json({ error: 'Failed to top up stream on chain', message: error.message ?? 'Unknown error' });

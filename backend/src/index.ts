@@ -1,10 +1,10 @@
 import dotenv from "dotenv";
 import app from "./app.js";
 import logger from "./logger.js";
-import { sorobanIndexerService } from "./services/soroban-indexer.service.js";
 import { startWorkers, stopWorkers } from "./workers/index.js";
 import { sseService } from "./services/sse.service.js";
 import { connectRedis, disconnectRedis } from "./lib/redis.js";
+import { rpcPool } from "./lib/rpc-pool.js";
 
 dotenv.config();
 
@@ -29,7 +29,6 @@ const startServer = async () => {
       );
     });
 
-    sorobanIndexerService.start();
     await startWorkers();
 
     const shutdown = async (signal: string) => {
@@ -41,13 +40,9 @@ const startServer = async () => {
       // 2. Stop accepting new HTTP connections
       server.close();
 
-      // 3. Stop indexers (clears poll timers)
-      try {
-        sorobanIndexerService.stop?.();
-      } catch (err) {
-        logger.warn("Error while stopping soroban indexer:", err);
-      }
+      // 3. Stop the singleton worker registry (clears poll timers)
       stopWorkers();
+      rpcPool.stopHealthProbes();
 
       // 4. Wait for in-flight indexer batch to finish (max 30s)
       let exitCode = 0;
