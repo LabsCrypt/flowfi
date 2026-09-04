@@ -67,55 +67,6 @@ const mockContractAddr = () => ({ address: { type: 'scAddressTypeContract', cont
 const mockMapEntry = (keyName: string, val: any) => ({ key: mockSym(keyName), val } as any);
 const mockMapValue = (entries: any[]) => ({ map: entries } as any);
 
-/** Build a valid admin_transferred event (processes without throwing). */
-function makeAdminTransferredEvent(
-  id: string,
-  ledger: number,
-  txHash: string,
-): rpc.Api.EventResponse {
-  return {
-    id,
-    type: 'contract',
-    ledger,
-    ledgerClosedAt: '2024-01-01T00:00:00Z',
-    txHash,
-    transactionIndex: 0,
-    operationIndex: 0,
-    inSuccessfulContractCall: true,
-    topic: [mockSym('admin_transferred')],
-    value: {
-      type: 'scvMap',
-      map: [
-        mockMapEntry('previous_admin', mockAccountAddr()),
-        mockMapEntry('new_admin', mockAccountAddr()),
-      ] as any,
-    } as any,
-  };
-}
-
-/** Build a malformed fee_config_updated event (missing body fields → throws). */
-function makeMalformedEvent(
-  id: string,
-  ledger: number,
-  txHash: string,
-): rpc.Api.EventResponse {
-  return {
-    id,
-    type: 'contract',
-    ledger,
-    ledgerClosedAt: '2024-01-01T00:00:00Z',
-    txHash,
-    transactionIndex: 0,
-    operationIndex: 0,
-    inSuccessfulContractCall: true,
-    topic: [mockSym('fee_config_updated')],
-    value: {
-      type: 'scvMap',
-      map: [] as any,
-    } as any,
-  };
-}
-
 // Standard stream fields map used across most tests
 const streamFields = (overrides?: { withdrawn_amount?: string; isActive?: boolean; is_active_value?: boolean }) => [
   mockMapEntry('sender', mockAccountAddr()),
