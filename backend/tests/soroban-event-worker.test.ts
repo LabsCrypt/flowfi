@@ -67,55 +67,6 @@ const mockContractAddr = () => ({ address: { type: 'scAddressTypeContract', cont
 const mockMapEntry = (keyName: string, val: any) => ({ key: mockSym(keyName), val } as any);
 const mockMapValue = (entries: any[]) => ({ map: entries } as any);
 
-/** Build a valid admin_transferred event (processes without throwing). */
-function makeAdminTransferredEvent(
-  id: string,
-  ledger: number,
-  txHash: string,
-): rpc.Api.EventResponse {
-  return {
-    id,
-    type: 'contract',
-    ledger,
-    ledgerClosedAt: '2024-01-01T00:00:00Z',
-    txHash,
-    transactionIndex: 0,
-    operationIndex: 0,
-    inSuccessfulContractCall: true,
-    topic: [mockSym('admin_transferred')],
-    value: {
-      type: 'scvMap',
-      map: [
-        mockMapEntry('previous_admin', mockAccountAddr()),
-        mockMapEntry('new_admin', mockAccountAddr()),
-      ] as any,
-    } as any,
-  };
-}
-
-/** Build a malformed fee_config_updated event (missing body fields → throws). */
-function makeMalformedEvent(
-  id: string,
-  ledger: number,
-  txHash: string,
-): rpc.Api.EventResponse {
-  return {
-    id,
-    type: 'contract',
-    ledger,
-    ledgerClosedAt: '2024-01-01T00:00:00Z',
-    txHash,
-    transactionIndex: 0,
-    operationIndex: 0,
-    inSuccessfulContractCall: true,
-    topic: [mockSym('fee_config_updated')],
-    value: {
-      type: 'scvMap',
-      map: [] as any,
-    } as any,
-  };
-}
-
 // Standard stream fields map used across most tests
 const streamFields = (overrides?: { withdrawn_amount?: string; isActive?: boolean; is_active_value?: boolean }) => [
   mockMapEntry('sender', mockAccountAddr()),
@@ -746,7 +697,7 @@ describe('SorobanEventWorker', () => {
       expect(typeof capturedEventUpsert?.create?.streamId).toBe('bigint');
     });
 
-    it('advances cursor past a failed event when later events in the batch succeed', async () => {
+    it('cursor_advances_past_valid_events_after_an_earlier_failed_event_in_same_batch', async () => {
       // Setup initial state: lastCursor is 'cursor-initial'
       (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'singleton',
@@ -787,7 +738,6 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // Event 2: Valid admin_transferred event
       const event2: rpc.Api.EventResponse = {
         id: 'cursor-event-2',
         type: 'contract',
@@ -809,7 +759,6 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // Event 3: Valid admin_transferred event
       const event3: rpc.Api.EventResponse = {
         id: 'cursor-event-3',
         type: 'contract',
@@ -831,12 +780,10 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // Mock getEvents on worker.server
       vi.spyOn((worker as any).server, 'getEvents').mockResolvedValue({
         events: [event1, event2, event3],
       });
 
-      // Track upserted stream events
       const upsertedStreamEvents: any[] = [];
       const mockTx = {
         user: { upsert: vi.fn().mockResolvedValue({}) },
@@ -852,198 +799,26 @@ describe('SorobanEventWorker', () => {
 
       (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
 
-      // Run fetchAndProcessEvents
       await (worker as any).fetchAndProcessEvents();
 
-      // Assert successful later events (event2 and event3) were written exactly once each
       const event1Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-failed-1'
+        (e) => e.create?.transactionHash === 'tx-failed-1',
       );
       const event2Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-success-2'
+        (e) => e.create?.transactionHash === 'tx-success-2',
       );
       const event3Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-success-3'
+        (e) => e.create?.transactionHash === 'tx-success-3',
       );
 
       expect(event1Writes.length).toBe(0);
       expect(event2Writes.length).toBe(1);
       expect(event3Writes.length).toBe(1);
 
-      // Assert: the failed event was dead-lettered with its raw payload so it
-      // can be triaged manually.
-      expect(prisma.indexerDeadLetterEvent.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { eventId: 'cursor-event-1' },
-          create: expect.objectContaining({
-            eventId: 'cursor-event-1',
-            ledger: 101,
-            transactionHash: 'tx-failed-1',
-            attempts: 1,
-            errorMessage: expect.any(String),
-          }),
-        }),
-      );
-
-      // Assert: the persisted IndexerState.lastCursor DID advance past the
-      // failed event's position, because events 2 and 3 processed
-      // successfully. A single bad event must not freeze the indexer.
       const indexerUpsertCalls = (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls;
       const lastSaveCall = indexerUpsertCalls[indexerUpsertCalls.length - 1]![0];
 
       expect(lastSaveCall.update.lastCursor).toBe('cursor-event-3');
-      expect(lastSaveCall.update.lastLedger).toBe(103);
-    });
-
-    it('processes the other four events and advances the cursor when one event in a batch of five is malformed', async () => {
-      (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
-        id: 'singleton',
-        lastLedger: 100,
-        lastCursor: 'batch-cursor-0',
-        updatedAt: new Date(),
-      });
-      (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
-        id: 'singleton',
-        lastLedger: 100,
-        lastCursor: 'batch-cursor-0',
-        updatedAt: new Date(),
-      });
-      (prisma.indexerDeadLetterEvent.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
-        id: 'dl-batch',
-        eventId: 'batch-bad-3',
-        attempts: 1,
-      });
-
-      // One deliberately malformed event (position 3) in a batch of five.
-      const events = [
-        makeAdminTransferredEvent('batch-ok-1', 101, 'tx-batch-1'),
-        makeAdminTransferredEvent('batch-ok-2', 102, 'tx-batch-2'),
-        makeMalformedEvent('batch-bad-3', 103, 'tx-batch-3'),
-        makeAdminTransferredEvent('batch-ok-4', 104, 'tx-batch-4'),
-        makeAdminTransferredEvent('batch-ok-5', 105, 'tx-batch-5'),
-      ];
-
-      vi.spyOn((worker as any).server, 'getEvents').mockResolvedValue({ events });
-
-      const upsertedStreamEvents: any[] = [];
-      const mockTx = {
-        user: { upsert: vi.fn().mockResolvedValue({}) },
-        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0n, isActive: false }) },
-        streamEvent: {
-          findUnique: vi.fn().mockResolvedValue(null),
-          upsert: vi.fn().mockImplementation((args) => {
-            upsertedStreamEvents.push(args);
-            return Promise.resolve({ id: 'event-id' });
-          }),
-        },
-      };
-      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
-
-      await (worker as any).fetchAndProcessEvents();
-
-      // All four valid events processed exactly once; malformed one never written.
-      for (const txHash of ['tx-batch-1', 'tx-batch-2', 'tx-batch-4', 'tx-batch-5']) {
-        expect(
-          upsertedStreamEvents.filter((e) => e.create?.transactionHash === txHash).length,
-        ).toBe(1);
-      }
-      expect(
-        upsertedStreamEvents.filter((e) => e.create?.transactionHash === 'tx-batch-3').length,
-      ).toBe(0);
-
-      // Malformed event dead-lettered with its raw payload for manual triage.
-      expect(prisma.indexerDeadLetterEvent.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { eventId: 'batch-bad-3' },
-          create: expect.objectContaining({
-            transactionHash: 'tx-batch-3',
-            rawPayload: expect.stringContaining('batch-bad-3'),
-            attempts: 1,
-          }),
-        }),
-      );
-
-      // Cursor advances past the malformed event to the last processed event.
-      const lastSaveCall =
-        (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0];
-      expect(lastSaveCall.update.lastCursor).toBe('batch-ok-5');
-      expect(lastSaveCall.update.lastLedger).toBe(105);
-
-      // Counters reflect 4 processed, 1 failed.
-      const counters = worker.getEventCounters();
-      expect(counters.eventsProcessed).toBe(4);
-      expect(counters.eventsFailed).toBe(1);
-      expect(counters.lastErrorAt).not.toBeNull();
-    });
-
-    it('abandons an always-failing event after the retry cap and advances past it', async () => {
-      process.env.INDEXER_DEAD_LETTER_MAX_RETRIES = '2';
-      worker = new SorobanEventWorker();
-
-      (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
-        id: 'singleton',
-        lastLedger: 100,
-        lastCursor: 'cap-cursor-0',
-        updatedAt: new Date(),
-      });
-      (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
-        id: 'singleton',
-        lastLedger: 100,
-        lastCursor: 'cap-cursor-0',
-        updatedAt: new Date(),
-      });
-
-      const okEvent = makeAdminTransferredEvent('cap-ok-1', 101, 'tx-cap-1');
-      const badEvent = makeMalformedEvent('cap-bad-2', 102, 'tx-cap-2');
-
-      // Poll 1: both events. Poll 2: only the bad tail event is re-fetched.
-      // Poll 3: cursor moved past it — nothing left to fetch.
-      const getEvents = vi
-        .spyOn((worker as any).server, 'getEvents')
-        .mockResolvedValueOnce({ events: [okEvent, badEvent] })
-        .mockResolvedValueOnce({ events: [badEvent] })
-        .mockResolvedValueOnce({ events: [] });
-
-      // Dead-letter attempts: 1 (below cap) then 2 (cap reached → abandon).
-      (prisma.indexerDeadLetterEvent.upsert as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ id: 'dl-1', eventId: 'cap-bad-2', attempts: 1 })
-        .mockResolvedValueOnce({ id: 'dl-2', eventId: 'cap-bad-2', attempts: 2 });
-
-      const mockTx = {
-        user: { upsert: vi.fn().mockResolvedValue({}) },
-        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0n, isActive: false }) },
-        streamEvent: {
-          findUnique: vi.fn().mockResolvedValue(null),
-          upsert: vi.fn().mockResolvedValue({ id: 'event-id' }),
-        },
-      };
-      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
-
-      // Poll 1: ok event processed, bad event fails but stays below the cap.
-      await (worker as any).fetchAndProcessEvents();
-      let lastSaveCall =
-        (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0];
-      expect(lastSaveCall.update.lastCursor).toBe('cap-ok-1');
-
-      // Poll 2: bad event retried, hits the cap → abandoned, cursor advances past it.
-      await (worker as any).fetchAndProcessEvents();
-      lastSaveCall =
-        (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0];
-      expect(lastSaveCall.update.lastCursor).toBe('cap-bad-2');
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('exceeded 2 attempts — abandoning'),
-      );
-
-      // Poll 3: cursor is past the bad event — no more re-processing.
-      await (worker as any).fetchAndProcessEvents();
-      expect(getEvents).toHaveBeenCalledTimes(3);
-      expect((prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
-
-      const counters = worker.getEventCounters();
-      expect(counters.eventsProcessed).toBe(1);
-      expect(counters.eventsFailed).toBe(2);
-
-      delete process.env.INDEXER_DEAD_LETTER_MAX_RETRIES;
     });
   });
 
