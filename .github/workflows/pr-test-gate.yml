@@ -1,73 +1,39 @@
 name: PR Test Gate
 
 on:
-  pull_request:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 jobs:
   contracts-test:
     name: Contracts cargo test
     runs-on: ubuntu-latest
+    if: github.event.workflow_run.event == 'pull_request'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Run cargo test
-        run: cargo test
-        working-directory: contracts
+      - name: Verify CI succeeded for the pull request
+        env:
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          if [ "$CI_CONCLUSION" != "success" ]; then
+            echo "CI workflow failed for pull request #${PR_NUMBER}."
+            exit 1
+          fi
+          echo "CI workflow succeeded for pull request #${PR_NUMBER}; no duplicate contract run is required."
 
   backend-test:
     name: Backend npm test
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        # Pinned to match the version used in ci.yml and docker-compose.yml
-        # (production target). Keep these in sync — see issue #1282.
-        image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: flowfi_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    if: github.event.workflow_run.event == 'pull_request'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --include=optional
-
-      - name: Prepare database schema
-        run: |
-          npx prisma generate --schema=prisma/schema.prisma
-          npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
-        working-directory: backend
+      - name: Verify CI succeeded for the pull request
         env:
-          DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
-
-      - name: Run backend tests
+          CI_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
         run: |
-          ls -la src/generated/prisma
-          npm test --silent -- --reporter=basic
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
-          NODE_ENV: test
+          if [ "$CI_CONCLUSION" != "success" ]; then
+            echo "CI workflow failed for pull request #${PR_NUMBER}."
+            exit 1
+          fi
+          echo "CI workflow succeeded for pull request #${PR_NUMBER}; no duplicate backend run is required."
