@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import { copyToClipboard } from "@/lib/clipboard";
 import type { Stream } from "@/lib/dashboard";
 
 interface StreamDetailsModalProps {
@@ -19,9 +20,20 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
     onTopUpClick,
 }) => {
     const dialogRef = useModalDialog({ onClose });
+    const [recipientCopied, setRecipientCopied] = useState(false);
 
     const progress = stream.deposited > 0 ? Math.min(100, Math.max(0, (stream.withdrawn / stream.deposited) * 100)) : 0;
     const remaining = stream.deposited - stream.withdrawn;
+
+    const handleCopyRecipient = async () => {
+        const success = await copyToClipboard(stream.recipient, {
+            successMessage: "Recipient address copied",
+        });
+        if (success) {
+            setRecipientCopied(true);
+            setTimeout(() => setRecipientCopied(false), 1500);
+        }
+    };
 
     return (
         <div
@@ -62,12 +74,19 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
                             <div className="flex items-center gap-2">
                                 <code className="text-sm text-accent truncate">{stream.recipient}</code>
                                 <button
-                                    onClick={() => navigator.clipboard.writeText(stream.recipient)}
-                                    className="text-slate-500 hover:text-accent transition-colors"
+                                    onClick={handleCopyRecipient}
+                                    aria-label={recipientCopied ? "Recipient address copied" : "Copy recipient address"}
+                                    className="text-slate-500 dark:text-slate-400 hover:text-accent transition-colors"
                                 >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    </svg>
+                                    {recipientCopied ? (
+                                        <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                        </svg>
+                                    )}
                                 </button>
                             </div>
                         </div>

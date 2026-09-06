@@ -53,16 +53,16 @@ describe("useIncomingStreams hooks", () => {
   describe("useIncomingStreams", () => {
     it("stays disabled when publicKey is null/undefined", () => {
       const { result, rerender } = renderHook(
-        (props: { publicKey: string | null | undefined }) =>
+        (props: { publicKey: string | null }) =>
           useIncomingStreams(props.publicKey),
-        { wrapper, initialProps: { publicKey: null } }
+        { wrapper, initialProps: { publicKey: null as string | null } }
       );
 
       expect(result.current.isPending).toBe(true);
       expect(result.current.fetchStatus).toBe("idle");
       expect(fetchIncomingStreams).not.toHaveBeenCalled();
 
-      rerender({ publicKey: undefined });
+      rerender({ publicKey: null });
       expect(result.current.fetchStatus).toBe("idle");
       expect(fetchIncomingStreams).not.toHaveBeenCalled();
     });
@@ -145,6 +145,51 @@ describe("useIncomingStreams hooks", () => {
       expect(invalidateSpy).toHaveBeenCalledWith({
         queryKey: incomingStreamsQueryKey("pubkey"),
       });
+    });
+
+    it("aborts polling when the component unmounts mid-backoff", async () => {
+      vi.useFakeTimers();
+      vi.mocked(withdrawFromStream).mockResolvedValue({ success: true, txHash: "tx-hash" });
+      // fetchIncomingStreams resolves with an empty array so the poll never
+      // finds a matching stream and keeps retrying.
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
+      const { result, unmount } = renderHook(
+        () => useWithdrawIncomingStream({} as unknown as WalletSession, "pubkey"),
+        { wrapper }
+      );
+
+      await act(async () => {
+        await result.current.mutateAsync({
+          id: "1",
+          streamId: 1,
+          withdrawn: 0,
+          deposited: 100,
+          ratePerSecond: 1,
+          isPaused: false,
+          lastUpdateTime: Date.now() / 1000,
+        } as unknown as IncomingStreamRecord);
+      });
+
+      // Let the first poll iteration fire (1 s delay)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+
+      const callsBeforeUnmount = vi.mocked(fetchIncomingStreams).mock.calls.length;
+
+      // Unmount the component – this should abort the poll controller
+      unmount();
+
+      // Advance well past all remaining retries
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(63_000);
+      });
+
+      // No additional fetches should have been made after unmount
+      expect(vi.mocked(fetchIncomingStreams).mock.calls.length).toBe(
+        callsBeforeUnmount,
+      );
     });
   });
 });
