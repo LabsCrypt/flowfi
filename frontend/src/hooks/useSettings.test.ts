@@ -45,14 +45,12 @@ describe('useSettings and formatAmountWithPreference', () => {
         expect(result.current.isHydrated).toBe(true);
       });
 
-      expect(result.current.theme).toBe(DEFAULT_SETTINGS.theme);
       expect(result.current.displayCurrency).toBe(DEFAULT_SETTINGS.displayCurrency);
       expect(result.current.amountFormat).toBe(DEFAULT_SETTINGS.amountFormat);
       expect(result.current.decimalPlaces).toBe(DEFAULT_SETTINGS.decimalPlaces);
     });
 
     it('hydrates settings from pre-seeded localStorage values', async () => {
-      localStorage.setItem(STORAGE_KEYS.theme, 'light');
       localStorage.setItem(STORAGE_KEYS.displayCurrency, 'XLM');
       localStorage.setItem(STORAGE_KEYS.amountFormat, 'compact');
       localStorage.setItem(STORAGE_KEYS.decimalPlaces, '4');
@@ -63,24 +61,9 @@ describe('useSettings and formatAmountWithPreference', () => {
         expect(result.current.isHydrated).toBe(true);
       });
 
-      expect(result.current.theme).toBe('light');
       expect(result.current.displayCurrency).toBe('XLM');
       expect(result.current.amountFormat).toBe('compact');
       expect(result.current.decimalPlaces).toBe(4);
-    });
-
-    it('updates state and localStorage when setTheme is called', async () => {
-      const { result } = renderHook(() => useSettings());
-      
-      await waitFor(() => expect(result.current.isHydrated).toBe(true));
-
-      act(() => {
-        result.current.setTheme('light');
-      });
-
-      expect(result.current.theme).toBe('light');
-      expect(localStorage.getItem(STORAGE_KEYS.theme)).toBe('light');
-      expect(document.documentElement.classList.contains('dark')).toBe(false);
     });
 
     it('updates state and localStorage when setDecimalPlaces is called', async () => {
@@ -146,17 +129,17 @@ describe('useSettings and formatAmountWithPreference', () => {
 
       act(() => {
         // Simulate other tab changing local storage
-        localStorage.setItem(STORAGE_KEYS.theme, 'light');
+        localStorage.setItem(STORAGE_KEYS.displayCurrency, 'EUR');
         
         // Dispatch storage event
         const event = new StorageEvent('storage', {
-          key: STORAGE_KEYS.theme,
-          newValue: 'light'
+          key: STORAGE_KEYS.displayCurrency,
+          newValue: 'EUR'
         });
         window.dispatchEvent(event);
       });
 
-      expect(result.current.theme).toBe('light');
+      expect(result.current.displayCurrency).toBe('EUR');
     });
   });
 

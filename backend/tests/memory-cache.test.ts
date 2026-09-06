@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cache } from '../src/lib/redis.js';
+import { MemoryCache, cache } from '../src/lib/redis.js';
 
 describe('MemoryCache', () => {
   afterEach(() => {
     vi.useRealTimers();
+    delete process.env.MEMORY_CACHE_MAX_ITEMS;
   });
 
   it('set+get returns value', () => {
@@ -72,5 +73,121 @@ describe('MemoryCache', () => {
       createdAt: new Date(3000).toISOString(),
       expiresAt: new Date(13000).toISOString(),
     });
+  });
+});
+
+describe('MemoryCache LRU eviction', () => {
+  it('evicts least-recently-used entries once maxItems is exceeded, without waiting for cleanup', () => {
+    const lru = new MemoryCache({ maxItems: 3 });
+
+    lru.set('a', 1, 10);
+    lru.set('b', 2, 10);
+    lru.set('c', 3, 10);
+
+    // Fourth set pushes the oldest entry ('a') out immediately.
+    lru.set('d', 4, 10);
+
+    expect(lru.get('a')).toBeNull();
+    expect(lru.get('b')).toBe(2);
+    expect(lru.get('c')).toBe(3);
+    expect(lru.get('d')).toBe(4);
+    expect(lru.getStats().itemCount).toBe(3);
+  });
+
+  it('get() refreshes recency so recently read entries survive eviction', () => {
+    const lru = new MemoryCache({ maxItems: 3 });
+
+    lru.set('a', 1, 10);
+    lru.set('b', 2, 10);
+    lru.set('c', 3, 10);
+
+    // Reading 'a' makes it most-recently-used, so 'b' becomes the LRU entry.
+    expect(lru.get('a')).toBe(1);
+    lru.set('d', 4, 10);
+
+    expect(lru.get('b')).toBeNull();
+    expect(lru.get('a')).toBe(1);
+    expect(lru.get('c')).toBe(3);
+    expect(lru.get('d')).toBe(4);
+  });
+
+  it('overwriting an existing key refreshes its recency', () => {
+    const lru = new MemoryCache({ maxItems: 3 });
+
+    lru.set('a', 1, 10);
+    lru.set('b', 2, 10);
+    lru.set('c', 3, 10);
+
+    // Refreshing 'a' (delete + set) makes it MRU; 'b' is now the LRU entry.
+    lru.set('a', 10, 10);
+    lru.set('d', 4, 10);
+
+    expect(lru.get('b')).toBeNull();
+    expect(lru.get('a')).toBe(10);
+    expect(lru.get('c')).toBe(3);
+    expect(lru.get('d')).toBe(4);
+  });
+
+  it('cleanup() also enforces the max-size cap after pruning expired entries', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+
+    const lru = new MemoryCache({ maxItems: 3 });
+    lru.set('expired', 'x', 0); // immediately expired
+    lru.set('a', 1, 60);
+    lru.set('b', 2, 60);
+    lru.set('c', 3, 60);
+
+    lru.cleanup();
+
+    expect(lru.getStats().itemCount).toBe(3);
+    expect(lru.get('expired')).toBeNull();
+    expect(lru.get('a')).toBe(1);
+    expect(lru.get('b')).toBe(2);
+    expect(lru.get('c')).toBe(3);
+  });
+
+  it('maxItems can be configured via MEMORY_CACHE_MAX_ITEMS env var', () => {
+    process.env.MEMORY_CACHE_MAX_ITEMS = '2';
+    const lru = new MemoryCache();
+
+    lru.set('a', 1, 10);
+    lru.set('b', 2, 10);
+    lru.set('c', 3, 10);
+
+    expect(lru.get('a')).toBeNull();
+    expect(lru.get('b')).toBe(2);
+    expect(lru.get('c')).toBe(3);
+    expect(lru.getStats().maxItems).toBe(2);
+  });
+
+  it('getStats() reports the configured maxItems', () => {
+    const lru = new MemoryCache({ maxItems: 42 });
+    expect(lru.getStats().maxItems).toBe(42);
+  });
+
+  it('keeps memory bounded under sustained load across many keys (Issue #1249 acceptance criteria)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+
+    const lru = new MemoryCache({ maxItems: 100 });
+
+    // Simulate sustained polling across many streams, generating far more
+    // unique keys (one per stream per timestamp bucket) than the cap.
+    for (let tick = 0; tick < 500; tick += 1) {
+      for (let stream = 0; stream < 50; stream += 1) {
+        const key = `claimable:${stream}:state:${tick}`;
+        lru.set(key, `value-${tick}-${stream}`, 5);
+      }
+      // Occasionally read an older key to exercise recency refresh.
+      if (tick % 7 === 0) {
+        lru.get(`claimable:0:state:${tick - 3}`);
+      }
+      expect(lru.getStats().itemCount).toBeLessThanOrEqual(100);
+      vi.advanceTimersByTime(100);
+    }
+
+    // Never grows linearly with the number of requests — always bounded by cap.
+    expect(lru.getStats().itemCount).toBeLessThanOrEqual(100);
   });
 });

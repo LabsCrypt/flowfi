@@ -1,6 +1,11 @@
 "use client";
 
 import {
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
+import {
   useMutation,
   useQuery,
   useQueryClient,
@@ -50,6 +55,43 @@ export function useWithdrawIncomingStream(
   },
 ) {
   const queryClient = useQueryClient();
+
+  // Ref to the active poll AbortController so we can cancel on unmount/
+  // wallet change. Each mutation resets it.
+  const pollControllerRef = useRef<AbortController | null>(null);
+
+  // Abort any in-flight poll when the component unmounts or the wallet
+  // changes.  This prevents stale fetches and state writes.
+  useEffect(() => {
+    return () => {
+      pollControllerRef.current?.abort();
+      pollControllerRef.current = null;
+    };
+  }, [publicKey]);
+
+  const pollIndexer = useCallback(
+    (
+      pk: string,
+      streamId: number,
+      oldWithdrawn: number,
+      expectedWithdrawn: number,
+    ) => {
+      // Abort any previous poll that may still be running
+      pollControllerRef.current?.abort();
+      const controller = new AbortController();
+      pollControllerRef.current = controller;
+
+      pollIndexerForWithdraw(
+        pk,
+        streamId,
+        oldWithdrawn,
+        expectedWithdrawn,
+        queryClient,
+        controller.signal,
+      );
+    },
+    [queryClient],
+  );
 
   return useMutation({
     mutationFn: async (stream: IncomingStreamRecord) => {
@@ -116,12 +158,11 @@ export function useWithdrawIncomingStream(
         };
         const targetWithdrawn = ctx.expectedWithdrawn ?? stream.withdrawn;
         // Start polling in the background without blocking the mutation
-        pollIndexerForWithdraw(
+        pollIndexer(
           publicKey,
           stream.streamId,
           stream.withdrawn,
           targetWithdrawn,
-          queryClient,
         );
       }
 
@@ -149,14 +190,25 @@ async function pollIndexerForWithdraw(
   oldWithdrawn: number,
   expectedWithdrawn: number,
   queryClient: ReturnType<typeof useQueryClient>,
+  signal?: AbortSignal,
   maxRetries = 6,
   initialDelay = 1000,
 ) {
   let delay = initialDelay;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Stop immediately if the caller has aborted (unmount / wallet change)
+    if (signal?.aborted) return;
+
     await new Promise((resolve) => setTimeout(resolve, delay));
+
+    // Re-check after the delay – the signal may have been aborted while we
+    // were waiting.
+    if (signal?.aborted) return;
+
     try {
       const streams = await fetchIncomingStreams(publicKey);
+      if (signal?.aborted) return;
+
       const updatedStream = streams.find((s) => s.streamId === streamId);
       if (
         updatedStream &&
@@ -167,11 +219,16 @@ async function pollIndexerForWithdraw(
         return;
       }
     } catch (err) {
+      // AbortError is expected when the signal fires; don't log it as a
+      // warning.
+      if (signal?.aborted) return;
       logger.warn("Error polling indexer for withdraw:", err);
     }
     delay *= 2;
   }
-  await queryClient.invalidateQueries({
-    queryKey: incomingStreamsQueryKey(publicKey),
-  });
+  if (!signal?.aborted) {
+    await queryClient.invalidateQueries({
+      queryKey: incomingStreamsQueryKey(publicKey),
+    });
+  }
 }

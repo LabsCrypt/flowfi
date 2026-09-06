@@ -131,6 +131,40 @@ describe('ClaimableAmountService', () => {
     expect(third.cached).toBe(false);
   });
 
+  it('buckets the cache-key timestamp so requests within the same 5s window share an entry (Issue #1249)', () => {
+    vi.setSystemTime(5_000);
+    const service = new ClaimableAmountService({
+      cacheTtlMs: 60_000,
+    });
+
+    const input = makeStreamState({
+      streamId: 8n,
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '0',
+    });
+
+    // Second 5 and second 9 land in the same 5s bucket (5..9), so the second
+    // request must reuse the cached value instead of creating a new key.
+    const first = service.getClaimableAmount(input, 5);
+    expect(first.cached).toBe(false);
+    expect(first.calculatedAt).toBe(5);
+    expect(first.claimableAmount).toBe('50'); // 5s elapsed × 10/s
+
+    const sameBucket = service.getClaimableAmount(input, 9);
+    expect(sameBucket.cached).toBe(true);
+    // The cached payload reflects the second the value was computed at.
+    expect(sameBucket.calculatedAt).toBe(5);
+    expect(sameBucket.claimableAmount).toBe('50');
+
+    // Second 10 starts a new bucket, so a fresh calculation is performed
+    // (and the value reflects the extra elapsed second).
+    const nextBucket = service.getClaimableAmount(input, 10);
+    expect(nextBucket.cached).toBe(false);
+    expect(nextBucket.calculatedAt).toBe(10);
+    expect(nextBucket.claimableAmount).toBe('100'); // 10s elapsed × 10/s
+  });
+
   it('reflects an indexed withdrawal immediately, without waiting for the cache TTL', () => {
     // The cache key is derived from getStateFingerprint(), which folds in
     // withdrawnAmount and lastUpdateTime (see claimable.service.ts). When the

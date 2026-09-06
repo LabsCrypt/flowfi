@@ -2,6 +2,7 @@
 
 import React from "react";
 import { Button } from "@/components/ui/Button";
+import { LiveValue } from "@/components/ui/LiveValue";
 import { useStreamingAmount } from "@/hooks/useStreamingAmount";
 import type {
   IncomingStreamRecord,
@@ -24,12 +25,12 @@ function formatTokenAmount(value: number, maximumFractionDigits = 7): string {
 function badgeClassName(status: IncomingStreamStatus): string {
   switch (status) {
     case "Active":
-      return "bg-emerald-500/15 text-emerald-700";
+      return "bg-emerald-500/15 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300";
     case "Paused":
-      return "bg-amber-500/15 text-amber-700";
+      return "bg-amber-500/15 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300";
     case "Completed":
     default:
-      return "bg-slate-500/15 text-slate-700";
+      return "bg-slate-500/15 text-slate-700 dark:bg-slate-400/15 dark:text-slate-300";
   }
 }
 
@@ -59,13 +60,13 @@ export const IncomingStreamCard = React.memo(function IncomingStreamCard({
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-800/70">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-800 dark:text-sky-300">
             Incoming stream
           </p>
-          <h2 className="mt-2 text-lg font-semibold text-slate-900">
+          <h2 className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
             {stream.senderDisplay}
           </h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
             Sender
           </p>
         </div>
@@ -76,38 +77,39 @@ export const IncomingStreamCard = React.memo(function IncomingStreamCard({
         </span>
       </div>
 
-      <dl className="mt-6 grid grid-cols-2 gap-4 text-sm text-slate-600">
+      <div className="mt-6 grid grid-cols-2 gap-4 text-sm text-slate-600 dark:text-slate-400">
         <div className="rounded-2xl bg-slate-900/5 p-4">
-          <dt className="text-xs uppercase tracking-[0.16em] text-slate-500">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
             Token
-          </dt>
-          <dd className="mt-2 text-base font-semibold text-slate-900">
+          </p>
+          <p className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">
             {stream.token}
-          </dd>
+          </p>
         </div>
         <div className="rounded-2xl bg-slate-900/5 p-4">
-          <dt className="text-xs uppercase tracking-[0.16em] text-slate-500">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
             Rate
-          </dt>
-          <dd className="mt-2 text-base font-semibold text-slate-900">
+          </p>
+          <p className="mt-2 text-base font-semibold text-slate-900 dark:text-slate-100">
             {formatTokenAmount(stream.ratePerSecond)} / sec
-          </dd>
+          </p>
         </div>
         <div className="col-span-2 rounded-[1.5rem] bg-gradient-to-r from-emerald-500/12 to-sky-500/10 p-4">
-          <dt className="text-xs uppercase tracking-[0.16em] text-slate-500">
+          <p className="text-xs uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
             Claimable amount
-          </dt>
-          <dd className="mt-2 text-2xl font-semibold text-slate-900">
+          </p>
+          <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
             {formatTokenAmount(claimable)} {stream.token}
-          </dd>
-          <p className="mt-1 text-sm text-slate-500">
+          </p>
+          <LiveValue value={`${formatTokenAmount(claimable)} ${stream.token}`} prefix="Claimable amount" />
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
             Stream #{stream.streamId}
           </p>
         </div>
-      </dl>
+      </div>
 
       <div className="mt-6 flex items-center justify-between gap-3">
-        <div className="text-xs text-slate-500">
+        <div className="text-xs text-slate-600 dark:text-slate-400">
           {stream.status === "Paused"
             ? "Withdrawals resume once the stream is active again."
             : stream.status === "Completed"

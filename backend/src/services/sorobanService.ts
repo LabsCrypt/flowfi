@@ -44,6 +44,20 @@ function getTxPollIntervalMs(): number {
   return Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
 }
 
+const DEFAULT_RPC_HEALTH_CACHE_TTL_MS = 10_000;
+
+let rpcHealthCache: { ok: boolean; expiresAt: number } | null = null;
+let rpcHealthPromise: Promise<boolean> | null = null;
+
+function getRpcHealthCacheTtlMs(): number {
+  return Number(process.env.SOROBAN_RPC_HEALTH_CACHE_TTL_MS ?? DEFAULT_RPC_HEALTH_CACHE_TTL_MS);
+}
+
+export function resetRpcHealthCache(): void {
+  rpcHealthCache = null;
+  rpcHealthPromise = null;
+}
+
 export class RpcTimeoutError extends Error {
   constructor(label: string, timeoutMs: number) {
     super(`${label} timed out after ${timeoutMs}ms`);
@@ -139,12 +153,36 @@ async function executeRpc<T>(label: string, operation: (server: rpc.Server) => P
  * unreachable Soroban RPC endpoint can't hang the health check.
  */
 export async function checkRpcHealth(timeoutMs = 3_000): Promise<boolean> {
-  try {
-    await withRpcTimeout('soroban rpc health check', () => executeRpc('soroban rpc health check', (server) => server.getHealth()), timeoutMs);
-    return true;
-  } catch {
-    return false;
+  const now = Date.now();
+  const ttlMs = getRpcHealthCacheTtlMs();
+
+  if (rpcHealthCache && now < rpcHealthCache.expiresAt) {
+    return rpcHealthCache.ok;
   }
+
+  if (rpcHealthPromise) {
+    return rpcHealthPromise;
+  }
+
+  rpcHealthPromise = (async () => {
+    try {
+      const ok = await withRpcTimeout(
+        'soroban rpc health check',
+        () => executeRpc('soroban rpc health check', (server) => server.getHealth()),
+        timeoutMs,
+      );
+      const result = Boolean(ok);
+      rpcHealthCache = { ok: result, expiresAt: Date.now() + ttlMs };
+      return result;
+    } catch {
+      rpcHealthCache = { ok: false, expiresAt: Date.now() + ttlMs };
+      return false;
+    } finally {
+      rpcHealthPromise = null;
+    }
+  })();
+
+  return rpcHealthPromise;
 }
 
 export function setServer(server: rpc.Server): void {
@@ -168,25 +206,25 @@ export interface ChainStream {
 }
 
 export function decodeI128(val: xdr.ScVal): string {
-  const parts = val.i128();
-  const hi = BigInt.asIntN(64, BigInt(parts.hi().toString()));
-  const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+  const parts = (val as xdr.ScValI128).i128;
+  const hi = BigInt.asIntN(64, BigInt(parts.hi.toString()));
+  const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
   return ((hi << 64n) | lo).toString();
 }
 
 export function decodeAddress(val: xdr.ScVal): string {
-  const addr = val.address();
-  if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
-    return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
+  const addr = (val as xdr.ScValAddress).address;
+  if (addr.type === 'scAddressTypeAccount') {
+    return StrKey.encodeEd25519PublicKey((addr.accountId as xdr.PublicKeyEd25519).ed25519.value);
   }
-  const hash = addr.contractId();
-  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
+  const hash = (addr as xdr.ScAddressContract).contractId;
+  return StrKey.encodeContract(Buffer.from(hash.value as unknown as Uint8Array));
 }
 
 function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
   const result: Record<string, xdr.ScVal> = {};
-  for (const entry of val.map() ?? []) {
-    result[entry.key().sym().toString()] = entry.val();
+  for (const entry of (val as xdr.ScValMap).map ?? []) {
+    result[(entry.key as xdr.ScValSymbol).sym.toString()] = entry.val;
   }
   return result;
 }
@@ -321,8 +359,8 @@ export async function getStreamFromChain(streamId: bigint): Promise<ChainStream 
 
     const isActiveVal = fields['is_active']!;
     const isActive =
-      isActiveVal.switch().value === xdr.ScValType.scvBool().value &&
-      isActiveVal.b() === true;
+      isActiveVal.type === 'scvBool' &&
+      isActiveVal.b === true;
 
     return {
       streamId,
@@ -332,7 +370,7 @@ export async function getStreamFromChain(streamId: bigint): Promise<ChainStream 
       ratePerSecond: decodeI128(fields['rate_per_second']!),
       depositedAmount: decodeI128(fields['deposited_amount']!),
       withdrawnAmount: decodeI128(fields['withdrawn_amount']!),
-      startTime: Number(fields['start_time']!.u64().toString()),
+      startTime: Number((fields['start_time']! as xdr.ScValU64).u64.toString()),
       isActive,
     };
   } catch (err) {
@@ -356,6 +394,14 @@ export async function getClaimableFromChain(streamId: bigint): Promise<string | 
   }
 }
 
+/**
+ * Cancels a stream on-chain.
+ * @param streamId - The on-chain stream ID
+ * @param senderSecret - The sender's private key used for cryptographic authorization.
+ *   This should be the secret key of the stream's sender wallet, NOT the keeper key.
+ *   Using the keeper key here defeats the purpose of per-action authorization.
+ * @returns Transaction hash of the cancellation transaction
+ */
 export async function cancelStream(streamId: bigint, senderSecret: string): Promise<string> {
   return submitContractCall('cancel_stream', [
     nativeToScVal(streamId, { type: 'u64' }),
