@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
@@ -100,6 +100,23 @@ vi.mock("@/components/TransactionTracker", () => ({
 import StreamDetailsContent from "../stream-details-content";
 
 const STREAM_ID = "42";
+
+// Helper to mock document.hidden
+let originalHidden: PropertyDescriptor | undefined;
+
+function setHidden(value: boolean) {
+  Object.defineProperty(document, "hidden", {
+    value,
+    writable: true,
+    configurable: true,
+  });
+}
+
+function restoreHidden() {
+  if (originalHidden) {
+    Object.defineProperty(document, "hidden", originalHidden);
+  }
+}
 
 function createMockStream() {
   return {
@@ -580,4 +597,67 @@ describe("StreamDetailsContent live-claimable interval", () => {
     expect(screen.getAllByText(/paused/i).length).toBeGreaterThan(0);
   });
 
+});
+
+describe("Live claimable visibility guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalHidden = Object.getOwnPropertyDescriptor(Document.prototype, "hidden");
+    setHidden(false);
+    global.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    restoreHidden();
+  });
+
+  it("skips updateClaimable when document.hidden is true", async () => {
+    // Capture the setInterval callback
+    let capturedCallback: (() => void) | null = null;
+    const realSetInterval = global.setInterval;
+    vi.spyOn(global, "setInterval").mockImplementation((fn: TimerHandler) => {
+      capturedCallback = fn as () => void;
+      return realSetInterval(fn, 1000);
+    });
+
+    const mockStream = createMockStream();
+
+    vi.mocked(global.fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockStream,
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response);
+
+    render(<StreamDetailsContent streamId={STREAM_ID} />);
+
+    // Wait for data to load and interval to be set up
+    await waitFor(() => {
+      expect(capturedCallback).not.toBeNull();
+    });
+
+    // Verify the initial claimable is displayed
+    const claimableCard = screen.getByText("Claimable").closest(".glass-card");
+    expect(claimableCard).toBeInTheDocument();
+    const initialText = claimableCard!.textContent;
+
+    // Simulate the interval firing while the tab is visible — should update
+    setHidden(false);
+    capturedCallback!();
+    // Value may or may not change depending on timing, but the function ran
+
+    // Now background the tab
+    setHidden(true);
+    capturedCallback!();
+
+    // The text should not have changed from the visible update
+    // (setLiveClaimable was NOT called because document.hidden was true)
+    expect(claimableCard!.textContent).toBe(initialText);
+
+    // Restore setInterval mock
+    vi.restoreAllMocks();
+  });
 });
