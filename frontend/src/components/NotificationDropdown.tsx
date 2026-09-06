@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { formatAmount } from "@/utils/amount";
@@ -24,6 +24,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     const [isOpen, setIsOpen] = useState(false);
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     const { events: streamEvents, connected } = useStreamEvents({
         userPublicKeys: [publicKey],
@@ -111,6 +112,53 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         });
     }, [streamEvents, isOpen, formatEventMessage]);
 
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setIsOpen(false);
+                return;
+            }
+
+            if (event.key === "Tab" && containerRef.current && isOpen) {
+                const focusableElements = containerRef.current.querySelectorAll<HTMLElement>(
+                    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                );
+                if (focusableElements.length === 0) return;
+
+                const firstElement = focusableElements[0];
+                const lastElement = focusableElements[focusableElements.length - 1];
+
+                if (event.shiftKey) {
+                    if (document.activeElement === firstElement) {
+                        event.preventDefault();
+                        lastElement?.focus();
+                    }
+                } else {
+                    if (document.activeElement === lastElement) {
+                        event.preventDefault();
+                        firstElement?.focus();
+                    }
+                }
+            }
+        };
+
+        if (isOpen) {
+            document.addEventListener("mousedown", handleClickOutside);
+            document.addEventListener("keydown", handleKeyDown);
+        }
+
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [isOpen]);
+
     const handleDropdownOpen = useCallback(() => {
         setIsOpen((prev) => !prev);
 
@@ -121,7 +169,14 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     }, [isOpen]);
 
     return (
-        <div className="relative">
+        <div className="relative" ref={containerRef}>
+<span
+    aria-live="polite"
+    aria-busy="false"
+    className="sr-only"
+>
+    {unreadCount} new notifications
+</span>
             <button
                 onClick={handleDropdownOpen}
                 aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
@@ -136,7 +191,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                         strokeLinejoin="round"
                         strokeWidth="2"
                         d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
-                    />
+                />
                 </svg>
 
                 {unreadCount > 0 && (

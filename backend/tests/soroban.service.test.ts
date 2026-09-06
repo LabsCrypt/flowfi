@@ -11,6 +11,7 @@ import {
 const mocks = vi.hoisted(() => {
   const server = {
     getAccount: vi.fn(),
+    getHealth: vi.fn(),
     simulateTransaction: vi.fn(),
     sendTransaction: vi.fn(),
     getTransaction: vi.fn(),
@@ -99,12 +100,38 @@ describe('Soroban Service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isSimulationError.mockReturnValue(false);
+    mocks.server.getHealth.mockResolvedValue({ status: 'healthy' });
   });
 
   afterEach(() => {
     delete process.env.STREAM_CONTRACT_ID;
     delete process.env.KEEPER_SECRET_KEY;
     delete process.env.SOROBAN_RPC_URL;
+  });
+
+  describe('checkRpcHealth', () => {
+    it('caches successful RPC health checks for the TTL window', async () => {
+      const { checkRpcHealth, resetRpcHealthCache } = await importService();
+      resetRpcHealthCache();
+
+      await expect(checkRpcHealth(25)).resolves.toBe(true);
+      await expect(checkRpcHealth(25)).resolves.toBe(true);
+      expect(mocks.server.getHealth).toHaveBeenCalledTimes(1);
+    });
+
+    it('deduplicates concurrent health checks while a refresh is in flight', async () => {
+      const { checkRpcHealth, resetRpcHealthCache } = await importService();
+      resetRpcHealthCache();
+
+      const [first, second] = await Promise.all([
+        checkRpcHealth(25),
+        checkRpcHealth(25),
+      ]);
+
+      expect(first).toBe(true);
+      expect(second).toBe(true);
+      expect(mocks.server.getHealth).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('isStale', () => {

@@ -52,7 +52,6 @@ model Stream {
   @@index([sender])
   @@index([recipient])
   @@index([tokenAddress])
-  @@index([streamId])
   @@index([isActive])
   @@index([isPaused])
 }
@@ -63,6 +62,26 @@ model IndexerState {
   lastLedger  Int      @default(0)
   lastCursor  String?  // Paging token of the last processed event (for cursor-based pagination)
   updatedAt   DateTime @updatedAt
+}
+
+// IndexerDeadLetterEvent model - Soroban events that failed to process, kept
+// with their raw payload for manual triage. The worker retries an event at
+// most INDEXER_DEAD_LETTER_MAX_RETRIES times, then abandons it and advances
+// the cursor so a single malformed event can never freeze the indexer.
+model IndexerDeadLetterEvent {
+  id              String   @id @default(uuid())
+  eventId         String   @unique // RPC paging-token id of the event
+  ledger          Int      // Ledger sequence the event was emitted in
+  transactionHash String   // Stellar transaction hash
+  rawPayload      String   // Full raw event JSON for manual triage/replay
+  errorMessage    String   // Last error thrown while processing
+  attempts        Int      @default(1) // Number of failed processing attempts
+  lastAttemptAt   DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([ledger])
+  @@index([transactionHash])
+  @@index([createdAt])
 }
 
 // StreamEvent model - indexer events for tracking all on-chain stream activities
@@ -83,6 +102,7 @@ model StreamEvent {
   @@unique([transactionHash, eventType])
   @@index([streamId])
   @@index([eventType])
+  @@index([streamId, eventType])
   @@index([timestamp])
   @@index([transactionHash])
   @@index([createdAt])

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Calendar as CalendarIcon, Filter } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
@@ -38,61 +38,56 @@ export default function DashboardCalendarPage() {
   const [direction, setDirection] = useState<"all" | "incoming" | "outgoing">("all");
   const [projectionDays, setProjectionDays] = useState<7 | 30 | 90>(30);
 
-  // Fetch streams
-  const fetchStreams = useCallback(async (signal?: AbortSignal) => {
-    if (!session?.publicKey) return;
-
-    try {
-      setLoading(true);
-      const response = await fetch(
-        `${API_BASE_URL}/streams?user=${session.publicKey}`,
-        { signal }
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch streams");
-      }
-
-      const data = await response.json();
-      const streamList = Array.isArray(data) ? data : data.data ?? [];
-      
-      // Map API response to our Stream type
-      const mappedStreams: Stream[] = streamList.map((s: Record<string, unknown>) => ({
-        id: s.id as string,
-        streamId: s.streamId as number,
-        sender: s.sender as string,
-        recipient: s.recipient as string,
-        tokenSymbol: s.tokenSymbol || "USDC",
-        ratePerSecond: Number(s.ratePerSecond) || 0,
-        depositedAmount: (s.depositedAmount as string) || "0",
-        withdrawnAmount: (s.withdrawnAmount as string) || "0",
-        startTime: s.startTime as number,
-        endTime: s.endTime as number | undefined,
-        isActive: s.isActive as boolean,
-        isPaused: s.isPaused as boolean,
-        status: (s.status as string) || "unknown",
-      }));
-
-      setStreams(mappedStreams);
-      setError(null);
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-      logger.error("Failed to fetch streams:", err);
-      setError(err instanceof Error ? err.message : "Failed to load streams");
-    } finally {
-      setLoading(false);
-    }
-  }, [session?.publicKey]);
-
-  // Load streams on mount
+  // Load streams on mount / wallet change
   useEffect(() => {
     if (!isHydrated || !session?.publicKey) return;
 
     const controller = new AbortController();
-    fetchStreams(controller.signal);
+
+    void (async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/streams?user=${session!.publicKey}`,
+          { signal: controller.signal }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch streams");
+        }
+
+        const data = await response.json();
+        const streamList = Array.isArray(data) ? data : data.data ?? [];
+
+        // Map API response to our Stream type
+        const mappedStreams: Stream[] = streamList.map((s: Record<string, unknown>) => ({
+          id: s.id as string,
+          streamId: s.streamId as number,
+          sender: s.sender as string,
+          recipient: s.recipient as string,
+          tokenSymbol: s.tokenSymbol || "USDC",
+          ratePerSecond: Number(s.ratePerSecond) || 0,
+          depositedAmount: (s.depositedAmount as string) || "0",
+          withdrawnAmount: (s.withdrawnAmount as string) || "0",
+          startTime: s.startTime as number,
+          endTime: s.endTime as number | undefined,
+          isActive: s.isActive as boolean,
+          isPaused: s.isPaused as boolean,
+          status: (s.status as string) || "unknown",
+        }));
+
+        setStreams(mappedStreams);
+        setError(null);
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        logger.error("Failed to fetch streams:", err);
+        setError(err instanceof Error ? err.message : "Failed to load streams");
+      } finally {
+        setLoading(false);
+      }
+    })();
 
     return () => controller.abort();
-  }, [isHydrated, session?.publicKey, fetchStreams]);
+  }, [isHydrated, session?.publicKey]);
 
   // Get unique tokens from streams
   const uniqueTokens = React.useMemo(() => {

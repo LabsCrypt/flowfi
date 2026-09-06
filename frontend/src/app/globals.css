@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * #1198 — Visible keyboard focus indicator (WCAG 2.1 AA 2.4.7).
+ * Every interactive element must show a clear focus ring when reached via
+ * keyboard; component-level custom focus states complement rather than
+ * replace this baseline.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent-secondary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Neutralize the default outline only when a richer ring is provided. */
+:focus-visible:has(.focus-ring) {
+  outline: none;
+}
+
 :root {
   --background: #020617;
   --foreground: #f8fafc;
@@ -1609,6 +1626,15 @@ body {
   border: 3px solid rgba(13, 83, 120, 0.1);
   border-top-color: var(--accent-strong);
   animation: spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-shimmer,
+  .animate-bounce,
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
+  }
 }
 
 .dashboard-error-state h3 {
