@@ -15,7 +15,7 @@ use events::{
     StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent,
     TokensWithdrawnEvent,
 };
-use types::{DataKey, DisputeInitiatedData, DisputeState, Stream, StreamStatus};
+use types::{DataKey, DisputeState, Stream, StreamStatus};
 
 // ─── Test Helpers ─────────────────────────────────────────────────────────────
 
@@ -3123,6 +3123,7 @@ fn test_resume_rejects_end_time_projection_overflow() {
 // ─── Dispute Tests (Issue #1319) ──────────────────────────────────────────────
 
 /// Helper: creates a stream with an arbiter configured via force_stream.
+#[allow(clippy::too_many_arguments)]
 fn create_escrow_stream(
     env: &Env,
     client: &StreamContractClient<'_>,
@@ -3288,7 +3289,7 @@ fn test_initiate_dispute_emits_event() {
         .iter()
         .rev()
         .find_map(|(_, t, d)| {
-            let t_vec: soroban_sdk::Vec<soroban_sdk::Val> = t.clone().into();
+            let t_vec: soroban_sdk::Vec<soroban_sdk::Val> = t.clone();
             if let Ok(sym) = Symbol::try_from_val(&env, &t_vec.get(0).unwrap()) {
                 if sym == Symbol::new(&env, "dispute_initiated") {
                     return Some((t, d));
@@ -3491,7 +3492,7 @@ fn test_resolve_dispute_emits_event() {
         .iter()
         .rev()
         .find_map(|(_, t, d)| {
-            let t_vec: soroban_sdk::Vec<soroban_sdk::Val> = t.clone().into();
+            let t_vec: soroban_sdk::Vec<soroban_sdk::Val> = t.clone();
             if let Ok(sym) = Symbol::try_from_val(&env, &t_vec.get(0).unwrap()) {
                 if sym == Symbol::new(&env, "dispute_resolved") {
                     return Some((t, d));
