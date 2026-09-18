@@ -8,7 +8,7 @@ WORKDIR /app
 # Copy lockfile first for optimal Docker layer caching:
 # rebuilds only when package files change, not source files.
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi
 
 # ============================================================
 # Stage 2: builder — compile Next.js application
@@ -18,7 +18,7 @@ FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb836
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 # Copy source files
 COPY . .
