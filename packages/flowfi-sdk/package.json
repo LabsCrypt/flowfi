@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node init && tsc",
     "codegen": "../../scripts/generate-sdk.sh"
   },
   "devDependencies": {

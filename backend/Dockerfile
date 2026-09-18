@@ -15,7 +15,7 @@ COPY package*.json ./
 COPY prisma ./prisma
 
 # Install all deps (incl. devDependencies needed for tsc / prisma generate)
-RUN npm ci
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY tsconfig.json ./
 COPY prisma.config.ts ./
@@ -45,7 +45,7 @@ ENV NODE_ENV=production
 # `npx prisma db push` step the workflow runs against this container,
 # while keeping the install layer cached whenever prisma/ is unchanged.
 COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi
 
 # Copy the prisma schema into the runner. The boot-and-check-health step
 # in .github/workflows/ci.yml runs `npx prisma db push` against this

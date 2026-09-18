@@ -1,7 +1,6 @@
 node_modules
 dist
 target
-.env
 .DS_Store
 coverage
 *.log
@@ -16,3 +15,4 @@ issue*.md
 pr*.md
 ISSUE_*.md
 PR_*.md
+config.bat
