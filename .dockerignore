@@ -1,0 +1,55 @@
+# Docker ignore rules for flowfi
+# Exclude files that inflate image context size but aren't needed at build time.
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Dependency directories (re-installed inside the container)
+node_modules
+**/node_modules
+
+# Build outputs (rebuilt inside the container)
+dist
+build
+.next
+out
+
+# Test artifacts
+coverage
+*.test.*
+*.spec.*
+__tests__
+__mocks__
+test
+tests
+e2e
+
+# Documentation
+*.md
+docs
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / IDE config
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# CI
+.github
+
+# Logs
+*.log
+logs
+npm-debug.log*
+
+# Misc
+*.tmp
+*.bak
