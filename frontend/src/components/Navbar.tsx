@@ -7,6 +7,7 @@ import { useWallet } from "@/context/wallet-context";
 import { ModeToggle } from "./ModeToggle";
 import { WalletButton } from "./wallet/WalletButton";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import { NetworkSelector } from "@/components/NetworkSelector";
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
@@ -50,6 +51,7 @@ export const Navbar = () => {
             </Link>
           ))}
           <ModeToggle />
+          <NetworkSelector />
         </div>
 
         <div className="flex items-center gap-4">
@@ -95,6 +97,7 @@ const MobileMenu = ({ onClose }: { onClose: () => void }) => {
           {link.label}
         </Link>
       ))}
+      <NetworkSelector />
       <ModeToggle />
     </div>
   );

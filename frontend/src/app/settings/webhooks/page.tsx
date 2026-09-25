@@ -1,0 +1,17 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import toast from "react-hot-toast";
+import { useWallet } from "@/context/wallet-context";
+import { createWebhook, deleteWebhook, listWebhooks, regenerateWebhookSecret, updateWebhook, type WebhookSubscription } from "@/lib/api/webhooks";
+import { WebhookDeliveryModal } from "@/components/webhooks/WebhookDeliveryModal";
+import { WebhookModal } from "@/components/webhooks/WebhookModal";
+import { WebhookTable } from "@/components/webhooks/WebhookTable";
+
+export default function WebhooksPage() {
+  const { session } = useWallet(); const [subscriptions, setSubscriptions] = useState<WebhookSubscription[]>([]); const [editing, setEditing] = useState<WebhookSubscription | null>(null); const [delivery, setDelivery] = useState<WebhookSubscription | null>(null); const [creating, setCreating] = useState(false); const [secretKey, setSecretKey] = useState<string | undefined>();
+  const refresh = async () => { if (!session?.publicKey) return; try { setSubscriptions(await listWebhooks(session.publicKey)); } catch (error) { toast.error(error instanceof Error ? error.message : "Failed to load webhooks"); } };
+  useEffect(() => { void refresh(); }, [session?.publicKey]);
+  const save = async (data: { targetUrl: string; eventTypes: string[] }) => { if (!session?.publicKey) return; if (editing) await updateWebhook(editing.id, session.publicKey, data); else { const result = await createWebhook({ userAddress: session.publicKey, ...data }); setSecretKey(result.secretKey); setEditing(result.subscription); } await refresh(); };
+  return <main className="min-h-screen bg-slate-950 px-6 py-12 text-white"><div className="mx-auto max-w-6xl"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-xs uppercase tracking-[0.25em] text-emerald-300">Developer tools</p><h1 className="mt-2 text-4xl font-semibold">Webhooks</h1><p className="mt-2 max-w-2xl text-sm text-slate-400">Register HTTPS receivers, manage event subscriptions, and inspect delivery attempts.</p></div><button onClick={() => { setEditing(null); setSecretKey(undefined); setCreating(true); }} className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950">Add endpoint</button></div>{session?.publicKey ? <div className="mt-8"><WebhookTable subscriptions={subscriptions} onEdit={(subscription) => { setEditing(subscription); setSecretKey(undefined); setCreating(true); }} onToggle={async (subscription) => { await updateWebhook(subscription.id, session.publicKey, { isActive: !subscription.isActive }); await refresh(); }} onDelete={async (subscription) => { if (window.confirm("Delete this webhook endpoint?")) { await deleteWebhook(subscription.id, session.publicKey); await refresh(); } }} onDeliveries={setDelivery} /></div> : <div className="mt-8 rounded-2xl border border-white/10 p-10 text-center text-slate-400">Connect a wallet to manage developer webhooks.</div>}</div>{creating && session?.publicKey && <WebhookModal userAddress={session.publicKey} subscription={editing ?? undefined} secretKey={secretKey} onClose={() => { setCreating(false); setEditing(null); setSecretKey(undefined); }} onSave={async (data) => { await save(data); }} onRegenerate={editing ? async () => { const next = await regenerateWebhookSecret(editing.id, session.publicKey); setSecretKey(next); return next; } : undefined} />}{delivery && session?.publicKey && <WebhookDeliveryModal subscription={delivery} userAddress={session.publicKey} onClose={() => setDelivery(null)} />}</main>;
+}

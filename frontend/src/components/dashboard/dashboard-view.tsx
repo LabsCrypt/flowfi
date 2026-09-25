@@ -51,6 +51,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
+import { CashflowProjectionChart } from "./CashflowProjectionChart";
 
 // @ts-expect-error unused var
 const DashboardOverviewDynamic = dynamic(
@@ -752,6 +753,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
+          <CashflowProjectionChart streams={[...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })), ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token }))]} />
           <StreamsTable
             snapshot={snapshot}
             onTopUp={handleTopUp}
@@ -770,6 +772,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           incomingStreams={snapshot!.incomingStreams}
           onWithdraw={handleIncomingWithdraw}
           withdrawingStreamId={withdrawingIncomingStreamId}
+          onBatchClaimSuccess={refetchSnapshot}
         />
       );
     }
