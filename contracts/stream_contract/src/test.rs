@@ -10,11 +10,12 @@ use soroban_sdk::{
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
-    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    AdminTransferredEvent, DisputeInitiatedEvent, DisputeResolvedEvent, FeeCollectedEvent,
+    FeeConfigUpdatedEvent, InitializedEvent, StreamCancelledEvent, StreamCompletedEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent,
+    TokensWithdrawnEvent,
 };
-use types::{DataKey, Stream, StreamStatus};
+use types::{DataKey, DisputeState, Stream, StreamStatus};
 
 // ─── Test Helpers ─────────────────────────────────────────────────────────────
 
@@ -73,6 +74,8 @@ fn test_datakey_stream_serializes_deterministically() {
         paused: false,
         paused_at: None,
         status: StreamStatus::Active,
+        arbiter: None,
+        dispute_state: DisputeState::None,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -2271,6 +2274,8 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+            arbiter: None,
+            dispute_state: DisputeState::None,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
@@ -3112,5 +3117,419 @@ fn test_resume_rejects_end_time_projection_overflow() {
     assert_eq!(
         client.try_resume_stream(&sender, &id),
         Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+// ─── Dispute Tests (Issue #1319) ──────────────────────────────────────────────
+
+/// Helper: creates a stream with an arbiter configured via force_stream.
+#[allow(clippy::too_many_arguments)]
+fn create_escrow_stream(
+    env: &Env,
+    client: &StreamContractClient<'_>,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    arbiter: &Address,
+    amount: i128,
+    duration: u64,
+) -> u64 {
+    mint(env, token, sender, amount);
+    let id = client.create_stream(sender, recipient, token, &amount, &duration);
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.arbiter = Some(arbiter.clone());
+    force_stream(env, client, id, &stream);
+    id
+}
+
+// ─── initiate_dispute ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_initiate_dispute_by_sender_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    client.initiate_dispute(&sender, &id);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(matches!(stream.dispute_state, DisputeState::Initiated(_)));
+    assert!(stream.paused);
+    assert_eq!(stream.status, StreamStatus::Paused);
+}
+
+#[test]
+fn test_initiate_dispute_by_recipient_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    client.initiate_dispute(&recipient, &id);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(matches!(stream.dispute_state, DisputeState::Initiated(_)));
+}
+
+#[test]
+fn test_initiate_dispute_unauthorized_caller_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    assert_eq!(
+        client.try_initiate_dispute(&stranger, &id),
+        Err(Ok(StreamError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_initiate_dispute_no_arbiter_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let client = create_contract(&env);
+
+    mint(&env, &token, &sender, 10_000);
+    let id = client.create_stream(&sender, &recipient, &token, &10_000, &100);
+
+    assert_eq!(
+        client.try_initiate_dispute(&sender, &id),
+        Err(Ok(StreamError::NoArbiterConfigured))
+    );
+}
+
+#[test]
+fn test_initiate_dispute_already_active_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    client.initiate_dispute(&sender, &id);
+
+    // Second initiate should fail.
+    assert_eq!(
+        client.try_initiate_dispute(&recipient, &id),
+        Err(Ok(StreamError::DisputeAlreadyActive))
+    );
+}
+
+#[test]
+fn test_initiate_dispute_stream_not_found_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = create_contract(&env);
+    let caller = Address::generate(&env);
+
+    assert_eq!(
+        client.try_initiate_dispute(&caller, &999_u64),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
+fn test_initiate_dispute_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    client.initiate_dispute(&sender, &id);
+
+    let events = env.events().all();
+    let (_topics, data) = events
+        .iter()
+        .rev()
+        .find_map(|(_, t, d)| {
+            let t_vec: soroban_sdk::Vec<soroban_sdk::Val> = t.clone();
+            if let Ok(sym) = Symbol::try_from_val(&env, &t_vec.get(0).unwrap()) {
+                if sym == Symbol::new(&env, "dispute_initiated") {
+                    return Some((t, d));
+                }
+            }
+            None
+        })
+        .expect("dispute_initiated event not found");
+
+    let evt = DisputeInitiatedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(evt.stream_id, id);
+    assert_eq!(evt.initiator, sender);
+}
+
+// ─── resolve_dispute ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_resolve_dispute_arbiter_splits_funds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    client.initiate_dispute(&sender, &id);
+
+    // Arbiter splits 10_000 → 6_000 to sender, 4_000 to recipient.
+    client.resolve_dispute(&arbiter, &id, &6_000, &4_000);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.dispute_state, DisputeState::Resolved);
+    assert!(!stream.is_active);
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&sender), 6_000);
+    assert_eq!(token_client.balance(&recipient), 4_000);
+}
+
+#[test]
+fn test_resolve_dispute_full_to_sender() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+    client.resolve_dispute(&arbiter, &id, &10_000, &0);
+
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&sender), 10_000);
+    assert_eq!(token_client.balance(&recipient), 0);
+}
+
+#[test]
+fn test_resolve_dispute_full_to_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+    client.resolve_dispute(&arbiter, &id, &0, &10_000);
+
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&sender), 0);
+    assert_eq!(token_client.balance(&recipient), 10_000);
+}
+
+#[test]
+fn test_resolve_dispute_unauthorized_non_arbiter_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+
+    assert_eq!(
+        client.try_resolve_dispute(&stranger, &id, &5_000, &5_000),
+        Err(Ok(StreamError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_resolve_dispute_no_active_dispute_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+
+    // No dispute initiated — resolve should fail.
+    assert_eq!(
+        client.try_resolve_dispute(&arbiter, &id, &5_000, &5_000),
+        Err(Ok(StreamError::NoActiveDispute))
+    );
+}
+
+#[test]
+fn test_resolve_dispute_invalid_split_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+
+    // 6_000 + 3_000 = 9_000 ≠ 10_000 remaining → invalid.
+    assert_eq!(
+        client.try_resolve_dispute(&arbiter, &id, &6_000, &3_000),
+        Err(Ok(StreamError::InvalidDisputeSplit))
+    );
+}
+
+#[test]
+fn test_resolve_dispute_negative_payout_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+
+    assert_eq!(
+        client.try_resolve_dispute(&arbiter, &id, &-1, &10_001),
+        Err(Ok(StreamError::InvalidDisputeSplit))
+    );
+}
+
+#[test]
+fn test_resolve_dispute_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+    client.resolve_dispute(&arbiter, &id, &7_000, &3_000);
+
+    let events = env.events().all();
+    let (_, data) = events
+        .iter()
+        .rev()
+        .find_map(|(_, t, d)| {
+            let t_vec: soroban_sdk::Vec<soroban_sdk::Val> = t.clone();
+            if let Ok(sym) = Symbol::try_from_val(&env, &t_vec.get(0).unwrap()) {
+                if sym == Symbol::new(&env, "dispute_resolved") {
+                    return Some((t, d));
+                }
+            }
+            None
+        })
+        .expect("dispute_resolved event not found");
+
+    let evt = DisputeResolvedEvent::try_from_val(&env, &data).unwrap();
+    assert_eq!(evt.stream_id, id);
+    assert_eq!(evt.arbiter, arbiter);
+    assert_eq!(evt.sender_payout, 7_000);
+    assert_eq!(evt.recipient_payout, 3_000);
+}
+
+// ─── Dispute blocks cancel ────────────────────────────────────────────────────
+
+#[test]
+fn test_cancel_blocked_during_active_dispute() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let client = create_contract(&env);
+
+    let id = create_escrow_stream(
+        &env, &client, &sender, &recipient, &token, &arbiter, 10_000, 100,
+    );
+    client.initiate_dispute(&sender, &id);
+
+    // Unilateral cancel must be blocked while dispute is active.
+    assert_eq!(
+        client.try_cancel_stream(&sender, &id),
+        Err(Ok(StreamError::DisputeInProgress))
     );
 }

@@ -39,15 +39,18 @@ use soroban_sdk::{contract, contractimpl, token, vec, Address, Env, InvokeError,
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    RecipientTransferredEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    AdminTransferredEvent, DisputeInitiatedEvent, DisputeResolvedEvent, FeeCollectedEvent,
+    FeeConfigUpdatedEvent, InitializedEvent, RecipientTransferredEvent, StreamCancelledEvent,
+    StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent,
+    StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
     try_load_config, try_load_stream,
 };
-use types::{BatchStreamInput, ProtocolConfig, Stream, StreamStatus};
+use types::{
+    BatchStreamInput, DisputeInitiatedData, DisputeState, ProtocolConfig, Stream, StreamStatus,
+};
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
 const MAX_FEE_RATE_BPS: u32 = 1_000;
@@ -263,6 +266,8 @@ impl StreamContract {
                 paused: false,
                 paused_at: None,
                 status: StreamStatus::Active,
+                arbiter: None,
+                dispute_state: DisputeState::None,
             },
         );
 
@@ -356,6 +361,8 @@ impl StreamContract {
                 paused: false,
                 paused_at: None,
                 status: StreamStatus::Active,
+                arbiter: None,
+                dispute_state: DisputeState::None,
             };
             save_stream(&env, stream_id, &stream);
             env.events().publish(
@@ -419,6 +426,8 @@ impl StreamContract {
                 paused: false,
                 paused_at: None,
                 status: StreamStatus::Active,
+                arbiter: None,
+                dispute_state: DisputeState::None,
             },
         );
         env.events().publish(
@@ -785,6 +794,11 @@ impl StreamContract {
         Self::validate_stream_ownership(&stream, &sender)?;
         Self::validate_stream_active(&stream)?;
 
+        // Block unilateral cancellation if a dispute is in progress.
+        if let DisputeState::Initiated(_) = &stream.dispute_state {
+            return Err(StreamError::DisputeInProgress);
+        }
+
         let now = env.ledger().timestamp();
         let accrued_amount = Self::calculate_claimable(&stream, now);
 
@@ -940,6 +954,236 @@ impl StreamContract {
         );
 
         Ok(new_end_time)
+    }
+
+    // ─── Escrow & Dispute Resolution ──────────────────────────────────────────
+
+    /// Create a new escrow-enabled payment stream with an arbiter.
+    ///
+    /// Identical to `create_stream` but accepts an `arbiter` address that can
+    /// mediate disputes. Either party can initiate a dispute, which freezes
+    /// accrual and blocks unilateral cancellation until the arbiter resolves it.
+    ///
+    /// # Errors
+    /// Same as `create_stream`.
+    pub fn create_escrow_stream(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_address: Address,
+        amount: i128,
+        duration: u64,
+        arbiter: Address,
+    ) -> Result<u64, StreamError> {
+        sender.require_auth();
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+        if duration == 0 {
+            return Err(StreamError::InvalidDuration);
+        }
+        Self::validate_token_contract(&env, &token_address)?;
+
+        let stream_id = next_stream_id(&env);
+        let start_time = env.ledger().timestamp();
+
+        let token_client = token::Client::new(&env, &token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&sender, &contract_address, &amount);
+
+        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id)?;
+        let rate_per_second = net_amount / (duration as i128);
+
+        if rate_per_second == 0 {
+            return Err(StreamError::InvalidRate);
+        }
+
+        save_stream(
+            &env,
+            stream_id,
+            &Stream {
+                sender: sender.clone(),
+                recipient: recipient.clone(),
+                token_address: token_address.clone(),
+                rate_per_second,
+                deposited_amount: net_amount,
+                withdrawn_amount: 0,
+                start_time,
+                last_update_time: start_time,
+                cliff_time: None,
+                is_active: true,
+                paused: false,
+                paused_at: None,
+                status: StreamStatus::Active,
+                arbiter: Some(arbiter),
+                dispute_state: DisputeState::None,
+            },
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_created"), stream_id),
+            StreamCreatedEvent {
+                stream_id,
+                sender,
+                recipient,
+                rate_per_second,
+                token_address,
+                deposited_amount: net_amount,
+                start_time,
+            },
+        );
+
+        Ok(stream_id)
+    }
+
+    /// Initiate a dispute on an escrow-enabled stream.
+    ///
+    /// Either the sender or recipient can initiate. Once initiated, token
+    /// accrual is frozen (stream is paused) and unilateral cancellation or
+    /// withdrawal is blocked until the arbiter resolves the dispute.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`       — no stream exists with `stream_id`.
+    /// - `Unauthorized`         — caller is neither sender nor recipient.
+    /// - `StreamNotActive`      — stream is inactive.
+    /// - `NoArbiterConfigured`  — stream has no arbiter.
+    /// - `DisputeAlreadyActive` — a dispute is already in progress.
+    pub fn initiate_dispute(env: Env, caller: Address, stream_id: u64) -> Result<(), StreamError> {
+        caller.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+
+        // Only sender or recipient may initiate.
+        if stream.sender != caller && stream.recipient != caller {
+            return Err(StreamError::Unauthorized);
+        }
+        if !stream.is_active {
+            return Err(StreamError::StreamNotActive);
+        }
+        if stream.arbiter.is_none() {
+            return Err(StreamError::NoArbiterConfigured);
+        }
+        if let DisputeState::Initiated(_) = &stream.dispute_state {
+            return Err(StreamError::DisputeAlreadyActive);
+        }
+
+        let now = env.ledger().timestamp();
+
+        // Freeze accrual by pausing the stream at the dispute moment.
+        if !stream.paused {
+            stream.paused = true;
+            stream.paused_at = Some(now);
+            stream.status = StreamStatus::Paused;
+        }
+
+        stream.dispute_state = DisputeState::Initiated(DisputeInitiatedData {
+            initiator: caller.clone(),
+            timestamp: now,
+        });
+        save_stream(&env, stream_id, &stream);
+
+        env.events().publish(
+            (Symbol::new(&env, "dispute_initiated"), stream_id),
+            DisputeInitiatedEvent {
+                stream_id,
+                initiator: caller,
+                timestamp: now,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Resolve an active dispute as the designated arbiter.
+    ///
+    /// The arbiter splits the remaining deposit (after already-withdrawn
+    /// amounts) between sender and recipient. The split must be exact:
+    /// `sender_payout + recipient_payout == remaining_deposit`.
+    ///
+    /// Both payouts are transferred atomically and the stream is terminated.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`      — no stream exists with `stream_id`.
+    /// - `Unauthorized`        — caller is not the stream's arbiter.
+    /// - `NoActiveDispute`     — no dispute is in progress.
+    /// - `InvalidDisputeSplit` — payouts do not sum to remaining deposit.
+    pub fn resolve_dispute(
+        env: Env,
+        arbiter: Address,
+        stream_id: u64,
+        sender_payout: i128,
+        recipient_payout: i128,
+    ) -> Result<(), StreamError> {
+        arbiter.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+
+        // Verify the caller is the stream's arbiter.
+        match &stream.arbiter {
+            Some(a) if *a == arbiter => {}
+            _ => return Err(StreamError::Unauthorized),
+        }
+
+        // Verify a dispute is active.
+        match &stream.dispute_state {
+            DisputeState::Initiated(_) => {}
+            _ => return Err(StreamError::NoActiveDispute),
+        }
+
+        // The remaining deposit is everything not yet withdrawn.
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
+
+        // Enforce exact split.
+        if sender_payout < 0 || recipient_payout < 0 {
+            return Err(StreamError::InvalidDisputeSplit);
+        }
+        if sender_payout
+            .checked_add(recipient_payout)
+            .ok_or(StreamError::ArithmeticOverflow)?
+            != remaining
+        {
+            return Err(StreamError::InvalidDisputeSplit);
+        }
+
+        // Effects: terminate the stream.
+        stream.is_active = false;
+        stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = Option::None;
+        stream.dispute_state = DisputeState::Resolved;
+        stream.withdrawn_amount = stream.deposited_amount;
+
+        let sender_addr = stream.sender.clone();
+        let recipient_addr = stream.recipient.clone();
+
+        // Persist state before external calls (CEI).
+        save_stream(&env, stream_id, &stream);
+
+        // Interactions: transfer payouts.
+        let token_client = token::Client::new(&env, &stream.token_address);
+        let contract_address = env.current_contract_address();
+
+        if sender_payout > 0 {
+            token_client.transfer(&contract_address, &sender_addr, &sender_payout);
+        }
+        if recipient_payout > 0 {
+            token_client.transfer(&contract_address, &recipient_addr, &recipient_payout);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "dispute_resolved"), stream_id),
+            DisputeResolvedEvent {
+                stream_id,
+                arbiter,
+                sender_payout,
+                recipient_payout,
+            },
+        );
+
+        Ok(())
     }
 
     // ─── Read-only Queries ────────────────────────────────────────────────────

@@ -166,3 +166,26 @@ pub struct StreamCompletedEvent {
     pub recipient: Address,
     pub total_withdrawn: i128,
 }
+
+/// Emitted when a dispute is initiated on an escrow-enabled stream.
+///
+/// Topic: `("dispute_initiated", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeInitiatedEvent {
+    pub stream_id: u64,
+    pub initiator: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when an arbiter resolves a dispute and splits the remaining funds.
+///
+/// Topic: `("dispute_resolved", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeResolvedEvent {
+    pub stream_id: u64,
+    pub arbiter: Address,
+    pub sender_payout: i128,
+    pub recipient_payout: i128,
+}

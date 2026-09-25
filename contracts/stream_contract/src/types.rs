@@ -1,5 +1,28 @@
 use soroban_sdk::{contracttype, Address};
 
+/// Data stored when a dispute is initiated.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeInitiatedData {
+    pub initiator: Address,
+    pub timestamp: u64,
+}
+
+/// State of a dispute on an escrow-enabled stream.
+///
+/// Streams with an assigned `arbiter` can enter dispute resolution,
+/// freezing accrual until the arbiter splits the remaining funds.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeState {
+    /// No dispute has been raised.
+    None,
+    /// A dispute has been initiated — stores initiator + timestamp.
+    Initiated(DisputeInitiatedData),
+    /// The arbiter has resolved the dispute.
+    Resolved,
+}
+
 /// Status of a payment stream.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,6 +84,11 @@ pub struct Stream {
     pub paused_at: Option<u64>,
     /// Current status of the stream. Always set.
     pub status: StreamStatus,
+    /// Optional arbiter address for escrow-enabled dispute resolution.
+    /// When set, the stream supports multi-signature dispute cancellation.
+    pub arbiter: Option<Address>,
+    /// If a dispute is active, stores its state. `None` means no dispute.
+    pub dispute_state: DisputeState,
 }
 
 /// Input for atomic batch stream creation.

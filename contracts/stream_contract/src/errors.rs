@@ -42,4 +42,14 @@ pub enum StreamError {
     /// Returned instead of letting `overflow-checks` panic and abort the whole
     /// transaction, so callers get a typed failure they can handle.
     ArithmeticOverflow = 16,
+    /// Stream has no arbiter configured; dispute operations are unavailable.
+    NoArbiterConfigured = 17,
+    /// A dispute is already active on this stream.
+    DisputeAlreadyActive = 18,
+    /// No active dispute exists on this stream.
+    NoActiveDispute = 19,
+    /// The payout split does not equal the remaining deposit.
+    InvalidDisputeSplit = 20,
+    /// Operation is blocked because a dispute is currently active on this stream.
+    DisputeInProgress = 21,
 }
