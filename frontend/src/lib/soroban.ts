@@ -1,13 +1,11 @@
 import type { WalletSession } from "@/lib/wallet";
+import { getNetworkConfig, type NetworkId } from "@/lib/stellar-config";
 
-const CONTRACT_ID =
-  process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID ?? "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-
-const SOROBAN_RPC_URL =
-  process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
-
-const NETWORK_PASSPHRASE =
-  process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
+function activeNetworkConfig() {
+  const stored = typeof window === "undefined" ? null : window.localStorage.getItem("flowfi.network");
+  const id: NetworkId = stored === "mainnet" || stored === "futurenet" || stored === "sandbox" ? stored : "testnet";
+  return getNetworkConfig(id);
+}
 
 export interface CreateStreamParams {
   recipient: string;
@@ -27,6 +25,10 @@ export interface CancelParams {
 
 export interface WithdrawParams {
   streamId: bigint;
+}
+
+export interface BatchWithdrawParams {
+  streamIds: bigint[];
 }
 
 export interface PauseParams {
@@ -149,13 +151,14 @@ export async function fetchTokenBalance(
   const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
 
   const tokenAddress = getTokenAddress(tokenSymbol);
-  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  const config = activeNetworkConfig();
+  const server = new rpc.Server(config.rpcUrl, { allowHttp: config.id === "sandbox" });
   const account = await server.getAccount(publicKey);
   const tokenContract = new Contract(tokenAddress);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase: config.passphrase,
   })
     .addOperation(tokenContract.call("balance", new Address(publicKey).toScVal()))
     .setTimeout(30)
@@ -217,13 +220,14 @@ async function freighterCall(
 
   const { signTransaction } = await import("@stellar/freighter-api");
 
-  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  const config = activeNetworkConfig();
+  const server = new rpc.Server(config.rpcUrl, { allowHttp: config.id === "sandbox" });
   const account = await server.getAccount(publicKey);
-  const contract = new Contract(CONTRACT_ID);
+  const contract = new Contract(config.contractId);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase: config.passphrase,
   })
     .addOperation(contract.call(method, ...args))
     .setTimeout(30)
@@ -232,7 +236,7 @@ async function freighterCall(
   const simResult = await server.simulateTransaction(tx);
   if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
     if (isContractNotFoundError(simResult)) {
-      throw contractNotFoundError(CONTRACT_ID);
+      throw contractNotFoundError(config.contractId);
     }
     throw new SorobanCallError(`Simulation failed: ${simResult.error}`, "NetworkError");
   }
@@ -241,7 +245,7 @@ async function freighterCall(
 
   const { signedTxXdr, error: signError } = await signTransaction(
     preparedTx.toXDR(),
-    { networkPassphrase: NETWORK_PASSPHRASE },
+    { networkPassphrase: config.passphrase },
   );
 
   if (signError) {
@@ -252,7 +256,7 @@ async function freighterCall(
     throw new SorobanCallError(msg, "Unknown");
   }
 
-  const signedTx = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
+  const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.passphrase);
   const sendResult = await server.sendTransaction(signedTx);
 
   if (sendResult.status === "ERROR") {
@@ -336,6 +340,16 @@ export async function withdrawFromStream(
   return freighterCall(session.publicKey, "withdraw", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),
+  ]);
+}
+
+export async function batchWithdrawFromStreams(
+  session: WalletSession,
+  params: BatchWithdrawParams,
+): Promise<SorobanResult> {
+  const { nativeToScVal } = await import("@stellar/stellar-sdk");
+  return freighterCall(session.publicKey, "batch_withdraw", [
+    nativeToScVal(params.streamIds, { type: "vec" }),
   ]);
 }
 

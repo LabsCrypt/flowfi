@@ -102,7 +102,6 @@ export async function listWebhookSubscriptions(
   const subscriptions = await prisma.webhookSubscription.findMany({
     where: {
       userAddress,
-      isActive: true,
     },
     orderBy: {
       createdAt: "desc",
@@ -128,6 +127,54 @@ export async function deleteWebhookSubscription(
       isActive: false,
     },
   });
+}
+
+export async function updateWebhookSubscription(
+  id: string,
+  userAddress: string,
+  input: { targetUrl?: string; eventTypes?: string[]; isActive?: boolean },
+): Promise<Omit<WebhookSubscription, "secretKey">> {
+  if (input.targetUrl !== undefined && !input.targetUrl.startsWith("https://")) {
+    throw new Error("Webhook URL must use HTTPS");
+  }
+  const subscription = await prisma.webhookSubscription.updateMany({
+    where: { id, userAddress },
+    data: input,
+  });
+  if (subscription.count === 0) throw new Error("Webhook subscription not found");
+  const updated = await prisma.webhookSubscription.findUniqueOrThrow({ where: { id } });
+  const { secretKey: _secretKey, ...safe } = updated;
+  return safe;
+}
+
+export async function listWebhookDeliveries(
+  id: string,
+  userAddress: string,
+  page: number,
+  limit: number,
+) {
+  const safePage = Math.max(1, Math.floor(page) || 1);
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 20));
+  const subscription = await prisma.webhookSubscription.findFirst({ where: { id, userAddress } });
+  if (!subscription) throw new Error("Webhook subscription not found");
+  const [deliveries, total] = await Promise.all([
+    prisma.webhookDelivery.findMany({
+      where: { subscriptionId: id },
+      orderBy: { createdAt: "desc" },
+      skip: (safePage - 1) * safeLimit,
+      take: safeLimit,
+    }),
+    prisma.webhookDelivery.count({ where: { subscriptionId: id } }),
+  ]);
+  return { deliveries, total, page: safePage, limit: safeLimit };
+}
+
+export async function regenerateWebhookSecret(id: string, userAddress: string): Promise<string> {
+  const owned = await prisma.webhookSubscription.findFirst({ where: { id, userAddress } });
+  if (!owned) throw new Error("Webhook subscription not found");
+  const secretKey = crypto.randomBytes(32).toString("hex");
+  await prisma.webhookSubscription.update({ where: { id }, data: { secretKey } });
+  return secretKey;
 }
 
 /**

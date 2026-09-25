@@ -8,6 +8,8 @@ import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/context/theme-provider";
 import { Navbar } from "@/components/Navbar";
 import { QueryProvider } from "@/components/providers/query-provider";
+import { NetworkProvider } from "@/context/NetworkContext";
+import { WalletMismatchBanner } from "@/components/wallet/WalletMismatchBanner";
 
 const sora = Sora({
   variable: "--font-display",
@@ -82,8 +84,10 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            <WalletProvider>
-              <Navbar />
+            <NetworkProvider>
+              <WalletProvider>
+                <Navbar />
+                <WalletMismatchBanner />
               <Toaster
                 position="top-right"
                 toastOptions={{
@@ -97,7 +101,8 @@ export default function RootLayout({
                 }}
               />
               {children}
-            </WalletProvider>
+              </WalletProvider>
+            </NetworkProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>
