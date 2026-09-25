@@ -45,8 +45,8 @@ use events::{
     TokensWithdrawnEvent,
 };
 use storage::{
-    config_exists, load_config, load_stream, next_stream_id, remove_stream, save_config, save_stream,
-    try_load_config, try_load_stream,
+    config_exists, load_config, load_stream, next_stream_id, remove_stream, save_config,
+    save_stream, try_load_config, try_load_stream,
 };
 use types::{BatchStreamInput, ProtocolConfig, Stream, StreamStatus};
 

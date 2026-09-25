@@ -3132,7 +3132,10 @@ fn test_close_stream_completed_by_sender_prunes_storage() {
     // Fully drain the stream so it transitions to Completed.
     env.ledger().with_mut(|l| l.timestamp += 200);
     client.withdraw(&recipient, &id);
-    assert_eq!(client.get_stream(&id).unwrap().status, StreamStatus::Completed);
+    assert_eq!(
+        client.get_stream(&id).unwrap().status,
+        StreamStatus::Completed
+    );
 
     client.close_stream(&sender, &id);
 
@@ -3161,7 +3164,10 @@ fn test_close_stream_cancelled_by_recipient_prunes_storage() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
     client.cancel_stream(&sender, &id);
-    assert_eq!(client.get_stream(&id).unwrap().status, StreamStatus::Cancelled);
+    assert_eq!(
+        client.get_stream(&id).unwrap().status,
+        StreamStatus::Cancelled
+    );
 
     client.close_stream(&recipient, &id);
     assert!(client.get_stream(&id).is_none());

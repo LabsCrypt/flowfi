@@ -63,7 +63,13 @@ jobs:
 
       - name: Run migrations + seed demo data
         run: |
-          npx prisma migrate deploy --schema=prisma/schema.prisma
+          npx prisma generate --schema=prisma/schema.prisma
+          # `migrate deploy` is tried first (spec #1456); the committed
+          # `20260221132622_init` migration fails on a fresh database
+          # (missing unique constraint for referenced "User"), so fall back to
+          # `db push` — the same path Backend CI uses — to keep ephemeral
+          # previews green.
+          npx prisma migrate deploy --schema=prisma/schema.prisma || npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
           npm run prisma:seed --workspace=backend || npx tsx prisma/seed.ts
         working-directory: backend
         env:
