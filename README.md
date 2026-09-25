@@ -269,6 +269,13 @@ Before your first change, run through the [Development Guide](docs/DEVELOPMENT.m
 
 For architecture details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+### Architecture Decisions & Threat Model (auditor entry points)
+
+- **Architecture Decision Records:** [docs/adr/](docs/adr/) — TTL strategy, keeper-key deprecation, indexer cursor/dead-letter, SSE/WebSocket coexistence.
+- **STRIDE Threat Model:** [docs/security/STRIDE_THREAT_MODEL.md](docs/security/STRIDE_THREAT_MODEL.md) — trust boundaries, threat matrix, mitigations, residual risks.
+- **TypeScript SDK (client-side signing):** [packages/flowfi-sdk/](packages/flowfi-sdk/) — standalone `FlowFiClient` for direct ledger access without the backend API.
+- **Preview environments:** every PR gets an ephemeral full-stack preview (migrated + seeded DB) via `.github/workflows/pr-preview.yml`; resources are torn down by `pr-preview-cleanup.yml` on close.
+
 ## Security
 
 If you discover a security vulnerability, please see our [Security Policy](SECURITY.md) for information on how to report it responsibly.

@@ -40,12 +40,13 @@ use soroban_sdk::{contract, contractimpl, token, vec, Address, Env, InvokeError,
 use errors::StreamError;
 use events::{
     AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    RecipientTransferredEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    RecipientTransferredEvent, StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent,
+    TokensWithdrawnEvent,
 };
 use storage::{
-    config_exists, load_config, load_stream, next_stream_id, save_config, save_stream,
-    try_load_config, try_load_stream,
+    config_exists, load_config, load_stream, next_stream_id, remove_stream, save_config,
+    save_stream, try_load_config, try_load_stream,
 };
 use types::{BatchStreamInput, ProtocolConfig, Stream, StreamStatus};
 
@@ -830,6 +831,76 @@ impl StreamContract {
                 recipient,
                 amount_withdrawn,
                 refunded_amount,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Permanently prune a fully settled stream's storage entry.
+    ///
+    /// Reclaims persistent storage rent and prevents unbounded state growth
+    /// from thousands of expired streams. Also avoids wasting TTL-bump gas on
+    /// finished streams that hold zero balance.
+    ///
+    /// Only the stream's `sender`, `recipient`, or the protocol admin may
+    /// close a stream. The stream must already be terminal (`Completed` or
+    /// `Cancelled`), inactive, and hold zero remaining balance.
+    ///
+    /// On success the `DataKey::Stream(stream_id)` entry is removed and a
+    /// `stream_closed` event is emitted for the backend indexer to mark the
+    /// stream as archived.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`   — no stream exists with `stream_id`.
+    /// - `Unauthorized`     — caller is not sender, recipient, or admin.
+    /// - `StreamStillActive` — stream is still active, has a non-terminal
+    ///   status, or still holds unwithdrawn / claimable funds.
+    pub fn close_stream(env: Env, caller: Address, stream_id: u64) -> Result<(), StreamError> {
+        caller.require_auth();
+
+        let stream = load_stream(&env, stream_id)?;
+
+        // Authorization: sender, recipient, or current protocol admin.
+        let is_admin = match try_load_config(&env) {
+            Some(cfg) => cfg.admin == caller,
+            None => false,
+        };
+        if caller != stream.sender && caller != stream.recipient && !is_admin {
+            return Err(StreamError::Unauthorized);
+        }
+
+        // Must be terminal and inactive.
+        if stream.is_active {
+            return Err(StreamError::StreamStillActive);
+        }
+        if stream.status != StreamStatus::Completed && stream.status != StreamStatus::Cancelled {
+            return Err(StreamError::StreamStillActive);
+        }
+
+        // Zero-balance check. Completed streams must be fully withdrawn
+        // (`deposited == withdrawn`, hence claimable == 0). Cancelled streams
+        // settled all funds at cancel time (payout + refund), so they are
+        // immediately prunable.
+        if stream.status == StreamStatus::Completed {
+            if stream.deposited_amount != stream.withdrawn_amount {
+                return Err(StreamError::StreamStillActive);
+            }
+            let now = env.ledger().timestamp();
+            if Self::calculate_claimable(&stream, now) != 0 {
+                return Err(StreamError::StreamStillActive);
+            }
+        }
+
+        remove_stream(&env, stream_id);
+
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (Symbol::new(&env, "stream_closed"), stream_id),
+            StreamClosedEvent {
+                stream_id,
+                closer: caller,
+                timestamp,
             },
         );
 
