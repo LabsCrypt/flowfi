@@ -11,8 +11,8 @@ use soroban_sdk::{
 use errors::StreamError;
 use events::{
     AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
-    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
+    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{DataKey, Stream, StreamStatus};
 
@@ -3113,4 +3113,148 @@ fn test_resume_rejects_end_time_projection_overflow() {
         client.try_resume_stream(&sender, &id),
         Err(Ok(StreamError::ArithmeticOverflow))
     );
+}
+
+// ─── close_stream / storage reclamation (#1441) ───────────────────────────────
+
+#[test]
+fn test_close_stream_completed_by_sender_prunes_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    // Fully drain the stream so it transitions to Completed.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+    assert_eq!(client.get_stream(&id).unwrap().status, StreamStatus::Completed);
+
+    client.close_stream(&sender, &id);
+
+    // Closed stream ID can no longer be queried or mutated.
+    assert!(client.get_stream(&id).is_none());
+    assert_eq!(client.get_claimable_amount(&id), None);
+    assert_eq!(
+        client.try_withdraw(&recipient, &id),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        client.try_close_stream(&sender, &id),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
+fn test_close_stream_cancelled_by_recipient_prunes_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.cancel_stream(&sender, &id);
+    assert_eq!(client.get_stream(&id).unwrap().status, StreamStatus::Cancelled);
+
+    client.close_stream(&recipient, &id);
+    assert!(client.get_stream(&id).is_none());
+}
+
+#[test]
+fn test_close_stream_by_admin_prunes_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    client.initialize(&admin, &treasury, &0);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+
+    client.close_stream(&admin, &id);
+    assert!(client.get_stream(&id).is_none());
+}
+
+#[test]
+fn test_close_stream_rejects_active_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    assert_eq!(
+        client.try_close_stream(&sender, &id),
+        Err(Ok(StreamError::StreamStillActive))
+    );
+    // Storage entry must survive the failed close.
+    assert!(client.get_stream(&id).is_some());
+}
+
+#[test]
+fn test_close_stream_rejects_unauthorized_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+
+    assert_eq!(
+        client.try_close_stream(&Address::generate(&env), &id),
+        Err(Ok(StreamError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_close_stream_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+    client.close_stream(&sender, &id);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_closed")
+        })
+        .expect("stream_closed event not found");
+
+    let payload: StreamClosedEvent = StreamClosedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.closer, sender);
 }

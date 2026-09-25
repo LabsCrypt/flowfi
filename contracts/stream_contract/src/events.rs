@@ -166,3 +166,14 @@ pub struct StreamCompletedEvent {
     pub recipient: Address,
     pub total_withdrawn: i128,
 }
+
+/// Emitted when a settled stream's storage entry is pruned via `close_stream`.
+///
+/// Topic: `("stream_closed", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamClosedEvent {
+    pub stream_id: u64,
+    pub closer: Address,
+    pub timestamp: u64,
+}

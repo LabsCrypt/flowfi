@@ -81,6 +81,21 @@ pub fn try_load_stream(env: &Env, stream_id: u64) -> Option<Stream> {
     stream
 }
 
+/// Removes a settled stream record from persistent storage.
+///
+/// Used by `close_stream` to reclaim storage rent and prune state bloat once
+/// a stream is fully settled (`Completed` or `Cancelled` with zero balance).
+/// Returns `true` if an entry was removed, `false` if none existed.
+pub fn remove_stream(env: &Env, stream_id: u64) -> bool {
+    let key = DataKey::Stream(stream_id);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+        true
+    } else {
+        false
+    }
+}
+
 // ─── Protocol Config ──────────────────────────────────────────────────────────
 
 /// Checks whether the protocol config has already been initialized.
