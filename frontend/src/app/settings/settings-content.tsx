@@ -11,6 +11,8 @@ import toast from "react-hot-toast";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DisconnectConfirmModal } from "@/components/wallet/DisconnectConfirmModal";
+import { ClearAppDataConfirmModal } from "@/components/settings/ClearAppDataConfirmModal";
+import { clearDisposableAppData } from "@/lib/app-data";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 
 type DisplayCurrency = "USD" | "EUR" | "GBP" | "XLM" | "USDC";
@@ -118,6 +120,7 @@ export default function SettingsContent() {
   };
 
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [showClearAppDataConfirm, setShowClearAppDataConfirm] = useState(false);
 
   const handleDisconnect = () => {
     if (isDirty) {
@@ -128,6 +131,16 @@ export default function SettingsContent() {
     }
     disconnect();
     toast.success("Wallet disconnected");
+    router.push("/");
+  };
+
+  const handleClearAppData = async () => {
+    clearDisposableAppData();
+    disconnect();
+    document.documentElement.classList.remove("light");
+    document.documentElement.classList.add("dark");
+    toast.success("App data cleared");
+    setShowClearAppDataConfirm(false);
     router.push("/");
   };
 
@@ -494,7 +507,34 @@ export default function SettingsContent() {
             </div>
           </div>
 
-          {/* Disconnect */}
+          {/* Clear App Data */}
+            <div className="pt-6 mt-6 border-t border-white/10 dark:border-black/10 space-y-3">
+              <div>
+                <p className="font-medium text-white dark:text-black">
+                  Clear App Data
+                </p>
+                <p className="text-sm text-white/60 dark:text-black/60 mt-1">
+                  Remove disposable FlowFi preferences, saved templates, drafts, and wallet session data from this browser.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowClearAppDataConfirm(true)}
+                className="w-full flex items-center justify-center gap-2 border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 transition px-4 py-3 rounded-xl text-amber-400 font-medium"
+              >
+                Clear App Data
+              </button>
+
+              {showClearAppDataConfirm && (
+                <ClearAppDataConfirmModal
+                  onClose={() => setShowClearAppDataConfirm(false)}
+                  onConfirm={handleClearAppData}
+                />
+              )}
+            </div>
+
+            {/* Disconnect */}
           {session && (
             <>
               <button

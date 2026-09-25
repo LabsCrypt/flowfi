@@ -257,35 +257,58 @@ describe('SorobanEventWorker', () => {
         } as any,
       };
 
-      // First call: event doesn't exist
-      (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
-      (prisma.streamEvent.upsert as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      const mockTx = {
+        streamEvent: {
+          findUnique: vi.fn(),
+          upsert: vi.fn(),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+        (callback) => callback(mockTx),
+      );
+
+      // First call: event doesn't exist.
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce(null);
+      mockTx.streamEvent.upsert.mockResolvedValueOnce({
         id: 'fee-event-1',
         transactionHash: txHash,
         eventType: 'FEE_COLLECTED',
       });
 
-      await (worker as any).handleFeeCollected(mockEvent, mockEvent.topic![1]);
-      expect(prisma.streamEvent.findUnique).toHaveBeenCalledTimes(1);
-      expect(prisma.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      await (worker as any).handleFeeCollected(
+        mockEvent,
+        mockEvent.topic![1],
+      );
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
       expect(logger.warn).not.toHaveBeenCalled();
 
-      // Reset mocks
       vi.clearAllMocks();
 
-      // Second call: event exists (duplicate)
-      (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      // Second call: event already exists, so no second row is created.
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({
         id: 'fee-event-1',
       });
 
-      await (worker as any).handleFeeCollected(mockEvent, mockEvent.topic![1]);
-      expect(prisma.streamEvent.findUnique).toHaveBeenCalledTimes(1);
-      expect(prisma.streamEvent.upsert).not.toHaveBeenCalled();
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation(
+        (callback) => callback(mockTx),
+      );
+
+      await (worker as any).handleFeeCollected(
+        mockEvent,
+        mockEvent.topic![1],
+      );
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('Duplicate StreamEvent skipped')
+        expect.stringContaining('Duplicate StreamEvent skipped'),
       );
     });
-
     it('should process fee_config_updated events successfully', async () => {
       const txHash = 'fee-config-tx-hash';
 
