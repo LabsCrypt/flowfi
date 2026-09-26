@@ -4,21 +4,21 @@ const I128_MAX = (1n << 127n) - 1n;
 const I128_MIN = -(1n << 127n);
 
 export interface ClaimableStreamState {
-  streamId: number;
+  streamId: bigint;
   ratePerSecond: string;
   depositedAmount: string;
   withdrawnAmount: string;
-  startTime: number;
-  lastUpdateTime: number;
+  startTime: number | bigint;
+  lastUpdateTime: number | bigint;
   isActive: boolean;
   isPaused: boolean;
-  pausedAt: number | null;
+  pausedAt: number | bigint | null;
   totalPausedDuration: number;
   updatedAt?: Date;
 }
 
 export interface ClaimableAmountResult {
-  streamId: number;
+  streamId: bigint;
   claimableAmount: string;
   actionable: boolean;
   calculatedAt: number;
@@ -30,6 +30,15 @@ interface ClaimableServiceOptions {
   cacheTtlMs?: number;
   nowMs?: () => number;
 }
+
+/**
+ * Coarseness (in seconds) of the timestamp component in the claimable-amount
+ * cache key (Issue #1249). Without bucketing, the key embeds the current
+ * second, so sustained polling generates a fresh key every second per stream
+ * state and the cache Map grows continuously. Rounding to a 5s bucket cuts
+ * that key churn by ~5x while staying well within the 5s cache TTL.
+ */
+const CLAIMABLE_CACHE_BUCKET_SECONDS = 5;
 
 function clampI128(value: bigint): bigint {
   if (value > I128_MAX) return I128_MAX;
@@ -102,7 +111,12 @@ export class ClaimableAmountService {
         ? Math.floor(requestedAt)
         : Math.floor(this.nowMs() / 1000);
 
-    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
+    // Bucket the timestamp so requests landing within the same window share a
+    // cache entry instead of creating a new key every second.
+    const cacheKeyBucket =
+      Math.floor(calculatedAt / CLAIMABLE_CACHE_BUCKET_SECONDS) *
+      CLAIMABLE_CACHE_BUCKET_SECONDS;
+    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${cacheKeyBucket}`;
     const cachedEntry = cache.get<Omit<ClaimableAmountResult, 'cached'>>(cacheKey);
 
     if (cachedEntry) {
@@ -114,14 +128,14 @@ export class ClaimableAmountService {
       };
     }
 
-    const anchorTime = BigInt(Math.max(0, stream.lastUpdateTime));
+    const anchorTime = BigInt(stream.lastUpdateTime) > 0n ? BigInt(stream.lastUpdateTime) : 0n;
     const nowTs = BigInt(Math.max(0, calculatedAt));
     let elapsed = nowTs > anchorTime ? nowTs - anchorTime : 0n;
 
     // Paused duration is handled by the contract updating lastUpdateTime on resume,
     // but we still account for it if it's currently paused.
-    if (stream.isPaused && stream.pausedAt !== null) {
-      const currentPauseStart = BigInt(Math.max(0, stream.pausedAt));
+    if (stream.isPaused && stream.pausedAt !== null && stream.pausedAt !== undefined) {
+      const currentPauseStart = BigInt(stream.pausedAt) > 0n ? BigInt(stream.pausedAt) : 0n;
       if (nowTs > currentPauseStart) {
         const currentPauseDuration = nowTs - currentPauseStart;
         elapsed = elapsed > currentPauseDuration ? elapsed - currentPauseDuration : 0n;

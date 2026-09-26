@@ -9,6 +9,7 @@ type ErrorHandler = () => void;
 
 class MockEventSource {
   static instance: MockEventSource | null = null;
+  static instanceCount = 0;
 
   url: string;
   onopen: (() => void) | null = null;
@@ -21,6 +22,7 @@ class MockEventSource {
   constructor(url: string) {
     this.url = url;
     MockEventSource.instance = this;
+    MockEventSource.instanceCount += 1;
   }
 
   addEventListener(type: string, handler: EventHandler) {
@@ -66,6 +68,7 @@ class MockEventSource {
 describe('useStreamEvents', () => {
   beforeEach(() => {
     MockEventSource.instance = null;
+    MockEventSource.instanceCount = 0;
     vi.useFakeTimers();
   });
 
@@ -152,6 +155,86 @@ describe('useStreamEvents', () => {
     expect(MockEventSource.instance).not.toBeNull();
   });
 
+  it('grows the reconnect delay exponentially across consecutive failures', () => {
+    // Keep `streamIds` referentially stable across re-renders (an inline
+    // array literal would change identity on every render and cause the
+    // hook to reconnect on its own, independent of the backoff timer).
+    const streamIds = ['1'];
+    renderHook(() =>
+      useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+    );
+
+    const first = MockEventSource.instance;
+    act(() => { first?.triggerError(); });
+
+    // First retry is scheduled after the initial 1000ms delay.
+    act(() => { vi.advanceTimersByTime(999); });
+    expect(MockEventSource.instance).toBe(first);
+    act(() => { vi.advanceTimersByTime(1); });
+    const second = MockEventSource.instance;
+    expect(second).not.toBe(first);
+    expect(second).not.toBeNull();
+
+    act(() => { second?.triggerError(); });
+
+    // Second retry should wait ~2000ms (doubled), not repeat the 1000ms delay.
+    act(() => { vi.advanceTimersByTime(1999); });
+    expect(MockEventSource.instance).toBe(second);
+    act(() => { vi.advanceTimersByTime(1); });
+    const third = MockEventSource.instance;
+    expect(third).not.toBe(second);
+    expect(third).not.toBeNull();
+
+    act(() => { third?.triggerError(); });
+
+    // Third retry should wait ~4000ms.
+    act(() => { vi.advanceTimersByTime(3999); });
+    expect(MockEventSource.instance).toBe(third);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(MockEventSource.instance).not.toBe(third);
+  });
+
+  it('caps the reconnect delay at maxRetryDelay', () => {
+    const streamIds = ['1'];
+    renderHook(() =>
+      useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 1500 }),
+    );
+
+    const first = MockEventSource.instance;
+    act(() => { first?.triggerError(); });
+    act(() => { vi.advanceTimersByTime(1000); }); // capped delay is min(1000, 1500) = 1000
+    const second = MockEventSource.instance;
+    expect(second).not.toBe(first);
+
+    act(() => { second?.triggerError(); });
+    // Next delay would be 2000 uncapped, but maxRetryDelay caps it at 1500.
+    act(() => { vi.advanceTimersByTime(1499); });
+    expect(MockEventSource.instance).toBe(second);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(MockEventSource.instance).not.toBe(second);
+  });
+
+  it('resets the backoff delay to the initial value after a successful connection', () => {
+    const streamIds = ['1'];
+    renderHook(() =>
+      useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+    );
+
+    const first = MockEventSource.instance;
+    act(() => { first?.triggerError(); });
+    act(() => { vi.advanceTimersByTime(1000); }); // reconnect after initial 1000ms
+
+    const second = MockEventSource.instance;
+    act(() => { second?.open(); }); // successful connection resets the counter
+    act(() => { second?.triggerError(); });
+
+    // Backoff should restart at 1000ms, not continue growing to 2000ms.
+    act(() => { vi.advanceTimersByTime(999); });
+    expect(MockEventSource.instance).toBe(second);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(MockEventSource.instance).not.toBe(second);
+  });
+
   it('clearEvents empties the events array', () => {
     const { result } = renderHook(() =>
       useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
@@ -199,5 +282,54 @@ describe('useStreamEvents', () => {
     });
 
     expect(result.current.events).toHaveLength(types.length);
+  });
+
+  it('creates only one EventSource across multiple re-renders and incoming events', () => {
+    const { result, rerender } = renderHook(
+      (opts: { streamIds: string[] } = { streamIds: ['1'] }) =>
+        useStreamEvents({ ...opts, autoReconnect: false }),
+    );
+
+    const firstInstance = MockEventSource.instance;
+
+    act(() => { firstInstance?.open(); });
+
+    // Simulate multiple re-renders with the same subscription (inline array)
+    rerender({ streamIds: ['1'] });
+    rerender({ streamIds: ['1'] });
+    rerender({ streamIds: ['1'] });
+
+    // Simulate incoming events causing re-renders of the consumer
+    act(() => {
+      MockEventSource.instance?.emit('stream.created', { i: 1 });
+      MockEventSource.instance?.emit('stream.created', { i: 2 });
+      MockEventSource.instance?.emit('stream.created', { i: 3 });
+    });
+
+    expect(result.current.events).toHaveLength(3);
+
+    // Re-render again after events
+    rerender({ streamIds: ['1'] });
+    rerender({ streamIds: ['1'] });
+
+    expect(MockEventSource.instanceCount).toBe(1);
+    expect(MockEventSource.instance).toBe(firstInstance);
+  });
+
+  it('stops reconnecting after reaching the cap', () => {
+    renderHook(() =>
+      useStreamEvents({ streamIds: ['1'], autoReconnect: true, maxRetryDelay: 1000 }),
+    );
+
+    // Trigger errors repeatedly to consume reconnect attempts.
+    // The reconnect delay stays at 1000ms (capped by maxRetryDelay).
+    for (let i = 0; i < 25; i++) {
+      act(() => { MockEventSource.instance?.triggerError(); });
+      act(() => { vi.advanceTimersByTime(2000); });
+    }
+
+    // 1 initial + 20 reconnect attempts = 21 instances max.
+    // After the 20th reconnect attempt, no more timers should fire.
+    expect(MockEventSource.instanceCount).toBeLessThanOrEqual(21);
   });
 });

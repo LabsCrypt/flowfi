@@ -46,6 +46,19 @@ export interface DashboardAnalyticsMetric {
   unavailableText: string;
 }
 
+/**
+ * Timezone display strategy for this file: all stream dates are displayed in
+ * UTC rather than the viewer's local timezone. FlowFi streams have a single
+ * canonical start time; formatting it locally would make two recipients in
+ * different timezones see different displayed dates/durations for the same
+ * stream, which is confusing for a payment-streaming product. Every date
+ * formatting helper below must go through `formatStreamDateUtc` so this stays
+ * consistent as more date fields are added.
+ */
+function formatStreamDateUtc(unixTimestampSeconds: number): string {
+  return new Date(unixTimestampSeconds * 1000).toISOString().split("T")[0] ?? "";
+}
+
 function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -88,21 +101,19 @@ async function fetchStreams(
   for (const endpoint of endpoints) {
     try {
       const response = await fetch(`${endpoint}?${params.toString()}`, { signal });
-    if (response.ok) {
-      const payload = (await response.json()) as
-        | BackendStream[]
-        | { data?: BackendStream[] };
-      return Array.isArray(payload) ? payload : payload.data ?? [];
-    }
+      if (response.ok) {
+        const payload = (await response.json()) as
+          | BackendStream[]
+          | { data?: BackendStream[] };
+        return Array.isArray(payload) ? payload : payload.data ?? [];
+      }
 
-    if (response.status === 404) {
-      lastError = new Error(`Endpoint not found: ${endpoint}`);
-      continue;
-    }
+      if (response.status === 404) {
+        lastError = new Error(`Endpoint not found: ${endpoint}`);
+        continue;
+      }
 
-    lastError = new Error(`Failed to fetch streams (${response.status}) from ${endpoint}`);
-  }
-
+      lastError = new Error(`Failed to fetch streams (${response.status}) from ${endpoint}`);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
@@ -130,7 +141,7 @@ export function mapBackendStreamToFrontend(s: BackendStream, counterparty: strin
     status: mapStreamStatus(s),
     deposited,
     withdrawn,
-    date: new Date(s.startTime * 1000).toISOString().split("T")[0] ?? "",
+    date: formatStreamDateUtc(s.startTime),
     ratePerSecond,
     lastUpdateTime: s.lastUpdateTime,
     isActive: s.isActive,

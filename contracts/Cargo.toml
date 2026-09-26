@@ -3,22 +3,31 @@ resolver = "2"
 members = [
   "stream_contract",
 ]
+rust-version = "1.81.0"
 
 [workspace.dependencies]
 soroban-sdk = "22.0.0"
 
 [profile.release]
+# Optimize for minimal WASM binary size — critical for on-chain deployment.
 opt-level = "z"
+# Prevent silent arithmetic wraparound in contract math (i128/u64).
 overflow-checks = true
+# Strip debuginfo from release WASM to meet the 200 KB size budget.
 debug = 0
+# Further reduce WASM binary size by removing symbol names.
 strip = "symbols"
+# Ensure debug assertions are disabled in release — they inflate binary size.
 debug-assertions = false
+# No unwinding table in WASM; shaves ~3 KB off the binary.
 panic = "abort"
+# Maximise inlining opportunities for smaller/faster WASM output.
 codegen-units = 1
+# Cross-crate link-time optimisation — essential for WASM size.
 lto = true
 
-# WASM size budget: 200KB (200000 bytes) for optimized contract
-# Enforced in .github/workflows/ci.yml
+# WASM size budget: 200 KB (200 000 bytes) for the optimised contract.
+# Enforced in .github/workflows/ci.yml via the "Check WASM size budget" step.
 
 [profile.release-with-logs]
 inherits = "release"

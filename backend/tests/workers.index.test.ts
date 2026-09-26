@@ -9,9 +9,15 @@ vi.mock('../src/workers/soroban-event-worker.js', () => ({
   },
 }));
 
+vi.mock('../src/workers/stream-runway-worker.js', () => ({
+  startStreamRunwayWorker: vi.fn(() => 123),
+}));
+
 vi.mock('../src/logger.js', () => ({
   default: {
     info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 

@@ -8,6 +8,10 @@ import {
   formatRate,
   hasValidPrecision,
   validateAmountInput,
+  truncateAmount,
+  formatCompactAmount,
+  toStroops,
+  fromStroops,
   getDefaultTokenDecimals,
   setCachedTokenDecimals,
   getCachedTokenDecimals,
@@ -95,8 +99,17 @@ describe('parseAmount', () => {
 
   it('returns 0 for empty or invalid input', () => {
     expect(parseAmount('', 7)).toBe(0n);
+    expect(parseAmount('   ', 7)).toBe(0n);
     expect(parseAmount('abc', 7)).toBe(0n);
     expect(parseAmount('1.2.3', 7)).toBe(0n);
+  });
+
+  it('round-trips various amounts through formatAmount', () => {
+    const testCases = [1n, 100n, 1000000n, 10000000n, 123456789n, 1000000000000n];
+    testCases.forEach(amount => {
+      const formatted = formatAmount(amount, 7);
+      expect(parseAmount(formatted, 7)).toBe(amount);
+    });
   });
 });
 
@@ -117,6 +130,100 @@ describe('formatRate', () => {
 
   it('works without symbol', () => {
     expect(formatRate(10000000n, 7)).toBe('1/sec (86400/day)');
+    expect(formatRate(0n, 7)).toBe('0/sec');
+  });
+
+  it('handles very small rates', () => {
+    expect(formatRate(1n, 7, 'USDC')).toBe('0.0000001 USDC/sec (0.00864 USDC/day)');
+  });
+
+  it('provides a daily/second breakdown for stream amounts', () => {
+    // 100 USDC over 30 days
+    const totalAmount = parseAmount('100', 7);
+    const ratePerSecond = totalAmount / BigInt(30 * 24 * 3600);
+
+    const formatted = formatRate(ratePerSecond, 7, 'USDC');
+    expect(formatted).toContain('USDC/sec');
+    expect(formatted).toContain('USDC/day');
+  });
+});
+
+describe('truncateAmount', () => {
+  it('truncates to the requested decimal places without rounding', () => {
+    // 1.23456789 truncated to 4 decimals = 1.2345 (not 1.2346)
+    expect(truncateAmount(123456789n, 8, 4)).toBe('1.2345');
+    expect(truncateAmount(123456789n, 8, 1)).toBe('1.2');
+  });
+
+  it('removes trailing zeros after truncation', () => {
+    expect(truncateAmount(1200000n, 7, 4)).toBe('0.12');
+  });
+
+  it('returns a whole number when there is no fractional part', () => {
+    expect(truncateAmount(10000000n, 7, 4)).toBe('1');
+  });
+
+  it('handles zero amount', () => {
+    expect(truncateAmount(0n, 7, 4)).toBe('0');
+  });
+});
+
+describe('formatCompactAmount', () => {
+  it('displays sub-thousand values as-is', () => {
+    expect(formatCompactAmount(100n, 0)).toBe('100');
+    expect(formatCompactAmount(999n, 0)).toBe('999');
+  });
+
+  it('formats thousands, millions and billions', () => {
+    expect(formatCompactAmount(1500n, 0)).toBe('1.5K');
+    expect(formatCompactAmount(1000n, 0)).toBe('1.0K');
+    expect(formatCompactAmount(1500000n, 0)).toBe('1.5M');
+    expect(formatCompactAmount(1000000n, 0)).toBe('1.0M');
+    expect(formatCompactAmount(1500000000n, 0)).toBe('1.5B');
+  });
+
+  it('respects token decimals', () => {
+    // 1000 XLM (1000 * 10^7)
+    expect(formatCompactAmount(10000000000n, 7)).toBe('1.0K');
+  });
+
+  it('returns 0 for zero amount', () => {
+    expect(formatCompactAmount(0n, 7)).toBe('0');
+  });
+});
+
+describe('toStroops / fromStroops', () => {
+  it('defaults to 7 decimals (XLM stroops) when decimals are omitted', () => {
+    expect(toStroops('1')).toBe(10000000n);
+    expect(toStroops('0.5')).toBe(5000000n);
+    expect(fromStroops(10000000n)).toBe('1');
+    expect(fromStroops(5000000n)).toBe('0.5');
+  });
+
+  it('still accepts an explicit decimals argument', () => {
+    expect(toStroops('1', 6)).toBe(1000000n);
+    expect(fromStroops(1000000n, 6)).toBe('1');
+  });
+
+  it('round-trips, dropping the trailing zero', () => {
+    expect(fromStroops(toStroops('123.4567890'))).toBe('123.456789');
+  });
+});
+
+// Regression coverage for the create-stream wizard, which previously imported a
+// second, parallel copy of these helpers from lib/amount.ts (issue #1124).
+describe('amount helpers as the create-stream wizard uses them', () => {
+  it('rejects amounts with too many decimals for a 7-decimal token', () => {
+    expect(hasValidPrecision('0.12345678', 7)).toBe(false);
+    expect(hasValidPrecision('100.99999999', 7)).toBe(false);
+  });
+
+  it('parses and re-formats a user-entered amount losslessly', () => {
+    const userInput = '1000.5';
+    const decimals = 7;
+
+    expect(hasValidPrecision(userInput, decimals)).toBe(true);
+    expect(formatAmount(parseAmount(userInput, decimals), decimals)).toBe(userInput);
   });
 });
 

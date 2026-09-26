@@ -37,9 +37,11 @@ export function streamProgressPercent(withdrawn: bigint, deposited: bigint): num
 
 /**
  * Alias for formatAmount - convert raw on-chain amount to human-readable string
+ * @param amount - Raw amount as bigint
+ * @param decimals - Token decimals; defaults to 7 (XLM stroops)
  * @deprecated Use formatAmount instead
  */
-export function fromStroops(amount: bigint, decimals: number): string {
+export function fromStroops(amount: bigint, decimals = 7): string {
   return formatAmount(amount, decimals);
 }
 
@@ -72,9 +74,11 @@ export function parseAmount(display: string, decimals: number): bigint {
 
 /**
  * Alias for parseAmount - convert human-readable to raw on-chain amount
+ * @param amount - Display string (e.g., "1.234")
+ * @param decimals - Token decimals; defaults to 7 (XLM stroops)
  * @deprecated Use parseAmount instead
  */
-export function toStroops(amount: string, decimals: number): bigint {
+export function toStroops(amount: string, decimals = 7): bigint {
   return parseAmount(amount, decimals);
 }
 
@@ -109,6 +113,51 @@ export function formatStreamRate(
   tokenSymbol: string = "USDC"
 ): string {
   return formatRate(ratePerSecond, decimals, tokenSymbol);
+}
+
+/**
+ * Truncate amount to specified decimal places without rounding
+ * @param amount - Amount as bigint
+ * @param decimals - Token decimals
+ * @param maxDisplayDecimals - Maximum decimal places to display
+ * @returns Truncated string
+ */
+export function truncateAmount(
+  amount: bigint,
+  decimals: number,
+  maxDisplayDecimals: number
+): string {
+  if (amount === 0n) return "0";
+
+  const factor = 10n ** BigInt(decimals);
+  const integerPart = amount / factor;
+  const fractionalPart = amount % factor;
+
+  if (fractionalPart === 0n) return integerPart.toString();
+
+  const fractionalStr = fractionalPart.toString().padStart(decimals, "0");
+  const truncatedFractional = fractionalStr.slice(0, maxDisplayDecimals);
+  const trimmedFractional = truncatedFractional.replace(/0+$/, "");
+
+  if (!trimmedFractional) return integerPart.toString();
+  return `${integerPart}.${trimmedFractional}`;
+}
+
+/**
+ * Format amount with compact notation (K, M, B) for large numbers
+ * @param amount - Amount as bigint
+ * @param decimals - Token decimals
+ * @returns Compact formatted string e.g., "1.5K"
+ */
+export function formatCompactAmount(amount: bigint, decimals: number): string {
+  const displayAmount = formatAmount(amount, decimals);
+  const num = parseFloat(displayAmount);
+
+  if (num === 0) return "0";
+  if (num < 1_000) return displayAmount;
+  if (num < 1_000_000) return `${(num / 1_000).toFixed(1)}K`;
+  if (num < 1_000_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+  return `${(num / 1_000_000_000).toFixed(1)}B`;
 }
 
 /**

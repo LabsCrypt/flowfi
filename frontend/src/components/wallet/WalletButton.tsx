@@ -13,12 +13,13 @@
  *     - "Disconnect" button
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useWallet } from "@/context/wallet-context";
 import {
   shortenPublicKey,
   isExpectedNetwork,
 } from "@/lib/wallet";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { WalletModal } from "./WalletModal";
 
@@ -27,7 +28,28 @@ export function WalletButton() {
   const [modalOpen, setModalOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [walletUnavailable, setWalletUnavailable] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const checkWalletAvailability = useCallback(() => {
+    if (typeof window === "undefined") return true;
+    const freighterAvailable =
+      "freighter" in window || "stellar" in window;
+    return freighterAvailable;
+  }, []);
+
+  useEffect(() => {
+    if (status !== "connected") return;
+
+    const interval = setInterval(() => {
+      if (!checkWalletAvailability()) {
+        setWalletUnavailable(true);
+        disconnect();
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [status, checkWalletAvailability, disconnect]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -47,19 +69,23 @@ export function WalletButton() {
 
   const handleCopy = async () => {
     if (!session?.publicKey) return;
-    try {
-      await navigator.clipboard.writeText(session.publicKey);
+    const success = await copyToClipboard(session.publicKey, {
+      successMessage: "Address copied to clipboard",
+    });
+    if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API may be blocked in some environments
     }
   };
 
   const handleDisconnect = () => {
     setDropdownOpen(false);
     setModalOpen(false);
-    disconnect();
+    try {
+      disconnect();
+    } catch {
+      setWalletUnavailable(true);
+    }
   };
 
   // Close modal when connection is successful
@@ -75,6 +101,26 @@ export function WalletButton() {
   if (!isHydrated) {
     return (
       <Skeleton className="w-[140px] h-[2.4rem] rounded-full" aria-hidden="true" />
+    );
+  }
+
+  if (walletUnavailable) {
+    return (
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-amber-600 dark:text-amber-400">
+          Wallet extension unavailable
+        </span>
+        <button
+          type="button"
+          className="wallet-connect-btn"
+          onClick={() => {
+            setWalletUnavailable(false);
+            setModalOpen(true);
+          }}
+        >
+          Reconnect
+        </button>
+      </div>
     );
   }
 

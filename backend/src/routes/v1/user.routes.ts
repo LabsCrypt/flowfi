@@ -1,7 +1,13 @@
-import { Router } from 'express';
-import { registerUser, getUser, getUserEvents, getCurrentUser } from '../../controllers/user.controller.js';
-import { getUserStreamSummary } from '../../controllers/stream.controller.js';
-import { requireAuth } from '../../middleware/auth.js';
+import { Router } from "express";
+import {
+  registerUser,
+  getUser,
+  getUserEvents,
+  getCurrentUser,
+  exportTransactions,
+} from "../../controllers/user.controller.js";
+import { getUserStreamSummary } from "../../controllers/stream.controller.js";
+import { requireAuth } from "../../middleware/auth.js";
 
 const router = Router();
 
@@ -41,7 +47,17 @@ const router = Router();
  *               $ref: '#/components/schemas/User'
  *       400:
  *         description: Invalid request body
- * 
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *
  * /v1/users/{publicKey}:
  *   get:
  *     tags:
@@ -64,6 +80,16 @@ const router = Router();
  *               $ref: '#/components/schemas/User'
  *       404:
  *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *
  * /v1/users/me:
  *   get:
@@ -82,9 +108,19 @@ const router = Router();
  *               $ref: '#/components/schemas/User'
  *       401:
  *         description: Unauthorized - invalid or missing token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
-router.post('/', registerUser);
-router.get('/me', requireAuth, getCurrentUser);
+router.post("/", registerUser);
+router.get("/me", requireAuth, getCurrentUser);
 /**
  * @openapi
  * /v1/users/{address}/summary:
@@ -111,25 +147,22 @@ router.get('/me', requireAuth, getCurrentUser);
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 address:
- *                   type: string
- *                 totalStreamsCreated:
- *                   type: integer
- *                 totalStreamedOut:
- *                   type: string
- *                 totalStreamedIn:
- *                   type: string
- *                 currentClaimable:
- *                   type: string
- *                 activeOutgoingCount:
- *                   type: integer
- *                 activeIncomingCount:
- *                   type: integer
+ *               $ref: '#/components/schemas/UserStreamSummary'
+ *       400:
+ *         description: Address is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
-router.get('/:address/summary', getUserStreamSummary);
-router.get('/:publicKey', getUser);
+router.get("/:address/summary", getUserStreamSummary);
+router.get("/:publicKey", getUser);
 
 /**
  * @openapi
@@ -165,23 +198,104 @@ router.get('/:publicKey', getUser);
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 data:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/StreamEvent'
- *                 total:
- *                   type: integer
- *                 hasMore:
- *                   type: boolean
- *                 limit:
- *                   type: integer
- *                 offset:
- *                   type: integer
+ *               $ref: '#/components/schemas/UserEventListResponse'
+ *       400:
+ *         description: Invalid pagination parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       404:
  *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
-router.get('/:publicKey/events', getUserEvents);
+router.get("/:publicKey/events", getUserEvents);
 
 export default router;
+
+/**
+ * @openapi
+ * /v1/users/{address}/export:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Export transaction history for tax and accounting
+ *     description: Generates CSV or JSON export of stream transactions for QuickBooks, Xero, CoinTracker, etc.
+ *     parameters:
+ *       - in: path
+ *         name: address
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Stellar public key
+ *       - in: query
+ *         name: format
+ *         schema:
+ *           type: string
+ *           enum: [csv, json]
+ *           default: csv
+ *         description: Export format
+ *       - in: query
+ *         name: direction
+ *         schema:
+ *           type: string
+ *           enum: [incoming, outgoing, all]
+ *           default: all
+ *         description: Filter by transaction direction
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: Start date (ISO 8601 or Unix timestamp)
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date-time
+ *         description: End date (ISO 8601 or Unix timestamp)
+ *       - in: query
+ *         name: tokenAddress
+ *         schema:
+ *           type: string
+ *         description: Filter by specific token contract
+ *     responses:
+ *       200:
+ *         description: Transaction export file
+ *         content:
+ *           text/csv:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *           application/json:
+ *             schema:
+ *               type: object
+ *       400:
+ *         description: Invalid parameters
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: User not found
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.get("/:address/export", exportTransactions);

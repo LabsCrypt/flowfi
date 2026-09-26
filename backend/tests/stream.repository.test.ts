@@ -19,33 +19,33 @@ describe('Stream Repository', () => {
 
   describe('updateStatus', () => {
     it('should update isActive to false for CANCELLED', async () => {
-      await updateStatus(123, 'CANCELLED');
+      await updateStatus(123n, 'CANCELLED');
       expect(prisma.stream.update).toHaveBeenCalledWith({
-        where: { streamId: 123 },
+        where: { streamId: 123n },
         data: { isActive: false },
       });
     });
 
     it('should update isActive to false for COMPLETED', async () => {
-      await updateStatus(123, 'COMPLETED');
+      await updateStatus(123n, 'COMPLETED');
       expect(prisma.stream.update).toHaveBeenCalledWith({
-        where: { streamId: 123 },
+        where: { streamId: 123n },
         data: { isActive: false },
       });
     });
 
     it('should update isActive to true for ACTIVE', async () => {
-      await updateStatus(123, 'ACTIVE');
+      await updateStatus(123n, 'ACTIVE');
       expect(prisma.stream.update).toHaveBeenCalledWith({
-        where: { streamId: 123 },
+        where: { streamId: 123n },
         data: { isActive: true },
       });
     });
 
     it('should update isActive to true for PAUSED', async () => {
-      await updateStatus(123, 'PAUSED');
+      await updateStatus(123n, 'PAUSED');
       expect(prisma.stream.update).toHaveBeenCalledWith({
-        where: { streamId: 123 },
+        where: { streamId: 123n },
         data: { isActive: true },
       });
     });

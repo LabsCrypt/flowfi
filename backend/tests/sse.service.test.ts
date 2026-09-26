@@ -98,3 +98,55 @@ describe('SSEService backpressure', () => {
     expect(service.getSlowClientsDropped()).toBe(1);
   });
 });
+
+describe('SSEService per-user connection cap', () => {
+  let service: SSEService;
+
+  afterEach(() => {
+    service.stopHeartbeat();
+  });
+
+  it('allows connections from a user up to the per-user cap, independent of IP', () => {
+    service = new SSEService();
+    const userId = 'GUSER123';
+
+    // Spread the connections across different IPs so only the per-user cap
+    // (not the pre-existing per-IP cap) is exercised here.
+    for (let i = 0; i < 10; i += 1) {
+      const capacity = service.checkCapacity(`10.0.0.${i}`, userId);
+      expect(capacity.allowed).toBe(true);
+      service.addClient(`client-${i}`, createMockResponse(), [], `10.0.0.${i}`, userId);
+    }
+
+    expect(service.getUserConnectionCount(userId)).toBe(10);
+
+    // The 11th connection for the same user, from yet another IP, must be rejected.
+    const rejected = service.checkCapacity('10.0.0.99', userId);
+    expect(rejected.allowed).toBe(false);
+    expect(rejected.status).toBe(429);
+    expect(rejected.message).toMatch(/user/i);
+    expect(rejected.retryAfterSeconds).toBeGreaterThan(0);
+  });
+
+  it('does not cap unauthenticated/anonymous checks that omit a userId', () => {
+    service = new SSEService();
+
+    for (let i = 0; i < 10; i += 1) {
+      const capacity = service.checkCapacity(`10.1.0.${i}`);
+      expect(capacity.allowed).toBe(true);
+    }
+  });
+
+  it('releases the per-user slot once a client disconnects', () => {
+    service = new SSEService();
+    const userId = 'GUSER456';
+
+    const res = createMockResponse();
+    service.addClient('client-a', res, [], '10.2.0.1', userId);
+    expect(service.getUserConnectionCount(userId)).toBe(1);
+
+    res.emitter.emit('close');
+
+    expect(service.getUserConnectionCount(userId)).toBe(0);
+  });
+});

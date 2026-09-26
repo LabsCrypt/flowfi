@@ -193,7 +193,7 @@ import Redis from 'ioredis';
 const redis = new Redis(process.env.REDIS_URL);
 const subscriber = new Redis(process.env.REDIS_URL);
 
-// Publisher (in stream controller)
+// Publisher (in Soroban event worker / indexer)
 redis.publish('stream-events', JSON.stringify({
   event: 'stream.created',
   data: mockStream,

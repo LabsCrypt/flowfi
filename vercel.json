@@ -3,5 +3,6 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "buildCommand": "npm run build --workspace=frontend",
-  "devCommand": "npm run dev --workspace=frontend"
+  "devCommand": "npm run dev --workspace=frontend",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- frontend/ package.json package-lock.json vercel.json"
 }

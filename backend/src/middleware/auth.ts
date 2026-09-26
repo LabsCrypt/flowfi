@@ -31,6 +31,9 @@ if (isProduction) {
 
 const JWT_EXPIRY_SECONDS = 3600; // 1 hour max per spec
 
+const JWT_ISSUER = process.env.JWT_ISSUER || 'flowfi-api';
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'flowfi-api';
+
 const STELLAR_NETWORK =
   process.env.STELLAR_NETWORK === 'mainnet'
     ? StellarSdk.Networks.PUBLIC
@@ -130,6 +133,11 @@ export function verifyJwt(token: string): { publicKey: string } | null {
       return null;
     }
 
+    // Verify issuer and audience
+    if (payload.iss !== JWT_ISSUER || payload.aud !== JWT_AUDIENCE) {
+      return null;
+    }
+
     return { publicKey: payload.sub };
   } catch {
     return null;
@@ -186,7 +194,7 @@ export function verifyChallenge(req: Request, res: Response): void {
 
     // Verify the manage_data op contains our nonce
     const op = tx.operations[0] as StellarSdk.Operation.ManageData | undefined;
-    if (!op || op.type !== 'manageData' || op.value?.toString('hex') !== challenge.nonce) {
+    if (!op || op.type !== 'manageData' || Buffer.from(op.value ?? new Uint8Array()).toString('hex') !== challenge.nonce) {
       res.status(401).json({ error: 'Invalid challenge nonce in transaction' });
       return;
     }
@@ -194,7 +202,7 @@ export function verifyChallenge(req: Request, res: Response): void {
     const keypair = StellarSdk.Keypair.fromPublicKey(publicKey);
     const txHash = tx.hash();
     const valid = tx.signatures.some((s) => {
-      try { return keypair.verify(txHash, s.signature()); } catch { return false; }
+      try { return keypair.verify(txHash, s.signature); } catch { return false; }
     });
 
     if (!valid) {
@@ -205,7 +213,7 @@ export function verifyChallenge(req: Request, res: Response): void {
     challenges.delete(publicKey);
 
     const now = Math.floor(Date.now() / 1000);
-    const token = signJwt({ sub: publicKey, iat: now, exp: now + JWT_EXPIRY_SECONDS });
+    const token = signJwt({ sub: publicKey, iat: now, exp: now + JWT_EXPIRY_SECONDS, iss: JWT_ISSUER, aud: JWT_AUDIENCE });
     res.json({ token, expiresIn: JWT_EXPIRY_SECONDS });
   } catch (err) {
     logger.error('[Auth] verifyChallenge error:', err);

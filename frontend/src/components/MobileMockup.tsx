@@ -13,9 +13,13 @@ export const MobileMockup = () => {
     }, []);
 
     return (
-        <div className="relative mx-auto w-[280px] h-[580px] md:w-[320px] md:h-[640px] animate-float">
+        <div
+            role="img"
+            aria-label="Mobile app mockup showing an available balance of $42,910.45 with a live per-second payment stream and a withdraw balance button"
+            className="relative mx-auto w-[280px] h-[580px] md:w-[320px] md:h-[640px] animate-float"
+        >
             {/* Phone Case/Outer Frame */}
-            <div className="absolute inset-0 rounded-[3rem] border-[8px] border-slate-800 bg-black shadow-2xl overflow-hidden ring-1 ring-white/10">
+            <div aria-hidden="true" className="absolute inset-0 rounded-[3rem] border-[8px] border-slate-800 bg-black shadow-2xl overflow-hidden ring-1 ring-white/10">
                 {/* Screen Content */}
                 <div className="relative h-full w-full bg-[#050510] flex flex-col pt-12 px-6">
                     {/* Status Bar / Notch */}
@@ -83,7 +87,7 @@ export const MobileMockup = () => {
             </div>
 
             {/* External decorative glow */}
-            <div className="absolute -inset-10 bg-accent opacity-20 blur-[80px] -z-10 rounded-full animate-pulse-slow"></div>
+            <div aria-hidden="true" className="absolute -inset-10 bg-accent opacity-20 blur-[80px] -z-10 rounded-full animate-pulse-slow"></div>
         </div>
     );
 };

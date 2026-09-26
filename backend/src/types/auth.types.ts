@@ -30,4 +30,6 @@ export interface SEP10TokenPayload {
   sub: string; // Stellar public key
   iat: number; // Issued at
   exp: number; // Expiration
+  iss: string; // Issuer
+  aud: string; // Audience
 }

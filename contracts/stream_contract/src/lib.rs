@@ -1,3 +1,25 @@
+//! # `stream_contract` — Soroban Payment-Streaming Contract
+//!
+//! ## Module responsibilities
+//!
+//! | Module | Responsibility |
+//! |--------|---------------|
+//! | [`lib.rs`](./lib.rs) | Public contract interface (`StreamContract`) — entrypoints exposed via `#[contractimpl]` |
+//! | [`storage.rs`](./storage.rs) | Persistent state — read/write `ProtocolConfig` and `Stream` records to Soroban storage |
+//! | [`types.rs`](./types.rs) | Data types — `Stream`, `ProtocolConfig`, `StreamStatus`, `DataKey` |
+//! | [`errors.rs`](./errors.rs) | Error types — `StreamError` enum with all contract error variants |
+//! | [`events.rs`](./events.rs) | Event payloads — typed structs emitted by each entrypoint |
+//! | [`test.rs`](./test.rs) | Unit & integration tests — module gated behind `#[cfg(test)]` |
+//!
+//! ## Stream State Invariant
+//!
+//! The `is_active` and `paused` fields are independently-settable with an implicit
+//! invariant: **a cancelled stream must never be resumable**. Once a stream's status
+//! is set to `Cancelled`, it cannot be resumed, even if `paused` is set to `true`.
+//! This invariant is critical for preventing state-invariant bugs and must be
+//! preserved across all contract changes. See Testing #94 for test coverage of this
+//! invariant.
+
 #![no_std]
 #![doc = include_str!("../README.md")]
 // A contract's entrypoint arity *is* its public ABI, and `#[contractimpl]` /
@@ -11,6 +33,10 @@ mod events;
 mod storage;
 mod types;
 
+#[cfg(test)]
+mod acceptance_tests;
+#[cfg(test)]
+mod property_tests;
 #[cfg(test)]
 mod test;
 
@@ -329,6 +355,7 @@ impl StreamContract {
     /// - `InvalidDuration`    — `duration` is 0.
     /// - `InvalidRate`        — `net_amount / duration` rounds to zero.
     /// - `InvalidTokenAddress` — `token_address` is not a token contract.
+    /// - `ArithmeticOverflow` — the protocol fee calculation overflows `i128`.
     pub fn create_stream(
         env: Env,
         sender: Address,
@@ -357,7 +384,7 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Deduct protocol fee; returns net amount (== amount when no fee config).
-        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id)?;
         let rate_per_second = net_amount / (duration as i128);
 
         // Reject streams where integer division rounds the rate to zero.
@@ -382,6 +409,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -691,12 +719,23 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Collect protocol fee and get net amount
-        let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id);
+        let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id)?;
 
         // Update stream state. `last_update_time` is intentionally left untouched:
         // it is the accrual anchor for `calculate_claimable`, and advancing it to
         // `now` would discard any already-vested, unwithdrawn tokens.
-        stream.deposited_amount += net_amount;
+        stream.deposited_amount = stream
+            .deposited_amount
+            .checked_add(net_amount)
+            .ok_or(StreamError::ArithmeticOverflow)?;
+
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(claimable);
+        let new_end_time = Self::project_end_time(now, remaining, stream.rate_per_second)?;
 
         save_stream(&env, stream_id, &stream);
 
@@ -708,6 +747,7 @@ impl StreamContract {
                 sender,
                 amount: net_amount,
                 new_deposited_amount: stream.deposited_amount,
+                new_end_time,
             },
         );
 
@@ -875,6 +915,27 @@ impl StreamContract {
         Ok(())
     }
 
+    /// Project the timestamp at which `remaining` tokens finish draining at
+    /// `rate_per_second`, starting from `now`.
+    ///
+    /// Both steps are checked. A balance large enough to drain for more than
+    /// `u64::MAX` seconds, or a projection that runs past the end of the u64
+    /// timestamp range, returns `ArithmeticOverflow`. The plain
+    /// `now + (remaining / rate) as u64` this replaces silently truncated the
+    /// quotient and then panicked on the addition under `overflow-checks`,
+    /// aborting an otherwise valid top-up or resume.
+    fn project_end_time(
+        now: u64,
+        remaining: i128,
+        rate_per_second: i128,
+    ) -> Result<u64, StreamError> {
+        let seconds_remaining = u64::try_from(remaining / rate_per_second)
+            .map_err(|_| StreamError::ArithmeticOverflow)?;
+
+        now.checked_add(seconds_remaining)
+            .ok_or(StreamError::ArithmeticOverflow)
+    }
+
     /// Validate that a stream is active.
     ///
     /// # Errors
@@ -899,9 +960,13 @@ impl StreamContract {
         recipient: &Address,
         amount: i128,
         now: u64,
-    ) {
-        // Effects: update stream state
-        stream.withdrawn_amount += amount;
+    ) -> Result<(), StreamError> {
+        // Effects: update stream state. The checked add runs before any state
+        // mutation or transfer, so an overflow leaves the stream untouched.
+        stream.withdrawn_amount = stream
+            .withdrawn_amount
+            .checked_add(amount)
+            .ok_or(StreamError::ArithmeticOverflow)?;
         stream.last_update_time = now;
 
         if stream.withdrawn_amount >= stream.deposited_amount {
@@ -915,6 +980,8 @@ impl StreamContract {
         // Interaction: transfer tokens only after state is committed to storage
         let token_client = token::Client::new(env, &stream.token_address);
         token_client.transfer(&env.current_contract_address(), recipient, &amount);
+
+        Ok(())
     }
 
     /// Withdraw all currently claimable tokens from a stream.
@@ -928,6 +995,7 @@ impl StreamContract {
     /// - `Unauthorized`    — caller is not the stream's recipient.
     /// - `StreamInactive`  — stream is already inactive.
     /// - `InvalidAmount`   — no claimable balance (fully withdrawn already).
+    /// - `ArithmeticOverflow` — the new withdrawn total overflows `i128`.
     pub fn withdraw(env: Env, recipient: Address, stream_id: u64) -> Result<i128, StreamError> {
         recipient.require_auth();
 
@@ -952,7 +1020,7 @@ impl StreamContract {
         }
 
         // Apply withdrawal: updates state, persists to storage, then transfers (CEI)
-        Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now);
+        Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
 
         let completed = stream.status == StreamStatus::Completed;
 
@@ -987,6 +1055,12 @@ impl StreamContract {
     /// accrued tokens up to the cancellation moment, and any remaining unspent
     /// balance is refunded to the sender.
     ///
+    /// **State Invariant:** Once a stream is cancelled, its `status` is set to
+    /// `Cancelled` and `is_active` is set to `false`. A cancelled stream can
+    /// never be resumed, even if `paused` is `true`. This invariant must be
+    /// preserved across all contract changes to prevent state-invariant bugs.
+    /// See Testing #94 for test coverage.
+    ///
     /// # Errors
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
     /// - `Unauthorized`    — caller is not the stream's sender.
@@ -1014,6 +1088,8 @@ impl StreamContract {
 
         stream.is_active = false;
         stream.status = StreamStatus::Cancelled;
+        stream.paused = false;
+        stream.paused_at = None;
         stream.last_update_time = now;
 
         let recipient = stream.recipient.clone();
@@ -1043,6 +1119,76 @@ impl StreamContract {
                 recipient,
                 amount_withdrawn,
                 refunded_amount,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Permanently prune a fully settled stream's storage entry.
+    ///
+    /// Reclaims persistent storage rent and prevents unbounded state growth
+    /// from thousands of expired streams. Also avoids wasting TTL-bump gas on
+    /// finished streams that hold zero balance.
+    ///
+    /// Only the stream's `sender`, `recipient`, or the protocol admin may
+    /// close a stream. The stream must already be terminal (`Completed` or
+    /// `Cancelled`), inactive, and hold zero remaining balance.
+    ///
+    /// On success the `DataKey::Stream(stream_id)` entry is removed and a
+    /// `stream_closed` event is emitted for the backend indexer to mark the
+    /// stream as archived.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`   — no stream exists with `stream_id`.
+    /// - `Unauthorized`     — caller is not sender, recipient, or admin.
+    /// - `StreamStillActive` — stream is still active, has a non-terminal
+    ///   status, or still holds unwithdrawn / claimable funds.
+    pub fn close_stream(env: Env, caller: Address, stream_id: u64) -> Result<(), StreamError> {
+        caller.require_auth();
+
+        let stream = load_stream(&env, stream_id)?;
+
+        // Authorization: sender, recipient, or current protocol admin.
+        let is_admin = match try_load_config(&env) {
+            Some(cfg) => cfg.admin == caller,
+            None => false,
+        };
+        if caller != stream.sender && caller != stream.recipient && !is_admin {
+            return Err(StreamError::Unauthorized);
+        }
+
+        // Must be terminal and inactive.
+        if stream.is_active {
+            return Err(StreamError::StreamStillActive);
+        }
+        if stream.status != StreamStatus::Completed && stream.status != StreamStatus::Cancelled {
+            return Err(StreamError::StreamStillActive);
+        }
+
+        // Zero-balance check. Completed streams must be fully withdrawn
+        // (`deposited == withdrawn`, hence claimable == 0). Cancelled streams
+        // settled all funds at cancel time (payout + refund), so they are
+        // immediately prunable.
+        if stream.status == StreamStatus::Completed {
+            if stream.deposited_amount != stream.withdrawn_amount {
+                return Err(StreamError::StreamStillActive);
+            }
+            let now = env.ledger().timestamp();
+            if Self::calculate_claimable(&stream, now) != 0 {
+                return Err(StreamError::StreamStillActive);
+            }
+        }
+
+        remove_stream(&env, stream_id);
+
+        let timestamp = env.ledger().timestamp();
+        env.events().publish(
+            (Symbol::new(&env, "stream_closed"), stream_id),
+            StreamClosedEvent {
+                stream_id,
+                closer: caller,
+                timestamp,
             },
         );
 
@@ -1101,11 +1247,16 @@ impl StreamContract {
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
     /// - `Unauthorized`    — caller is not the stream's sender.
     /// - `StreamNotPaused` — stream is active but not currently paused.
+    /// - `ArithmeticOverflow` — the projected end time overflows `u64`.
     pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
         sender.require_auth();
 
         let mut stream = load_stream(&env, stream_id)?;
         Self::validate_stream_ownership(&stream, &sender)?;
+
+        if !stream.is_active {
+            return Err(StreamError::StreamNotActive);
+        }
 
         if !stream.paused {
             return Err(StreamError::StreamNotPaused);
@@ -1421,10 +1572,20 @@ impl StreamContract {
     /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
     /// If fee calculation truncates to 0, no transfer/event occurs and `amount` is unchanged.
     /// Time complexity: O(1).
-    fn collect_fee(env: &Env, token_address: &Address, amount: i128, stream_id: u64) -> i128 {
+    fn collect_fee(
+        env: &Env,
+        token_address: &Address,
+        amount: i128,
+        stream_id: u64,
+    ) -> Result<i128, StreamError> {
         match try_load_config(env) {
             Some(cfg) if cfg.fee_rate_bps > 0 => {
-                let fee = amount * (cfg.fee_rate_bps as i128) / 10_000;
+                // `amount` is caller-supplied and can reach i128::MAX, so the
+                // bps multiplication is the first thing that would overflow.
+                let fee = amount
+                    .checked_mul(cfg.fee_rate_bps as i128)
+                    .ok_or(StreamError::ArithmeticOverflow)?
+                    / 10_000;
                 if fee > 0 {
                     let token_client = token::Client::new(env, token_address);
                     token_client.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
@@ -1438,9 +1599,11 @@ impl StreamContract {
                         },
                     );
                 }
-                amount - fee
+                // `fee_rate_bps` is capped at MAX_FEE_RATE_BPS (10%), so `fee`
+                // is always well below `amount` and this cannot underflow.
+                Ok(amount - fee)
             }
-            _ => amount,
+            _ => Ok(amount),
         }
     }
 }

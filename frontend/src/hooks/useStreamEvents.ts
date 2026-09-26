@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 interface StreamEvent {
   type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed' | 'paused' | 'resumed';
@@ -23,12 +23,13 @@ interface UseStreamEventsReturn {
   clearEvents: () => void;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 20;
+
 export function useStreamEvents(
   options: UseStreamEventsOptions = {}
 ): UseStreamEventsReturn {
   const {
-    streamIds = [],
-    // userPublicKeys = [],
+    streamIds: rawStreamIds = [],
     subscribeToAll = false,
     autoReconnect = true,
     maxRetryDelay = 30000,
@@ -43,7 +44,13 @@ export function useStreamEvents(
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryDelayRef = useRef(1000);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptsRef = useRef(0);
   const connectRef = useRef<() => void>(() => undefined);
+
+  const subscriptionKey = useMemo(() => {
+    const streams = [...rawStreamIds].sort().join(',');
+    return `${subscribeToAll ? 'all' : streams}|${jwtToken || ''}`;
+  }, [rawStreamIds, subscribeToAll, jwtToken]);
 
   const buildUrl = useCallback(() => {
     const params = new URLSearchParams();
@@ -51,24 +58,29 @@ export function useStreamEvents(
     if (subscribeToAll) {
       params.append('all', 'true');
     } else {
-      streamIds.forEach(id => params.append('streams', id));
+      rawStreamIds.forEach(id => params.append('streams', id));
     }
 
-    // Add JWT token to query string for authentication
-    // (EventSource doesn't support custom headers in browser)
     if (jwtToken) {
       params.append('token', jwtToken);
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
     return `${baseUrl}/v1/events/subscribe?${params}`;
-  }, [streamIds, subscribeToAll, jwtToken]);
+    // subscriptionKey captures all subscription parameters as a stable string
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscriptionKey]);
 
   const clearEvents = useCallback(() => {
     setEvents([]);
   }, []);
 
   const connect = useCallback(() => {
+    if (reconnectTimeoutRef.current !== null) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
     const url = buildUrl();
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
@@ -77,16 +89,16 @@ export function useStreamEvents(
       setConnected(true);
       setReconnecting(false);
       setError(null);
-      retryDelayRef.current = 1000; // Reset retry delay
+      retryDelayRef.current = 1000;
+      reconnectAttemptsRef.current = 0;
     };
-
 
     const handleEvent = (type: StreamEvent['type']) => (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         setEvents((prev: StreamEvent[]) => [
           { type, data, timestamp: Date.now() },
-          ...prev.slice(0, 99), // Keep last 100 events
+          ...prev.slice(0, 99),
         ]);
       } catch {
         // Silently ignore malformed event messages
@@ -108,13 +120,24 @@ export function useStreamEvents(
 
       if (autoReconnect) {
         setReconnecting(true);
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connectRef.current();
-          retryDelayRef.current = Math.min(
-            retryDelayRef.current * 2,
-            maxRetryDelay
-          );
-        }, retryDelayRef.current);
+
+        if (reconnectTimeoutRef.current !== null) {
+          clearTimeout(reconnectTimeoutRef.current);
+          reconnectTimeoutRef.current = null;
+        }
+
+        reconnectAttemptsRef.current += 1;
+
+        if (reconnectAttemptsRef.current <= MAX_RECONNECT_ATTEMPTS) {
+          // Cap the delay we're about to wait on, and precompute the next
+          // (doubled, capped) delay up front so consecutive failures keep
+          // growing the backoff even if the next attempt fails immediately.
+          const delay = Math.min(retryDelayRef.current, maxRetryDelay);
+          retryDelayRef.current = Math.min(retryDelayRef.current * 2, maxRetryDelay);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectRef.current();
+          }, delay);
+        }
       }
     };
   }, [buildUrl, autoReconnect, maxRetryDelay]);
@@ -131,8 +154,9 @@ export function useStreamEvents(
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
-      if (reconnectTimeoutRef.current) {
+      if (reconnectTimeoutRef.current !== null) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
     };
   }, [connect]);

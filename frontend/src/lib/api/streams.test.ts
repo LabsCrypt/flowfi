@@ -34,6 +34,8 @@ describe('fetchIncomingStreams', () => {
     isPaused: false,
     pausedAt: null,
     totalPausedDuration: 0,
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
   };
 
   it('advances to the next endpoint on 404 and returns mapped results from the first 2xx', async () => {
@@ -55,7 +57,7 @@ describe('fetchIncomingStreams', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('db-id-1');
+    expect(result[0]!.id).toBe('db-id-1');
   });
 
   it('handles array response shapes correctly', async () => {
@@ -67,8 +69,8 @@ describe('fetchIncomingStreams', () => {
 
     const result = await fetchIncomingStreams(recipientPublicKey);
     expect(result).toHaveLength(2);
-    expect(result[0].id).toBe('db-id-1');
-    expect(result[1].id).toBe('db-id-2');
+    expect(result[0]!.id).toBe('db-id-1');
+    expect(result[1]!.id).toBe('db-id-2');
   });
 
   it('handles { data: [] } response shapes correctly', async () => {
@@ -80,7 +82,7 @@ describe('fetchIncomingStreams', () => {
 
     const result = await fetchIncomingStreams(recipientPublicKey);
     expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('db-id-1');
+    expect(result[0]!.id).toBe('db-id-1');
   });
 
   it('maps mapBackendStream output correctly: token label resolution + fallback', async () => {
@@ -98,12 +100,12 @@ describe('fetchIncomingStreams', () => {
     const result = await fetchIncomingStreams(recipientPublicKey);
 
     // Resolution based on TOKEN_ADDRESSES
-    expect(result[0].token).toBe('USDC');
-    expect(result[0].tokenAddress).toBe(TOKEN_ADDRESSES.USDC);
+    expect(result[0]!.token).toBe('USDC');
+    expect(result[0]!.tokenAddress).toBe(TOKEN_ADDRESSES.USDC);
 
     // Fallback format
-    expect(result[1].token).toBe('CBXHQZ...YYYY');
-    expect(result[1].tokenAddress).toBe(unknownTokenStream.tokenAddress);
+    expect(result[1]!.token).toBe('CBXHQZ...YYYY');
+    expect(result[1]!.tokenAddress).toBe(unknownTokenStream.tokenAddress);
   });
 
   it('maps mapBackendStream output correctly: toTokenAmount scaling', async () => {
@@ -116,11 +118,11 @@ describe('fetchIncomingStreams', () => {
     const result = await fetchIncomingStreams(recipientPublicKey);
     
     // 10000000 stroops = 1 token
-    expect(result[0].ratePerSecond).toBe(1);
+    expect(result[0]!.ratePerSecond).toBe(1);
     // 100000000 stroops = 10 tokens
-    expect(result[0].deposited).toBe(10);
+    expect(result[0]!.deposited).toBe(10);
     // 50000000 stroops = 5 tokens
-    expect(result[0].withdrawn).toBe(5);
+    expect(result[0]!.withdrawn).toBe(5);
   });
 
   it('maps mapBackendStream output correctly: status', async () => {
@@ -136,9 +138,9 @@ describe('fetchIncomingStreams', () => {
 
     const result = await fetchIncomingStreams(recipientPublicKey);
 
-    expect(result[0].status).toBe('Active');
-    expect(result[1].status).toBe('Paused');
-    expect(result[2].status).toBe('Completed');
+    expect(result[0]!.status).toBe('Active');
+    expect(result[1]!.status).toBe('Paused');
+    expect(result[2]!.status).toBe('Completed');
   });
 
   it('throws the last error when all candidates fail (non-404)', async () => {
@@ -165,5 +167,29 @@ describe('fetchIncomingStreams', () => {
     await expect(fetchIncomingStreams(recipientPublicKey)).rejects.toThrow(
       /Endpoint not found:/
     );
+  });
+
+  it('aborts a hung request after the timeout and surfaces a clear error', async () => {
+    vi.useFakeTimers();
+
+    // Simulate a backend that never responds: fetch only settles when the
+    // AbortController tied to the timeout fires.
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const abortError = new Error('The operation was aborted.');
+          abortError.name = 'AbortError';
+          reject(abortError);
+        });
+      });
+    });
+
+    const pending = fetchIncomingStreams(recipientPublicKey, 5000);
+    const assertion = expect(pending).rejects.toThrow(/timed out after 5000ms/);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    await assertion;
+
+    vi.useRealTimers();
   });
 });

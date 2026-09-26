@@ -91,7 +91,7 @@ describe('event wire format', () => {
 
       expect(decodedKeys).toEqual([...allFields].sort());
 
-      for (const field of HANDLER_READ_FIELDS[eventName]) {
+      for (const field of HANDLER_READ_FIELDS[eventName] ?? []) {
         expect(decoded).toHaveProperty(field);
       }
     },

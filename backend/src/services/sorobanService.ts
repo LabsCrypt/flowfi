@@ -1,7 +1,6 @@
 import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks, Account } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
-
-const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
+import { rpcPool } from '../lib/rpc-pool.js';
 
 function getContractId(): string {
   return process.env.STREAM_CONTRACT_ID ?? '';
@@ -34,6 +33,30 @@ const RPC_MAX_RETRIES = Number(process.env.SOROBAN_RPC_MAX_RETRIES ?? 2);
 
 /** Base delay for exponential backoff between retries (doubles each attempt). */
 const RPC_RETRY_BASE_MS = Number(process.env.SOROBAN_RPC_RETRY_BASE_MS ?? 250);
+
+/** Bounded deadline for awaiting on-chain transaction finality (default 30s). */
+function getTxConfirmationTimeoutMs(): number {
+  return Number(process.env.SOROBAN_TX_CONFIRMATION_TIMEOUT_MS ?? 30_000);
+}
+
+/** Polling interval when awaiting on-chain transaction finality (default 1s). */
+function getTxPollIntervalMs(): number {
+  return Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
+}
+
+const DEFAULT_RPC_HEALTH_CACHE_TTL_MS = 10_000;
+
+let rpcHealthCache: { ok: boolean; expiresAt: number } | null = null;
+let rpcHealthPromise: Promise<boolean> | null = null;
+
+function getRpcHealthCacheTtlMs(): number {
+  return Number(process.env.SOROBAN_RPC_HEALTH_CACHE_TTL_MS ?? DEFAULT_RPC_HEALTH_CACHE_TTL_MS);
+}
+
+export function resetRpcHealthCache(): void {
+  rpcHealthCache = null;
+  rpcHealthPromise = null;
+}
 
 export class RpcTimeoutError extends Error {
   constructor(label: string, timeoutMs: number) {
@@ -119,11 +142,47 @@ const SIMULATION_PLACEHOLDER_ACCOUNT = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKI
 
 let _server: rpc.Server | null = null;
 
-function getServer(): rpc.Server {
-  if (!_server) {
-    _server = new rpc.Server(RPC_URL, { allowHttp: true });
+async function executeRpc<T>(label: string, operation: (server: rpc.Server) => Promise<T>): Promise<T> {
+  if (_server) return operation(_server);
+  return rpcPool.execute(label, (server) => operation(server));
+}
+
+/**
+ * Lightweight connectivity check used by the /health endpoint.
+ * Calls the RPC server's getHealth() with a bounded timeout so a slow or
+ * unreachable Soroban RPC endpoint can't hang the health check.
+ */
+export async function checkRpcHealth(timeoutMs = 3_000): Promise<boolean> {
+  const now = Date.now();
+  const ttlMs = getRpcHealthCacheTtlMs();
+
+  if (rpcHealthCache && now < rpcHealthCache.expiresAt) {
+    return rpcHealthCache.ok;
   }
-  return _server;
+
+  if (rpcHealthPromise) {
+    return rpcHealthPromise;
+  }
+
+  rpcHealthPromise = (async () => {
+    try {
+      const ok = await withRpcTimeout(
+        'soroban rpc health check',
+        () => executeRpc('soroban rpc health check', (server) => server.getHealth()),
+        timeoutMs,
+      );
+      const result = Boolean(ok);
+      rpcHealthCache = { ok: result, expiresAt: Date.now() + ttlMs };
+      return result;
+    } catch {
+      rpcHealthCache = { ok: false, expiresAt: Date.now() + ttlMs };
+      return false;
+    } finally {
+      rpcHealthPromise = null;
+    }
+  })();
+
+  return rpcHealthPromise;
 }
 
 export function setServer(server: rpc.Server): void {
@@ -135,7 +194,7 @@ export function resetServer(): void {
 }
 
 export interface ChainStream {
-  streamId: number;
+  streamId: bigint;
   sender: string;
   recipient: string;
   tokenAddress: string;
@@ -147,25 +206,25 @@ export interface ChainStream {
 }
 
 export function decodeI128(val: xdr.ScVal): string {
-  const parts = val.i128();
-  const hi = BigInt.asIntN(64, BigInt(parts.hi().toString()));
-  const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+  const parts = (val as xdr.ScValI128).i128;
+  const hi = BigInt.asIntN(64, BigInt(parts.hi.toString()));
+  const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
   return ((hi << 64n) | lo).toString();
 }
 
 export function decodeAddress(val: xdr.ScVal): string {
-  const addr = val.address();
-  if (addr.switch().value === xdr.ScAddressType.scAddressTypeAccount().value) {
-    return StrKey.encodeEd25519PublicKey(addr.accountId().ed25519());
+  const addr = (val as xdr.ScValAddress).address;
+  if (addr.type === 'scAddressTypeAccount') {
+    return StrKey.encodeEd25519PublicKey((addr.accountId as xdr.PublicKeyEd25519).ed25519.value);
   }
-  const hash = addr.contractId();
-  return StrKey.encodeContract(Buffer.from(hash as unknown as Uint8Array));
+  const hash = (addr as xdr.ScAddressContract).contractId;
+  return StrKey.encodeContract(Buffer.from(hash.value as unknown as Uint8Array));
 }
 
 function decodeMap(val: xdr.ScVal): Record<string, xdr.ScVal> {
   const result: Record<string, xdr.ScVal> = {};
-  for (const entry of val.map() ?? []) {
-    result[entry.key().sym().toString()] = entry.val();
+  for (const entry of (val as xdr.ScValMap).map ?? []) {
+    result[(entry.key as xdr.ScValSymbol).sym.toString()] = entry.val;
   }
   return result;
 }
@@ -192,7 +251,7 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
     .build();
 
   const result = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () => executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx))),
   );
 
   if (rpc.Api.isSimulationError(result)) {
@@ -209,7 +268,7 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 
   const keypair = Keypair.fromSecret(senderSecret);
   const contract = new Contract(contractId);
-  const account = await withRpcTimeout('getAccount', () => getServer().getAccount(keypair.publicKey()));
+  const account = await withRpcTimeout('getAccount', () => executeRpc('getAccount', (server) => server.getAccount(keypair.publicKey())));
 
   const op = contract.call(method, ...args);
 
@@ -226,7 +285,7 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 
   // Simulate first to get foot print and resource info
   const simulation = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () => executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx))),
   );
   if (rpc.Api.isSimulationError(simulation)) {
     throw new Error(`Simulation failed: ${simulation.error}`);
@@ -236,16 +295,59 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
   const assembledTx = rpc.assembleTransaction(tx, simulation).build();
   assembledTx.sign(keypair);
 
-  const response = await withRpcTimeout('sendTransaction', () => getServer().sendTransaction(assembledTx));
+  const response = await withRpcTimeout('sendTransaction', () => executeRpc('sendTransaction', (server) => server.sendTransaction(assembledTx)));
 
   if (response.status === 'ERROR') {
     throw new Error(`Transaction failed: ${JSON.stringify(response.errorResult)}`);
   }
 
+  await pollTransactionStatus(response.hash);
+
   return response.hash;
 }
 
-export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
+/**
+ * Poll Soroban RPC getTransaction until the transaction reaches a terminal status
+ * (SUCCESS or FAILED) or until the bounded timeout expires.
+ */
+export async function pollTransactionStatus(
+  txHash: string,
+  timeoutMs: number = getTxConfirmationTimeoutMs(),
+  pollIntervalMs: number = getTxPollIntervalMs(),
+): Promise<rpc.Api.GetSuccessfulTransactionResponse> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const txResponse = await withRpcRetry('getTransaction', () =>
+      withRpcTimeout('getTransaction', () => executeRpc('getTransaction', (server) => server.getTransaction(txHash))),
+    );
+
+    if (
+      txResponse.status === rpc.Api.GetTransactionStatus.SUCCESS ||
+      (txResponse.status as string) === 'SUCCESS'
+    ) {
+      return txResponse as rpc.Api.GetSuccessfulTransactionResponse;
+    }
+
+    if (
+      txResponse.status === rpc.Api.GetTransactionStatus.FAILED ||
+      (txResponse.status as string) === 'FAILED'
+    ) {
+      const errorDetail = (txResponse as rpc.Api.GetFailedTransactionResponse).resultXdr
+        ? ` (resultXdr: ${(txResponse as rpc.Api.GetFailedTransactionResponse).resultXdr.toXDR('base64')})`
+        : '';
+      throw new Error(`Transaction failed on-chain: ${txHash}${errorDetail}`);
+    }
+
+    if (pollIntervalMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
+  throw new Error(`Transaction confirmation timed out after ${timeoutMs}ms: ${txHash}`);
+}
+
+export async function getStreamFromChain(streamId: bigint): Promise<ChainStream | null> {
   if (!getContractId()) return null;
 
   try {
@@ -257,8 +359,8 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
 
     const isActiveVal = fields['is_active']!;
     const isActive =
-      isActiveVal.switch().value === xdr.ScValType.scvBool().value &&
-      isActiveVal.b() === true;
+      isActiveVal.type === 'scvBool' &&
+      isActiveVal.b === true;
 
     return {
       streamId,
@@ -268,7 +370,7 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
       ratePerSecond: decodeI128(fields['rate_per_second']!),
       depositedAmount: decodeI128(fields['deposited_amount']!),
       withdrawnAmount: decodeI128(fields['withdrawn_amount']!),
-      startTime: Number(fields['start_time']!.u64().toString()),
+      startTime: Number((fields['start_time']! as xdr.ScValU64).u64.toString()),
       isActive,
     };
   } catch (err) {
@@ -277,7 +379,7 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
   }
 }
 
-export async function getClaimableFromChain(streamId: number): Promise<string | null> {
+export async function getClaimableFromChain(streamId: bigint): Promise<string | null> {
   if (!getContractId()) return null;
 
   try {
@@ -292,13 +394,21 @@ export async function getClaimableFromChain(streamId: number): Promise<string | 
   }
 }
 
-export async function cancelStream(streamId: number, senderSecret: string): Promise<string> {
+/**
+ * Cancels a stream on-chain.
+ * @param streamId - The on-chain stream ID
+ * @param senderSecret - The sender's private key used for cryptographic authorization.
+ *   This should be the secret key of the stream's sender wallet, NOT the keeper key.
+ *   Using the keeper key here defeats the purpose of per-action authorization.
+ * @returns Transaction hash of the cancellation transaction
+ */
+export async function cancelStream(streamId: bigint, senderSecret: string): Promise<string> {
   return submitContractCall('cancel_stream', [
     nativeToScVal(streamId, { type: 'u64' }),
   ], senderSecret);
 }
 
-export async function topUpStream(streamId: number, amount: bigint, callerAddress: string): Promise<string> {
+export async function topUpStream(streamId: bigint, amount: bigint, callerAddress: string): Promise<string> {
   const keeperSecret = getKeeperSecret();
   if (!keeperSecret) throw new Error('KEEPER_SECRET_KEY not configured');
   return submitContractCall('top_up_stream', [
@@ -324,7 +434,7 @@ export interface PauseResumeResult {
  */
 export async function pauseStream(
   senderAddress: string,
-  streamId: number
+  streamId: bigint
 ): Promise<PauseResumeResult> {
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
@@ -358,7 +468,7 @@ export async function pauseStream(
  */
 export async function resumeStream(
   senderAddress: string,
-  streamId: number
+  streamId: bigint
 ): Promise<PauseResumeResult> {
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
@@ -390,7 +500,7 @@ export async function resumeStream(
  * matching the current pause/resume backend pattern.
  */
 export async function withdraw(
-  streamId: number,
+  streamId: bigint,
   recipientAddress: string,
 ): Promise<PauseResumeResult> {
   if (!getContractId()) {

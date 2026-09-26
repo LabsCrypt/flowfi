@@ -2,28 +2,17 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { subscribe } from '../../controllers/sse.controller.js';
 import { sseService } from '../../services/sse.service.js';
-import { requireAuth } from '../../middleware/auth.js';
+import { requireAdmin, requireAuth } from '../../middleware/auth.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
-import { prisma } from '../../lib/prisma.js';
 import logger from '../../logger.js';
+import {
+  listEventsForWallet,
+  parseEventTypeFilter,
+  resolveEventsOffset,
+  resolveEventsPageSize,
+} from '../../repositories/streamEvent.repository.js';
 
 const router = Router();
-
-const EVENT_TYPES = new Set([
-  'CREATED',
-  'TOPPED_UP',
-  'WITHDRAWN',
-  'CANCELLED',
-  'COMPLETED',
-  'PAUSED',
-  'RESUMED',
-  'FEE_COLLECTED',
-  'FEE_CONFIG_UPDATED',
-  'ADMIN_TRANSFERRED',
-]);
-
-export const MAX_EVENTS_PAGE_SIZE = 200;
-export const DEFAULT_EVENTS_PAGE_SIZE = 50;
 
 /**
  * @openapi
@@ -48,7 +37,7 @@ export const DEFAULT_EVENTS_PAGE_SIZE = 50;
  *         description: |
  *           Comma-separated list of event types to include. Allowed values:
  *           CREATED, TOPPED_UP, WITHDRAWN, CANCELLED, COMPLETED, PAUSED,
- *           RESUMED, FEE_COLLECTED.
+ *           RESUMED, FEE_COLLECTED, FEE_CONFIG_UPDATED, ADMIN_TRANSFERRED.
  *       - in: query
  *         name: limit
  *         required: false
@@ -62,9 +51,42 @@ export const DEFAULT_EVENTS_PAGE_SIZE = 50;
  *         required: false
  *         schema: { type: integer, default: 1 }
  *         description: Optional 1-based page index. Ignored when offset is set.
+ *       - in: query
+ *         name: includeStream
+ *         required: false
+ *         schema: { type: boolean, default: false }
+ *         description: When true, each event includes its related `stream`.
  *     responses:
  *       200:
  *         description: Paginated event list
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/EventListResponse'
+ *       400:
+ *         description: Missing/invalid `address` or invalid `type` filter
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - `address` must match the authenticated wallet
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -81,58 +103,34 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
       return;
     }
 
-    const rawType = typeof req.query.type === 'string' ? req.query.type : '';
-    const requested = rawType
-      .split(',')
-      .map((t) => t.trim().toUpperCase())
-      .filter(Boolean);
-    const types = requested.filter((t) => EVENT_TYPES.has(t));
+    const { requested, types } = parseEventTypeFilter(req.query.type);
     if (requested.length > 0 && types.length === 0) {
       res.status(400).json({ error: 'No valid event types in `type` filter' });
       return;
     }
 
-    const parsedLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
-    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
-      ? Math.min(parsedLimit, MAX_EVENTS_PAGE_SIZE)
-      : DEFAULT_EVENTS_PAGE_SIZE;
+    const limit = resolveEventsPageSize(req.query.limit);
+    const offset = resolveEventsOffset({
+      rawOffset: req.query.offset,
+      rawPage: req.query.page,
+      limit,
+    });
+    const includeStream = req.query.includeStream === 'true';
 
-    const hasOffset = req.query.offset !== undefined;
-    const parsedOffset = Number.parseInt(String(req.query.offset ?? ''), 10);
-    const parsedPage = Number.parseInt(String(req.query.page ?? ''), 10);
-    const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-    const offset = hasOffset && Number.isFinite(parsedOffset) && parsedOffset >= 0
-      ? parsedOffset
-      : (page - 1) * limit;
-
-    const where: {
-      stream: { OR: Array<{ sender: string } | { recipient: string }> };
-      eventType?: { in: string[] };
-    } = {
-      stream: {
-        OR: [{ sender: address }, { recipient: address }],
-      },
-    };
-    if (types.length > 0) {
-      where.eventType = { in: types };
-    }
-
-    const [events, total] = await Promise.all([
-      prisma.streamEvent.findMany({
-        where,
-        orderBy: { timestamp: 'desc' },
-        skip: offset,
-        take: limit,
-      }),
-      prisma.streamEvent.count({ where }),
-    ]);
-
-    res.json({
-      events,
-      total,
+    const result = await listEventsForWallet({
+      address,
+      types,
       limit,
       offset,
-      hasMore: offset + events.length < total,
+      includeStream,
+    });
+
+    res.json({
+      events: result.events,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
+      hasMore: result.hasMore,
     });
   } catch (err) {
     logger.error('GET /v1/events failed:', err);
@@ -205,13 +203,16 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
  *         example: false
  *     responses:
  *       200:
- *         description: SSE connection established
+ *         description: SSE connection established. Events are emitted as `data:` frames of type stream.created, stream.topped_up, stream.withdrawn, stream.cancelled, stream.completed, stream.paused, stream.resumed, fee.collected.
  *         content:
  *           text/event-stream:
  *             schema:
  *               type: string
+ *               description: Server-Sent Events stream; each event carries a JSON payload matching the StreamEvent schema
  *       400:
  *         description: Invalid subscription parameters
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
  */
 router.get('/subscribe', requireAuth, subscribe);
 
@@ -222,32 +223,36 @@ router.get('/subscribe', requireAuth, subscribe);
  *     tags:
  *       - Events
  *     summary: Get SSE connection statistics
- *     description: Returns current SSE connection metrics for monitoring
+ *     description: Returns current SSE connection metrics for monitoring (admin only)
+ *     security:
+ *       - adminAuth: []
  *     responses:
  *       200:
  *         description: Connection statistics
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 activeConnections:
- *                   type: number
- *                   example: 42
- *                 activeIps:
- *                   type: number
- *                   example: 8
- *                 perIpPeakConnections:
- *                   type: number
- *                   example: 5
- *                 maxConnections:
- *                   type: number
- *                   example: 10000
- *                 timestamp:
- *                   type: string
- *                   format: date-time
+ *               $ref: '#/components/schemas/SseStats'
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - admin access required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       500:
+ *         description: Internal server error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
-router.get('/stats', (req: Request, res: Response) => {
+router.get('/stats', requireAdmin, (req: Request, res: Response) => {
   res.json({
     activeConnections: sseService.getClientCount(),
     activeIps: sseService.getActiveIpCount(),

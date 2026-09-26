@@ -54,13 +54,22 @@ async function main() {
 
     console.log({ stream1 });
 
-    // Create an example event
-    const event1 = await prisma.streamEvent.create({
-        data: {
+    // Upsert an example event – keyed on the @@unique([transactionHash, eventType])
+    // constraint so re-running the seed never creates duplicate rows.
+    const DEMO_TX_HASH = '6f7e8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r';
+    const event1 = await prisma.streamEvent.upsert({
+        where: {
+            transactionHash_eventType: {
+                transactionHash: DEMO_TX_HASH,
+                eventType: 'CREATED',
+            },
+        },
+        update: {},
+        create: {
             streamId: stream1.streamId,
             eventType: 'CREATED',
             amount: '1000000000000',
-            transactionHash: '6f7e8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r',
+            transactionHash: DEMO_TX_HASH,
             ledgerSequence: 123456,
             timestamp: Math.floor(Date.now() / 1000),
             metadata: JSON.stringify({ memo: 'Seed data' }),

@@ -6,7 +6,11 @@
   "main": "index.js",
   "scripts": {
     "prebuild": "prisma generate",
+    "pretest": "prisma generate",
     "test": "vitest run",
+    "test:unit": "vitest run --exclude='tests/integration/**'",
+    "test:integration": "vitest run tests/integration",
+    "test:integration:docker": "docker compose up -d postgres && vitest run tests/integration/stream-lifecycle.test.ts; docker compose stop postgres",
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/index.js",
@@ -14,7 +18,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "codegen:openapi": "tsx scripts/export-openapi.mts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -25,7 +30,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
-    "@stellar/stellar-sdk": "^15.1.0",
+    "@stellar/stellar-sdk": "^17.0.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",

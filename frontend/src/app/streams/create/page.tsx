@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import CreateStreamContent from "./create-stream-content";
 
 export const metadata: Metadata = {
@@ -7,5 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default function CreateStreamPage() {
-  return <CreateStreamContent />;
+  return (
+    <Suspense fallback={null}>
+      <CreateStreamContent />
+    </Suspense>
+  );
 }
