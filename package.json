@@ -15,7 +15,7 @@
   "devDependencies": {
     "@vitest/coverage-v8": "^3.2.7",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.7",
+    "lint-staged": "^17.5.1",
     "vitest": "^3.2.7"
   },
   "lint-staged": {
@@ -24,10 +24,10 @@
     ]
   },
   "dependencies": {
-    "react-hot-toast": "^2.6.0"
+    "react-hot-toast": "^2.6.1"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.63.1",
+    "@rollup/rollup-linux-x64-gnu": "^4.63.3",
     "@tailwindcss/oxide-darwin-arm64": "^4.3.1",
     "@tailwindcss/oxide-darwin-x64": "^4.3.1",
     "@tailwindcss/oxide-linux-x64-gnu": "^4.3.1",
