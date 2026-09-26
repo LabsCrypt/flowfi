@@ -35,16 +35,38 @@ pub enum StreamError {
     StreamNotPaused = 13,
     /// `pause_stream` was called on a stream that is already paused.
     StreamAlreadyPaused = 14,
-    /// Operation requires an active stream, but the stream is inactive (cancelled or completed).
-    StreamNotActive = 15,
-    /// An amount or timestamp calculation exceeded the range of its type.
+    /// The protocol circuit breaker is engaged; token-in operations are halted.
+    ProtocolPaused = 15,
+    /// A step-tranche schedule declared no steps.
+    EmptyVestingSchedule = 16,
+    /// A step-tranche schedule declares more than `MAX_VESTING_STEPS` steps.
+    TooManyVestingSteps = 17,
+    /// Step unlock times are not strictly monotonically increasing.
+    NonMonotonicVestingSteps = 18,
+    /// A step's `unlock_amount` is zero or negative.
+    InvalidVestingStepAmount = 19,
+    /// Step amounts do not sum to the stream's deposited amount.
+    VestingStepTotalMismatch = 20,
+    /// A vesting step unlocks at or before the stream's start time.
+    VestingStepBeforeStart = 21,
+    /// Cliff time is not strictly after the stream start, or the cliff amount
+    /// leaves no room for the linear tail.
+    InvalidCliffParameters = 22,
+    /// `batch_withdraw` received more than `MAX_BATCH_WITHDRAW` stream IDs.
+    BatchTooLarge = 23,
+    /// Caller is not the protocol admin and not the emergency guardian, and
+    /// only the admin may perform this action.
+    NotGuardian = 24,
+    /// `migrate` was asked to move to a version this contract cannot reach.
+    UnsupportedMigration = 25,
+    /// The on-chain state is already at a version newer than this contract.
+    StateVersionTooNew = 26,
+    /// `top_up_stream` was called on a step-tranche stream.
     ///
-    /// Returned instead of letting `overflow-checks` panic and abort the whole
-    /// transaction, so callers get a typed failure they can handle.
-    ArithmeticOverflow = 16,
-    /// Operation requires a fully settled stream, but unwithdrawn funds remain.
-    ///
-    /// Returned by `close_stream` when the stream is still active, has a
-    /// non-terminal status, or still holds a claimable / undeposited balance.
-    StreamStillActive = 17,
+    /// A step schedule must sum to exactly the deposited amount, so extra
+    /// tokens have nowhere to go: appending them to the final step would lock
+    /// the top-up until the last milestone, and ignoring them would strand them
+    /// as unclaimable residue. Rejecting is the only option that never lies to
+    /// the recipient about when funds become available.
+    TopUpUnsupported = 27,
 }

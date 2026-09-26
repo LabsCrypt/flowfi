@@ -22,6 +22,11 @@
 
 #![no_std]
 #![doc = include_str!("../README.md")]
+// A contract's entrypoint arity *is* its public ABI, and `#[contractimpl]` /
+// `#[contractclient]` regenerate every client method with the same arity inside
+// the macro expansion, where an item-level `allow` cannot reach. Suppressing the
+// lint crate-wide is the only way to keep `-D warnings` meaningful elsewhere.
+#![allow(clippy::too_many_arguments)]
 
 mod errors;
 mod events;
@@ -35,23 +40,39 @@ mod property_tests;
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, token, vec, Address, Env, InvokeError, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, token, vec, Address, BytesN, Env, InvokeError, Symbol, Vec,
+};
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    RecipientTransferredEvent, StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent,
-    StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    AdminTransferredEvent, ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
+    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
+    ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
+    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
-    config_exists, load_config, load_stream, next_stream_id, remove_stream, save_config,
-    save_stream, try_load_config, try_load_stream,
+    config_exists, get_contract_version, get_recorded_wasm_hash, load_config, load_stream,
+    next_stream_id, save_config, save_contract_version, save_recorded_wasm_hash, save_stream,
+    try_load_config, try_load_stream,
 };
-use types::{BatchStreamInput, ProtocolConfig, Stream, StreamStatus};
+use types::{
+    ProtocolConfig, Stream, StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW,
+    MAX_VESTING_STEPS,
+};
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
 const MAX_FEE_RATE_BPS: u32 = 1_000;
+
+/// Current on-chain state schema version.
+///
+/// - `0` — unversioned, written before `DataKey::ContractVersion` existed.
+///   `ProtocolConfig` has three fields and `Stream` has no `schedule`.
+/// - `1` — reserved for versioned pre-circuit-breaker state.
+/// - `2` — adds the protocol circuit breaker, the emergency guardian role and
+///   the `VestingSchedule` discriminator to `Stream`.
+const CURRENT_DATA_VERSION: u32 = 2;
 
 #[contract]
 pub struct StreamContract;
@@ -61,6 +82,9 @@ impl StreamContract {
     // ─── Protocol Administration ──────────────────────────────────────────────
 
     /// One-time initialization of the protocol fee configuration.
+    ///
+    /// The protocol starts unpaused with no emergency guardian; set the latter
+    /// with `set_emergency_guardian` once the protocol is live.
     ///
     /// # Errors
     /// - `AlreadyInitialized` — called more than once.
@@ -86,8 +110,11 @@ impl StreamContract {
                 admin: admin.clone(),
                 treasury: treasury.clone(),
                 fee_rate_bps,
+                is_protocol_paused: false,
+                emergency_guardian: None,
             },
         );
+        save_contract_version(&env, CURRENT_DATA_VERSION);
 
         env.events().publish(
             (Symbol::new(&env, "initialized"),),
@@ -102,6 +129,8 @@ impl StreamContract {
     }
 
     /// Update the treasury address and/or fee rate. Admin-only.
+    ///
+    /// Circuit-breaker and guardian state are deliberately left untouched.
     ///
     /// # Errors
     /// - `NotInitialized` — `initialize` has not been called.
@@ -129,6 +158,8 @@ impl StreamContract {
                 admin: config.admin.clone(),
                 treasury: treasury.clone(),
                 fee_rate_bps,
+                is_protocol_paused: config.is_protocol_paused,
+                emergency_guardian: config.emergency_guardian,
             },
         );
 
@@ -149,7 +180,14 @@ impl StreamContract {
     /// Transfer the protocol admin role to a new address.
     ///
     /// The current admin must authenticate. After this call the new address
-    /// becomes the sole admin and the previous admin loses all admin privileges.
+    /// becomes the sole admin and the previous admin loses all admin privileges,
+    /// including the ability to clear a protocol pause.
+    ///
+    /// The emergency guardian role *is* carried over, because dropping it
+    /// mid-incident would hand the incoming admin a protocol that nobody can
+    /// trip. The new admin holds `set_emergency_guardian` and can revoke or
+    /// re-point the role whenever they choose. A pause already in effect stays
+    /// in effect until explicitly cleared.
     ///
     /// # Errors
     /// - `NotInitialized` — `initialize` has not been called.
@@ -172,6 +210,8 @@ impl StreamContract {
                 admin: new_admin.clone(),
                 treasury: config.treasury,
                 fee_rate_bps: config.fee_rate_bps,
+                is_protocol_paused: config.is_protocol_paused,
+                emergency_guardian: config.emergency_guardian,
             },
         );
 
@@ -186,9 +226,117 @@ impl StreamContract {
         Ok(())
     }
 
-    /// Returns the current protocol fee configuration, or `None` if not yet initialized.
+    /// Returns the current protocol configuration, or `None` if not yet initialized.
     pub fn get_fee_config(env: Env) -> Option<ProtocolConfig> {
         try_load_config(&env)
+    }
+
+    // ─── Circuit Breaker (F1) ─────────────────────────────────────────────────
+
+    /// Trip or clear the protocol-wide circuit breaker.
+    ///
+    /// Authorization is deliberately asymmetric, following the emergency-stop
+    /// pattern used across DeFi:
+    /// - **Pausing** — the admin *or* the emergency guardian may trip it.
+    /// - **Unpausing** — only the admin. A guardian that could also clear the
+    ///   breaker could silently reinstate deposits during the very incident
+    ///   that caused the pause, so a compromised guardian can only ever be
+    ///   maximally restrictive.
+    ///
+    /// While paused, every token-*in* entrypoint (`create_stream`,
+    /// `create_step_vesting_stream`, `create_hybrid_cliff_stream`,
+    /// `top_up_stream`) reverts with `ProtocolPaused`. Every token-*out*
+    /// entrypoint (`withdraw`, `batch_withdraw`, `cancel_stream`) stays open so
+    /// a pause can neither censor withdrawals of vested funds nor trap capital.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — `initialize` has not been called.
+    /// - `NotAdmin`       — caller is neither admin nor guardian, or is neither
+    ///   admin nor guardian while attempting to unpause.
+    pub fn set_protocol_pause(env: Env, caller: Address, paused: bool) -> Result<(), StreamError> {
+        let mut config = load_config(&env)?;
+        caller.require_auth();
+
+        let authorized = if paused {
+            // Admin or the configured guardian may trip the breaker.
+            config.admin == caller || config.emergency_guardian.as_ref() == Some(&caller)
+        } else {
+            // Only the admin may clear it.
+            config.admin == caller
+        };
+
+        if !authorized {
+            return Err(if paused {
+                StreamError::NotGuardian
+            } else {
+                StreamError::NotAdmin
+            });
+        }
+
+        config.is_protocol_paused = paused;
+        save_config(&env, &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "protocol_pause_status"),),
+            ProtocolPauseStatusEvent {
+                caller,
+                paused,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Returns `true` while the protocol-wide circuit breaker is engaged.
+    pub fn is_protocol_paused(env: Env) -> bool {
+        try_load_config(&env)
+            .map(|c| c.is_protocol_paused)
+            .unwrap_or(false)
+    }
+
+    /// Set or clear the emergency guardian. Admin-only.
+    ///
+    /// Passing `None` removes the guardian, leaving the admin as the only
+    /// authority able to trip the breaker. Re-setting the guardian to the admin
+    /// address is allowed and equivalent to having no separate guardian.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — `initialize` has not been called.
+    /// - `NotAdmin`       — caller is not the current admin.
+    pub fn set_emergency_guardian(
+        env: Env,
+        admin: Address,
+        guardian: Option<Address>,
+    ) -> Result<(), StreamError> {
+        admin.require_auth();
+
+        let mut config = load_config(&env)?;
+        if config.admin != admin {
+            return Err(StreamError::NotAdmin);
+        }
+
+        config.emergency_guardian = guardian.clone();
+        save_config(&env, &config);
+
+        env.events().publish(
+            (Symbol::new(&env, "emergency_guardian_updated"),),
+            EmergencyGuardianUpdatedEvent { admin, guardian },
+        );
+
+        Ok(())
+    }
+
+    /// Reverts with `ProtocolPaused` while the circuit breaker is engaged.
+    ///
+    /// Placed at the top of every token-in entrypoint. A missing config counts
+    /// as "not paused" so that the guard never becomes a second, redundant
+    /// initialization gate.
+    fn require_not_protocol_paused(env: &Env) -> Result<(), StreamError> {
+        if Self::is_protocol_paused(env.clone()) {
+            return Err(StreamError::ProtocolPaused);
+        }
+        Ok(())
     }
 
     // ─── Stream Operations ────────────────────────────────────────────────────
@@ -202,9 +350,10 @@ impl StreamContract {
     /// Returns the new stream ID (starts at 1, increments monotonically).
     ///
     /// # Errors
-    /// - `InvalidAmount`   — `amount` ≤ 0.
-    /// - `InvalidDuration` — `duration` is 0.
-    /// - `InvalidRate`     — `net_amount / duration` rounds to zero.
+    /// - `ProtocolPaused`     — the circuit breaker is engaged.
+    /// - `InvalidAmount`      — `amount` ≤ 0.
+    /// - `InvalidDuration`    — `duration` is 0.
+    /// - `InvalidRate`        — `net_amount / duration` rounds to zero.
     /// - `InvalidTokenAddress` — `token_address` is not a token contract.
     /// - `ArithmeticOverflow` — the protocol fee calculation overflows `i128`.
     pub fn create_stream(
@@ -216,6 +365,7 @@ impl StreamContract {
         duration: u64,
     ) -> Result<u64, StreamError> {
         sender.require_auth();
+        Self::require_not_protocol_paused(&env)?;
 
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
@@ -264,6 +414,7 @@ impl StreamContract {
                 paused: false,
                 paused_at: None,
                 status: StreamStatus::Active,
+                schedule: VestingSchedule::Linear,
             },
         );
 
@@ -283,126 +434,168 @@ impl StreamContract {
         Ok(stream_id)
     }
 
-    /// Create multiple streams atomically, aggregating token transfers by token.
-    pub fn batch_create_streams(
-        env: Env,
-        sender: Address,
-        streams: Vec<BatchStreamInput>,
-    ) -> Result<Vec<u64>, StreamError> {
-        sender.require_auth();
-        let count = streams.len();
-        if count == 0 || count > 50 {
-            return Err(StreamError::InvalidAmount);
-        }
-
-        // Validate all inputs before any transfer or state mutation.
-        for input in streams.iter() {
-            if input.amount <= 0 || input.duration == 0 {
-                return Err(if input.amount <= 0 {
-                    StreamError::InvalidAmount
-                } else {
-                    StreamError::InvalidDuration
-                });
-            }
-            if let Some(cliff) = input.cliff_duration {
-                if cliff == 0 || cliff > input.duration {
-                    return Err(StreamError::InvalidDuration);
-                }
-            }
-            Self::validate_token_contract(&env, &input.token_address)?;
-            if input.amount / input.duration as i128 == 0 {
-                return Err(StreamError::InvalidRate);
-            }
-        }
-
-        let contract_address = env.current_contract_address();
-        // Aggregate gross deposits per token while preserving first-seen order.
-        let mut token_totals: Vec<(Address, i128)> = Vec::new(&env);
-        for input in streams.iter() {
-            let mut found = false;
-            for i in 0..token_totals.len() {
-                let (token_address, total) = token_totals.get(i).unwrap();
-                if token_address == input.token_address {
-                    token_totals.set(i, (token_address, total + input.amount));
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                token_totals.push_back((input.token_address.clone(), input.amount));
-            }
-        }
-        for (token_address, total) in token_totals.iter() {
-            token::Client::new(&env, &token_address).transfer(&sender, &contract_address, &total);
-        }
-
-        let mut ids: Vec<u64> = Vec::new(&env);
-        for input in streams.iter() {
-            let stream_id = next_stream_id(&env);
-            let start_time = env.ledger().timestamp();
-            let net_amount =
-                Self::collect_fee(&env, &input.token_address, input.amount, stream_id)?;
-            let cliff_time = input.cliff_duration.map(|duration| start_time + duration);
-            let stream = Stream {
-                sender: sender.clone(),
-                recipient: input.recipient.clone(),
-                token_address: input.token_address.clone(),
-                rate_per_second: net_amount / input.duration as i128,
-                deposited_amount: net_amount,
-                withdrawn_amount: 0,
-                start_time,
-                last_update_time: start_time,
-                cliff_time,
-                is_active: true,
-                paused: false,
-                paused_at: None,
-                status: StreamStatus::Active,
-            };
-            save_stream(&env, stream_id, &stream);
-            env.events().publish(
-                (Symbol::new(&env, "stream_created"), stream_id),
-                StreamCreatedEvent {
-                    stream_id,
-                    sender: sender.clone(),
-                    recipient: input.recipient,
-                    rate_per_second: stream.rate_per_second,
-                    token_address: input.token_address,
-                    deposited_amount: net_amount,
-                    start_time,
-                },
-            );
-            ids.push_back(stream_id);
-        }
-        Ok(ids)
-    }
-
-    /// Create a stream with a vesting cliff.
-    pub fn create_stream_with_cliff(
+    /// Create a milestone (step-tranche) vesting stream.
+    ///
+    /// Instead of unlocking continuously, the deposited amount is released in
+    /// discrete tranches: at ledger timestamp `T` the recipient may claim the
+    /// sum of every `step.unlock_amount` whose `unlock_time` is `<= T`, minus
+    /// whatever they have already withdrawn. This models institutional grants,
+    /// VC tranches and executive packages inside a single stream instead of
+    /// forcing the sender to fragment the award across N linear streams.
+    ///
+    /// Validation is strict because a malformed schedule is unrecoverable once
+    /// funds are escrowed:
+    /// - 1..=`MAX_VESTING_STEPS` steps,
+    /// - strictly increasing `unlock_time`, each strictly after `start_time`,
+    /// - strictly positive `unlock_amount`,
+    /// - step amounts summing to exactly the post-fee deposited amount.
+    ///
+    /// Fee handling matches `create_stream`: the protocol fee is deducted from
+    /// the gross `amount` and the steps must sum to that *net* figure.
+    ///
+    /// # Errors
+    /// - `ProtocolPaused`              — the circuit breaker is engaged.
+    /// - `InvalidAmount`               — `amount` ≤ 0.
+    /// - `InvalidTokenAddress`         — `token_address` is not a token contract.
+    /// - `EmptyVestingSchedule`        — `steps` is empty.
+    /// - `TooManyVestingSteps`         — more than `MAX_VESTING_STEPS` steps.
+    /// - `NonMonotonicVestingSteps`    — two steps share an `unlock_time` or are out of order.
+    /// - `InvalidVestingStepAmount`    — a step amount is ≤ 0.
+    /// - `VestingStepBeforeStart`      — a step unlocks at or before the stream start.
+    /// - `VestingStepTotalMismatch`    — step amounts ≠ post-fee deposited amount.
+    pub fn create_step_vesting_stream(
         env: Env,
         sender: Address,
         recipient: Address,
         token_address: Address,
         amount: i128,
-        duration: u64,
-        cliff_duration: u64,
+        steps: Vec<VestingStep>,
     ) -> Result<u64, StreamError> {
         sender.require_auth();
+        Self::require_not_protocol_paused(&env)?;
+
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
         }
-        if duration == 0 || cliff_duration == 0 || cliff_duration > duration {
-            return Err(StreamError::InvalidDuration);
-        }
         Self::validate_token_contract(&env, &token_address)?;
+
+        let step_count = steps.len();
+        if step_count == 0 {
+            return Err(StreamError::EmptyVestingSchedule);
+        }
+        if step_count > MAX_VESTING_STEPS {
+            return Err(StreamError::TooManyVestingSteps);
+        }
+
         let stream_id = next_stream_id(&env);
         let start_time = env.ledger().timestamp();
+
+        let token_client = token::Client::new(&env, &token_address);
         let contract_address = env.current_contract_address();
-        token::Client::new(&env, &token_address).transfer(&sender, &contract_address, &amount);
-        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id)?;
-        let rate_per_second = net_amount / duration as i128;
-        if rate_per_second == 0 {
-            return Err(StreamError::InvalidRate);
+        token_client.transfer(&sender, &contract_address, &amount);
+
+        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+
+        // Structural validation. Runs *after* the transfer so that the real
+        // net amount is known, but a returned Err rolls the whole transaction
+        // back including the transfer and the fee.
+        Self::validate_step_schedule(&steps, start_time, net_amount)?;
+
+        let last_unlock_time = steps.get(step_count - 1).unwrap().unlock_time;
+
+        save_stream(
+            &env,
+            stream_id,
+            &Stream {
+                sender: sender.clone(),
+                recipient: recipient.clone(),
+                token_address: token_address.clone(),
+                // Step schedules unlock by absolute timestamp, not by rate.
+                rate_per_second: 0,
+                deposited_amount: net_amount,
+                withdrawn_amount: 0,
+                start_time,
+                last_update_time: start_time,
+                is_active: true,
+                paused: false,
+                paused_at: None,
+                status: StreamStatus::Active,
+                schedule: VestingSchedule::StepTranches(steps),
+            },
+        );
+
+        env.events().publish(
+            (Symbol::new(&env, "step_vesting_stream_created"), stream_id),
+            StepVestingStreamCreatedEvent {
+                stream_id,
+                sender,
+                recipient,
+                token_address,
+                deposited_amount: net_amount,
+                step_count,
+                last_unlock_time,
+            },
+        );
+
+        Ok(stream_id)
+    }
+
+    /// Create a cliff + linear hybrid stream.
+    ///
+    /// `cliff_unlock_amount` unlocks in one lump at absolute timestamp
+    /// `cliff_time`; the remaining `deposited_amount - cliff_unlock_amount`
+    /// then drips linearly at `(net - cliff) / linear_duration` per second.
+    /// This is the common "4-year cliff, then monthly" compensation shape.
+    ///
+    /// # Errors
+    /// - `ProtocolPaused`        — the circuit breaker is engaged.
+    /// - `InvalidAmount`         — `amount` ≤ 0.
+    /// - `InvalidTokenAddress`   — `token_address` is not a token contract.
+    /// - `InvalidCliffParameters` — `cliff_time` not after start, `cliff_unlock_amount`
+    ///   not in `(0, net)`, `linear_duration` 0, or the post-cliff rate rounds to zero.
+    pub fn create_hybrid_cliff_stream(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_address: Address,
+        amount: i128,
+        cliff_time: u64,
+        cliff_unlock_amount: i128,
+        linear_duration: u64,
+    ) -> Result<u64, StreamError> {
+        sender.require_auth();
+        Self::require_not_protocol_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
         }
+        if linear_duration == 0 {
+            return Err(StreamError::InvalidCliffParameters);
+        }
+        Self::validate_token_contract(&env, &token_address)?;
+
+        let stream_id = next_stream_id(&env);
+        let start_time = env.ledger().timestamp();
+
+        let token_client = token::Client::new(&env, &token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&sender, &contract_address, &amount);
+
+        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+
+        // The cliff must land strictly after creation, and must leave a
+        // non-empty remainder so the linear component is well defined.
+        if cliff_time <= start_time || cliff_unlock_amount <= 0 || cliff_unlock_amount >= net_amount
+        {
+            return Err(StreamError::InvalidCliffParameters);
+        }
+
+        let linear_amount = net_amount - cliff_unlock_amount;
+        let rate_per_second = linear_amount / (linear_duration as i128);
+        if rate_per_second == 0 {
+            return Err(StreamError::InvalidCliffParameters);
+        }
+
         save_stream(
             &env,
             stream_id,
@@ -415,75 +608,65 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
-                cliff_time: Some(start_time + cliff_duration),
                 is_active: true,
                 paused: false,
                 paused_at: None,
                 status: StreamStatus::Active,
+                schedule: VestingSchedule::HybridCliffLinear(cliff_time, cliff_unlock_amount),
             },
         );
+
         env.events().publish(
-            (Symbol::new(&env, "stream_created"), stream_id),
-            StreamCreatedEvent {
+            (Symbol::new(&env, "hybrid_cliff_stream_created"), stream_id),
+            HybridCliffStreamCreatedEvent {
                 stream_id,
                 sender,
                 recipient,
-                rate_per_second,
                 token_address,
                 deposited_amount: net_amount,
-                start_time,
+                cliff_time,
+                cliff_unlock_amount,
+                rate_per_second,
             },
         );
+
         Ok(stream_id)
     }
 
-    /// Transfer an active stream to a new recipient after settling accrued funds.
-    pub fn transfer_recipient(
-        env: Env,
-        current_recipient: Address,
-        stream_id: u64,
-        new_recipient: Address,
+    /// Structural validation for a step-tranche schedule.
+    ///
+    /// Split out from `create_step_vesting_stream` so the same invariants can
+    /// be asserted directly in tests.
+    fn validate_step_schedule(
+        steps: &Vec<VestingStep>,
+        start_time: u64,
+        net_amount: i128,
     ) -> Result<(), StreamError> {
-        current_recipient.require_auth();
-        let mut stream = load_stream(&env, stream_id)?;
-        if stream.recipient != current_recipient {
-            return Err(StreamError::Unauthorized);
-        }
-        Self::validate_stream_active(&stream)?;
-        if new_recipient == current_recipient || new_recipient == env.current_contract_address() {
-            return Err(StreamError::Unauthorized);
-        }
-        let now = env.ledger().timestamp();
-        let settled_amount = Self::calculate_claimable(&stream, now);
-        if settled_amount > 0 {
-            stream.withdrawn_amount += settled_amount;
-        }
-        stream.last_update_time = now;
-        stream.recipient = new_recipient.clone();
-        save_stream(&env, stream_id, &stream);
-        if settled_amount > 0 {
-            token::Client::new(&env, &stream.token_address).transfer(
-                &env.current_contract_address(),
-                &current_recipient,
-                &settled_amount,
-            );
-        }
-        env.events().publish(
-            (Symbol::new(&env, "recipient_transferred"), stream_id),
-            RecipientTransferredEvent {
-                stream_id,
-                old_recipient: current_recipient,
-                new_recipient,
-                settled_amount,
-                timestamp: now,
-            },
-        );
-        Ok(())
-    }
+        let mut total: i128 = 0;
+        let mut previous_unlock_time: Option<u64> = None;
 
-    /// Renew a stream's persistent storage TTL without authorization.
-    pub fn extend_stream_ttl(env: Env, stream_id: u64) -> Result<(), StreamError> {
-        let _ = load_stream(&env, stream_id)?;
+        for step in steps.iter() {
+            if step.unlock_amount <= 0 {
+                return Err(StreamError::InvalidVestingStepAmount);
+            }
+            if step.unlock_time <= start_time {
+                return Err(StreamError::VestingStepBeforeStart);
+            }
+            // Strictly increasing: a duplicate or out-of-order timestamp would
+            // make "sum of steps with unlock_time <= T" ambiguous at the boundary.
+            if let Some(previous) = previous_unlock_time {
+                if step.unlock_time <= previous {
+                    return Err(StreamError::NonMonotonicVestingSteps);
+                }
+            }
+            previous_unlock_time = Some(step.unlock_time);
+            total = total.saturating_add(step.unlock_amount);
+        }
+
+        if total != net_amount {
+            return Err(StreamError::VestingStepTotalMismatch);
+        }
+
         Ok(())
     }
 
@@ -492,13 +675,21 @@ impl StreamContract {
     /// Only the original sender may top up their own stream. The top-up amount
     /// is subject to protocol fees (if configured) before being added to the stream.
     ///
+    /// Supported for the continuous-drip schedules ([`VestingSchedule::Linear`]
+    /// and the linear tail of [`VestingSchedule::HybridCliffLinear`]), where a
+    /// larger deposit simply extends the drain time at the same rate. Rejected
+    /// for [`VestingSchedule::StepTranches`] with `TopUpUnsupported` — a step
+    /// schedule must sum to exactly the deposited amount, so a top-up could
+    /// either be stranded as unclaimable residue or silently deferred to the
+    /// final milestone. Both would misstate when the recipient gets their money.
+    ///
     /// # Errors
-    /// - `InvalidAmount`   — `amount` ≤ 0.
-    /// - `StreamNotFound`  — no stream exists with `stream_id`.
-    /// - `Unauthorized`    — caller is not the stream's sender.
-    /// - `StreamInactive`  — stream has been cancelled or fully withdrawn.
-    /// - `ArithmeticOverflow` — the fee calculation, the new deposited total,
-    ///   or the projected end time overflows.
+    /// - `ProtocolPaused`    — the circuit breaker is engaged.
+    /// - `InvalidAmount`     — `amount` ≤ 0.
+    /// - `StreamNotFound`    — no stream exists with `stream_id`.
+    /// - `Unauthorized`      — caller is not the stream's sender.
+    /// - `StreamInactive`    — stream has been cancelled or fully withdrawn.
+    /// - `TopUpUnsupported`  — the stream uses a step-tranche schedule.
     pub fn top_up_stream(
         env: Env,
         sender: Address,
@@ -506,6 +697,7 @@ impl StreamContract {
         amount: i128,
     ) -> Result<(), StreamError> {
         sender.require_auth();
+        Self::require_not_protocol_paused(&env)?;
 
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
@@ -516,6 +708,10 @@ impl StreamContract {
         // Validate ownership and active status using helper functions
         Self::validate_stream_ownership(&stream, &sender)?;
         Self::validate_stream_active(&stream)?;
+
+        if matches!(stream.schedule, VestingSchedule::StepTranches(_)) {
+            return Err(StreamError::TopUpUnsupported);
+        }
 
         // Transfer tokens from sender to contract
         let token_client = token::Client::new(&env, &stream.token_address);
@@ -574,8 +770,22 @@ impl StreamContract {
 
     /// Calculate the claimable amount for a stream at a given timestamp.
     ///
-    /// Excludes any time the stream was paused. If the stream is currently
-    /// paused, accrual stops at `paused_at`.
+    /// Dispatches on [`Stream::schedule`]:
+    ///
+    /// - [`VestingSchedule::Linear`] — accrues at `rate_per_second` from the
+    ///   `last_update_time` anchor, so pauses are handled by `resume_stream`
+    ///   shifting that anchor forward.
+    /// - [`VestingSchedule::StepTranches`] — sums the `unlock_amount` of every
+    ///   step whose absolute `unlock_time` has arrived, minus what has already
+    ///   been withdrawn. Steps are strictly increasing, so the loop can stop at
+    ///   the first future step.
+    /// - [`VestingSchedule::HybridCliffLinear`] — the cliff lump once
+    ///   `cliff_time` is reached, plus linear accrual from `cliff_time`.
+    ///
+    /// The two non-linear schedules are anchored to absolute ledger timestamps
+    /// rather than to `last_update_time`. Their claim function is therefore
+    /// always `total_unlocked(now) - withdrawn`, which is idempotent and cannot
+    /// double-count across repeated calls or a pause/resume cycle.
     ///
     /// # Overflow Protection
     /// - Uses `checked_mul` for rate_per_second * elapsed_seconds multiplication
@@ -590,14 +800,6 @@ impl StreamContract {
             now
         };
 
-        if let Some(cliff) = stream.cliff_time {
-            if effective_now < cliff {
-                return 0;
-            }
-        }
-
-        let elapsed = effective_now.saturating_sub(stream.last_update_time);
-
         // Clamp to 0: withdrawn_amount should never exceed deposited_amount in
         // normal flow, but guard defensively so the function never returns negative.
         let remaining = stream
@@ -605,14 +807,100 @@ impl StreamContract {
             .saturating_sub(stream.withdrawn_amount)
             .max(0);
 
-        // Use checked_mul to prevent overflow when multiplying rate * elapsed.
-        // If overflow would occur, cap at the remaining balance.
-        let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
-            Some(result) => result,
-            None => return remaining,
+        match &stream.schedule {
+            VestingSchedule::Linear => {
+                let elapsed = effective_now.saturating_sub(stream.last_update_time);
+
+                // Use checked_mul to prevent overflow when multiplying rate * elapsed.
+                // If overflow would occur, cap at the remaining balance.
+                let streamed = match (elapsed as i128).checked_mul(stream.rate_per_second) {
+                    Some(result) => result,
+                    None => return remaining,
+                };
+
+                streamed.min(remaining)
+            }
+            VestingSchedule::StepTranches(steps) => {
+                let mut unlocked: i128 = 0;
+                for step in steps.iter() {
+                    // Strictly increasing unlock times make the early exit
+                    // equivalent to a full scan, at O(reached steps).
+                    if step.unlock_time > effective_now {
+                        break;
+                    }
+                    unlocked = unlocked.saturating_add(step.unlock_amount);
+                }
+                unlocked
+                    .saturating_sub(stream.withdrawn_amount)
+                    .max(0)
+                    .min(remaining)
+            }
+            VestingSchedule::HybridCliffLinear(cliff_time, cliff_unlock_amount) => {
+                if effective_now < *cliff_time {
+                    return 0;
+                }
+                // The linear tail is anchored at `cliff_time` and can never
+                // outrun the post-cliff remainder, so a partial withdrawal can
+                // never re-earn the tail it already consumed.
+                let linear_total = stream.deposited_amount.saturating_sub(*cliff_unlock_amount);
+                let linear_elapsed = effective_now.saturating_sub(*cliff_time);
+                let linear = match (linear_elapsed as i128).checked_mul(stream.rate_per_second) {
+                    Some(result) => result.min(linear_total),
+                    None => linear_total,
+                };
+                (*cliff_unlock_amount)
+                    .saturating_add(linear)
+                    .saturating_sub(stream.withdrawn_amount)
+                    .max(0)
+                    .min(remaining)
+            }
+        }
+    }
+
+    /// Ledger timestamp at which a stream is expected to be fully drained.
+    ///
+    /// For [`VestingSchedule::Linear`] this is `last_update_time + remaining /
+    /// rate`. For the linear tail of [`VestingSchedule::HybridCliffLinear`] the
+    /// accrual is anchored at `cliff_time` instead, and the still-unclaimed
+    /// cliff is excluded because it does not drip. Step-tranche streams have no
+    /// rate at all and report the timestamp of their final unlock step, which is
+    /// the only meaningful deadline they have.
+    fn projected_end_time(stream: &Stream) -> u64 {
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount);
+
+        let drip_time = |anchor: u64, drippable: i128| -> u64 {
+            // A non-positive rate means there is no linear component left to
+            // project; report the anchor rather than dividing by zero.
+            if stream.rate_per_second <= 0 {
+                return anchor;
+            }
+            anchor.saturating_add((drippable.max(0) / stream.rate_per_second) as u64)
         };
 
-        streamed.min(remaining)
+        match &stream.schedule {
+            VestingSchedule::StepTranches(steps) => {
+                let len = steps.len();
+                if len == 0 {
+                    return stream.last_update_time;
+                }
+                steps.get(len - 1).unwrap().unlock_time
+            }
+            VestingSchedule::HybridCliffLinear(cliff_time, cliff_unlock_amount) => {
+                let unclaimed_cliff = cliff_unlock_amount.saturating_sub(stream.withdrawn_amount);
+                drip_time(*cliff_time, remaining.saturating_sub(unclaimed_cliff))
+            }
+            VestingSchedule::Linear => {
+                // `create_stream` guarantees rate >= 1 for linear streams, but
+                // the guard above keeps a hand-crafted record from trapping.
+                let anchor = match stream.paused_at {
+                    Some(paused_at) => paused_at,
+                    None => stream.last_update_time,
+                };
+                drip_time(anchor, remaining)
+            }
+        }
     }
 
     /// Validate that a stream exists and is owned by the caller.
@@ -949,13 +1237,11 @@ impl StreamContract {
     /// from the current moment, effectively extending the stream by the
     /// duration it was paused.
     ///
-    /// **State Invariant:** A cancelled stream (status == `Cancelled`) can
-    /// never be resumed, even if `paused` is `true`. The `is_active` and
-    /// `paused` fields are independently-settable, but once a stream is
-    /// cancelled, the invariant "a cancelled stream must never be resumable"
-    /// is absolute. This invariant must be preserved across all contract
-    /// changes to prevent state-invariant bugs. See Testing #94 for test
-    /// coverage.
+    /// Step-tranche schedules are anchored to absolute unlock timestamps and
+    /// carry no rate, so their reported `new_end_time` is the final unlock step
+    /// rather than a rate-derived projection. Note that pausing does *not* push
+    /// a step deadline out: a step that fell due while the stream was paused is
+    /// claimable as soon as it resumes.
     ///
     /// # Errors
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
@@ -986,6 +1272,8 @@ impl StreamContract {
         let claimable_at_resume = Self::calculate_claimable(&stream, now);
 
         // Advance last_update_time by pause duration so accrual resumes from now.
+        // Only meaningful for the rate-based schedules; the step engine ignores
+        // this anchor entirely.
         stream.last_update_time = stream.last_update_time.saturating_add(pause_duration);
         // new_end_time represents when the stream will fully drain from now,
         // net of the amount already accrued (and claimable) at the pause point.
@@ -993,8 +1281,22 @@ impl StreamContract {
             .deposited_amount
             .saturating_sub(stream.withdrawn_amount)
             .saturating_sub(claimable_at_resume);
-        // rate_per_second is guaranteed >= 1 due to create_stream's InvalidRate guard
-        let new_end_time = Self::project_end_time(now, remaining, stream.rate_per_second)?;
+
+        let new_end_time = match stream.schedule {
+            // A linear stream is guaranteed rate >= 1 by create_stream's
+            // InvalidRate guard, so the division is safe here.
+            VestingSchedule::Linear => now + (remaining / stream.rate_per_second) as u64,
+            // Step and hybrid schedules are anchored to absolute timestamps;
+            // ask the schedule-aware projection instead of dividing.
+            _ => {
+                stream.paused = false;
+                stream.paused_at = None;
+                let projected = Self::projected_end_time(&stream);
+                stream.paused = true;
+                stream.paused_at = Some(paused_at);
+                projected
+            }
+        };
 
         stream.paused = false;
         stream.paused_at = None;
@@ -1011,6 +1313,209 @@ impl StreamContract {
         );
 
         Ok(new_end_time)
+    }
+
+    /// Withdraw claimable tokens from several streams in one transaction.
+    ///
+    /// A recipient with N concurrent income streams would otherwise need N
+    /// ledger transactions — N base fees, N wallet signatures, and N chances
+    /// for a sequence-number collision to leave them in a partially withdrawn
+    /// state. This collapses the sweep into a single atomic call.
+    ///
+    /// Semantics, chosen so that one stale entry can never grief the rest of the
+    /// batch:
+    /// - **Hard errors abort the whole batch** — an unknown `stream_id`
+    ///   (`StreamNotFound`) or a stream belonging to somebody else
+    ///   (`Unauthorized`). A silently-ignored typo would be worse than a
+    ///   revert, and the transaction is atomic either way.
+    /// - **Streams with nothing to claim are skipped** — already-completed,
+    ///   cancelled, sender-paused, or simply not vested far enough yet. They
+    ///   appear in neither the returned vector nor the events, and they do not
+    ///   revert the batch.
+    ///
+    /// Each processed stream emits its own `tokens_withdrawn` event, and any
+    /// stream drained by this call also emits `stream_completed`, so an indexer
+    /// sees exactly the same event stream it would from N separate `withdraw`
+    /// calls. Streams may target different tokens; each is paid from its own
+    /// token contract.
+    ///
+    /// This entrypoint intentionally remains available while the protocol
+    /// circuit breaker is engaged: a pause must never block access to
+    /// already-vested funds.
+    ///
+    /// # Errors
+    /// - `BatchTooLarge`   — more than `MAX_BATCH_WITHDRAW` IDs supplied.
+    /// - `StreamNotFound`  — an ID does not exist.
+    /// - `Unauthorized`    — an ID belongs to a different recipient.
+    pub fn batch_withdraw(
+        env: Env,
+        recipient: Address,
+        stream_ids: Vec<u64>,
+    ) -> Result<Vec<(u64, i128)>, StreamError> {
+        recipient.require_auth();
+
+        if stream_ids.len() > MAX_BATCH_WITHDRAW {
+            return Err(StreamError::BatchTooLarge);
+        }
+
+        let now = env.ledger().timestamp();
+        let mut withdrawn: Vec<(u64, i128)> = Vec::new(&env);
+
+        for stream_id in stream_ids.iter() {
+            let mut stream = load_stream(&env, stream_id)?;
+
+            if stream.recipient != recipient {
+                return Err(StreamError::Unauthorized);
+            }
+
+            // Nothing to claim: already finished, or frozen by its own sender.
+            if !stream.is_active || stream.paused {
+                continue;
+            }
+
+            let claimable = Self::calculate_claimable(&stream, now);
+            if claimable <= 0 {
+                continue;
+            }
+
+            // Each stream is committed to storage before its own token transfer
+            // (CEI), so a malicious token cannot re-enter against stale state.
+            Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now);
+
+            let completed = stream.status == StreamStatus::Completed;
+
+            env.events().publish(
+                (Symbol::new(&env, "tokens_withdrawn"), stream_id),
+                TokensWithdrawnEvent {
+                    stream_id,
+                    recipient: recipient.clone(),
+                    amount: claimable,
+                    timestamp: stream.last_update_time,
+                },
+            );
+
+            if completed {
+                env.events().publish(
+                    (Symbol::new(&env, "stream_completed"), stream_id),
+                    StreamCompletedEvent {
+                        stream_id,
+                        recipient: recipient.clone(),
+                        total_withdrawn: stream.withdrawn_amount,
+                    },
+                );
+            }
+
+            withdrawn.push_back((stream_id, claimable));
+        }
+
+        Ok(withdrawn)
+    }
+
+    // ─── Upgrades & State Migration (F3) ──────────────────────────────────────
+
+    /// Replace this contract's executable in place, preserving its address.
+    ///
+    /// The admin must authenticate. The new module must already be present on
+    /// the ledger; upload it with `env.deployer().upload_contract_wasm(..)` and
+    /// pass the resulting hash here.
+    ///
+    /// Because the address never changes, active streams, escrowed balances and
+    /// the protocol config all survive untouched — which is the entire reason to
+    /// prefer an in-place upgrade over a redeploy. Note that swapping the
+    /// executable does **not** migrate state: if the new code expects a
+    /// different schema, follow up with `migrate`.
+    ///
+    /// All storage writes and the `contract_upgraded` event happen *before* the
+    /// swap, because the host finalizes the new executable as this invocation
+    /// returns and rejects further contract-side writes afterwards.
+    ///
+    /// `old_wasm_hash` is read from `DataKey::ContractWasmHash` rather than from
+    /// the host, which exposes no getter for a contract's live executable. It is
+    /// therefore all-zero for a contract that has never been upgraded.
+    ///
+    /// # Errors
+    /// - `NotInitialized` — `initialize` has not been called.
+    /// - `NotAdmin`       — caller is not the current admin.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), StreamError> {
+        let config = load_config(&env)?;
+        config.admin.require_auth();
+
+        env.events().publish(
+            (Symbol::new(&env, "contract_upgraded"),),
+            ContractUpgradedEvent {
+                admin: config.admin,
+                old_wasm_hash: get_recorded_wasm_hash(&env),
+                new_wasm_hash: new_wasm_hash.clone(),
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        save_recorded_wasm_hash(&env, &new_wasm_hash);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        Ok(())
+    }
+
+    /// Returns the on-chain state schema version.
+    ///
+    /// `0` means the state predates versioning and still uses the legacy
+    /// layout; see `migrate`.
+    pub fn get_contract_version(env: Env) -> u32 {
+        get_contract_version(&env)
+    }
+
+    /// Move the on-chain state to `target_version`. Admin-only.
+    ///
+    /// Only forward moves are supported, and only to the version this contract
+    /// knows how to write. Today that is a single step — any pre-v2 state
+    /// (`0` unversioned, or `1` versioned) becomes `2`, the layout carrying the
+    /// circuit breaker, the guardian role and the `VestingSchedule`
+    /// discriminator.
+    ///
+    /// Streams are migrated lazily rather than in bulk: Soroban exposes no way
+    /// to enumerate persistent storage, so a sweep is impossible. Instead both
+    /// `load_config` and `load_stream` decode the legacy shape on read and
+    /// rewrite the record in the current shape the next time it is written. A
+    /// migrated record therefore heals on first touch.
+    ///
+    /// Idempotent: migrating to the version already in effect is a no-op.
+    ///
+    /// # Errors
+    /// - `NotInitialized`      — `initialize` has not been called.
+    /// - `NotAdmin`            — caller is not the current admin.
+    /// - `StateVersionTooNew`  — on-chain state is newer than this contract.
+    /// - `UnsupportedMigration` — the target version is unreachable or a downgrade.
+    pub fn migrate(env: Env, target_version: u32) -> Result<(), StreamError> {
+        let config = load_config(&env)?;
+        config.admin.require_auth();
+
+        let current_version = get_contract_version(&env);
+
+        if current_version > CURRENT_DATA_VERSION {
+            return Err(StreamError::StateVersionTooNew);
+        }
+        if target_version > CURRENT_DATA_VERSION || target_version < current_version {
+            return Err(StreamError::UnsupportedMigration);
+        }
+        if target_version == current_version {
+            return Ok(());
+        }
+
+        // `load_config` already decoded (and defaulted) a legacy record, so
+        // rewriting it here is what actually persists the new shape.
+        save_config(&env, &config);
+        save_contract_version(&env, target_version);
+
+        env.events().publish(
+            (Symbol::new(&env, "state_migrated"),),
+            StateMigratedEvent {
+                admin: config.admin,
+                old_version: current_version,
+                new_version: target_version,
+            },
+        );
+
+        Ok(())
     }
 
     // ─── Read-only Queries ────────────────────────────────────────────────────
@@ -1041,6 +1546,22 @@ impl StreamContract {
             let now = env.ledger().timestamp();
             Self::calculate_claimable(&stream, now)
         })
+    }
+
+    /// Returns the unlock curve governing a stream, or `None` if it is unknown.
+    ///
+    /// Callers building a vesting UI need the step list itself, not just the
+    /// aggregate claimable figure.
+    pub fn get_vesting_schedule(env: Env, stream_id: u64) -> Option<VestingSchedule> {
+        try_load_stream(&env, stream_id).map(|stream| stream.schedule)
+    }
+
+    /// Returns the ledger timestamp at which a stream is projected to drain.
+    ///
+    /// Step-tranche streams report their final unlock step; rate-based streams
+    /// report the linear projection. Returns `None` for an unknown stream.
+    pub fn get_projected_end_time(env: Env, stream_id: u64) -> Option<u64> {
+        try_load_stream(&env, stream_id).map(|stream| Self::projected_end_time(&stream))
     }
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
