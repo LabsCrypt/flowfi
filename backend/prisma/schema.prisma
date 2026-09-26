@@ -155,3 +155,28 @@ model AlertHistory {
   @@index([streamId])
   @@index([sentAt])
 }
+
+// IndexerDeadLetterEvent model - quarantines Soroban events whose processing
+// failed (unexpected payload shape, transient DB lock, RPC timeout mid-handler).
+// A quarantined event is never retried inline by the poll loop, so one malformed
+// event cannot freeze the worker cursor; operators replay or discard it through
+// the admin dead-letter endpoints instead.
+model IndexerDeadLetterEvent {
+  id             String   @id @default(uuid())
+  eventId        String   // Soroban paging token / event id of the quarantined event
+  eventType      String   // Contract event name, e.g. "stream_created"
+  txHash         String   // Stellar transaction hash
+  ledgerSequence Int      // Ledger the event was emitted in
+  cursor         String?  // Paging token captured alongside the event
+  payload        String   // JSON envelope: base64 XDR for each topic ScVal + value ScVal
+  errorMessage   String   // Failure reason from the processing attempt
+  attempts       Int      @default(1)
+  lastAttemptAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@unique([eventId, eventType])
+  @@index([ledgerSequence])
+  @@index([createdAt])
+  @@index([attempts])
+  @@index([eventType])
+}

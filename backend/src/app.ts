@@ -12,10 +12,11 @@ import {
 } from "./middleware/api-version.middleware.js";
 import { sandboxMiddleware } from "./middleware/sandbox.middleware.js";
 import { globalRateLimiter } from "./middleware/rate-limiter.middleware.js";
+import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
-import "./lib/stream-id.js";
+import metricsRoutes from "./routes/metrics.routes.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -35,6 +36,9 @@ app.use(globalRateLimiter);
 
 // Request ID tracing
 app.use(requestIdMiddleware);
+
+// Request counting/latency for the Prometheus registry
+app.use(metricsMiddleware);
 
 app.disable("x-powered-by");
 
@@ -138,6 +142,12 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Health check routes
 app.use("/health", healthRoutes);
+
+// Prometheus scrape endpoint. Mounted after the metrics middleware so scrapes
+// are themselves counted, and outside the versioned API surface because
+// Prometheus cannot send a version prefix or an Authorization header by
+// default. Access control lives in the router (see metrics.routes.ts).
+app.use("/metrics", metricsRoutes);
 
 /**
  * @openapi
