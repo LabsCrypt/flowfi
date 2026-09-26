@@ -4,6 +4,7 @@ target
 .env
 .DS_Store
 coverage
+e2e-results
 *.log
 
 # Soroban test runner — auto-generated, never commit
