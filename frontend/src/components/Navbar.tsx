@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useWallet } from "@/context/wallet-context";
 import { ModeToggle } from "./ModeToggle";
 import { WalletButton } from "./wallet/WalletButton";
+import { useModalDialog } from "@/hooks/useModalDialog";
+import { NetworkSelector } from "@/components/NetworkSelector";
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
@@ -49,6 +51,7 @@ export const Navbar = () => {
             </Link>
           ))}
           <ModeToggle />
+          <NetworkSelector />
         </div>
 
         <div className="flex items-center gap-4">
@@ -69,23 +72,33 @@ export const Navbar = () => {
       </div>
 
       {isMobileMenuOpen && (
-        <div
-          data-testid="mobile-menu"
-          className="flex flex-col gap-4 px-6 pb-4 text-sm font-semibold text-slate-400 md:hidden"
-        >
-          {NAV_LINKS.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className="transition-colors hover:text-accent"
-              onClick={() => setIsMobileMenuOpen(false)}
-            >
-              {link.label}
-            </Link>
-          ))}
-          <ModeToggle />
-        </div>
+        <MobileMenu onClose={() => setIsMobileMenuOpen(false)} />
       )}
     </nav>
+  );
+};
+
+const MobileMenu = ({ onClose }: { onClose: () => void }) => {
+  const dialogRef = useModalDialog({ onClose });
+
+  return (
+    <div
+      ref={dialogRef}
+      data-testid="mobile-menu"
+      className="flex flex-col gap-4 px-6 pb-4 text-sm font-semibold text-slate-400 md:hidden"
+    >
+      {NAV_LINKS.map((link) => (
+        <Link
+          key={link.href}
+          href={link.href}
+          className="transition-colors hover:text-accent"
+          onClick={onClose}
+        >
+          {link.label}
+        </Link>
+      ))}
+      <NetworkSelector />
+      <ModeToggle />
+    </div>
   );
 };

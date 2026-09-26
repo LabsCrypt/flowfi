@@ -21,35 +21,23 @@ const router = Router();
  *       (lag > 60 s). A cold-started instance with no state row yet, or a
  *       deployment with the indexer intentionally disabled, always returns 200
  *       as long as the DB is reachable.
+ *       **Event-processing failures** are also reported. When the indexer is
+ *       enabled and recent per-event failures spike (≥50% of attempts in the
+ *       last 5 minutes, with ≥3 samples), the endpoint returns 503 even if
+ *       lag looks healthy (the IndexerState upsert bumps updatedAt every poll).
  *     responses:
  *       200:
  *         description: Service is healthy
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 status:
- *                   type: string
- *                   example: ok
- *                 db:
- *                   type: string
- *                   example: connected
- *                 indexerEnabled:
- *                   type: boolean
- *                   description: Whether the event indexer is configured
- *                   example: true
- *                 indexerLag:
- *                   type: integer
- *                   nullable: true
- *                   description: Seconds since last indexer update, or null when no state row exists yet
- *                   example: 5
- *                 uptime:
- *                   type: number
- *                   description: Server uptime in seconds
- *                   example: 3600
+ *               $ref: '#/components/schemas/HealthResponse'
  *       503:
  *         description: Service is degraded or unhealthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
  */
 router.get('/', async (_req: Request, res: Response) => {
   let dbStatus = 'connected';
@@ -109,6 +97,22 @@ router.get('/', async (_req: Request, res: Response) => {
     indexerLedgerLag:
       networkLedger > 0 ? Math.max(0, networkLedger - (state?.lastLedger ?? 0)) : null,
     uptime: process.uptime(),
+    checks: {
+      database: {
+        status: dbStatus === 'connected' ? 'ok' : 'down',
+      },
+      indexer: {
+        status: !indexerEnabled ? 'disabled' : indexerFailureDegraded || indexerLagDegraded ? 'degraded' : 'ok',
+        enabled: indexerEnabled,
+        lagSeconds: indexerLag === -1 ? null : indexerLag,
+      },
+      redis: {
+        status: redisStatus,
+      },
+      sorobanRpc: {
+        status: sorobanRpcOk ? 'ok' : 'down',
+      },
+    },
   });
 });
 

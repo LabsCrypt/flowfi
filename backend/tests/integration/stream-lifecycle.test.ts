@@ -4,16 +4,53 @@
  * These tests use real Postgres database and verify the complete pipeline:
  * event worker → DB update → controller response → SSE broadcast
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import request from "supertest";
-import { PrismaClient } from "../../src/generated/prisma/index.js";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { xdr, nativeToScVal, Keypair, StrKey } from "@stellar/stellar-sdk";
+import type { PrismaClient } from "../../src/generated/prisma/index.js";
 import app from "../../src/app.js";
 import { SorobanEventWorker } from "../../src/workers/soroban-event-worker.js";
 import { sseService } from "../../src/services/sse.service.js";
 import EventSource from "eventsource";
+import {
+  resolveDbReadiness,
+  resolveTestDatabaseUrl,
+  explainSkipReason,
+} from "./_db.js";
+
+// Lazy-loaded Prisma client. Promise type via definite assignment; the
+// skip-on-no-DB guards below (lastDbReadiness?.ready + ctx.skip() + getDb())
+// ensure we never dereference testPrisma when it has not been assigned.
+// See issue #760 for the runtime contract.
+let testPrisma!: PrismaClient;
+// Underlying pg pool, kept at module scope so we can close it in afterAll
+// without leaking TCP handles (which would otherwise keep the Vitest
+// process alive past the hook timeout).
+let testPool!: pg.Pool;
+// Captured during beforeAll so other hooks can read the readiness report
+// (and skip message) without re-probing the database.
+let lastDbReadiness: Awaited<ReturnType<typeof resolveDbReadiness>> | null =
+  null;
+
+function getDb(): PrismaClient {
+  if (!testPrisma) {
+    throw new Error(
+      "testPrisma accessed before initialization (this suite should have been skipped)",
+    );
+  }
+  return testPrisma;
+}
 
 // XDR Helper functions (copied from soroban-event-worker.test.ts)
 function scvU64(n: bigint): xdr.ScVal {
@@ -41,17 +78,6 @@ function scvMap(entries: [string, xdr.ScVal][]): xdr.ScVal {
     entries.map(([k, v]) => new xdr.ScMapEntry({ key: scvSymbol(k), val: v })),
   );
 }
-
-// Test database setup
-const connectionString =
-  process.env.DATABASE_URL ||
-  "postgresql://postgres:password@127.0.0.1:5432/flowfi_test";
-const testPool = new pg.Pool({ connectionString });
-const testAdapter = new PrismaPg(testPool);
-const testPrisma = new PrismaClient({
-  adapter: testAdapter,
-  log: ["error"], // Minimal logging for tests
-});
 
 // Mock RPC calls for stale DB fallback tests
 vi.mock("../../src/services/sorobanService.js", () => ({
@@ -190,15 +216,16 @@ function createStreamCancelledEvent(
 
 async function cleanupDatabase() {
   // Clean up in order to respect foreign key constraints
-  await testPrisma.streamEvent.deleteMany();
-  await testPrisma.stream.deleteMany();
-  await testPrisma.user.deleteMany();
-  await testPrisma.indexerState.deleteMany();
+  const db = getDb();
+  await db.streamEvent.deleteMany();
+  await db.stream.deleteMany();
+  await db.user.deleteMany();
+  await db.indexerState.deleteMany();
 }
 
 async function createTestUsers() {
   // Create test users for foreign key constraints
-  await testPrisma.user.createMany({
+  await getDb().user.createMany({
     data: [{ publicKey: SENDER }, { publicKey: RECIPIENT }],
     skipDuplicates: true,
   });
@@ -209,7 +236,38 @@ describe("Stream Lifecycle Integration Tests", () => {
   let server: any;
   let serverPort: number;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
+    // Issue #760: when DATABASE_URL is missing or the server is unreachable,
+    // skip this suite cleanly with an actionable message rather than letting
+    // Prisma throw PrismaClientInitializationError mid-test.
+    const readiness = await resolveDbReadiness();
+    lastDbReadiness = readiness;
+    if (!readiness.ready) {
+      // eslint-disable-next-line no-console
+      console.warn(`\n${explainSkipReason(readiness)}\n`);
+      return;
+    }
+
+    const { PrismaClient } = await import(
+      "../../src/generated/prisma/index.js"
+    );
+    const { createPgPool } = await import("../../src/lib/pg-pool.js");
+    const connectionString = resolveTestDatabaseUrl();
+    testPool = createPgPool({ connectionString });
+    const testAdapter = new PrismaPg(testPool);
+    testPrisma = new PrismaClient({
+      adapter: testAdapter,
+      log: ["error"], // Minimal logging for tests
+    });
+  });
+
+  beforeEach(async (ctx) => {
+    // Issue #760: when DB is missing, skip this test cleanly and short-circuit
+    // so we don't throw via getDb() or open an orphan Express listener.
+    if (!lastDbReadiness?.ready) {
+      ctx.skip();
+      return;
+    }
     vi.clearAllMocks();
     await cleanupDatabase();
     await createTestUsers();
@@ -223,13 +281,33 @@ describe("Stream Lifecycle Integration Tests", () => {
   });
 
   afterEach(async () => {
+    if (!lastDbReadiness?.ready) return;
     if (server) {
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });
     }
     await cleanupDatabase();
+    // NOTE: do NOT call testPrisma.$disconnect() here. The Prisma client
+    // (and its underlying pg.Pool) are created once per file in beforeAll
+    // and reused across every test; disconnecting after each test would
+    // make the very next beforeEach fail with
+    // "Prisma Client is disconnected" when cleanupDatabase() runs.
+  });
+
+  afterAll(async () => {
+    if (!lastDbReadiness?.ready) return;
+    // Defensive: if beforeAll threw midway through the import → pg.Pool →
+    // PrismaClient assignment chain (e.g., schema not generated yet),
+    // testPrisma may still be undefined even though readiness reported
+    // ready. Skip the teardown rather than dereferencing undefined and
+    // crashing the test runner. `testPool.end()` is wrapped in `.catch`
+    // because PrismaPg's $disconnect() already closes the underlying
+    // pg.Pool on most engines, and a second `.end()` would warn
+    // "Pool is ended" into the test output.
+    if (!testPrisma) return;
     await testPrisma.$disconnect();
+    await testPool.end().catch(() => undefined);
   });
 
   describe("Indexer → stream_created: stream appears in GET /v1/streams/:id", () => {
@@ -246,7 +324,7 @@ describe("Stream Lifecycle Integration Tests", () => {
         include: { senderUser: true, recipientUser: true },
       });
       expect(dbStream).toBeTruthy();
-      expect(dbStream?.streamId).toBe(streamId);
+      expect(dbStream?.streamId).toBe(BigInt(streamId));
       expect(dbStream?.sender).toBe(SENDER);
       expect(dbStream?.recipient).toBe(RECIPIENT);
       expect(dbStream?.isActive).toBe(true);
@@ -513,7 +591,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(response.body.cached).toBe(false);
 
       // Verify RPC was called
-      expect(getClaimableFromChain).toHaveBeenCalledWith(streamId);
+      expect(getClaimableFromChain).toHaveBeenCalledWith(BigInt(streamId));
     });
 
     it("returns fresh data when not stale", async () => {
@@ -623,6 +701,112 @@ describe("Stream Lifecycle Integration Tests", () => {
     });
   });
 
+  describe("Full lifecycle: create → top up → partial withdraw → cancel", () => {
+    it("walks a single stream through every phase and verifies indexer state", async () => {
+      const streamId = 100;
+
+      // ── Step 1: Create ──────────────────────────────────────────────────
+      const createEvent = createStreamCreatedEvent(streamId, {
+        deposited_amount: scvI128(BigInt(100_000)),
+        rate_per_second: scvI128(BigInt(100)),
+      });
+      await worker.processEvent(createEvent);
+
+      let dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream).toBeTruthy();
+      expect(dbStream?.depositedAmount).toBe("100000");
+      expect(dbStream?.withdrawnAmount).toBe("0");
+      expect(dbStream?.isActive).toBe(true);
+
+      // ── Step 2: Top up ──────────────────────────────────────────────────
+      // Add 50 000 more → deposited becomes 150 000
+      const topUpEvent = createStreamToppedUpEvent(streamId, 50_000, 150_000);
+      topUpEvent.txHash = "topup-tx-hash";
+      await worker.processEvent(topUpEvent);
+
+      dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream?.depositedAmount).toBe("150000");
+      expect(dbStream?.withdrawnAmount).toBe("0");
+      expect(dbStream?.isActive).toBe(true);
+
+      // ── Step 3: Partial withdraw ─────────────────────────────────────────
+      // Recipient withdraws 30 000 → withdrawn becomes 30 000
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      const withdrawEvent = {
+        id: `evt-stream-withdrawn-${streamId}`,
+        type: "contract" as const,
+        ledger: 12350,
+        ledgerClosedAt: "2023-01-01T00:00:00Z",
+        transactionIndex: 0,
+        operationIndex: 0,
+        txHash: "withdraw-tx-hash",
+        topic: [scvSymbol("tokens_withdrawn"), scvU64(BigInt(streamId))],
+        value: scvMap([
+          ["recipient", scvAccountAddress(RECIPIENT)],
+          ["amount", scvI128(BigInt(30_000))],
+          ["timestamp", scvU64(BigInt(currentTimestamp))],
+        ]),
+        inSuccessfulContractCall: true,
+      };
+      await worker.processEvent(withdrawEvent);
+
+      dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream?.withdrawnAmount).toBe("30000");
+      expect(dbStream?.depositedAmount).toBe("150000");
+      // Stream should still be active after partial withdrawal
+      expect(dbStream?.isActive).toBe(true);
+
+      // Verify the withdraw event was recorded
+      const withdrawEventRecord = await testPrisma.streamEvent.findFirst({
+        where: { streamId, eventType: "WITHDRAWN" },
+      });
+      expect(withdrawEventRecord).toBeTruthy();
+      expect(withdrawEventRecord?.amount).toBe("30000");
+
+      // ── Step 4: Cancel ───────────────────────────────────────────────────
+      // Cancel settles the remaining claimable. Withdrawn in the cancel event
+      // includes the 30 000 already withdrawn + newly accrued.
+      // For this test we use a cancel that settles 40 000 to recipient and
+      // refunds the rest (150 000 - 40 000 = 110 000) to sender.
+      const cancelEvent = createStreamCancelledEvent(
+        streamId,
+        40_000,
+        110_000,
+      );
+      cancelEvent.txHash = "cancel-tx-hash";
+      await worker.processEvent(cancelEvent);
+
+      dbStream = await testPrisma.stream.findUnique({
+        where: { streamId },
+      });
+      expect(dbStream?.withdrawnAmount).toBe("40000");
+      expect(dbStream?.isActive).toBe(false);
+
+      // Verify the cancel event was recorded
+      const cancelEventRecord = await testPrisma.streamEvent.findFirst({
+        where: { streamId, eventType: "CANCELLED" },
+      });
+      expect(cancelEventRecord).toBeTruthy();
+      expect(cancelEventRecord?.amount).toBe("110000");
+
+      // ── Verify that the final API response shows the completed stream ────
+      const response = await request(app)
+        .get(`/v1/streams/${streamId}`)
+        .expect(200);
+
+      expect(response.body.streamId).toBe(streamId);
+      expect(response.body.isActive).toBe(false);
+      expect(response.body.depositedAmount).toBe("150000");
+      expect(response.body.withdrawnAmount).toBe("40000");
+    });
+  });
+
   describe("SSE client receives broadcast for each stream event", () => {
     let eventSource: EventSource;
 
@@ -662,7 +846,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.created",
-        expect.objectContaining({ streamId }),
+        expect.objectContaining({ streamId: BigInt(streamId) }),
       );
 
       // Verify event was received by client (if SSE service is real)
@@ -713,7 +897,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.topped_up",
-        expect.objectContaining({ streamId, amount: "1000" }),
+        expect.objectContaining({ streamId: BigInt(streamId), amount: "1000" }),
       );
     });
 
@@ -760,7 +944,7 @@ describe("Stream Lifecycle Integration Tests", () => {
       expect(sseService.broadcastToStream).toHaveBeenCalledWith(
         streamId.toString(),
         "stream.cancelled",
-        expect.objectContaining({ streamId }),
+        expect.objectContaining({ streamId: BigInt(streamId) }),
       );
     });
   });

@@ -82,7 +82,7 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
   it('pauses a stream and only writes one PAUSED event via indexer', async () => {
     const sender = makeKeypair();
     const token = await getValidJwt(sender);
-    const streamId = 77;
+    const streamId = 77n;
 
     // 1. Controller flow
     mockPrisma.stream.findUnique.mockResolvedValue({

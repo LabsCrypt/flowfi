@@ -1,7 +1,12 @@
 import type { BackendStream } from "@/lib/api-types";
 import { TOKEN_ADDRESSES } from "@/lib/soroban";
 import { shortenPublicKey } from "@/lib/wallet";
-import { getStreamsEndpointCandidates, toTokenAmount } from "@/lib/api/_shared";
+import {
+  DEFAULT_FETCH_TIMEOUT_MS,
+  fetchWithTimeout,
+  getStreamsEndpointCandidates,
+  toTokenAmount,
+} from "@/lib/api/_shared";
 
 export type IncomingStreamStatus = "Active" | "Paused" | "Completed";
 
@@ -65,6 +70,7 @@ function mapBackendStream(stream: BackendStream): IncomingStreamRecord {
 
 export async function fetchIncomingStreams(
   recipientPublicKey: string,
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
 ): Promise<IncomingStreamRecord[]> {
   const endpoints = getStreamsEndpointCandidates();
   const params = new URLSearchParams({
@@ -76,7 +82,7 @@ export async function fetchIncomingStreams(
   let lastError: Error | null = null;
 
   for (const endpoint of endpoints) {
-    const response = await fetch(`${endpoint}?${params.toString()}`);
+    const response = await fetchWithTimeout(`${endpoint}?${params.toString()}`, {}, timeoutMs);
 
     if (response.ok) {
       const payload = (await response.json()) as BackendStream[] | StreamListResponse;

@@ -6,7 +6,7 @@ import { ActivityHistory } from "@/components/dashboard/ActivityHistory";
 import { BackendStreamEvent } from "@/lib/api-types";
 import { Button } from "@/components/ui/Button";
 import { Loader2, Download } from "lucide-react";
-import { formatAmount } from "@/lib/amount";
+import { formatAmount } from "@/utils/amount";
 import { downloadCSV } from "@/utils/csvExport";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";

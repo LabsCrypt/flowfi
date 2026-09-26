@@ -10,6 +10,16 @@ assignees: ''
 
 **For non-sensitive security-related issues only:**
 
+### What to expect
+
+Per our [Security Policy](../../SECURITY.md#response-timeline), the same response timeline applies to reports filed here:
+
+- **Initial Response**: Within 48 hours of receiving your report
+- **Status Update**: Within 7 days with our assessment and planned timeline
+- **Resolution**: We aim to resolve critical vulnerabilities within 30 days
+
+If you have not heard from us within 48 hours, please ping the issue or reach out through our [community Telegram](https://t.me/+DOylgFv1jyJlNzM0).
+
 ## Description
 A clear and concise description of the security concern.
 

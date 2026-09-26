@@ -15,12 +15,13 @@ const parsePositiveIntegerEnv = (name: string, defaultValue: number): number => 
   return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : defaultValue;
 };
 
-export const createPgPoolConfig = (): pg.PoolConfig => ({
+export const createPgPoolConfig = (overrides?: Partial<pg.PoolConfig>): pg.PoolConfig => ({
   connectionString: process.env.DATABASE_URL,
   max: parsePositiveIntegerEnv('PG_POOL_MAX', 10),
   idleTimeoutMillis: parsePositiveIntegerEnv('PG_IDLE_TIMEOUT_MS', 30_000),
   connectionTimeoutMillis: parsePositiveIntegerEnv('PG_CONNECTION_TIMEOUT_MS', 5_000),
   statement_timeout: parsePositiveIntegerEnv('PG_STATEMENT_TIMEOUT_MS', 30_000),
+  ...overrides,
 });
 
 /**

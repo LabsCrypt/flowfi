@@ -60,7 +60,8 @@ import app from '../../src/app.js';
 import { signJwt } from '../../src/middleware/auth.js';
 
 const ADDR = 'GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA';
-const token = signJwt({ sub: ADDR, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
+const now = Math.floor(Date.now() / 1000);
+const token = signJwt({ sub: ADDR, iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'flowfi-api' });
 
 function makeEvent(overrides: Partial<Record<string, unknown>> = {}) {
   return {
@@ -97,10 +98,13 @@ describe('GET /v1/events', () => {
   });
 
   it('rejects requests with mismatched authenticated user and address query', async () => {
+    const now = Math.floor(Date.now() / 1000);
     const otherToken = signJwt({
       sub: 'GOTHER123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA',
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: now,
+      exp: now + 3600,
+      iss: 'flowfi-api',
+      aud: 'flowfi-api',
     });
     const res = await request(app)
       .get(`/v1/events?address=${ADDR}`)
@@ -171,5 +175,111 @@ describe('GET /v1/events', () => {
       skip: number;
     };
     expect(callArgs.skip).toBe(30);
+  });
+
+  it('does not include the related stream by default', async () => {
+    mocks.prisma.streamEvent.findMany.mockResolvedValueOnce([]);
+    mocks.prisma.streamEvent.count.mockResolvedValueOnce(0);
+
+    await request(app)
+      .get(`/v1/events?address=${ADDR}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    const callArgs = mocks.prisma.streamEvent.findMany.mock.calls[0]![0] as {
+      include?: unknown;
+    };
+    expect(callArgs.include).toBeUndefined();
+  });
+
+  it('includes the related stream when includeStream=true', async () => {
+    mocks.prisma.streamEvent.findMany.mockResolvedValueOnce([]);
+    mocks.prisma.streamEvent.count.mockResolvedValueOnce(0);
+
+    await request(app)
+      .get(`/v1/events?address=${ADDR}&includeStream=true`)
+      .set('Authorization', `Bearer ${token}`);
+
+    const callArgs = mocks.prisma.streamEvent.findMany.mock.calls[0]![0] as {
+      include?: unknown;
+    };
+    expect(callArgs.include).toEqual({ stream: true });
+  });
+});
+
+/**
+ * Feature-parity tests: GET /v1/users/:publicKey/events and GET /v1/events
+ * both sit on top of the shared listEventsForWallet helper
+ * (backend/src/repositories/streamEvent.repository.ts) and must therefore
+ * apply identical sender/recipient and type-filtering logic, even though
+ * they differ in auth model (unauthenticated + :publicKey param vs.
+ * requireAuth + session address) and response envelope field name
+ * (`data` vs `events`).
+ */
+describe('GET /v1/users/:publicKey/events and GET /v1/events filtering parity', () => {
+  // GET /v1/users/:publicKey/events validates the Stellar public key format
+  // (^G[A-Z2-7]{55}$), unlike GET /v1/events (whose `address` comes from an
+  // already-authenticated session), so parity tests need a well-formed key.
+  const VALID_ADDR = 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ';
+  const validAddrNow = Math.floor(Date.now() / 1000);
+  const validAddrToken = signJwt({
+    sub: VALID_ADDR,
+    iat: validAddrNow,
+    exp: validAddrNow + 3600,
+    iss: 'flowfi-api',
+    aud: 'flowfi-api',
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('apply the same sender/recipient OR where-clause for a given wallet', async () => {
+    mocks.prisma.streamEvent.findMany.mockResolvedValue([]);
+    mocks.prisma.streamEvent.count.mockResolvedValue(0);
+
+    await request(app)
+      .get(`/v1/events?address=${VALID_ADDR}`)
+      .set('Authorization', `Bearer ${validAddrToken}`);
+    const eventsWhere = mocks.prisma.streamEvent.findMany.mock.calls[0]![0].where;
+
+    vi.clearAllMocks();
+    mocks.prisma.streamEvent.findMany.mockResolvedValue([]);
+    mocks.prisma.streamEvent.count.mockResolvedValue(0);
+
+    await request(app).get(`/v1/users/${VALID_ADDR}/events`);
+    const userEventsWhere = mocks.prisma.streamEvent.findMany.mock.calls[0]![0].where;
+
+    expect(userEventsWhere.stream).toEqual(eventsWhere.stream);
+  });
+
+  it('apply the same comma-separated `type` filter', async () => {
+    mocks.prisma.streamEvent.findMany.mockResolvedValue([]);
+    mocks.prisma.streamEvent.count.mockResolvedValue(0);
+
+    await request(app)
+      .get(`/v1/events?address=${VALID_ADDR}&type=PAUSED,RESUMED`)
+      .set('Authorization', `Bearer ${validAddrToken}`);
+    const eventsWhere = mocks.prisma.streamEvent.findMany.mock.calls[0]![0].where;
+
+    vi.clearAllMocks();
+    mocks.prisma.streamEvent.findMany.mockResolvedValue([]);
+    mocks.prisma.streamEvent.count.mockResolvedValue(0);
+
+    await request(app).get(`/v1/users/${VALID_ADDR}/events?type=PAUSED,RESUMED`);
+    const userEventsWhere = mocks.prisma.streamEvent.findMany.mock.calls[0]![0].where;
+
+    expect(userEventsWhere.eventType).toEqual(eventsWhere.eventType);
+    expect(userEventsWhere.eventType).toEqual({ in: ['PAUSED', 'RESUMED'] });
+  });
+
+  it('both reject a type filter with no valid values', async () => {
+    const eventsRes = await request(app)
+      .get(`/v1/events?address=${VALID_ADDR}&type=BOGUS`)
+      .set('Authorization', `Bearer ${validAddrToken}`);
+    const userEventsRes = await request(app).get(`/v1/users/${VALID_ADDR}/events?type=BOGUS`);
+
+    expect(eventsRes.status).toBe(400);
+    expect(userEventsRes.status).toBe(400);
+    expect(mocks.prisma.streamEvent.findMany).not.toHaveBeenCalled();
   });
 });

@@ -11,7 +11,7 @@ Required:
 - Rust toolchain (stable via rustup)
 - Node.js 20+
 - npm
-- PostgreSQL 14+
+- PostgreSQL 16 (matches the version pinned in `docker-compose.yml` and CI)
 - Docker & Docker Compose (recommended for local infra)
 - Stellar CLI / Soroban CLI (https://github.com/stellar/stellar-cli)
 
@@ -67,6 +67,8 @@ Run database setup:
 npm run prisma:generate
 npm run prisma:migrate
 ```
+
+These commands read their paths and connection string from `backend/prisma.config.ts`, which configures the Prisma CLI separately from the data model in `backend/prisma/schema.prisma`. See [Prisma Database](../backend/README.md#prismaconfigts-vs-prismaschemaprisma) in the backend README for what each file owns and what to check when a `generate`/`migrate` command misbehaves.
 
 Start backend:
 
@@ -145,6 +147,8 @@ Frontend:
 ```bash
 cd frontend
 npm run lint
+npm test
+npm run test:coverage
 ```
 
 Contracts:
@@ -199,6 +203,7 @@ Configure in `.env`:
 * Check `DATABASE_URL`
 * Run `prisma generate`
 * Reset DB if schema drift occurs
+* Check `backend/prisma.config.ts` — it sets the schema path, migrations path, and the `DATABASE_URL` the CLI uses ([details](../backend/README.md#troubleshooting))
 
 ---
 

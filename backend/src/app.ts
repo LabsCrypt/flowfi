@@ -15,7 +15,6 @@ import { globalRateLimiter } from "./middleware/rate-limiter.middleware.js";
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import v1Routes from "./routes/v1/index.js";
-
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
 

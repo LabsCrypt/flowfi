@@ -165,8 +165,18 @@ Benefits:
 ## Operational Notes
 
 1. `/v1/events/stats` exposes active SSE connections and connection-capacity metrics.
-1. Admin metrics include SSE peak-per-IP visibility for abuse monitoring.
-1. User summary endpoint (`/v1/users/{address}/summary`) is cached for 30s to protect DB hot paths.
+2. Admin metrics include SSE peak-per-IP visibility for abuse monitoring.
+3. User summary endpoint (`/v1/users/{address}/summary`) is cached for 30s to protect DB hot paths.
+
+---
+
+## Logging & Observability
+
+All backend log lines use standard JSON formatting via Winston and include a `requestId` correlation ID field when running inside a request or worker context (managed by Node's `AsyncLocalStorage` via `requestContext` in `backend/src/logger.ts`).
+
+- **HTTP Requests:** Requests receive or generate a `requestId` via `requestIdMiddleware` (`X-Request-ID` header).
+- **Background Indexer/Worker Poll Cycles:** Each `SorobanEventWorker` poll batch runs inside `requestContext.run({ requestId: randomUUID() }, ...)` so all RPC fetches, event processing, and per-event error logs within that poll cycle share a single correlation ID.
+- **Admin Replays:** Triggering an indexer event replay (via `replayFromLedger` or `POST /v1/admin/indexer/replay`) wraps the reset and worker poll cycle in `requestContext`. The correlation ID is included on all log statements emitted during replay and returned in the HTTP API response (`{ ok: true, replayingFrom: <ledger>, requestId: "<id>" }`).
 
 ---
 
@@ -192,6 +202,22 @@ Frontend useStreamEvents hook  (frontend/src/hooks/useStreamEvents.ts)
     ▼
 Dashboard / NotificationDropdown  re-render with live data
 ```
+
+### Indexer Ownership & Naming
+
+Two files share the `indexer` name, but only one of them is the indexer that writes stream state. This section documents which is the source of truth so contributors know where to start when debugging indexing.
+
+| File | Role | Status |
+|------|------|--------|
+| `backend/src/workers/soroban-event-worker.ts` (`SorobanEventWorker`) | **Source-of-truth indexer.** Polls Soroban RPC, decodes XDR, persists `Stream` / `StreamEvent`, advances the `IndexerState` cursor, and broadcasts SSE. | Active / source of truth. Started by `backend/src/workers/index.ts` |
+| `backend/src/services/indexerService.ts` | **Not an indexer at all.** Admin control-plane helpers (`getIndexerStatus`, `resetIndexer`, `replayFromLedger`) that read/reset `IndexerState` and trigger the worker's poll loop. | Active. The name is misleading. |
+
+Key points:
+
+1. **When debugging indexing, read `backend/src/workers/soroban-event-worker.ts` first.** It is the only file that persists canonical stream state.
+2. **`indexerService.ts` is control-plane only** — it never reads the chain; it manages the shared cursor and triggers replays.
+
+**Naming convention plan:** the team convention is kebab-case with a `.service.ts` suffix (e.g. `claimable.service.ts`, `sse.service.ts`). The helper file `indexerService.ts` breaks that convention and is also a misleading name. It is expected to be renamed to `indexer.service.ts`.
 
 ### Deduplication
 

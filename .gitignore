@@ -8,5 +8,11 @@ coverage
 
 # Soroban test runner — auto-generated, never commit
 **/test_snapshots/
-fix.md
 .npm-cache/
+
+# Scratch / draft markdown files — never commit
+fix.md
+issue*.md
+pr*.md
+ISSUE_*.md
+PR_*.md

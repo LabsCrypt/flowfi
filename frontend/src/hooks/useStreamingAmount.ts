@@ -44,6 +44,10 @@ export function useStreamingAmount({
       !isPaused &&
       ratePerSecond > 0 &&
       maxClaimable > 0;
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let lastFrameTime = performance.now();
 
     const computeClaimable = () => {
@@ -97,7 +101,12 @@ export function useStreamingAmount({
       }
     };
 
-    if (isStreaming) {
+    if (reduceMotion && isStreaming) {
+      // #1198 — Respect prefers-reduced-motion: compute the accrued value once
+      // and skip the per-frame animation loop entirely.
+      claimableRef.current = computeClaimable();
+      setClaimable(claimableRef.current);
+    } else if (isStreaming) {
       rafId = requestAnimationFrame(tick);
     }
 

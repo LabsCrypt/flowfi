@@ -58,7 +58,8 @@ import app from '../../src/app.js';
 import { signJwt } from '../../src/middleware/auth.js';
 
 const ADDR = 'GABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA';
-const token = signJwt({ sub: ADDR, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
+const now = Math.floor(Date.now() / 1000);
+const token = signJwt({ sub: ADDR, iat: now, exp: now + 3600, iss: 'flowfi-api', aud: 'flowfi-api' });
 
 describe('GET /v1/events/subscribe', () => {
   beforeEach(() => {

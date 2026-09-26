@@ -1,9 +1,8 @@
 "use client";
 
-import React from "react";
 import toast from "react-hot-toast";
 import TransactionTracker, {
-  type TransactionStatus,
+  useTransactionTracker,
 } from "@/components/TransactionTracker";
 import { IncomingStreamCard } from "@/components/streams/IncomingStreamCard";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -16,13 +15,6 @@ import {
   useIncomingStreams,
   useWithdrawIncomingStream,
 } from "@/hooks/useIncomingStreams";
-
-interface TrackerState {
-  status: TransactionStatus;
-  txHash?: string;
-  error?: string;
-  streamId?: string;
-}
 
 function LoadingCard() {
   return (
@@ -41,48 +33,29 @@ function LoadingCard() {
 
 export default function IncomingContent() {
   const { session, status, isHydrated } = useWallet();
-  const [tracker, setTracker] = React.useState<TrackerState>({
-    status: "idle",
-  });
+  const tracker = useTransactionTracker();
 
   const incomingStreamsQuery = useIncomingStreams(session?.publicKey);
   const withdrawMutation = useWithdrawIncomingStream(
     session,
     session?.publicKey,
     {
-      onSuccess: async (result, stream) => {
-        setTracker({
-          status: "submitted",
-          txHash: result.txHash,
-          streamId: String(stream.streamId),
-        });
-        toast.success(`Withdrawal submitted for stream #${stream.streamId}`);
-
-        window.setTimeout(() => {
-          setTracker((current) =>
-            current.txHash === result.txHash
-              ? { ...current, status: "confirmed" }
-              : current,
-          );
-        }, 1500);
+      onSuccess: async (result, _stream) => {
+        tracker.submit(result.txHash);
+        toast.success(`Withdrawal submitted for stream #${_stream.streamId}`);
+        // Move to confirming — TransactionTracker polls the indexer from here
+        tracker.confirm();
       },
-      onError: (error, stream) => {
+      onError: (error) => {
         const message = toSorobanErrorMessage(error);
-        setTracker({
-          status: "failed",
-          error: message,
-          streamId: String(stream.streamId),
-        });
+        tracker.fail(message);
         toast.error(message);
       },
     },
   );
 
   const handleWithdraw = async (stream: IncomingStreamRecord) => {
-    setTracker({
-      status: "signing",
-      streamId: String(stream.streamId),
-    });
+    tracker.start();
 
     try {
       await withdrawMutation.mutateAsync(stream);
@@ -192,7 +165,6 @@ export default function IncomingContent() {
               action="withdraw"
               txHash={tracker.txHash}
               error={tracker.error}
-              streamId={tracker.streamId}
             />
           </section>
         )}

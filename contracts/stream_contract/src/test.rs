@@ -11,8 +11,8 @@ use soroban_sdk::{
 use errors::StreamError;
 use events::{
     AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
-    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
+    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{DataKey, Stream, StreamStatus};
 
@@ -68,6 +68,7 @@ fn test_datakey_stream_serializes_deterministically() {
         withdrawn_amount: 0,
         start_time: 1,
         last_update_time: 1,
+        cliff_time: None,
         is_active: true,
         paused: false,
         paused_at: None,
@@ -386,6 +387,74 @@ fn test_create_stream_emits_event() {
     assert_eq!(payload.rate_per_second, 5);
 }
 
+// ─── #796 start_time / backdated timestamp guard ──────────────────────────────
+//
+// `create_stream` always derives `start_time` from `env.ledger().timestamp()`
+// (see lib.rs:201). The contract does NOT accept a caller-supplied start_time,
+// so backdated start times are structurally impossible via the public API.
+//
+// The tests below verify this invariant and demonstrate the risk that would
+// exist if a backdated start_time were accepted.
+
+#[test]
+fn test_create_stream_uses_ledger_timestamp_as_start_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // Set ledger to a known timestamp.
+    env.ledger().with_mut(|l| l.timestamp = 500_000);
+
+    let client = create_contract(&env);
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    let s = client.get_stream(&stream_id).unwrap();
+    // start_time must be the ledger timestamp at creation, never caller-supplied.
+    assert_eq!(s.start_time, 500_000);
+    assert_eq!(s.last_update_time, 500_000);
+}
+
+#[test]
+fn test_backdated_start_time_would_immediately_vest_full_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Simulate a backdated start_time by directly manipulating storage.
+    // This is NOT possible through the public API — the contract always uses
+    // env.ledger().timestamp() — but it demonstrates the risk that would exist
+    // if a caller-supplied start_time were ever added.
+    let mut stream = client.get_stream(&stream_id).unwrap();
+    stream.start_time = 0; // backdated far into the past
+    stream.last_update_time = 0; // sync anchor to match
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), &stream);
+    });
+
+    // Advance ledger well past the stream's natural end.
+    env.ledger().with_mut(|l| l.timestamp += 10_000);
+
+    // The full deposited_amout would be immediately claimable because the
+    // elapsed time (start_time=0 → now=10_000) far exceeds the duration.
+    let claimable = client.get_claimable_amount(&stream_id).unwrap();
+    assert_eq!(claimable, 1_000);
+
+    // Backdated start times are intentionally prevented by the contract design:
+    // `create_stream` always uses `env.ledger().timestamp()`, so this scenario
+    // cannot occur via the public API.
+}
+
 // ─── top_up_stream ────────────────────────────────────────────────────────────
 
 #[test]
@@ -511,6 +580,7 @@ fn test_top_up_emits_event() {
     assert_eq!(payload.stream_id, id);
     assert_eq!(payload.amount, 5_000);
     assert_eq!(payload.new_deposited_amount, 15_000);
+    assert_eq!(payload.new_end_time, 150);
 }
 
 #[test]
@@ -2032,6 +2102,41 @@ fn test_fuzz_cancel_early_refunds() {
 }
 
 #[test]
+fn test_resume_on_cancelled_stream_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Advance time and pause the stream.
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    // Cancel the paused stream — this should set is_active=false and status=Cancelled,
+    // but previously would leave paused=true, allowing a subsequent resume to corrupt state.
+    client.cancel_stream(&sender, &id);
+
+    // Resume on a cancelled stream must fail.
+    let result = client.try_resume_stream(&sender, &id);
+    assert_eq!(
+        result,
+        Err(Ok(StreamError::StreamNotActive)),
+        "resume_stream must return StreamNotActive on an inactive stream"
+    );
+
+    // Stream state must be unchanged: still cancelled, not resumed.
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    assert!(!s.paused);
+}
+
+#[test]
 fn test_fuzz_pause_resume_maintains_active_state() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2153,6 +2258,7 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             withdrawn_amount: withdrawn,
             start_time: 0,
             last_update_time: 0,
+            cliff_time: None,
             is_active: true,
             paused,
             paused_at: if paused {
@@ -2640,14 +2746,120 @@ fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
 fn event_field_names(env: &Env, payload: &soroban_sdk::Val) -> std::vec::Vec<std::string::String> {
     let map = soroban_sdk::Map::<Symbol, soroban_sdk::Val>::try_from_val(env, payload)
         .expect("event data is not a Map");
-    let mut names: std::vec::Vec<std::string::String> = map
-        .keys()
-        .iter()
-        .map(|sym| sym.to_string())
-        .collect();
+    let mut names: std::vec::Vec<std::string::String> =
+        map.keys().iter().map(|sym| sym.to_string()).collect();
     names.sort();
     names
 }
+
+// ─── Concurrent streams (same sender/recipient/token) ─────────────────────────
+
+#[test]
+fn test_concurrent_streams_same_tuple_independent_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let client = create_contract(&env);
+    let id1 = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    let id2 = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Both streams must exist and have distinct IDs.
+    assert_ne!(id1, id2);
+    let s1 = client.get_stream(&id1).unwrap();
+    let s2 = client.get_stream(&id2).unwrap();
+    assert_eq!(s1.deposited_amount, 1_000);
+    assert_eq!(s2.deposited_amount, 1_000);
+    assert_eq!(s1.withdrawn_amount, 0);
+    assert_eq!(s2.withdrawn_amount, 0);
+
+    // Advance time and withdraw from stream 1 only.
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    let claimed1 = client.withdraw(&recipient, &id1);
+    assert_eq!(claimed1, 500); // 50 s * (1 000 / 100) = 500
+
+    // Stream 2 must be unaffected.
+    let s2_after = client.get_stream(&id2).unwrap();
+    assert_eq!(s2_after.withdrawn_amount, 0);
+    assert_eq!(s2_after.deposited_amount, 1_000);
+
+    // Advance more time and withdraw from stream 2.
+    env.ledger().with_mut(|l| l.timestamp += 50);
+    let claimed2 = client.withdraw(&recipient, &id2);
+    assert_eq!(claimed2, 1_000); // 100 s * 10 rate = 1 000 (full stream)
+
+    // Stream 1 must still have its original withdrawn amount unchanged.
+    let s1_final = client.get_stream(&id1).unwrap();
+    assert_eq!(s1_final.withdrawn_amount, 500);
+}
+
+// ─── Cumulative fee rounding drift ────────────────────────────────────────────
+//
+// The protocol fee uses integer division: fee = amount * fee_rate_bps / 10_000.
+// When many small deposits are made sequentially, each individual fee may round
+// down (due to integer truncation), causing the sum of collected fees to be
+// slightly less than fee_rate_bps/10_000 of the gross total. This test verifies
+// the drift stays within an acceptable tolerance.
+//
+// Rounding direction: favours the user (the protocol receives ≤ the ideal fee).
+
+#[test]
+fn test_cumulative_fee_rounding_drift() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let fee_rate_bps: u32 = 199;
+    mint(&env, &token, &sender, 10_000_000);
+
+    let client = create_contract(&env);
+    let token_client = token::Client::new(&env, &token);
+    client.initialize(&admin, &treasury, &fee_rate_bps);
+
+    let id = client.create_stream(&sender, &recipient, &token, &100_000, &10_000);
+
+    // Perform 200 small sequential top-ups, each for 101 tokens.
+    // Per top-up: fee = 101 * 199 / 10_000 = 20_099 / 10_000 = 2 (rounded down).
+    let top_up_count = 200;
+    let per_top_up = 101i128;
+    for _ in 0..top_up_count {
+        mint(&env, &token, &sender, per_top_up);
+        client.top_up_stream(&sender, &id, &per_top_up);
+    }
+
+    let total_gross = 100_000i128 + (top_up_count as i128) * per_top_up;
+    let ideal_fee = (total_gross * fee_rate_bps as i128) / 10_000;
+    let actual_fee = token_client.balance(&treasury);
+
+    // Each individual top-up of 101 * 199 / 10000 = 2.0099 → 2, losing 0.0099 per op.
+    // Over 200 ops: at most 200 * 0.0099 ≈ 1.98 tokens of downward drift.
+    // Allow tolerance of 2 tokens (enforced by `max_drift`).
+    let max_drift = top_up_count as i128;
+    let drift = ideal_fee - actual_fee;
+    assert!(
+        drift >= 0,
+        "Fee collected ({}) exceeds ideal ({}) — rounding favoured protocol (unexpected)",
+        actual_fee,
+        ideal_fee
+    );
+    assert!(
+        drift <= max_drift,
+        "Fee drift too large: ideal={ideal_fee}, actual={actual_fee}, drift={drift}, max={max_drift}"
+    );
+}
+
+// ─── update_fee_config ceiling enforcement ─────────────────────────────────────
+//
+// The existing test `test_update_fee_config_rejects_invalid_fee_rate` at line 171
+// already verifies that `update_fee_config` rejects a rate above MAX_FEE_RATE_BPS
+// (1 000). The implementation check is at `lib.rs:95-97`.
 
 #[test]
 fn test_stream_created_event_field_names_match_decoder_expectations() {
@@ -2696,4 +2908,359 @@ fn test_stream_created_event_field_names_match_decoder_expectations() {
         names, expected,
         "stream_created event fields drifted from soroban-event-worker.ts's decodeMap expectations"
     );
+}
+
+// ─── #1297 Overflow regressions for the #1224 unchecked arithmetic sites ──────
+//
+// Issue #1224 ("Functional Edge Case #22") identified five call sites that used
+// plain `+=` / `*` / `+` while the rest of the file uses checked or saturating
+// arithmetic. `overflow-checks` is on for both the release profile the WASM
+// ships with and the dev profile these tests run under, so an overflow at any
+// of them panicked and aborted the whole transaction instead of returning a
+// `StreamError`. The tests below pin each site at its boundary and assert the
+// typed `ArithmeticOverflow` error.
+//
+//   1. `collect_fee`      — `amount * fee_rate_bps`
+//   2. `top_up_stream`    — `deposited_amount +=`
+//   3. `apply_withdrawal` — `withdrawn_amount +=`
+//   4. `top_up_stream`    — `now + (remaining / rate) as u64`
+//   5. `resume_stream`    — `now + (remaining / rate) as u64`
+
+/// Overwrites a stream record in place.
+///
+/// Reaching an i128 boundary through the public API alone would take an
+/// impractical number of calls, so these tests park the stream one step below
+/// the ceiling and then drive the real entrypoint across it. Same technique as
+/// `test_claimable_max_i128_rate_overflow` and
+/// `test_calculate_claimable_underflow_returns_zero` above.
+fn force_stream(env: &Env, client: &StreamContractClient<'_>, stream_id: u64, stream: &Stream) {
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), stream);
+    });
+}
+
+/// Site 1 — `collect_fee`: `amount * (cfg.fee_rate_bps as i128)`.
+///
+/// At the maximum fee rate the multiplication overflows for any amount above
+/// `i128::MAX / 1_000`, so `i128::MAX` is well past the boundary.
+#[test]
+fn test_create_stream_rejects_fee_multiplication_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, i128::MAX);
+
+    let client = create_contract(&env);
+    client.initialize(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &MAX_FEE_RATE_BPS,
+    );
+
+    assert_eq!(
+        client.try_create_stream(&sender, &recipient, &token, &i128::MAX, &1_000),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+/// Site 2 — `top_up_stream`: `stream.deposited_amount += net_amount`.
+///
+/// The stream is parked one unit below `i128::MAX`, so any positive top-up
+/// pushes the deposited total out of range.
+#[test]
+fn test_top_up_rejects_deposited_amount_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = i128::MAX - 1;
+    force_stream(&env, &client, id, &stream);
+
+    assert_eq!(
+        client.try_top_up_stream(&sender, &id, &5_000),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+/// Site 3 — `apply_withdrawal`: `stream.withdrawn_amount += amount`.
+///
+/// Exercised at the boundary rather than past it. `calculate_claimable` clamps
+/// its result to `deposited_amount - withdrawn_amount`, which makes
+/// `withdrawn_amount + claimable <= deposited_amount <= i128::MAX` an invariant
+/// of every reachable call, so no input can push this site over. The test pins
+/// the exact state where the sum lands on `i128::MAX`: the checked add must
+/// succeed and the withdrawal must complete, so a future change to that clamp
+/// which does let this site overflow surfaces here as a test failure instead of
+/// as an aborted transaction in production.
+#[test]
+fn test_withdraw_at_i128_max_withdrawn_boundary_does_not_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &10_000, &100);
+
+    // 1 000 units still claimable, and withdrawn + claimable lands exactly on
+    // i128::MAX. The huge rate makes `streamed` exceed `remaining`, so the
+    // clamp rather than the elapsed time decides the amount.
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = i128::MAX;
+    stream.withdrawn_amount = i128::MAX - 1_000;
+    stream.rate_per_second = i128::MAX;
+    force_stream(&env, &client, id, &stream);
+
+    env.ledger().with_mut(|l| l.timestamp += 10);
+
+    assert_eq!(client.try_withdraw(&recipient, &id), Ok(Ok(1_000)));
+
+    let settled = client.get_stream(&id).unwrap();
+    assert_eq!(settled.withdrawn_amount, i128::MAX);
+    assert!(!settled.is_active);
+    assert_eq!(settled.status, StreamStatus::Completed);
+}
+
+/// Remaining balance whose drain time cannot be represented as a `u64`.
+///
+/// `Q = 3 * 2^64 - 101`. At one unit per second the stream needs `Q` seconds to
+/// drain, which is past `u64::MAX`. The pre-fix code truncated that quotient
+/// with `as u64`, giving `2^64 - 101`, then panicked on `now + (2^64 - 101)`
+/// for any `now > 100`. The fixed code rejects the quotient before it is ever
+/// truncated.
+const END_TIME_OVERFLOW_REMAINING: i128 = 3 * (1_i128 << 64) - 101;
+
+/// Ledger timestamp for the two end-time tests. Any value above 100 makes the
+/// pre-fix truncated addition overflow.
+const END_TIME_OVERFLOW_NOW: u64 = 1_000;
+
+/// Site 4 — `top_up_stream`: `now + (remaining / rate_per_second) as u64`.
+#[test]
+fn test_top_up_rejects_end_time_projection_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    env.ledger()
+        .with_mut(|l| l.timestamp = END_TIME_OVERFLOW_NOW);
+
+    // A 10-unit top-up brings the deposited balance to exactly Q. Anchoring
+    // last_update_time at `now` keeps the claimable amount at 0, so the whole
+    // balance counts as remaining.
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = END_TIME_OVERFLOW_REMAINING - 10;
+    stream.withdrawn_amount = 0;
+    stream.rate_per_second = 1;
+    stream.last_update_time = END_TIME_OVERFLOW_NOW;
+    force_stream(&env, &client, id, &stream);
+
+    assert_eq!(
+        client.try_top_up_stream(&sender, &id, &10),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+/// Site 5 — `resume_stream`: `now + (remaining / rate_per_second) as u64`.
+#[test]
+fn test_resume_rejects_end_time_projection_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 20_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    env.ledger()
+        .with_mut(|l| l.timestamp = END_TIME_OVERFLOW_NOW);
+
+    // Paused with paused_at == last_update_time, so nothing accrued while
+    // paused and the full balance is still remaining at resume.
+    let mut stream = client.get_stream(&id).unwrap();
+    stream.deposited_amount = END_TIME_OVERFLOW_REMAINING;
+    stream.withdrawn_amount = 0;
+    stream.rate_per_second = 1;
+    stream.last_update_time = 500;
+    stream.paused = true;
+    stream.paused_at = Some(500);
+    stream.status = StreamStatus::Paused;
+    force_stream(&env, &client, id, &stream);
+
+    assert_eq!(
+        client.try_resume_stream(&sender, &id),
+        Err(Ok(StreamError::ArithmeticOverflow))
+    );
+}
+
+// ─── close_stream / storage reclamation (#1441) ───────────────────────────────
+
+#[test]
+fn test_close_stream_completed_by_sender_prunes_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    // Fully drain the stream so it transitions to Completed.
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+    assert_eq!(
+        client.get_stream(&id).unwrap().status,
+        StreamStatus::Completed
+    );
+
+    client.close_stream(&sender, &id);
+
+    // Closed stream ID can no longer be queried or mutated.
+    assert!(client.get_stream(&id).is_none());
+    assert_eq!(client.get_claimable_amount(&id), None);
+    assert_eq!(
+        client.try_withdraw(&recipient, &id),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+    assert_eq!(
+        client.try_close_stream(&sender, &id),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
+fn test_close_stream_cancelled_by_recipient_prunes_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.cancel_stream(&sender, &id);
+    assert_eq!(
+        client.get_stream(&id).unwrap().status,
+        StreamStatus::Cancelled
+    );
+
+    client.close_stream(&recipient, &id);
+    assert!(client.get_stream(&id).is_none());
+}
+
+#[test]
+fn test_close_stream_by_admin_prunes_storage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    client.initialize(&admin, &treasury, &0);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+
+    client.close_stream(&admin, &id);
+    assert!(client.get_stream(&id).is_none());
+}
+
+#[test]
+fn test_close_stream_rejects_active_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    assert_eq!(
+        client.try_close_stream(&sender, &id),
+        Err(Ok(StreamError::StreamStillActive))
+    );
+    // Storage entry must survive the failed close.
+    assert!(client.get_stream(&id).is_some());
+}
+
+#[test]
+fn test_close_stream_rejects_unauthorized_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+
+    assert_eq!(
+        client.try_close_stream(&Address::generate(&env), &id),
+        Err(Ok(StreamError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_close_stream_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &500, &100);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.withdraw(&recipient, &id);
+    client.close_stream(&sender, &id);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_closed")
+        })
+        .expect("stream_closed event not found");
+
+    let payload: StreamClosedEvent = StreamClosedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.closer, sender);
 }

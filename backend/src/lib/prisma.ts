@@ -23,4 +23,7 @@ export const prisma =
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
+export { getPoolMetrics } from './pg-pool.js';
+export const pool = globalForPrisma.pool!;
+
 export default prisma;

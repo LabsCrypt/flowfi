@@ -79,4 +79,22 @@ describe("mapBackendStreamToFrontend", () => {
       expect(mapBackendStreamToFrontend(s, "G").status).toBe("Completed");
     });
   });
+
+  describe("date", () => {
+    it("formats startTime as a UTC calendar date, independent of the runner's local timezone", () => {
+      // 2023-11-14T22:13:20.000Z: in a negative UTC-offset local timezone this
+      // instant falls on the previous local calendar day, which is exactly
+      // the ambiguity this format must avoid.
+      const s = makeStream({ startTime: 1_700_000_000 });
+      expect(mapBackendStreamToFrontend(s, "G").date).toBe("2023-11-14");
+    });
+
+    it("is stable across different timestamps within the same UTC day", () => {
+      const morning = makeStream({ startTime: 1_700_000_000 }); // 22:13:20 UTC
+      const lateSameUtcDay = makeStream({ startTime: 1_700_003_000 }); // 23:03:20 UTC
+      expect(mapBackendStreamToFrontend(morning, "G").date).toBe(
+        mapBackendStreamToFrontend(lateSameUtcDay, "G").date,
+      );
+    });
+  });
 });

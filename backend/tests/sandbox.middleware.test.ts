@@ -32,6 +32,21 @@ describe('Sandbox Middleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('should not let a client-supplied X-Sandbox-Mode header flip sandbox mode when globally disabled', () => {
+    (sandboxConfig.getSandboxConfig as any).mockReturnValue({
+      enabled: false,
+      allowHeader: true,
+      allowQueryParam: true,
+      headerName: 'X-Sandbox-Mode',
+      queryParamName: 'sandbox',
+    });
+    req.headers = { 'x-sandbox-mode': 'true' };
+    sandboxMiddleware(req as SandboxRequest, res as Response, next);
+    expect(req.sandbox).toBe(false);
+    expect(req.sandboxMode).toBe(false);
+    expect(next).toHaveBeenCalled();
+  });
+
   it('should detect sandbox via header', () => {
     (sandboxConfig.getSandboxConfig as any).mockReturnValue({
       enabled: true,

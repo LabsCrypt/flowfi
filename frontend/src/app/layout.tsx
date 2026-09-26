@@ -8,6 +8,8 @@ import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/context/theme-provider";
 import { Navbar } from "@/components/Navbar";
 import { QueryProvider } from "@/components/providers/query-provider";
+import { NetworkProvider } from "@/context/NetworkContext";
+import { WalletMismatchBanner } from "@/components/wallet/WalletMismatchBanner";
 
 const sora = Sora({
   variable: "--font-display",
@@ -60,7 +62,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning> {/* TODO: revisit if i18n is introduced */}
+    /*
+      `suppressHydrationWarning` is the companion to next-themes' built-in
+      blocking pre-paint script (rendered by <ThemeProvider> below). The
+      server renders <html> without a theme class; that script then reads the
+      persisted theme from localStorage and adds/removes the theme class
+      (`light`/`dark`) on <html> before the first paint, so the client DOM
+      class list can legitimately differ from what the server rendered. This
+      prop tells React to skip the hydration-difference check for this
+      element because the divergence is intentional and resolved before paint.
+      See `theme-provider.tsx` for the full strategy.
+    */
+    <html lang="en" suppressHydrationWarning>
       <head />
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
         <ThemeProvider
@@ -71,8 +84,10 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            <WalletProvider>
-              <Navbar />
+            <NetworkProvider>
+              <WalletProvider>
+                <Navbar />
+                <WalletMismatchBanner />
               <Toaster
                 position="top-right"
                 toastOptions={{
@@ -86,7 +101,8 @@ export default function RootLayout({
                 }}
               />
               {children}
-            </WalletProvider>
+              </WalletProvider>
+            </NetworkProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

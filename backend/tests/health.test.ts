@@ -17,7 +17,20 @@ vi.mock('../src/lib/prisma.js', () => ({
   default: prismaMock,
 }));
 
+vi.mock('../src/workers/soroban-event-worker.js', () => ({
+  sorobanEventWorker: {
+    getEventCounters: vi.fn().mockReturnValue({
+      eventsProcessed: 0,
+      eventsFailed: 0,
+      lastErrorAt: null,
+      degraded: false,
+    }),
+  },
+  SorobanEventWorker: vi.fn(),
+}));
+
 import app from '../src/app.js';
+import { sorobanEventWorker } from '../src/workers/soroban-event-worker.js';
 
 function makeState(lagSeconds: number) {
   const updatedAt = new Date(Date.now() - lagSeconds * 1000);
@@ -29,6 +42,12 @@ describe('GET /health', () => {
     vi.unstubAllEnvs();
     prismaMock.$queryRaw.mockResolvedValue([{ '?column?': 1n }]);
     prismaMock.indexerState.findUnique.mockResolvedValue(null);
+    vi.mocked(sorobanEventWorker.getEventCounters).mockReturnValue({
+      eventsProcessed: 0,
+      eventsFailed: 0,
+      lastErrorAt: null,
+      degraded: false,
+    });
   });
 
   afterEach(() => {
@@ -43,7 +62,12 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.db).toBe('connected');
     expect(res.body.indexerEnabled).toBe(false);
+    expect(res.body.checks.indexer.status).toBe('disabled');
     expect(res.body.indexerLag).toBeNull();
+    expect(res.body.eventsProcessed).toBe(0);
+    expect(res.body.eventsFailed).toBe(0);
+    expect(res.body.lastErrorAt).toBeNull();
+    expect(res.body.indexerDegraded).toBe(false);
   });
 
   it('returns 200 when DB is up and indexer is enabled but has no state row yet (cold start)', async () => {
@@ -55,6 +79,7 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.indexerEnabled).toBe(true);
     expect(res.body.indexerLag).toBeNull();
+    expect(res.body.checks.indexer.status).toBe('ok');
   });
 
   it('returns 200 when DB is up, indexer enabled, and lag is within threshold', async () => {
@@ -66,6 +91,7 @@ describe('GET /health', () => {
     expect(res.body.status).toBe('ok');
     expect(res.body.indexerLag).toBeGreaterThanOrEqual(0);
     expect(res.body.indexerLag).toBeLessThanOrEqual(60);
+    expect(res.body.checks.indexer.status).toBe('ok');
   });
 
   it('returns 503 when DB is up, indexer enabled, and lag exceeds 60 s', async () => {
@@ -76,6 +102,38 @@ describe('GET /health', () => {
     expect(res.status).toBe(503);
     expect(res.body.status).toBe('degraded');
     expect(res.body.indexerLag).toBeGreaterThan(60);
+    expect(res.body.checks.indexer.status).toBe('degraded');
+  });
+
+  it('returns checks.indexer.status "degraded" for lag-only degradation, with failure-rate signals asserted healthy (#1294)', async () => {
+    vi.stubEnv('STREAM_CONTRACT_ID', 'CSOME_CONTRACT_ADDRESS');
+    prismaMock.indexerState.findUnique.mockResolvedValue(makeState(120));
+    // Explicitly (re)assert the failure-rate counters are healthy so this
+    // test isolates lag-only degradation rather than relying on beforeEach
+    // defaults implicitly — the mismatch this test guards against is
+    // checks.indexer.status staying "ok" while lag alone drives the
+    // top-level status to "degraded".
+    vi.mocked(sorobanEventWorker.getEventCounters).mockReturnValue({
+      eventsProcessed: 42,
+      eventsFailed: 0,
+      lastErrorAt: null,
+      degraded: false,
+    });
+
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.indexerLag).toBeGreaterThan(60);
+    // Failure-rate degradation is NOT a contributing factor.
+    expect(res.body.eventsFailed).toBe(0);
+    expect(res.body.indexerDegraded).toBe(false);
+    // The granular breakdown must match the top-level verdict during a
+    // lag-only incident.
+    expect(res.body.checks.indexer.status).toBe('degraded');
+    expect(res.body.checks.indexer.enabled).toBe(true);
+    expect(res.body.checks.indexer.lagSeconds).toBeGreaterThan(60);
+    expect(res.body.checks.database.status).toBe('ok');
   });
 
   it('returns 503 when DB is down regardless of indexer state', async () => {
@@ -96,5 +154,26 @@ describe('GET /health', () => {
     expect(res.status).toBe(200);
     expect(typeof res.body.indexerLag).toBe('number');
     expect(typeof res.body.uptime).toBe('number');
+  });
+
+  it('returns 503 when indexer is enabled and event-processing failures spike (#844)', async () => {
+    vi.stubEnv('STREAM_CONTRACT_ID', 'CSOME_CONTRACT_ADDRESS');
+    prismaMock.indexerState.findUnique.mockResolvedValue(makeState(5));
+    vi.mocked(sorobanEventWorker.getEventCounters).mockReturnValue({
+      eventsProcessed: 1,
+      eventsFailed: 10,
+      lastErrorAt: '2026-07-27T08:00:00.000Z',
+      degraded: true,
+    });
+
+    const res = await request(app).get('/health');
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.indexerLag).toBeLessThanOrEqual(60);
+    expect(res.body.eventsProcessed).toBe(1);
+    expect(res.body.eventsFailed).toBe(10);
+    expect(res.body.lastErrorAt).toBe('2026-07-27T08:00:00.000Z');
+    expect(res.body.indexerDegraded).toBe(true);
+    expect(res.body.checks.indexer.status).toBe('degraded');
   });
 });

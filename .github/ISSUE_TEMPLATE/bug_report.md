@@ -21,8 +21,21 @@ A clear and concise description of what you expected to happen.
 ## Actual Behavior
 A clear and concise description of what actually happened.
 
-## Screenshots
-If applicable, add screenshots to help explain your problem.
+## Component
+Select the sub-project(s) or component(s) affected:
+- [ ] Frontend
+- [ ] Backend
+- [ ] Contracts (Smart Contracts)
+- [ ] Infrastructure (Infra / CI / Deployment)
+- [ ] Documentation
+- [ ] Other (please specify)
+
+## Network
+Select the target Stellar network environment:
+- [ ] Testnet
+- [ ] Mainnet
+- [ ] Local Sandbox
+- [ ] Not Applicable
 
 ## Environment
 - **FlowFi Version**: (e.g., commit hash or version number)
@@ -31,12 +44,8 @@ If applicable, add screenshots to help explain your problem.
 - **Node.js Version**: (if relevant)
 - **Wallet**: (e.g., Freighter 2.0.0)
 
-## Component
-- [ ] Frontend
-- [ ] Backend
-- [ ] Smart Contracts
-- [ ] Documentation
-- [ ] Other (please specify)
+## Screenshots
+If applicable, add screenshots to help explain your problem.
 
 ## Logs/Error Messages
 ```

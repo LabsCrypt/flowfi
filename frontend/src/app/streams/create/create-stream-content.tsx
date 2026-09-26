@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { logger } from "@/lib/logger";
 import {
   createStream,
@@ -10,27 +10,57 @@ import {
   toSorobanErrorMessage,
   TOKEN_ADDRESSES
 } from "@/lib/soroban";
-import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
+import { hasValidPrecision } from "@/utils/amount";
 import { toast } from "react-hot-toast";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileText, X } from "lucide-react";
 import { useWallet } from "@/context/wallet-context";
+import { useStreamForm } from "@/hooks/useStreamForm";
 
 const TOKEN_DECIMALS = 7;
 
 export default function CreateStreamContent() {
   const { status, session } = useWallet();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [nowTimestamp] = useState(() => Date.now());
   const [loading, setLoading] = useState(false);
   const [txState, setTxState] = useState<"idle" | "signing" | "submitted" | "confirming">("idle");
-  const [formData, setFormData] = useState({
-    recipient: "",
-    token: "XLM",
-    amount: "",
-    duration: "30",
+  const [dismissedDraftBanner, setDismissedDraftBanner] = useState(false);
+
+  // ── Shared form hook ────────────────────────────────────────────────────
+  const {
+    formData,
+    errors,
+    updateFormData,
+    resetForm: _resetForm,
+    validateAll,
+    walletBalance,
+    walletBalanceLoading,
+    walletBalanceError,
+    hasDraft,
+    discardDraft,
+    draftSavedAt,
+  } = useStreamForm({
+    walletPublicKey: session?.publicKey,
+    enableDraftPersistence: true,
+    initialData: { token: "XLM", duration: "30" },
   });
+
+  // Handle recipient prefill from search params — but only if no draft is restored
+  useEffect(() => {
+    const recipientParam = searchParams.get("recipient");
+    if (!recipientParam || hasDraft) return;
+
+    import("@stellar/stellar-sdk").then(({ StrKey }) => {
+      if (StrKey.isValidEd25519PublicKey(recipientParam)) {
+        updateFormData({ recipient: recipientParam });
+      } else {
+        logger.warn("Ignoring malformed recipient query param", { recipientParam });
+      }
+    });
+  }, [searchParams, hasDraft, updateFormData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,9 +69,11 @@ export default function CreateStreamContent() {
       return;
     }
 
-    const validationError = validateAmountInput(formData.amount, TOKEN_DECIMALS);
-    if (validationError) {
-      toast.error(validationError);
+    // Use the shared validation (checks recipient format, amount, precision, balance)
+    if (!validateAll()) {
+      // Show the first error as a toast for flat-form UX
+      const firstError = Object.values(errors)[0];
+      if (firstError) toast.error(firstError);
       return;
     }
 
@@ -62,17 +94,19 @@ export default function CreateStreamContent() {
 
       if (result.success) {
         setTxState("confirming");
+        discardDraft();
         toast.success("Stream created successfully!");
         setTimeout(() => {
+          setLoading(false);
+          setTxState("idle");
           router.push("/dashboard");
         }, 2000);
       }
     } catch (error) {
-      logger.error("Stream creation failed:", error);
-      toast.error(toSorobanErrorMessage(error));
-    } finally {
       setLoading(false);
       setTxState("idle");
+      logger.error("Stream creation failed:", error);
+      toast.error(toSorobanErrorMessage(error));
     }
   };
 
@@ -86,9 +120,10 @@ export default function CreateStreamContent() {
     }
   };
 
-  const amountError = formData.amount
-    ? validateAmountInput(formData.amount, TOKEN_DECIMALS)
-    : null;
+  const handleDismissDraft = useCallback(() => {
+    discardDraft();
+    setDismissedDraftBanner(true);
+  }, [discardDraft]);
 
   return (
     <div className="container mx-auto max-w-2xl px-4 py-12">
@@ -99,6 +134,25 @@ export default function CreateStreamContent() {
         <ArrowLeft className="mr-2 h-4 w-4" />
         Back to Dashboard
       </Link>
+
+      {/* Resume draft banner */}
+      {hasDraft && !dismissedDraftBanner && draftSavedAt && (
+        <div className="mb-6 flex items-center gap-3 rounded-2xl border border-accent/30 bg-accent/10 px-5 py-4 text-sm">
+          <FileText className="h-5 w-5 text-accent flex-shrink-0" />
+          <span className="flex-1">
+            Resumed a saved draft from{" "}
+            {new Date(draftSavedAt).toLocaleTimeString()}
+            . You can continue editing or start fresh.
+          </span>
+          <button
+            onClick={handleDismissDraft}
+            className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <X className="h-3.5 w-3.5" />
+            Discard Draft
+          </button>
+        </div>
+      )}
 
       <div className="glass-card rounded-3xl border-slate-800 p-8">
         <h1 className="mb-2 text-3xl font-bold">Create New Stream</h1>
@@ -117,9 +171,12 @@ export default function CreateStreamContent() {
               placeholder="G..."
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.recipient}
-              onChange={(e) => setFormData({ ...formData, recipient: e.target.value })}
+              onChange={(e) => updateFormData({ recipient: e.target.value })}
               required
             />
+            {errors.recipient && (
+              <p className="text-xs text-red-400 mt-1" role="alert">{errors.recipient}</p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -131,7 +188,7 @@ export default function CreateStreamContent() {
                 id="create-stream-token"
                 className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors appearance-none"
                 value={formData.token}
-                onChange={(e) => setFormData({ ...formData, token: e.target.value })}
+                onChange={(e) => updateFormData({ token: e.target.value })}
               >
                 {Object.keys(TOKEN_ADDRESSES).map((symbol) => (
                   <option key={symbol} value={symbol}>
@@ -155,14 +212,25 @@ export default function CreateStreamContent() {
                   const newValue = e.target.value;
                   if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
                     if (hasValidPrecision(newValue, TOKEN_DECIMALS)) {
-                      setFormData({ ...formData, amount: newValue });
+                      updateFormData({ amount: newValue });
                     }
                   }
                 }}
                 required
               />
-              {amountError && (
-                <p className="text-xs text-red-400 mt-1">{amountError}</p>
+              {errors.amount && (
+                <p className="text-xs text-red-400 mt-1" role="alert">{errors.amount}</p>
+              )}
+              {walletBalance && !errors.amount && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Available: {walletBalance} {formData.token}
+                </p>
+              )}
+              {walletBalanceLoading && (
+                <p className="text-xs text-slate-500 mt-1">Loading balance…</p>
+              )}
+              {walletBalanceError && (
+                <p className="text-xs text-yellow-500 mt-1">{walletBalanceError}</p>
               )}
             </div>
           </div>
@@ -177,9 +245,12 @@ export default function CreateStreamContent() {
               placeholder="30"
               className="w-full rounded-xl border border-slate-800 bg-slate-900/50 p-4 outline-none focus:border-accent transition-colors"
               value={formData.duration}
-              onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
+              onChange={(e) => updateFormData({ duration: e.target.value })}
               required
             />
+            {errors.duration && (
+              <p className="text-xs text-red-400 mt-1" role="alert">{errors.duration}</p>
+            )}
           </div>
 
           <div className="rounded-2xl bg-accent/5 p-6 space-y-4">

@@ -307,9 +307,13 @@ describe('Authentication & Middleware Tests', () => {
 
     it('test_admin_middleware_rejects_non_admin_token', async () => {
       const nonAdminKeypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
       const token = signJwt({
         sub: nonAdminKeypair.publicKey(),
-        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
       });
 
       // Set admin key to something else
@@ -326,9 +330,13 @@ describe('Authentication & Middleware Tests', () => {
 
     it('test_admin_middleware_accepts_admin_token', async () => {
       const adminKeypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
       const token = signJwt({
         sub: adminKeypair.publicKey(),
-        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
       });
 
       process.env.ADMIN_PUBLIC_KEY = adminKeypair.publicKey();
@@ -343,9 +351,13 @@ describe('Authentication & Middleware Tests', () => {
 
     it('test_admin_middleware_fails_closed_when_key_unset', async () => {
       const keypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
       const token = signJwt({
         sub: keypair.publicKey(),
-        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
       });
 
       // Unset the admin key
@@ -371,9 +383,13 @@ describe('Authentication & Middleware Tests', () => {
 
     it('test_events_endpoint_allows_authenticated_matching_address', async () => {
       const keypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
       const token = signJwt({
         sub: keypair.publicKey(),
-        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
       });
 
       const res = await request(app)
@@ -388,9 +404,13 @@ describe('Authentication & Middleware Tests', () => {
     it('test_events_endpoint_rejects_authenticated_mismatched_address', async () => {
       const keypair = makeKeypair();
       const otherKeypair = makeKeypair();
+      const now = Math.floor(Date.now() / 1000);
       const token = signJwt({
         sub: keypair.publicKey(),
-        exp: Math.floor(Date.now() / 1000) + 3600,
+        iat: now,
+        exp: now + 3600,
+        iss: 'flowfi-api',
+        aud: 'flowfi-api',
       });
 
       const res = await request(app)

@@ -160,7 +160,7 @@ describe('Indexer worker integration (mocked DB)', () => {
 
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId },
+        where: { streamId: BigInt(streamId) },
         data: expect.objectContaining({ isPaused: true }),
       }),
     );
@@ -197,7 +197,7 @@ describe('Indexer worker integration (mocked DB)', () => {
 
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId },
+        where: { streamId: BigInt(streamId) },
         data: expect.objectContaining({
           isPaused: false,
         }),
@@ -231,7 +231,7 @@ describe('Indexer worker integration (mocked DB)', () => {
 
     expect(mockPrisma.stream.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId },
+        where: { streamId: BigInt(streamId) },
         data: expect.objectContaining({ isActive: false }),
       }),
     );
@@ -295,7 +295,7 @@ describe('Indexer worker integration (mocked DB)', () => {
 
     expect(mockPrisma.stream.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { streamId: 0 },
+        where: { streamId: 0n },
       }),
     );
 
@@ -308,7 +308,7 @@ describe('Indexer worker integration (mocked DB)', () => {
           },
         },
         create: expect.objectContaining({
-          streamId: 0,
+          streamId: 0n,
           eventType: 'FEE_CONFIG_UPDATED',
           transactionHash: 'hash-fee-config',
           ledgerSequence: 105,
@@ -361,7 +361,7 @@ describe('Indexer worker integration (mocked DB)', () => {
           },
         },
         create: expect.objectContaining({
-          streamId: 0,
+          streamId: 0n,
           eventType: 'ADMIN_TRANSFERRED',
           transactionHash: 'hash-admin-transfer',
           ledgerSequence: 106,

@@ -1,46 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { rpc } from '@stellar/stellar-sdk';
 
+const mockPrismaObj = vi.hoisted(() => ({
+  indexerState: {
+    findUnique: vi.fn(),
+    create: vi.fn(),
+    upsert: vi.fn(),
+  },
+  user: {
+    upsert: vi.fn(),
+  },
+  stream: {
+    upsert: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
+  },
+  streamEvent: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+    create: vi.fn(),
+  },
+  indexerDeadLetterEvent: {
+    upsert: vi.fn(),
+  },
+  $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() } })),
+  $disconnect: vi.fn(),
+}));
+
 // Mock prisma before importing the worker
 vi.mock('../src/lib/prisma.js', () => ({
-  default: {
-    indexerState: {
-      upsert: vi.fn(),
-    },
-    user: {
-      upsert: vi.fn(),
-    },
-    stream: {
-      upsert: vi.fn(),
-      findUniqueOrThrow: vi.fn(),
-    },
-    streamEvent: {
-      findUnique: vi.fn(),
-      upsert: vi.fn(),
-      create: vi.fn(),
-    },
-    $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() } })),
-    $disconnect: vi.fn(),
-  },
-  prisma: {
-    indexerState: {
-      upsert: vi.fn(),
-    },
-    user: {
-      upsert: vi.fn(),
-    },
-    stream: {
-      upsert: vi.fn(),
-      findUniqueOrThrow: vi.fn(),
-    },
-    streamEvent: {
-      findUnique: vi.fn(),
-      upsert: vi.fn(),
-      create: vi.fn(),
-    },
-    $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() } })),
-    $disconnect: vi.fn(),
-  },
+  default: mockPrismaObj,
+  prisma: mockPrismaObj,
 }));
 
 // Mock SSE service
@@ -53,17 +42,42 @@ vi.mock('../src/services/sse.service.js', () => ({
 }));
 
 // Mock logger
-vi.mock('../src/logger.js', () => ({
-  default: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
+vi.mock('../src/logger.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/logger.js')>();
+  return {
+    ...actual,
+    default: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+  };
+});
 
 import { SorobanEventWorker } from '../src/workers/soroban-event-worker.js';
 import { prisma } from '../src/lib/prisma.js';
 import logger from '../src/logger.js';
+
+// ─── ScVal v17 mock helpers (property-based, not method-based) ──────────────
+const mockSym = (name: string) => ({ sym: { toString: () => name } } as any);
+const mockU64 = (value: number | bigint | string) => ({ u64: { toString: () => String(value) } } as any);
+const mockI128 = (hi: number | bigint | string, lo: number | bigint | string) => ({ i128: { hi: { toString: () => String(hi) }, lo: { toString: () => String(lo) } } } as any);
+const mockAccountAddr = () => ({ address: { type: 'scAddressTypeAccount', accountId: { ed25519: { value: Buffer.alloc(32) } } } } as any);
+const mockContractAddr = () => ({ address: { type: 'scAddressTypeContract', contractId: { value: Buffer.alloc(32) } } } as any);
+const mockMapEntry = (keyName: string, val: any) => ({ key: mockSym(keyName), val } as any);
+const mockMapValue = (entries: any[]) => ({ map: entries } as any);
+
+// Standard stream fields map used across most tests
+const streamFields = (overrides?: { withdrawn_amount?: string; isActive?: boolean; is_active_value?: boolean }) => [
+  mockMapEntry('sender', mockAccountAddr()),
+  mockMapEntry('recipient', mockAccountAddr()),
+  mockMapEntry('token_address', mockContractAddr()),
+  mockMapEntry('rate_per_second', mockI128(0, 100)),
+  mockMapEntry('deposited_amount', mockI128(0, 86400)),
+  mockMapEntry('withdrawn_amount', mockI128(0, Number(overrides?.withdrawn_amount ?? 0))),
+  mockMapEntry('start_time', mockU64(1700000000)),
+  mockMapEntry('is_active', { b: overrides?.is_active_value ?? true } as any),
+];
 
 describe('SorobanEventWorker', () => {
   let worker: SorobanEventWorker;
@@ -98,19 +112,12 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_created'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
-            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '100' }) }) }) },
-            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '86400' }) }) }) },
-            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
-          ] as any,
+          type: 'scvMap',
+          ...mockMapValue(streamFields()),
         } as any,
       };
 
@@ -173,19 +180,19 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_created'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('sender', mockAccountAddr()),
+            mockMapEntry('recipient', mockAccountAddr()),
+            mockMapEntry('token_address', mockContractAddr()),
             // rate_per_second = 0 (hi=0, lo=0)
-            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '0' }) }) }) },
-            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '500' }) }) }) },
-            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
+            mockMapEntry('rate_per_second', mockI128('0', '0')),
+            mockMapEntry('deposited_amount', mockI128('0', '500')),
+            mockMapEntry('start_time', mockU64('1700000000')),
           ] as any,
         } as any,
       };
@@ -237,15 +244,15 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'fee_collected' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('fee_collected'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'fee_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '1000' }) }) }) },
-            { key: () => ({ sym: () => 'token' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('treasury', mockAccountAddr()),
+            mockMapEntry('fee_amount', mockI128('0', '1000')),
+            mockMapEntry('token', mockContractAddr()),
           ] as any,
         } as any,
       };
@@ -292,16 +299,16 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'fee_config_updated' } as any,
+          mockSym('fee_config_updated'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'old_treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'old_fee_rate_bps' }), val: () => ({ u32: () => 100 }) },
-            { key: () => ({ sym: () => 'new_fee_rate_bps' }), val: () => ({ u32: () => 200 }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('admin', mockAccountAddr()),
+            mockMapEntry('old_treasury', mockAccountAddr()),
+            mockMapEntry('new_treasury', mockAccountAddr()),
+            mockMapEntry('old_fee_rate_bps', { u32: 100 } as any),
+            mockMapEntry('new_fee_rate_bps', { u32: 200 } as any),
           ] as any,
         } as any,
       };
@@ -326,7 +333,7 @@ describe('SorobanEventWorker', () => {
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           create: expect.objectContaining({
-            streamId: 0,
+            streamId: 0n,
             eventType: 'FEE_CONFIG_UPDATED',
             transactionHash: txHash,
             ledgerSequence: 1005,
@@ -349,14 +356,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_paused' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_paused'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'paused_at' }), val: () => ({ u64: () => ({ toString: () => '1700001000' }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('sender', mockAccountAddr()),
+            mockMapEntry('paused_at', mockU64('1700001000')),
           ] as any,
         } as any,
       };
@@ -401,14 +408,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_resumed' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_resumed'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_end_time' }), val: () => ({ u64: () => ({ toString: () => '1700090000' }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('sender', mockAccountAddr()),
+            mockMapEntry('new_end_time', mockU64('1700090000')),
           ] as any,
         } as any,
       };
@@ -457,15 +464,15 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'tokens_withdrawn' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('tokens_withdrawn'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '500' }) }) }) },
-            { key: () => ({ sym: () => 'timestamp' }), val: () => ({ u64: () => ({ toString: () => '1700002000' }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('recipient', mockAccountAddr()),
+            mockMapEntry('amount', mockI128('0', '500')),
+            mockMapEntry('timestamp', mockU64('1700002000')),
           ] as any,
         } as any,
       };
@@ -490,7 +497,7 @@ describe('SorobanEventWorker', () => {
       await expect((worker as any).handleTokensWithdrawn(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
       expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
       expect(mockTx.stream.update).toHaveBeenCalledWith({
-        where: { streamId },
+        where: { streamId: BigInt(streamId) },
         data: { withdrawnAmount: '1500', lastUpdateTime: 1700002000 },
       });
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
@@ -522,14 +529,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_topped_up' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_topped_up'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '200' }) }) }) },
-            { key: () => ({ sym: () => 'new_deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '1200' }) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('amount', mockI128('0', '200')),
+            mockMapEntry('new_deposited_amount', mockI128('0', '1200')),
           ] as any,
         } as any,
       };
@@ -575,7 +582,7 @@ describe('SorobanEventWorker', () => {
       // Sanity check: depositedAmount/endTime from the (only) applied update
       // match what a single application should produce.
       expect(firstUpdateArgs.data.depositedAmount).toBe('1200');
-      expect(expectedEndTime).toBe(1700000000 + Math.floor(1200 / 10) + 0);
+      expect(expectedEndTime).toBe(1700000000n + BigInt(Math.floor(1200 / 10)));
     });
 
     it('should process admin_transferred events successfully', async () => {
@@ -591,20 +598,20 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'admin_transferred' } as any,
+          mockSym('admin_transferred'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'previous_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('previous_admin', mockAccountAddr()),
+            mockMapEntry('new_admin', mockAccountAddr()),
           ] as any,
         } as any,
       };
 
       const mockTx = {
         user: { upsert: vi.fn().mockResolvedValue({}) },
-        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0, isActive: false }) },
+        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0n, isActive: false }) },
         streamEvent: {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: vi.fn().mockResolvedValue({ id: 'event-admin-transferred' }),
@@ -622,13 +629,264 @@ describe('SorobanEventWorker', () => {
       expect(mockTx.streamEvent.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           create: expect.objectContaining({
-            streamId: 0,
+            streamId: 0n,
             eventType: 'ADMIN_TRANSFERRED',
             transactionHash: txHash,
             ledgerSequence: 1006,
           }),
         })
       );
+    });
+
+    it('persists a u64 streamId above int4 max (2^31-1) without Number coercion (#829)', async () => {
+      // int4 max is 2_147_483_647; this value would previously fail with
+      // "value out of range for type integer" on insert.
+      const streamId = 3_000_000_000n;
+      const txHash = 'large-u64-stream-id-tx';
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'large-u64-event-1',
+        type: 'contract',
+        ledger: 5000,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          mockSym('stream_created'),
+          mockU64(streamId),
+        ],
+        value: {
+          type: 'scvMap',
+          ...mockMapValue(streamFields()),
+        } as any,
+      };
+
+      let capturedStreamUpsert: any = null;
+      let capturedEventUpsert: any = null;
+      const mockTx = {
+        user: { upsert: vi.fn().mockResolvedValue({}) },
+        stream: {
+          upsert: vi.fn().mockImplementation((args) => {
+            capturedStreamUpsert = args;
+            return Promise.resolve({ streamId, isActive: true });
+          }),
+        },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockImplementation((args) => {
+            capturedEventUpsert = args;
+            return Promise.resolve({ id: 'event-large-u64' });
+          }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      await expect(
+        (worker as any).handleStreamCreated(mockEvent, mockEvent.topic![1]),
+      ).resolves.not.toThrow();
+
+      expect(capturedStreamUpsert?.where?.streamId).toBe(streamId);
+      expect(capturedStreamUpsert?.create?.streamId).toBe(streamId);
+      expect(typeof capturedStreamUpsert?.create?.streamId).toBe('bigint');
+      expect(capturedStreamUpsert.create.streamId > 2_147_483_647n).toBe(true);
+
+      expect(capturedEventUpsert?.create?.streamId).toBe(streamId);
+      expect(typeof capturedEventUpsert?.create?.streamId).toBe('bigint');
+    });
+
+    it('cursor_advances_past_valid_events_after_an_earlier_failed_event_in_same_batch', async () => {
+      // Setup initial state: lastCursor is 'cursor-initial'
+      (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'singleton',
+        lastLedger: 100,
+        lastCursor: 'cursor-initial',
+        updatedAt: new Date(),
+      });
+      (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'singleton',
+        lastLedger: 100,
+        lastCursor: 'cursor-initial',
+        updatedAt: new Date(),
+      });
+
+      // Dead-letter upsert: first (and only) failure stays below the retry cap.
+      (prisma.indexerDeadLetterEvent.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'dl-1',
+        eventId: 'cursor-event-1',
+        attempts: 1,
+      });
+
+      // Event 1: Missing required body fields for fee_config_updated -> handleFeeConfigUpdated throws
+      const event1: rpc.Api.EventResponse = {
+        id: 'cursor-event-1',
+        type: 'contract',
+        ledger: 101,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash: 'tx-failed-1',
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          mockSym('fee_config_updated'),
+        ],
+        value: {
+          type: 'scvMap',
+          map: [] as any,
+        } as any,
+      };
+
+      const event2: rpc.Api.EventResponse = {
+        id: 'cursor-event-2',
+        type: 'contract',
+        ledger: 102,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash: 'tx-success-2',
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          mockSym('admin_transferred'),
+        ],
+        value: {
+          type: 'scvMap',
+          map: [
+            mockMapEntry('previous_admin', mockAccountAddr()),
+            mockMapEntry('new_admin', mockAccountAddr()),
+          ] as any,
+        } as any,
+      };
+
+      const event3: rpc.Api.EventResponse = {
+        id: 'cursor-event-3',
+        type: 'contract',
+        ledger: 103,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash: 'tx-success-3',
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          mockSym('admin_transferred'),
+        ],
+        value: {
+          type: 'scvMap',
+          map: [
+            mockMapEntry('previous_admin', mockAccountAddr()),
+            mockMapEntry('new_admin', mockAccountAddr()),
+          ] as any,
+        } as any,
+      };
+
+      vi.spyOn((worker as any).server, 'getEvents').mockResolvedValue({
+        events: [event1, event2, event3],
+      });
+
+      const upsertedStreamEvents: any[] = [];
+      const mockTx = {
+        user: { upsert: vi.fn().mockResolvedValue({}) },
+        stream: { upsert: vi.fn().mockResolvedValue({ streamId: 0n, isActive: false }) },
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockImplementation((args) => {
+            upsertedStreamEvents.push(args);
+            return Promise.resolve({ id: 'event-id' });
+          }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      await (worker as any).fetchAndProcessEvents();
+
+      const event1Writes = upsertedStreamEvents.filter(
+        (e) => e.create?.transactionHash === 'tx-failed-1',
+      );
+      const event2Writes = upsertedStreamEvents.filter(
+        (e) => e.create?.transactionHash === 'tx-success-2',
+      );
+      const event3Writes = upsertedStreamEvents.filter(
+        (e) => e.create?.transactionHash === 'tx-success-3',
+      );
+
+      expect(event1Writes.length).toBe(0);
+      expect(event2Writes.length).toBe(1);
+      expect(event3Writes.length).toBe(1);
+
+      const indexerUpsertCalls = (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls;
+      const lastSaveCall = indexerUpsertCalls[indexerUpsertCalls.length - 1]![0];
+
+      expect(lastSaveCall.update.lastCursor).toBe('cursor-event-3');
+    });
+  });
+
+  describe('poll / triggerPoll serialization (#843)', () => {
+    it('does not run fetchAndProcessEvents concurrently for overlapping poll and triggerPoll', async () => {
+      let concurrent = 0;
+      let maxConcurrent = 0;
+      const releases: Array<() => void> = [];
+
+      const fetchSpy = vi
+        .spyOn(worker as any, 'fetchAndProcessEvents')
+        .mockImplementation(async () => {
+          concurrent += 1;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await new Promise<void>((resolve) => {
+            releases.push(resolve);
+          });
+          concurrent -= 1;
+        });
+
+      // Avoid scheduling real timers from poll()'s finally
+      vi.spyOn(worker as any, 'scheduleNext').mockImplementation(() => {});
+      (worker as any).isRunning = true;
+
+      const pollPromise = (worker as any).poll();
+      const triggerPromise = worker.triggerPoll();
+
+      await vi.waitFor(() => expect(releases.length).toBe(1));
+      expect(concurrent).toBe(1);
+
+      releases[0]!();
+      await vi.waitFor(() => expect(releases.length).toBe(2));
+      expect(concurrent).toBe(1);
+
+      releases[1]!();
+      await Promise.all([pollPromise, triggerPromise]);
+
+      expect(maxConcurrent).toBe(1);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('waitForDrain awaits an in-flight triggerPoll batch', async () => {
+      let resolveFetch!: () => void;
+      vi.spyOn(worker as any, 'fetchAndProcessEvents').mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      );
+      vi.spyOn(worker as any, 'scheduleNext').mockImplementation(() => {});
+      (worker as any).isRunning = true;
+
+      const triggerPromise = worker.triggerPoll();
+      // activeBatch is registered synchronously in runExclusive
+      expect((worker as any).activeBatch).not.toBeNull();
+
+      let drained = false;
+      const drainPromise = worker.waitForDrain().then(() => {
+        drained = true;
+      });
+
+      await Promise.resolve();
+      expect(drained).toBe(false);
+
+      resolveFetch();
+      await Promise.all([triggerPromise, drainPromise]);
+      expect(drained).toBe(true);
+      expect((worker as any).activeBatch).toBeNull();
     });
   });
 });
