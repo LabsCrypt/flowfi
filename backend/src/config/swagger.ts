@@ -68,6 +68,10 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         name: 'Admin',
         description: 'Administrative and monitoring endpoints',
       },
+      {
+        name: 'Observability',
+        description: 'Prometheus metrics scrape endpoint',
+      },
     ],
     components: {
       securitySchemes: {

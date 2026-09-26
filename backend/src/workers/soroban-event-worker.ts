@@ -2,6 +2,13 @@ import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
+import { publishIndexerLag, quarantineEvent } from "../services/indexerService.js";
+import {
+  indexerEventsProcessedTotal,
+  indexerPollsTotal,
+  recordRpcRequest,
+} from "../lib/metrics.js";
+import { withSpan } from "../lib/tracing.js";
 import logger from "../logger.js";
 import { Prisma } from "../generated/prisma/index.js";
 
@@ -188,6 +195,14 @@ export class SorobanEventWorker {
    * cursor (or start ledger on first run) and process each one in order.
    */
   private async fetchAndProcessEvents(): Promise<void> {
+    return withSpan(
+      "indexer.poll",
+      { "indexer.contract_id": this.contractId },
+      async () => this.runPollCycle(),
+    );
+  }
+
+  private async runPollCycle(): Promise<void> {
     // Ensure an IndexerState row exists on first run.
     const state = await prisma.indexerState.upsert({
       where: { id: INDEXER_STATE_ID },
@@ -218,9 +233,26 @@ export class SorobanEventWorker {
       ? { ...baseFilter, cursor: state.lastCursor }
       : { ...baseFilter, startLedger: state.lastLedger || this.startLedger };
 
-    const response = await this.server.getEvents(params);
+    const rpcStart = Date.now();
+    let response: Awaited<ReturnType<rpc.Server["getEvents"]>>;
+    try {
+      response = await this.server.getEvents(params);
+      recordRpcRequest("getEvents", (Date.now() - rpcStart) / 1000, "success");
+    } catch (err) {
+      recordRpcRequest("getEvents", (Date.now() - rpcStart) / 1000, "error");
+      indexerPollsTotal.inc({ outcome: "rpc_error" });
+      throw err;
+    }
 
-    if (response.events.length === 0) return;
+    // The network tip is reported alongside every batch, so lag is observable
+    // even on cycles that return no events.
+    const networkLedger = response.latestLedger ?? 0;
+
+    if (response.events.length === 0) {
+      indexerPollsTotal.inc({ outcome: "empty" });
+      publishIndexerLag(state.lastLedger, networkLedger);
+      return;
+    }
 
     let lastCursor: string | null = state.lastCursor;
     let lastLedger: number = state.lastLedger;
@@ -240,16 +272,24 @@ export class SorobanEventWorker {
       // Only process events from successful contract calls.
       if (!event.inSuccessfulContractCall) continue;
 
+      const eventType = event.topic[0] ? decodeSymbol(event.topic[0]) : "unknown";
+
       try {
         await this.processEvent(event);
         // Use the event ID as the cursor if pagingToken is not available
         lastCursor = event.id;
         lastLedger = event.ledger;
+        indexerEventsProcessedTotal.inc({ eventType, result: "processed" });
       } catch (err) {
+        indexerEventsProcessedTotal.inc({ eventType, result: "quarantined" });
         logger.error(
           `[SorobanWorker] Failed to process event ${event.id}:`,
           err,
         );
+        // Quarantine rather than retry inline: a payload the handler cannot
+        // parse would otherwise be re-fetched every cycle and block everything
+        // queued behind it. Operators replay it via the admin dead-letter API.
+        await quarantineEvent(event, err);
         // Continue processing subsequent events rather than halting.
       }
     }
@@ -266,6 +306,9 @@ export class SorobanEventWorker {
       },
       update: { lastLedger, lastCursor: finalCursor },
     });
+
+    indexerPollsTotal.inc({ outcome: "processed" });
+    publishIndexerLag(lastLedger, networkLedger);
 
     logger.info(
       `[SorobanWorker] Processed ${response.events.length} event(s) — latest ledger: ${lastLedger}`,

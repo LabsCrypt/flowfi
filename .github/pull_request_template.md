@@ -60,6 +60,7 @@ Closes #
 - [ ] New and existing unit tests pass locally with my changes
 - [ ] Any dependent changes have been merged and published
 - [ ] I have checked for breaking changes and documented them if applicable
+- [ ] If this change adds or modifies a metric, I have updated the Grafana dashboard and the alert rules in `backend/docs/observability/`
 
 ## Additional Notes
 <!-- Any additional information that reviewers should know -->
