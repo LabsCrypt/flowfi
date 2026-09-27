@@ -155,6 +155,22 @@ model AlertHistory {
   @@index([streamId])
   @@index([sentAt])
 }
+// Cached metadata for Soroban token contracts and Stellar Asset Contracts.
+model TokenRegistry {
+  id              String   @id @default(uuid())
+  contractAddress String   @unique
+  symbol          String
+  name            String
+  decimals        Int
+  iconUrl         String?
+  issuerAddress   String?
+  isVerified      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([contractAddress])
+  @@index([symbol])
+}
 
 // IndexerDeadLetterEvent model - quarantines Soroban events whose processing
 // failed (unexpected payload shape, transient DB lock, RPC timeout mid-handler).
