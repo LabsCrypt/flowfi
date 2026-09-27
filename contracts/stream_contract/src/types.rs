@@ -13,6 +13,16 @@ pub const MAX_VESTING_STEPS: u32 = 12;
 /// transactions.
 pub const MAX_BATCH_WITHDRAW: u32 = 30;
 
+/// Denominator for all basis-point math (100 % = 10 000 bps).
+pub const BPS_DENOMINATOR: u32 = 10_000;
+
+/// Hard ceiling on the dynamic protocol fee: 100 bps = 1.00 %.
+///
+/// Kept deliberately far below [`crate::MAX_FEE_RATE_BPS`] (the legacy 10 %
+/// cap) so a compromised or mistaken admin can never impose a predatory fee
+/// through `configure_protocol_fees`.
+pub const MAX_ALLOWED_FEE_BPS: u32 = 100;
+
 /// Status of a payment stream.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -83,6 +93,91 @@ pub enum DataKey {
     /// so the upgrade history is tracked here instead. Absent — read as
     /// `BytesN::zero` — means the contract has never been upgraded in place.
     ContractWasmHash,
+    /// Dynamic, multi-recipient protocol fee configuration (singleton).
+    ProtocolFeeConfig,
+    /// Position receipt for a stream, keyed by stream ID and the holder's role.
+    Position(u64, PositionRole),
+    /// Index of position receipts owned by an address (persistent, `Vec<PositionRef>`).
+    PositionOwnerIndex(Address),
+}
+
+/// Which side of a stream a [`StreamPositionMetadata`] receipt represents.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionRole {
+    Sender,
+    Recipient,
+}
+
+/// Lifecycle status of a position receipt.
+///
+/// A receipt is `Active` while its stream has funds outstanding, and `Settled`
+/// once the stream is fully paid out (`Completed`) or cancelled. Settling burns
+/// the claim entitlement while retaining the attestation for credit/payroll
+/// history.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionStatus {
+    Active,
+    Settled,
+}
+
+/// Public, wallet-displayable description of a stream position receipt.
+///
+/// Extended to carry `owner` and `status` beyond the minimal draft shape so the
+/// receipt is self-describing when returned from `get_position_metadata` and
+/// `get_positions_by_owner`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPositionMetadata {
+    pub stream_id: u64,
+    pub role: PositionRole,
+    /// Owner of the receipt. Updated by `transfer_position` when transferable.
+    pub owner: Address,
+    pub token_address: Address,
+    pub rate_per_second: i128,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub is_transferable: bool,
+    pub status: PositionStatus,
+}
+
+/// Lightweight reference used for the per-owner position index.
+///
+/// Kept separate from [`StreamPositionMetadata`] so the index stays small: the
+/// full metadata is loaded lazily from `DataKey::Position` only for receipts the
+/// caller actually asks about.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PositionRef {
+    pub stream_id: u64,
+    pub role: PositionRole,
+}
+
+/// A single destination within a [`ProtocolFeeConfig`] split.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeRecipient {
+    pub recipient: Address,
+    /// Share of the collected fee in basis points. The split set must sum to
+    /// exactly [`BPS_DENOMINATOR`] (10 000).
+    pub share_bps: u32,
+}
+
+/// Dynamic protocol fee configuration with multi-recipient treasury splits.
+///
+/// Stored as a singleton in instance storage under `DataKey::ProtocolFeeConfig`.
+/// When absent or disabled, fee collection falls back to the legacy single
+/// treasury configured by `initialize`/`update_fee_config`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolFeeConfig {
+    /// Total protocol fee in basis points. Capped at [`MAX_ALLOWED_FEE_BPS`].
+    pub fee_bps: u32,
+    /// Destinations the collected fee is split across. Sums to exactly 10 000 bps.
+    pub splits: Vec<FeeRecipient>,
+    /// When `false`, no fee is collected and the legacy config is bypassed.
+    pub is_enabled: bool,
 }
 
 /// Immutable state of a payment stream.

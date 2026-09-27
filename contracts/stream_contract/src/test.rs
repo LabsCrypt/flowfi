@@ -3290,12 +3290,6 @@ fn test_unpause_restores_creations_and_top_ups() {
     client.top_up_stream(&sender, &id, &500);
     let created = client.create_stream(&sender, &Address::generate(&env), &token, &500, &500);
     assert!(created > id);
-74
-
-74
-
-74
-
     assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_500);
 }
 
@@ -4514,8 +4508,9 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    // `Stream` carries the `cliff_time` and `schedule` fields; `LegacyStream`
+    // carries neither.
+    raw_stream_field_count(env, contract, stream_id) == 14
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].

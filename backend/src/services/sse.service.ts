@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import type { Response } from 'express';
 import logger, { requestContext } from '../logger.js';
 import { isRedisAvailable, getPublisher, getSubscriber } from '../lib/redis.js';
+import { graphqlPubSub, streamTopic, userTopic } from '../graphql/pubsub.js';
 import {
   sseClientsDroppedTotal,
   sseConnectionsTotal,
@@ -209,6 +210,10 @@ export class SSEService {
   }
 
   broadcastToStream(streamId: string, event: string, data: unknown): void {
+    // Mirror into the GraphQL subscription broker so `streamUpdated` clients see
+    // the same traffic as SSE subscribers (Issue #1467).
+    graphqlPubSub.publish(streamTopic(streamId), data);
+
     if (isRedisAvailable()) {
       getPublisher()?.publish(`sse:stream:${streamId}`, JSON.stringify({ event, data }));
     } else {
@@ -217,6 +222,10 @@ export class SSEService {
   }
 
   broadcastToUser(publicKey: string, event: string, data: unknown): void {
+    // Mirror into the GraphQL subscription broker so `userStreams` clients see
+    // the same user-scoped events as SSE subscribers (Issue #1467).
+    graphqlPubSub.publish(userTopic(publicKey), data);
+
     if (isRedisAvailable()) {
       getPublisher()?.publish(`sse:user:${publicKey}`, JSON.stringify({ event, data }));
     } else {
