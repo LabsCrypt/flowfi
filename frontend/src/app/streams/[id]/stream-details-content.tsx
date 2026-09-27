@@ -102,11 +102,10 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
 
   // The hook operates on numbers (same as the dashboard), but this page
   // formats raw stroop amounts, so round back to an exact bigint for display.
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization -- stable ref dependency
-  const liveClaimable = useMemo(() => {
-    if (!Number.isFinite(liveClaimableNumber)) return 0n;
-    return BigInt(Math.round(liveClaimableNumber));
-  }, [liveClaimableNumber]);
+  const liveClaimable =
+    Number.isFinite(liveClaimableNumber)
+      ? BigInt(Math.round(liveClaimableNumber))
+      : 0n;
 
   const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],

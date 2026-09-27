@@ -105,6 +105,37 @@ describe('GET /health', () => {
     expect(res.body.checks.indexer.status).toBe('degraded');
   });
 
+  it('returns checks.indexer.status "degraded" for lag-only degradation, with failure-rate signals asserted healthy (#1294)', async () => {
+    vi.stubEnv('STREAM_CONTRACT_ID', 'CSOME_CONTRACT_ADDRESS');
+    prismaMock.indexerState.findUnique.mockResolvedValue(makeState(120));
+    // Explicitly (re)assert the failure-rate counters are healthy so this
+    // test isolates lag-only degradation rather than relying on beforeEach
+    // defaults implicitly — the mismatch this test guards against is
+    // checks.indexer.status staying "ok" while lag alone drives the
+    // top-level status to "degraded".
+    vi.mocked(sorobanEventWorker.getEventCounters).mockReturnValue({
+      eventsProcessed: 42,
+      eventsFailed: 0,
+      lastErrorAt: null,
+      degraded: false,
+    });
+
+    const res = await request(app).get('/health');
+
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe('degraded');
+    expect(res.body.indexerLag).toBeGreaterThan(60);
+    // Failure-rate degradation is NOT a contributing factor.
+    expect(res.body.eventsFailed).toBe(0);
+    expect(res.body.indexerDegraded).toBe(false);
+    // The granular breakdown must match the top-level verdict during a
+    // lag-only incident.
+    expect(res.body.checks.indexer.status).toBe('degraded');
+    expect(res.body.checks.indexer.enabled).toBe(true);
+    expect(res.body.checks.indexer.lagSeconds).toBeGreaterThan(60);
+    expect(res.body.checks.database.status).toBe('ok');
+  });
+
   it('returns 503 when DB is down regardless of indexer state', async () => {
     vi.stubEnv('STREAM_CONTRACT_ID', '');
     prismaMock.$queryRaw.mockRejectedValue(new Error('DB connection refused'));

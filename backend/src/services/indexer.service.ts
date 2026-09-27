@@ -23,10 +23,14 @@ export async function getIndexerStatus(): Promise<IndexerStatus> {
 }
 
 export async function resetIndexer(toLedger: number): Promise<void> {
-  await prisma.indexerState.upsert({
-    where: { id: INDEXER_STATE_ID },
-    create: { id: INDEXER_STATE_ID, lastLedger: toLedger, lastCursor: null },
-    update: { lastLedger: toLedger, lastCursor: null },
+  // Acquire the same mutex that serialises poll/replay batches so that an
+  // in-flight poll cannot overwrite the reset cursor after we write it (#1221).
+  await sorobanEventWorker.runExclusive(async () => {
+    await prisma.indexerState.upsert({
+      where: { id: INDEXER_STATE_ID },
+      create: { id: INDEXER_STATE_ID, lastLedger: toLedger, lastCursor: null },
+      update: { lastLedger: toLedger, lastCursor: null },
+    });
   });
   logger.info(`[IndexerService] Reset lastProcessedLedger to ${toLedger}`);
 }

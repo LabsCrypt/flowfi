@@ -9,6 +9,7 @@ import Link from "next/link";
 import { formatNetwork } from "@/lib/wallet";
 import toast from "react-hot-toast";
 import { getApiBaseUrl } from "@/lib/api/_shared";
+import { copyToClipboard } from "@/lib/clipboard";
 import { DisconnectConfirmModal } from "@/components/wallet/DisconnectConfirmModal";
 import { ClearAppDataConfirmModal } from "@/components/settings/ClearAppDataConfirmModal";
 import { clearDisposableAppData } from "@/lib/app-data";
@@ -144,10 +145,12 @@ export default function SettingsContent() {
   };
 
   const copyAddress = async () => {
-    if (session?.publicKey) {
-      await navigator.clipboard.writeText(session.publicKey);
+    if (!session?.publicKey) return;
+    const success = await copyToClipboard(session.publicKey, {
+      successMessage: "Address copied to clipboard",
+    });
+    if (success) {
       setCopied(true);
-      toast.success("Address copied to clipboard");
       setTimeout(() => setCopied(false), 1500);
     }
   };
@@ -269,8 +272,7 @@ export default function SettingsContent() {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              {(["light", "dark", "system"] as const).map((t) => (
+            <div className="flex gap-2">                  {(["light", "dark", "system"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => handleThemeChange(t)}
@@ -478,10 +480,11 @@ export default function SettingsContent() {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-mono text-white dark:text-black">{shortenPublicKey(CONTRACT_ADDRESS)}</span>
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(CONTRACT_ADDRESS);
-                      toast.success("Contract address copied");
-                    }}
+                    onClick={() =>
+                      copyToClipboard(CONTRACT_ADDRESS, {
+                        successMessage: "Contract address copied",
+                      })
+                    }
                     aria-label="Copy contract address"
                     className="opacity-60 hover:opacity-100 transition"
                   >

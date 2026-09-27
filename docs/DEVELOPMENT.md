@@ -11,7 +11,7 @@ Required:
 - Rust toolchain (stable via rustup)
 - Node.js 20+
 - npm
-- PostgreSQL 14+
+- PostgreSQL 16 (matches the version pinned in `docker-compose.yml` and CI)
 - Docker & Docker Compose (recommended for local infra)
 - Stellar CLI / Soroban CLI (https://github.com/stellar/stellar-cli)
 

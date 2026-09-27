@@ -139,6 +139,10 @@ router.get("/", webhookController.listWebhooks);
  */
 router.delete("/:id", webhookController.deleteWebhook);
 
+router.patch("/:id", webhookController.updateWebhook);
+router.post("/:id/secret", webhookController.regenerateSecret);
+router.get("/:id/deliveries", webhookController.listDeliveries);
+
 /**
  * @openapi
  * /v1/webhooks/{id}/test:

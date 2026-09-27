@@ -11,6 +11,7 @@ import {
   resumeStream,
 } from '../../controllers/stream.controller.js';
 import { cancelStreamHandler } from '../../controllers/stream/cancel.js';
+import { simulateStreamHandler } from '../../controllers/stream/simulate.js';
 import { withdrawHandler } from './streams/withdraw.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { streamCreationRateLimiter } from '../../middleware/stream-rate-limiter.middleware.js';
@@ -102,6 +103,121 @@ const router = Router();
  *               $ref: '#/components/schemas/Error'
  */
 router.post('/', requireAuth, streamCreationRateLimiter, createStream);
+
+/**
+ * @openapi
+ * /v1/streams/simulate:
+ *   post:
+ *     tags:
+ *       - Streams
+ *     summary: Simulate a stream contract call (client-side signing)
+ *     description: |
+ *       Runs a Soroban `simulateTransaction` for the requested action and
+ *       returns an **unsigned** transaction with the ledger footprint, resource
+ *       limits and a padded resource fee already applied, ready for a browser
+ *       wallet (Freighter, Lobstr, xBull) to sign.
+ *
+ *       The returned XDR carries the sender's sequence number as of the moment
+ *       of simulation, so clients should sign promptly rather than holding the
+ *       response open. A 15% resource-fee buffer is applied on top of the
+ *       simulated minimum to absorb footprint drift between simulation and
+ *       submission.
+ *
+ *       Reverted simulations return HTTP 400 with the decoded contract error
+ *       code and a remediation hint in `details`.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - action
+ *               - senderPublicKey
+ *             properties:
+ *               action:
+ *                 type: string
+ *                 enum: [create, withdraw, cancel, top_up, batch_withdraw]
+ *                 example: create
+ *               senderPublicKey:
+ *                 type: string
+ *                 description: Stellar account that will sign the transaction
+ *                 example: GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
+ *               params:
+ *                 type: object
+ *                 description: |
+ *                   Action-specific arguments. `create` needs `recipient`,
+ *                   `amount`, `duration` and `tokenAddress`; `withdraw` and
+ *                   `cancel` need `streamId`; `top_up` needs `streamId` and
+ *                   `amount`; `batch_withdraw` needs `streamIds`.
+ *                 properties:
+ *                   streamId:
+ *                     type: string
+ *                     example: '123'
+ *                   streamIds:
+ *                     type: array
+ *                     items:
+ *                       type: string
+ *                   recipient:
+ *                     type: string
+ *                     example: GBBJ6H3FJN34VLIGNU2QZJ4T6NMY4B2LKCVYGCXK5HO3JFXKHTGSHRQ
+ *                   amount:
+ *                     type: string
+ *                     description: Amount in the token's smallest unit (i128 as string)
+ *                     example: '1000000000'
+ *                   duration:
+ *                     type: integer
+ *                     description: Stream duration in seconds
+ *                     example: 2592000
+ *                   tokenAddress:
+ *                     type: string
+ *                     description: Token contract address — required for `create`
+ *     responses:
+ *       200:
+ *         description: Simulation succeeded
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     unsignedXdr:
+ *                       type: string
+ *                       description: Base64-encoded unsigned transaction XDR
+ *                       example: AAAAAB...
+ *                     minResourceFee:
+ *                       type: string
+ *                       description: Simulated minimum resource fee in stroops
+ *                       example: '15000'
+ *                     recommendedFee:
+ *                       type: string
+ *                       description: minResourceFee plus a 15% safety buffer
+ *                       example: '17250'
+ *                     cpuInstructions:
+ *                       type: integer
+ *                       example: 1420500
+ *                     memoryBytes:
+ *                       type: integer
+ *                       example: 524000
+ *                     expiresAtLedger:
+ *                       type: integer
+ *                       description: Last ledger the returned footprint is valid against
+ *                       example: 482910
+ *                     simulatedReturn:
+ *                       type: string
+ *                       description: Decoded contract return value (empty string for void returns)
+ *                       example: '100000000'
+ *       400:
+ *         description: Invalid parameters, or the simulation reverted
+ *       503:
+ *         description: Stream contract is not configured
+ */
+router.post('/simulate', simulateStreamHandler);
 
 /**
  * @openapi

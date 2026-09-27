@@ -2,6 +2,12 @@ import { randomUUID } from 'crypto';
 import type { Response } from 'express';
 import logger, { requestContext } from '../logger.js';
 import { isRedisAvailable, getPublisher, getSubscriber } from '../lib/redis.js';
+import {
+  sseClientsDroppedTotal,
+  sseConnectionsTotal,
+  sseMaxConnections,
+  setSseConnectionCounts,
+} from '../lib/metrics.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_WRITABLE_BUFFER = 64 * 1024;
@@ -75,6 +81,7 @@ export class SSEService {
 
   checkCapacity(ip: string, userId?: string): SSECapacityCheckResult {
     if (this.clients.size >= this.maxConnections) {
+      sseClientsDroppedTotal.inc({ reason: 'capacity' });
       return {
         allowed: false,
         status: 503,
@@ -84,6 +91,7 @@ export class SSEService {
 
     const currentIpConnections = this.ipConnectionCounts.get(ip) ?? 0;
     if (currentIpConnections >= MAX_CONNECTIONS_PER_IP) {
+      sseClientsDroppedTotal.inc({ reason: 'per_ip_limit' });
       return {
         allowed: false,
         status: 429,
@@ -137,6 +145,8 @@ export class SSEService {
     };
 
     this.clients.set(clientId, client);
+    sseConnectionsTotal.inc();
+    this.publishConnectionMetrics();
     logger.info(
       `[SSEService] Connection opened: ${clientId}, ip: ${ip}, userId: ${userId ?? 'n/a'}, subscriptions: ${subscriptions.join(', ')}`
     );
@@ -146,6 +156,25 @@ export class SSEService {
     });
 
     this.ensureHeartbeat();
+  }
+
+  /**
+   * Re-derive the per-topic connection gauges from the live client map.
+   *
+   * Recomputing from source (rather than incrementing/decrementing per event)
+   * keeps the gauges correct across slow-client drops, write failures and
+   * disconnect races, all of which can reach `removeClient` from more than one
+   * path.
+   */
+  private publishConnectionMetrics(): void {
+    const countsByTopic = new Map<string, number>();
+    for (const client of this.clients.values()) {
+      for (const topic of client.subscriptions) {
+        countsByTopic.set(topic, (countsByTopic.get(topic) ?? 0) + 1);
+      }
+    }
+
+    setSseConnectionCounts(countsByTopic, this.clients.size);
   }
 
   sendHeartbeat(): void {
@@ -281,6 +310,7 @@ export class SSEService {
     }
 
     this.clients.delete(clientId);
+    this.publishConnectionMetrics();
 
     const currentIpCount = this.ipConnectionCounts.get(client.ip) ?? 0;
     if (currentIpCount <= 1) {
@@ -313,6 +343,7 @@ export class SSEService {
 
   private dropSlowClient(client: SSEClient): void {
     this.slowClientsDropped += 1;
+    sseClientsDroppedTotal.inc({ reason: 'slow_client' });
     this.removeClient(client.id, 'slow-client');
   }
 
@@ -348,3 +379,8 @@ export class SSEService {
 
 export const sseService = new SSEService();
 export type { SSEClient };
+
+// Publish the configured ceiling once at import time so
+// `flowfi_sse_max_connections / flowfi_sse_active_connections{topic="total"}`
+// is a usable saturation ratio even before the first client connects.
+sseMaxConnections.set(sseService.getMaxConnections());

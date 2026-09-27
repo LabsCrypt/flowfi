@@ -1,8 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import React from "react";
 import {
   mapBackendStreamToFrontend,
   getDashboardAnalytics,
   dashboardQueryKey,
+  useDashboard,
   type DashboardSnapshot,
 } from "./dashboard";
 import type { BackendStream } from "./api-types";
@@ -179,5 +183,105 @@ describe("getDashboardAnalytics", () => {
     const metrics = getDashboardAnalytics(snapshot);
     const volume30d = metrics.find((m) => m.id === "total-volume-30d")!;
     expect(volume30d.value).toBe(50); // only the recent activity
+  });
+});
+
+// ── useDashboard ─────────────────────────────────────────────────────────────
+
+describe("useDashboard", () => {
+  const PUBLIC_KEY = "GABCDEFPUBLICKEY000000000000000000000000000000000000000";
+
+  function jsonResponse(body: unknown) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => body,
+    } as Response;
+  }
+
+  function makeWrapper(queryClient: QueryClient) {
+    return function Wrapper({ children }: { children: React.ReactNode }) {
+      return React.createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        children,
+      );
+    };
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does not fetch when publicKey is empty (disabled query)", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => useDashboard(""), {
+      wrapper: makeWrapper(queryClient),
+    });
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("fetches and returns a mapped dashboard snapshot for a given publicKey", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse([]));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    const { result } = renderHook(() => useDashboard(PUBLIC_KEY), {
+      wrapper: makeWrapper(queryClient),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual<DashboardSnapshot>({
+      totalSent: 0,
+      totalReceived: 0,
+      totalValueLocked: 0,
+      activeStreamsCount: 0,
+      recentActivity: [],
+      outgoingStreams: [],
+      incomingStreams: [],
+    });
+    // one request for outgoing ("sender") streams, one for incoming ("recipient")
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not refetch within staleTime when remounted with the same QueryClient (no duplicate fetch on tab switch)", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse([]));
+    // Mirror the app's real QueryClient defaults (frontend/src/components/providers/query-provider.tsx)
+    // so this test proves the behavior users actually get.
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { staleTime: 10_000, refetchOnWindowFocus: false, retry: 1 },
+      },
+    });
+    const wrapper = makeWrapper(queryClient);
+
+    const first = renderHook(() => useDashboard(PUBLIC_KEY), { wrapper });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    // Simulate navigating away (unmount) and back (remount) within the
+    // 10s staleTime window, sharing the same QueryClient instance the way
+    // the app's QueryProvider keeps one alive across route/tab changes.
+    first.unmount();
+
+    const second = renderHook(() => useDashboard(PUBLIC_KEY), { wrapper });
+    await waitFor(() =>
+      expect(second.result.current.data).toBeDefined(),
+    );
+
+    // Cache hit: still just the 2 calls from the initial mount — no
+    // duplicate network fetch for switching away and back within staleTime.
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(second.result.current.isFetching).toBe(false);
   });
 });

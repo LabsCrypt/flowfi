@@ -3,10 +3,22 @@ import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
-import logger, { requestContext } from "../logger.js";
+import { publishIndexerLag, quarantineEvent } from "../services/indexerService.js";
+import {
+  indexerEventsProcessedTotal,
+  indexerPollsTotal,
+  recordRpcRequest,
+} from "../lib/metrics.js";
+import { withSpan } from "../lib/tracing.js";
+import logger from "../logger.js";
 import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
 import { rpcPool } from "../lib/rpc-pool.js";
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+
+/** Default max failed processing attempts before an event is abandoned. */
+const DEAD_LETTER_MAX_RETRIES_DEFAULT = 5;
 
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
@@ -92,6 +104,8 @@ export class SorobanEventWorker {
   private readonly server: rpc.Server;
   private readonly pollIntervalMs: number;
   private readonly startLedger: number;
+  /** Max failed processing attempts before an event is abandoned (dead-lettered). */
+  private readonly deadLetterMaxRetries: number;
 
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | undefined;
@@ -122,6 +136,11 @@ export class SorobanEventWorker {
       10,
     );
     this.startLedger = parseInt(process.env.INDEXER_START_LEDGER ?? "0", 10);
+    this.deadLetterMaxRetries = parseInt(
+      process.env.INDEXER_DEAD_LETTER_MAX_RETRIES ??
+        String(DEAD_LETTER_MAX_RETRIES_DEFAULT),
+      10,
+    );
   }
 
   /**
@@ -235,8 +254,11 @@ export class SorobanEventWorker {
   /**
    * Run `fn` exclusively with any other poll/replay batch.
    * Registers the work on `activeBatch` so `waitForDrain` awaits replays too.
+   *
+   * Public so that admin reset/replay paths can acquire the same lock,
+   * preventing a concurrent poll from overwriting the reset cursor (#1221).
    */
-  private runExclusive(fn: () => Promise<void>): Promise<void> {
+  runExclusive(fn: () => Promise<void>): Promise<void> {
     const run = this.batchMutex.then(fn);
     // Keep the mutex chain alive even when a batch rejects.
     const gate = run.then(
@@ -311,18 +333,14 @@ export class SorobanEventWorker {
    * cursor (or start ledger on first run) and process each one in order.
    */
   private async fetchAndProcessEvents(): Promise<void> {
-    const currentCtx = requestContext?.getStore?.();
-    if (
-      !currentCtx?.requestId &&
-      requestContext &&
-      typeof requestContext.run === "function"
-    ) {
-      const requestId = randomUUID();
-      return requestContext.run({ requestId }, () =>
-        this.fetchAndProcessEvents(),
-      );
-    }
+    return withSpan(
+      "indexer.poll",
+      { "indexer.contract_id": this.contractId },
+      async () => this.runPollCycle(),
+    );
+  }
 
+  private async runPollCycle(): Promise<void> {
     // Ensure an IndexerState row exists on first run.
     const state = await ensureIndexerState(this.startLedger);
 
@@ -345,15 +363,30 @@ export class SorobanEventWorker {
       ? { ...baseFilter, cursor: state.lastCursor }
       : { ...baseFilter, startLedger: state.lastLedger || this.startLedger };
 
-    const response = await (this.server
-      ? this.server.getEvents(params)
-      : rpcPool.execute("getEvents", (server) => server.getEvents(params)));
+    const rpcStart = Date.now();
+    let response: Awaited<ReturnType<rpc.Server["getEvents"]>>;
+    try {
+      response = await this.server.getEvents(params);
+      recordRpcRequest("getEvents", (Date.now() - rpcStart) / 1000, "success");
+    } catch (err) {
+      recordRpcRequest("getEvents", (Date.now() - rpcStart) / 1000, "error");
+      indexerPollsTotal.inc({ outcome: "rpc_error" });
+      throw err;
+    }
 
-    if (response.events.length === 0) return;
+    // The network tip is reported alongside every batch, so lag is observable
+    // even on cycles that return no events.
+    const networkLedger = response.latestLedger ?? 0;
+
+    if (response.events.length === 0) {
+      indexerPollsTotal.inc({ outcome: "empty" });
+      publishIndexerLag(state.lastLedger, networkLedger);
+      return;
+    }
 
     let lastCursor: string | null = state.lastCursor;
     let lastLedger: number = state.lastLedger;
-    let hasError = false;
+    let sawSuccess = false;
 
     // Sort events so that 'stream_created' events are processed first in the batch.
     // This ensures that subsequent events (like 'fee_collected') that depend on
@@ -370,32 +403,37 @@ export class SorobanEventWorker {
       // Only process events from successful contract calls.
       if (!event.inSuccessfulContractCall) continue;
 
+      const eventType = event.topic[0] ? decodeSymbol(event.topic[0]) : "unknown";
+
       try {
         await this.processEvent(event);
         this.eventsProcessed += 1;
         this.recordOutcome(true);
-        if (!hasError) {
-          // Use the event ID as the cursor if pagingToken is not available
-          lastCursor = event.id;
-          lastLedger = event.ledger;
-        }
+        sawSuccess = true;
+        // Advance the cursor to the most recent event that was successfully processed.
+        // This keeps a single malformed event from pinning the entire batch forever.
+        lastCursor = event.id;
+        lastLedger = event.ledger;
+        indexerEventsProcessedTotal.inc({ eventType, result: "processed" });
       } catch (err) {
-        hasError = true;
-        this.eventsFailed += 1;
-        this.lastErrorAt = new Date();
-        this.recordOutcome(false);
+        indexerEventsProcessedTotal.inc({ eventType, result: "quarantined" });
         logger.error(
           `[SorobanWorker] Failed to process event ${event.id}:`,
           err,
         );
+        // Quarantine rather than retry inline: a payload the handler cannot
+        // parse would otherwise be re-fetched every cycle and block everything
+        // queued behind it. Operators replay it via the admin dead-letter API.
+        await quarantineEvent(event, err);
         // Continue processing subsequent events rather than halting.
       }
     }
 
-    // Use the response's final cursor if provided and no error occurred, otherwise the last valid event's ID
-    const finalCursor = hasError
-      ? lastCursor
-      : (response as any).latestCursor || lastCursor;
+    // If we successfully processed any events in the batch, advance to the last
+    // successful event so a single poison-pill failure cannot freeze the cursor.
+    const finalCursor = sawSuccess
+      ? ((response as any).latestCursor || lastCursor)
+      : lastCursor;
 
     await prisma.indexerState.upsert({
       where: { id: INDEXER_STATE_ID },
@@ -407,9 +445,54 @@ export class SorobanEventWorker {
       update: { lastLedger, lastCursor: finalCursor },
     });
 
+    indexerPollsTotal.inc({ outcome: "processed" });
+    publishIndexerLag(lastLedger, networkLedger);
+
     logger.info(
       `[SorobanWorker] Processed ${response.events.length} event(s) — latest ledger: ${lastLedger}`,
     );
+  }
+
+  /**
+   * Record a failed event in the dead-letter table (with its raw payload for
+   * manual triage), incrementing its attempt counter.
+   *
+   * @returns `true` when the event has reached the retry cap and should be
+   *   abandoned (cursor advanced past it); `false` to leave it for a retry
+   *   on a future poll. Never throws — a dead-letter write failure must not
+   *   abort the batch; in that case the event is simply left for the next
+   *   poll.
+   */
+  private async deadLetterEvent(
+    event: rpc.Api.EventResponse,
+    err: unknown,
+  ): Promise<boolean> {
+    try {
+      const row = await prisma.indexerDeadLetterEvent.upsert({
+        where: { eventId: event.id },
+        create: {
+          eventId: event.id,
+          ledger: event.ledger,
+          transactionHash: event.txHash,
+          rawPayload: JSON.stringify(event),
+          errorMessage: err instanceof Error ? err.message : String(err),
+          attempts: 1,
+          lastAttemptAt: new Date(),
+        },
+        update: {
+          errorMessage: err instanceof Error ? err.message : String(err),
+          attempts: { increment: 1 },
+          lastAttemptAt: new Date(),
+        },
+      });
+      return row.attempts >= this.deadLetterMaxRetries;
+    } catch (dlErr) {
+      logger.error(
+        `[SorobanWorker] Failed to write dead-letter entry for event ${event.id}:`,
+        dlErr,
+      );
+      return false;
+    }
   }
 
   /**

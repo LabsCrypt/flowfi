@@ -9,6 +9,8 @@ import { ThemeProvider } from "@/context/theme-provider";
 import { Navbar } from "@/components/Navbar";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { AppDataSync } from "@/components/providers/app-data-sync";
+import { NetworkProvider } from "@/context/NetworkContext";
+import { WalletMismatchBanner } from "@/components/wallet/WalletMismatchBanner";
 
 const sora = Sora({
   variable: "--font-display",
@@ -72,23 +74,26 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            <WalletProvider>
-              <AppDataSync />
-              <Navbar />
-              <Toaster
-                position="top-right"
-                toastOptions={{
-                  duration: 4000,
-                  style: {
-                    background: "#111",
-                    color: "#fff",
-                    border: "1px solid #333",
-                    borderRadius: "12px",
-                  },
-                }}
-              />
-              {children}
-            </WalletProvider>
+            <NetworkProvider>
+              <WalletProvider>
+                <AppDataSync />
+                <Navbar />
+                <WalletMismatchBanner />
+                <Toaster
+                  position="top-right"
+                  toastOptions={{
+                    duration: 4000,
+                    style: {
+                      background: "#111",
+                      color: "#fff",
+                      border: "1px solid #333",
+                      borderRadius: "12px",
+                    },
+                  }}
+                />
+                {children}
+              </WalletProvider>
+            </NetworkProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

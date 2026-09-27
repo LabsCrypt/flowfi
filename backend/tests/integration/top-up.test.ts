@@ -129,6 +129,16 @@ describe('POST /v1/streams/:streamId/top-up', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns 400 when amount exceeds the maximum allowed length', async () => {
+    const res = await request(app)
+      .post('/v1/streams/42/top-up')
+      .set('Authorization', 'Bearer dummy')
+      .send({ amount: '1'.repeat(10000) });
+
+    expect(res.status).toBe(400);
+    expect(topUpStream).not.toHaveBeenCalled();
+  });
+
   it('returns 404 when stream does not exist', async () => {
     vi.mocked(mockPrisma.stream.findUnique).mockResolvedValue(null);
 
@@ -172,7 +182,7 @@ describe('POST /v1/streams/:streamId/top-up', () => {
       .send({ amount: '1000' });
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toMatch(/inactive stream/);
+    expect(res.body.error.message).toMatch(/inactive stream/);
   });
 
   it('returns 409 when stream is paused', async () => {
@@ -184,7 +194,7 @@ describe('POST /v1/streams/:streamId/top-up', () => {
       .send({ amount: '1000' });
 
     expect(res.status).toBe(409);
-    expect(res.body.message).toMatch(/paused stream/);
+    expect(res.body.error.message).toMatch(/paused stream/);
   });
 
   it('leaves DB unchanged when topUpStream fails on-chain', async () => {

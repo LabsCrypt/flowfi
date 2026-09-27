@@ -1735,6 +1735,8 @@ export interface paths {
                     offset?: number;
                     /** @description Optional 1-based page index. Ignored when offset is set. */
                     page?: number;
+                    /** @description When true, each event includes its related `stream`. */
+                    includeStream?: boolean;
                 };
                 header?: never;
                 path?: never;
@@ -2799,20 +2801,14 @@ export interface components {
             };
         };
         Error: {
-            /**
-             * @description Error message
-             * @example Resource not found
-             */
-            error?: string;
-            /**
-             * @description Error code
-             * @example NOT_FOUND
-             */
-            code?: string;
-            /** @description Human-readable detail (present on many error responses) */
-            message?: string | null;
-            /** @description Structured validation issues (zod) when the error is a 400 */
-            details?: Record<string, never>[] | null;
+            error: {
+                /** @example NOT_FOUND */
+                code: string;
+                /** @example Resource not found */
+                message: string;
+                /** @description Structured validation issues when applicable */
+                details?: Record<string, never>[];
+            };
         };
     };
     responses: never;

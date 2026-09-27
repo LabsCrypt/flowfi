@@ -1,3 +1,7 @@
+// OpenTelemetry must be initialised before any instrumented module is loaded —
+// the auto-instrumentations patch http/express/pg at require time.
+import "./lib/otel.js";
+
 import dotenv from "dotenv";
 import app from "./app.js";
 import logger from "./logger.js";
@@ -26,6 +30,9 @@ const startServer = async () => {
       logger.info(`Server started on port ${port}`);
       logger.info(
         `API Documentation available at http://localhost:${port}/api-docs`,
+      );
+      logger.info(
+        `Prometheus metrics available at http://localhost:${port}/metrics`,
       );
     });
 

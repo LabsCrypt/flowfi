@@ -828,29 +828,33 @@
         "type": "object",
         "properties": {
           "error": {
-            "type": "string",
-            "description": "Error message",
-            "example": "Resource not found"
-          },
-          "code": {
-            "type": "string",
-            "description": "Error code",
-            "example": "NOT_FOUND"
-          },
-          "message": {
-            "type": "string",
-            "nullable": true,
-            "description": "Human-readable detail (present on many error responses)"
-          },
-          "details": {
-            "type": "array",
-            "nullable": true,
-            "description": "Structured validation issues (zod) when the error is a 400",
-            "items": {
-              "type": "object"
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "NOT_FOUND"
+              },
+              "message": {
+                "type": "string",
+                "example": "Resource not found"
+              },
+              "details": {
+                "type": "array",
+                "description": "Structured validation issues when applicable",
+                "items": {
+                  "type": "object"
+                }
+              }
             }
           }
-        }
+        },
+        "required": [
+          "error"
+        ]
       }
     }
   },
@@ -2751,6 +2755,16 @@
               "default": 1
             },
             "description": "Optional 1-based page index. Ignored when offset is set."
+          },
+          {
+            "in": "query",
+            "name": "includeStream",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "When true, each event includes its related `stream`."
           }
         ],
         "responses": {
