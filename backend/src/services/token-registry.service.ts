@@ -32,7 +32,8 @@ async function invoke(address: string, method: 'symbol' | 'decimals' | 'name'): 
     return scValToNative(retval);
   });
 }
-async function resolveSac(address: string, symbol: string): Promise<{ symbol: string; issuerAddress: string } | null> {
+async function resolveSac(address: string, symbol: string): Promise<{ symbol: string; issuerAddress: string | null } | null> {
+  if (Asset.native().contractId(networkPassphrase()) === address) return { symbol: 'XLM', issuerAddress: null };
   const baseUrl = process.env.STELLAR_HORIZON_URL; if (!baseUrl) return null;
   // Compare deterministic SAC contract IDs derived from Horizon asset records.
   let next: string | null = `${baseUrl.replace(/\/$/, '')}/assets?asset_code=${encodeURIComponent(symbol)}&limit=200&order=asc`;
