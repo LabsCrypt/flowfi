@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS } from '../src/controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getStreamSnapshot, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS } from '../src/controllers/stream.controller.js';
 import { prisma } from '../src/lib/prisma.js';
-import { claimableAmountService } from '../src/services/claimable.service.js';
+import { claimableAmountService, calculateHistoricalStreamSnapshot } from '../src/services/claimable.service.js';
 import * as sorobanService from '../src/services/sorobanService.js';
 import type { Request, Response } from 'express';
 
@@ -26,6 +26,8 @@ vi.mock("../src/services/claimable.service.js", () => ({
   claimableAmountService: {
     getClaimableAmount: vi.fn(),
   },
+  calculateHistoricalStreamSnapshot: vi.fn(),
+  StreamSnapshotHistoryError: class extends Error {},
 }));
 
 vi.mock("../src/services/sorobanService.js", () => ({
@@ -311,6 +313,45 @@ describe("Stream Controller", () => {
     });
   });
 
+  describe('getStreamSnapshot', () => {
+    it('validates the timestamp before querying stream history', async () => {
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '12.5' };
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.stream.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('loads only events through the requested timestamp and returns the replayed snapshot', async () => {
+      const events = [{ eventType: 'CREATED', amount: '1000', timestamp: 100n, metadata: null, ledgerSequence: 1 }];
+      const snapshot = {
+        streamId: '123', timestamp: 150, depositedAmount: '1000', withdrawnAmount: '0',
+        claimableAmount: '500', unvestedAmount: '500', statusAtTimestamp: 'ACTIVE',
+      };
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '150' };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123n, ratePerSecond: '10', startTime: 100n, events,
+      });
+      (calculateHistoricalStreamSnapshot as any).mockReturnValue(snapshot);
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+        where: { streamId: 123n },
+        select: expect.objectContaining({
+          events: expect.objectContaining({
+            where: { timestamp: { lte: 150n } },
+            orderBy: [{ timestamp: 'asc' }, { ledgerSequence: 'asc' }],
+          }),
+        }),
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(snapshot);
+    });
+  });
   describe("getUserStreamSummary", () => {
     it("should return 400 when address is missing", async () => {
       req.params = {} as any;

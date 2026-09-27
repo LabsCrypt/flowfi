@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "../generated/prisma/index.js";
 import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
-import { claimableAmountService } from "../services/claimable.service.js";
+import { claimableAmountService, calculateHistoricalStreamSnapshot, StreamSnapshotHistoryError } from "../services/claimable.service.js";
 import {
   getStreamFromChain,
   getClaimableFromChain,
@@ -493,6 +493,47 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
   }
 };
 
+/** Return reconstructed balances and lifecycle status at a Unix timestamp. */
+export const getStreamSnapshot = async (req: Request, res: Response) => {
+  try {
+    const streamIdParam = Array.isArray(req.params.streamId) ? req.params.streamId[0] : req.params.streamId;
+    const streamId = parseStreamId(streamIdParam);
+    if (streamId === null) return sendApiError(res, 400, 'INVALID_STREAM_ID', 'Invalid streamId parameter');
+
+    const rawTimestamp = req.query.timestamp;
+    if (typeof rawTimestamp !== 'string' || !/^\d+$/.test(rawTimestamp)) {
+      return sendApiError(res, 400, 'INVALID_TIMESTAMP', 'timestamp must be a non-negative Unix timestamp in seconds');
+    }
+    const timestamp = Number(rawTimestamp);
+    if (!Number.isSafeInteger(timestamp)) {
+      return sendApiError(res, 400, 'INVALID_TIMESTAMP', 'timestamp must be a safe Unix timestamp in seconds');
+    }
+
+    const target = BigInt(timestamp);
+    const stream = await prisma.stream.findUnique({
+      where: { streamId },
+      select: {
+        streamId: true,
+        ratePerSecond: true,
+        startTime: true,
+        events: {
+          where: { timestamp: { lte: target } },
+          orderBy: [{ timestamp: 'asc' }, { ledgerSequence: 'asc' }],
+          select: { eventType: true, amount: true, timestamp: true, metadata: true, ledgerSequence: true },
+        },
+      },
+    });
+    if (!stream) return sendApiError(res, 404, 'NOT_FOUND', 'Stream not found');
+
+    return res.status(200).json(calculateHistoricalStreamSnapshot(stream, stream.events, timestamp));
+  } catch (error) {
+    if (error instanceof StreamSnapshotHistoryError) {
+      return sendApiError(res, 409, 'HISTORY_UNAVAILABLE', error.message);
+    }
+    logger.error('Error reconstructing historical stream snapshot:', error);
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'A technical error occurred. Please try again later.');
+  }
+};
 /**
  * Get user-level stream summary used by dashboard/profile cards.
  */
