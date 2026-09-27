@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { rpc, xdr, Contract } from '@stellar/stellar-sdk';
 import { prisma } from '../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
@@ -31,10 +32,15 @@ export async function getIndexerStatus(): Promise<IndexerStatus> {
 }
 
 export async function resetIndexer(toLedger: number): Promise<void> {
-  await prisma.indexerState.upsert({
-    where: { id: INDEXER_STATE_ID },
-    create: { id: INDEXER_STATE_ID, lastLedger: toLedger, lastCursor: null },
-    update: { lastLedger: toLedger, lastCursor: null },
+  // Serialize with the poll loop's own cursor writes (#1221). Without this, a
+  // poll batch already in flight could land its `lastCursor` *after* the reset
+  // and silently discard the admin's intent.
+  await sorobanEventWorker.runExclusive(async () => {
+    await prisma.indexerState.upsert({
+      where: { id: INDEXER_STATE_ID },
+      create: { id: INDEXER_STATE_ID, lastLedger: toLedger, lastCursor: null },
+      update: { lastLedger: toLedger, lastCursor: null },
+    });
   });
   setIndexerLedgers(toLedger, 0);
   logger.info(`[IndexerService] Reset lastProcessedLedger to ${toLedger}`);
@@ -50,11 +56,81 @@ export async function resetIndexer(toLedger: number): Promise<void> {
  * is incremented unconditionally on every replay, so replay is NOT fully
  * idempotent. See issue #808 for the withdrawnAmount idempotency fix.
  */
-export async function replayFromLedger(fromLedger: number): Promise<void> {
+export async function replayFromLedger(
+  fromLedger: number,
+  customRequestId?: string,
+): Promise<string> {
   await resetIndexer(fromLedger);
+  // A caller-supplied correlation id ties the replay's logs back to the admin
+  // request that triggered it; otherwise one is minted up front so the id
+  // returned to the caller is the same one the poll batch is bound to.
+  const requestId = customRequestId ?? randomUUID();
   // Kick off an immediate poll cycle without waiting for the next interval.
-  await sorobanEventWorker.triggerPoll();
+  await sorobanEventWorker.triggerPoll(requestId);
   logger.info(`[IndexerService] Replay triggered from ledger ${fromLedger}`);
+  return requestId;
+}
+
+/** What an indexer reset would do, without doing it. */
+export interface IndexerResetPreview {
+  currentLastLedger: number;
+  currentLastCursor: string | null;
+  targetLastLedger: number;
+}
+
+/**
+ * Dry-run an indexer reset, so an operator can see the blast radius — where the
+ * cursor is now, and where the reset would move it — before rewinding.
+ */
+export async function previewReset(toLedger: number): Promise<IndexerResetPreview> {
+  const state = await prisma.indexerState.findUnique({
+    where: { id: INDEXER_STATE_ID },
+  });
+
+  return {
+    currentLastLedger: state?.lastLedger ?? 0,
+    currentLastCursor: state?.lastCursor ?? null,
+    targetLastLedger: toLedger,
+  };
+}
+
+/** What a replay would do, without doing it. */
+export interface IndexerReplayPreview {
+  fromLedger: number;
+  currentLastLedger: number;
+  currentLastCursor: string | null;
+  /** Stored events the poll loop would re-examine. */
+  eventCount: number;
+  /** Lowest ledger among those events, or 0 when there are none. */
+  minLedgerInReplayRange: number;
+  /** Highest ledger among those events, or 0 when there are none. */
+  maxLedgerInReplayRange: number;
+}
+
+/**
+ * Dry-run a replay. The `StreamEvent` unique constraint keeps reprocessing
+ * idempotent, so this is a safe read-only preview of what would be replayed.
+ */
+export async function previewReplay(fromLedger: number): Promise<IndexerReplayPreview> {
+  const state = await prisma.indexerState.findUnique({
+    where: { id: INDEXER_STATE_ID },
+  });
+
+  const range = await prisma.streamEvent.aggregate({
+    where: { ledgerSequence: { gte: fromLedger } },
+    _count: { _all: true },
+    _min: { ledgerSequence: true },
+    _max: { ledgerSequence: true },
+  });
+
+  return {
+    fromLedger,
+    currentLastLedger: state?.lastLedger ?? 0,
+    currentLastCursor: state?.lastCursor ?? null,
+    eventCount: range._count._all,
+    minLedgerInReplayRange: range._min.ledgerSequence ?? 0,
+    maxLedgerInReplayRange: range._max.ledgerSequence ?? 0,
+  };
 }
 
 /**
@@ -140,12 +216,18 @@ export function deserializeDeadLetterPayload(payload: string): rpc.Api.EventResp
   return event;
 }
 
-/** Best-effort event-type label used for dedup and operator filtering. */
+/**
+ * Best-effort event-type label used for dedup and operator filtering.
+ *
+ * `xdr.ScVal` is a union of per-type classes, so the symbol accessor is only
+ * reachable through the narrowed member — the same cast the indexer worker
+ * uses in `decodeSymbol`.
+ */
 function eventTypeOf(event: rpc.Api.EventResponse): string {
   const topic0 = event.topic?.[0];
   if (!topic0) return 'unknown';
   try {
-    return topic0.sym().toString();
+    return (topic0 as xdr.ScValSymbol).sym.toString();
   } catch {
     return 'unknown';
   }

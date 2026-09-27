@@ -310,12 +310,7 @@ fn fee_above_maximum_is_rejected() {
     c.initialize(&admin, &treasury, &0);
 
     assert_eq!(
-        c.try_configure_protocol_fees(
-            &admin,
-            &101,
-            &two_way_splits(&env, &dao, &insurance),
-            &true
-        ),
+        c.try_configure_protocol_fees(&admin, &101, &two_way_splits(&env, &dao, &insurance), &true),
         Err(Ok(StreamError::FeeExceedsMaximum))
     );
 }
@@ -394,7 +389,10 @@ fn withdraw_and_swap_delivers_target_token() {
     let received = c.withdraw_and_swap(&recipient, &id, &target_token, &1_000, &dex, &deadline);
 
     assert_eq!(received, 1_000);
-    assert_eq!(token::Client::new(&env, &target_token).balance(&recipient), 1_000);
+    assert_eq!(
+        token::Client::new(&env, &target_token).balance(&recipient),
+        1_000
+    );
     // Accounting stays in the deposit token and the stream is fully drained.
     let stream = c.get_stream(&id).unwrap();
     assert_eq!(stream.withdrawn_amount, 1_000);
@@ -421,7 +419,14 @@ fn withdraw_and_swap_rejects_expired_deadline() {
 
     let expired_deadline = env.ledger().timestamp() - 1;
     assert_eq!(
-        c.try_withdraw_and_swap(&recipient, &id, &target_token, &1_000, &dex, &expired_deadline),
+        c.try_withdraw_and_swap(
+            &recipient,
+            &id,
+            &target_token,
+            &1_000,
+            &dex,
+            &expired_deadline
+        ),
         Err(Ok(StreamError::DeadlineExpired))
     );
 }

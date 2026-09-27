@@ -1613,7 +1613,10 @@ impl StreamContract {
         save_position(&env, stream_id, &role, &metadata);
 
         env.events().publish(
-            (Symbol::new(&env, "position_transferability_updated"), stream_id),
+            (
+                Symbol::new(&env, "position_transferability_updated"),
+                stream_id,
+            ),
             PositionTransferabilityUpdatedEvent {
                 stream_id,
                 role,
@@ -1901,7 +1904,10 @@ impl StreamContract {
         }
 
         env.events().publish(
-            (Symbol::new(&env, "cross_asset_withdrawal_executed"), stream_id),
+            (
+                Symbol::new(&env, "cross_asset_withdrawal_executed"),
+                stream_id,
+            ),
             CrossAssetWithdrawalExecutedEvent {
                 stream_id,
                 recipient: recipient.clone(),

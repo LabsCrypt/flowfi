@@ -349,9 +349,7 @@ pub fn remove_owner_position(
 
 /// Loads the dynamic fee configuration, or `None` if never configured.
 pub fn try_load_fee_config(env: &Env) -> Option<ProtocolFeeConfig> {
-    env.storage()
-        .instance()
-        .get(&DataKey::ProtocolFeeConfig)
+    env.storage().instance().get(&DataKey::ProtocolFeeConfig)
 }
 
 /// Persists the dynamic fee configuration.

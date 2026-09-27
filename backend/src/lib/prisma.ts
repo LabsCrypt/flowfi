@@ -12,7 +12,12 @@ if (!globalForPrisma.pool) {
   globalForPrisma.pool = createPgPool();
 }
 
-const adapter = new PrismaPg(globalForPrisma.pool);
+// The npm workspace hoists `pg`, while the standalone Docker build resolves the
+// adapter's own nested copy, so the two `Pool` types differ nominally even
+// though the runtime value is one and the same `pg.Pool` instance.
+type PrismaPgPool = ConstructorParameters<typeof PrismaPg>[0];
+
+const adapter = new PrismaPg(globalForPrisma.pool as unknown as PrismaPgPool);
 
 export const prisma =
   globalForPrisma.prisma ||

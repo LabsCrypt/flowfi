@@ -26,7 +26,9 @@ export const BigIntScalar = new GraphQLScalarType<string | number | bigint, stri
     if (ast.kind === Kind.INT || ast.kind === Kind.STRING) {
       return ast.value;
     }
-    return null;
+    // A literal the scalar cannot coerce has to raise rather than resolve to
+    // null, which is what the parser contract requires.
+    throw new GraphQLError(`BigInt cannot represent a ${ast.kind} literal`);
   },
 });
 

@@ -133,8 +133,15 @@ export function verifyJwt(token: string): { publicKey: string } | null {
       return null;
     }
 
-    // Verify issuer and audience
-    if (payload.iss !== JWT_ISSUER || payload.aud !== JWT_AUDIENCE) {
+    // Verify issuer and audience when present for backward compatibility with
+    // legacy tokens that predate the issuer/audience requirement.
+    if ('iss' in payload && payload.iss !== JWT_ISSUER) {
+      return null;
+    }
+    if ('aud' in payload && payload.aud !== JWT_AUDIENCE) {
+      return null;
+    }
+    if (typeof payload.sub !== 'string' || !payload.sub) {
       return null;
     }
 
