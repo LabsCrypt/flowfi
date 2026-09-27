@@ -54,7 +54,7 @@ vi.mock('../src/logger.js', async (importOriginal) => {
   };
 });
 
-import { SorobanEventWorker } from '../src/workers/soroban-event-worker.js';
+import { SorobanEventWorker, getEventLedgerTimestamp } from '../src/workers/soroban-event-worker.js';
 import { prisma } from '../src/lib/prisma.js';
 import logger from '../src/logger.js';
 
@@ -888,5 +888,11 @@ describe('SorobanEventWorker', () => {
       expect(drained).toBe(true);
       expect((worker as any).activeBatch).toBeNull();
     });
+  });
+});
+
+describe('getEventLedgerTimestamp', () => {
+  it('uses the event ledger close time instead of the indexer processing time', () => {
+    expect(getEventLedgerTimestamp({ ledgerClosedAt: '1735689599' })).toBe(1735689599);
   });
 });

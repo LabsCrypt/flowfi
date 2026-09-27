@@ -5,6 +5,7 @@ import {
   getStream,
   getStreamEvents,
   getStreamClaimableAmount,
+  getStreamSnapshot,
   getUserStreamSummary,
   topUpStreamHandler,
   pauseStream,
@@ -507,6 +508,7 @@ router.get('/:streamId/events', getStreamEvents);
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/:streamId/claimable', getStreamClaimableAmount);
+router.get('/:streamId/snapshot', getStreamSnapshot);
 
 /**
  * @openapi

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { ClaimableAmountService } from '../src/services/claimable.service.js';
+import { ClaimableAmountService, calculateHistoricalStreamSnapshot } from '../src/services/claimable.service.js';
 
 function makeStreamState(overrides: Partial<Parameters<ClaimableAmountService['getClaimableAmount']>[0]> = {}) {
   return {
@@ -280,5 +280,92 @@ describe('ClaimableAmountService', () => {
       expect(claimable <= remaining, `iteration ${iteration}: claimable exceeded remaining`).toBe(true);
       expect(cancelRefund + withdrawn + claimable <= deposited, `iteration ${iteration}: cancel settlement exceeded deposit`).toBe(true);
     }
+  });
+});
+
+describe('calculateHistoricalStreamSnapshot', () => {
+  const stream = { streamId: 42n, ratePerSecond: '2', startTime: 100 };
+  const event = (eventType: string, timestamp: number, amount: string | null = null, metadata: Record<string, unknown> = {}, ledgerSequence = timestamp) => ({
+    eventType, timestamp, amount, metadata: Object.keys(metadata).length ? JSON.stringify(metadata) : null, ledgerSequence,
+  });
+
+  it('replays creation, top-ups, withdrawals, and a completed pause interval', () => {
+    const snapshot = calculateHistoricalStreamSnapshot(stream, [
+      event('CREATED', 100, '500'),
+      event('TOPPED_UP', 200, '200', { newDepositedAmount: '700' }),
+      event('WITHDRAWN', 220, '150'),
+      event('PAUSED', 250, null, { pausedAt: '250' }),
+      event('RESUMED', 300, null, { pausedDuration: 50 }),
+    ], 350);
+
+    expect(snapshot).toEqual({
+      streamId: '42', timestamp: 350, depositedAmount: '700', withdrawnAmount: '150',
+      claimableAmount: '250', unvestedAmount: '300', statusAtTimestamp: 'ACTIVE',
+    });
+  });
+
+  it('freezes accrual while paused at the requested timestamp', () => {
+    const snapshot = calculateHistoricalStreamSnapshot(stream, [
+      event('CREATED', 100, '1000'),
+      event('WITHDRAWN', 120, '50'),
+      event('PAUSED', 200, null, { pausedAt: '200' }),
+    ], 260);
+
+    expect(snapshot.claimableAmount).toBe('150');
+    expect(snapshot.unvestedAmount).toBe('800');
+    expect(snapshot.statusAtTimestamp).toBe('PAUSED');
+  });
+
+  it('replays cancellation as a terminal state and preserves its cumulative withdrawn amount', () => {
+    const snapshot = calculateHistoricalStreamSnapshot(
+      { ...stream, ratePerSecond: '1' },
+      [
+        event('CREATED', 100, '1000'),
+        event('WITHDRAWN', 120, '25'),
+        event('CANCELLED', 150, '950', { amountWithdrawn: '50', refundedAmount: '950' }),
+      ],
+      300,
+    );
+
+    expect(snapshot).toEqual({
+      streamId: '42', timestamp: 300, depositedAmount: '1000', withdrawnAmount: '50',
+      claimableAmount: '0', unvestedAmount: '950', statusAtTimestamp: 'CANCELLED',
+    });
+  });
+
+  it('matches the live claimable calculation for a static active stream checkpoint', () => {
+    const timestamp = 150;
+    const snapshot = calculateHistoricalStreamSnapshot(
+      { streamId: 42n, ratePerSecond: '10', startTime: 100 },
+      [event('CREATED', 100, '1000')],
+      timestamp,
+    );
+    const simulatedClaimable = new ClaimableAmountService({ cacheTtlMs: 0 }).getClaimableAmount(
+      makeStreamState({ streamId: 42n, ratePerSecond: '10', depositedAmount: '1000', lastUpdateTime: 100 }),
+      timestamp,
+    );
+
+    expect(snapshot.claimableAmount).toBe(simulatedClaimable.claimableAmount);
+  });
+  it('caps completed vesting at the total deposit and honors cumulative withdrawals', () => {
+    const snapshot = calculateHistoricalStreamSnapshot(
+      { ...stream, ratePerSecond: '10' },
+      [event('CREATED', 100, '500'), event('COMPLETED', 200, '500')],
+      400,
+    );
+    expect(snapshot.claimableAmount).toBe('0');
+    expect(snapshot.unvestedAmount).toBe('0');
+    expect(snapshot.statusAtTimestamp).toBe('COMPLETED');
+  });
+
+  it('returns an empty not-started snapshot before the stream start', () => {
+    expect(calculateHistoricalStreamSnapshot(stream, [], 99)).toEqual({
+      streamId: '42', timestamp: 99, depositedAmount: '0', withdrawnAmount: '0',
+      claimableAmount: '0', unvestedAmount: '0', statusAtTimestamp: 'NOT_STARTED',
+    });
+  });
+
+  it('rejects snapshots when the creation event is missing', () => {
+    expect(() => calculateHistoricalStreamSnapshot(stream, [], 100)).toThrow(/creation event is missing/);
   });
 });

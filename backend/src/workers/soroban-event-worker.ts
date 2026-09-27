@@ -22,6 +22,13 @@ const DEAD_LETTER_MAX_RETRIES_DEFAULT = 5;
 
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
+/** Use the ledger close time, not worker processing time, for historical state changes. */
+export function getEventLedgerTimestamp(event: Pick<rpc.Api.EventResponse, 'ledgerClosedAt'>): number {
+  const ledgerTimestamp = Number(event.ledgerClosedAt);
+  return Number.isSafeInteger(ledgerTimestamp) && ledgerTimestamp >= 0
+    ? ledgerTimestamp
+    : Math.floor(Date.now() / 1000);
+}
 /** Decode an ScVal symbol to a string. */
 export function decodeSymbol(val: xdr.ScVal): string {
   return (val as xdr.ScValSymbol).sym.toString();
@@ -982,7 +989,7 @@ export class SorobanEventWorker {
 
     const amountWithdrawn = decodeI128(body["amount_withdrawn"]);
     const refundedAmount = decodeI128(body["refunded_amount"]);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -1055,7 +1062,7 @@ export class SorobanEventWorker {
 
     const recipient = decodeAddress(body["recipient"]);
     const totalWithdrawn = decodeI128(body["total_withdrawn"]);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -1189,7 +1196,7 @@ export class SorobanEventWorker {
 
     const sender = decodeAddress(body["sender"]);
     const pausedAt = Number(decodeU64(body["paused_at"]));
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -1261,7 +1268,7 @@ export class SorobanEventWorker {
 
     const sender = decodeAddress(body["sender"]);
     const newEndTime = decodeU64(body["new_end_time"]);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Get current stream to calculate paused duration
