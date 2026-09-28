@@ -12,6 +12,7 @@ import {
 } from "@/lib/soroban";
 import { hasValidPrecision } from "@/utils/amount";
 import { toast } from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, FileText, X } from "lucide-react";
@@ -95,7 +96,7 @@ export default function CreateStreamContent() {
       if (result.success) {
         setTxState("confirming");
         discardDraft();
-        toast.success("Stream created successfully!");
+        transactionSuccessToast("Stream created successfully!");
         setTimeout(() => {
           setLoading(false);
           setTxState("idle");
