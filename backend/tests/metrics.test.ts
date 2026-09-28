@@ -247,6 +247,8 @@ describe('metrics registry', () => {
       'flowfi_http_request_duration_seconds',
       'flowfi_indexer_polls_total',
       'flowfi_indexer_events_processed_total',
+      'flowfi_indexer_reorg_events_total',
+      'flowfi_indexer_reverted_ledgers',
       'flowfi_rpc_failovers_total',
       'flowfi_rpc_circuit_breaker_trips_total',
       'flowfi_sse_clients_dropped_total',

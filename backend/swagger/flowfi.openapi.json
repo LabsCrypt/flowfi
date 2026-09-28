@@ -43,6 +43,14 @@
     {
       "name": "Admin",
       "description": "Administrative and monitoring endpoints"
+    },
+    {
+      "name": "Observability",
+      "description": "Prometheus metrics scrape endpoint"
+    },
+    {
+      "name": "Compliance",
+      "description": "Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints"
     }
   ],
   "components": {
@@ -869,6 +877,33 @@
         "responses": {
           "200": {
             "description": "API is running successfully"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Observability"
+        ],
+        "summary": "Prometheus metrics",
+        "description": "Returns the registry in the standard Prometheus exposition format.\nRestricted to the internal cluster network (`METRICS_ALLOWED_CIDRS`)\nand/or a shared bearer token (`METRICS_BEARER_TOKEN`); when both are\nconfigured the request must satisfy both. Disabled by default in\nproduction when neither is configured.\n",
+        "responses": {
+          "200": {
+            "description": "Metrics in Prometheus text exposition format",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - request did not originate from an allowed network or present a valid token"
+          },
+          "404": {
+            "description": "Metrics endpoint is disabled in this environment"
           }
         }
       }
@@ -1863,6 +1898,143 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/streams/simulate": {
+      "post": {
+        "tags": [
+          "Streams"
+        ],
+        "summary": "Simulate a stream contract call",
+        "description": "Runs a Soroban `simulateTransaction` for the requested action and\nreturns an unsigned transaction with the ledger footprint, resource\nlimits and a padded resource fee already applied — ready for a\nbrowser wallet (Freighter, Lobstr, xBull) to sign.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "action",
+                  "senderPublicKey"
+                ],
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "create",
+                      "withdraw",
+                      "cancel",
+                      "top_up",
+                      "batch_withdraw"
+                    ],
+                    "example": "create"
+                  },
+                  "senderPublicKey": {
+                    "type": "string",
+                    "description": "Stellar account that will sign the transaction",
+                    "example": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+                  },
+                  "params": {
+                    "type": "object",
+                    "description": "Action-specific arguments. `create` needs `recipient`,\n`amount`, `duration` and `tokenAddress`; `withdraw` and\n`cancel` need `streamId`; `top_up` needs `streamId` and\n`amount`; `batch_withdraw` needs `streamIds`.\n",
+                    "properties": {
+                      "streamId": {
+                        "type": "string",
+                        "example": "123"
+                      },
+                      "streamIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "recipient": {
+                        "type": "string",
+                        "example": "GBBJ6H3FJN34VLIGNU2QZJ4T6NMY4B2LKCVYGCXK5HO3JFXKHTGSHRQ"
+                      },
+                      "amount": {
+                        "type": "string",
+                        "description": "Amount in the token's smallest unit (i128 as string)",
+                        "example": "1000000000"
+                      },
+                      "duration": {
+                        "type": "integer",
+                        "description": "Stream duration in seconds",
+                        "example": 2592000
+                      },
+                      "tokenAddress": {
+                        "type": "string",
+                        "description": "Token contract address — required for `create`"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Simulation succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "unsignedXdr": {
+                          "type": "string",
+                          "description": "Base64-encoded unsigned transaction XDR",
+                          "example": "AAAAAB..."
+                        },
+                        "minResourceFee": {
+                          "type": "string",
+                          "description": "Simulated minimum resource fee in stroops",
+                          "example": "15000"
+                        },
+                        "recommendedFee": {
+                          "type": "string",
+                          "description": "minResourceFee plus a 15% safety buffer",
+                          "example": "17250"
+                        },
+                        "cpuInstructions": {
+                          "type": "integer",
+                          "example": 1420500
+                        },
+                        "memoryBytes": {
+                          "type": "integer",
+                          "example": 524000
+                        },
+                        "expiresAtLedger": {
+                          "type": "integer",
+                          "description": "Last ledger the returned footprint is valid against",
+                          "example": 482910
+                        },
+                        "simulatedReturn": {
+                          "type": "string",
+                          "description": "Decoded contract return value (empty string for void returns)",
+                          "example": "100000000"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameters or a reverted simulation"
+          },
+          "503": {
+            "description": "Stream contract is not configured"
           }
         }
       }
@@ -2972,6 +3144,161 @@
         }
       }
     },
+    "/v1/compliance/kyc-attestation": {
+      "post": {
+        "tags": [
+          "Compliance"
+        ],
+        "summary": "Submit a SEP-0009 KYC/AML attestation",
+        "description": "Allows an organization to submit a cryptographic proof of identity\nverification for a wallet, following the SEP-0009 (Standard KYC / AML\nFields) schema. Attestations are stored as PENDING for out-of-band\nreview and are recorded in the compliance audit trail.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subjectAddress",
+                  "proof",
+                  "fields"
+                ],
+                "properties": {
+                  "subjectAddress": {
+                    "type": "string",
+                    "description": "Stellar public key the identity belongs to"
+                  },
+                  "organization": {
+                    "type": "string",
+                    "description": "Organization identifier; defaults to the authenticated wallet"
+                  },
+                  "proof": {
+                    "type": "string",
+                    "description": "Cryptographic proof / signature over the identity payload"
+                  },
+                  "proofType": {
+                    "type": "string",
+                    "enum": [
+                      "ed25519",
+                      "secp256k1",
+                      "stellar-signature"
+                    ]
+                  },
+                  "fields": {
+                    "type": "object",
+                    "description": "SEP-0009 KYC/AML fields (snake_case, vendor fields passthrough)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Attestation accepted for review"
+          },
+          "400": {
+            "description": "Invalid attestation payload"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/v1/compliance/screen": {
+      "post": {
+        "tags": [
+          "Compliance"
+        ],
+        "summary": "Screen an address against sanctions data",
+        "description": "Runs the configured sanctions / risk screening provider for a wallet\naddress and returns the result. Results are cached for the configured\nTTL. Requires authentication to prevent open enumeration.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address"
+                ],
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "Stellar public key to screen"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Screening result"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication"
+          },
+          "503": {
+            "description": "Screening provider unavailable"
+          }
+        }
+      }
+    },
+    "/v1/compliance/screen/{address}": {
+      "get": {
+        "tags": [
+          "Compliance"
+        ],
+        "summary": "Screen a wallet address (read-only)",
+        "description": "Convenience GET variant of /v1/compliance/screen for audit tooling.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stellar public key to screen"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screening result"
+          },
+          "400": {
+            "description": "Address is required"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication"
+          },
+          "503": {
+            "description": "Screening provider unavailable"
+          }
+        }
+      }
+    },
     "/v1/auth/challenge": {
       "post": {
         "tags": [
@@ -3536,6 +3863,185 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/admin/indexer/dead-letter": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List quarantined indexer events",
+        "description": "Paginated, filterable view of Soroban events the indexer failed to\nprocess. Each entry carries the raw payload and the most recent error,\nwith `attempts` recording how many times processing has been tried.\n",
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          {
+            "in": "query",
+            "name": "ledgerSequence",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Return only events from this ledger"
+          },
+          {
+            "in": "query",
+            "name": "startDate",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "endDate",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "eventType",
+            "schema": {
+              "type": "string",
+              "example": "stream_created"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated dead-letter records"
+          },
+          "400": {
+            "description": "Invalid query parameters"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - admin access required"
+          }
+        }
+      }
+    },
+    "/v1/admin/indexer/dead-letter/replay-all": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Replay every pending dead-letter event",
+        "description": "Replays all pending records sequentially, oldest ledger first, so events\nfor the same stream apply in their original order.\n",
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-record replay outcomes plus an aggregate summary"
+          }
+        }
+      }
+    },
+    "/v1/admin/indexer/dead-letter/{id}/replay": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Replay a single quarantined event",
+        "description": "Re-injects the payload through the indexer pipeline. On success the\ndead-letter row is deleted and the corresponding Stream / StreamEvent\nrecords are created; on failure `attempts` is incremented and\n`lastAttemptAt` / `errorMessage` are refreshed.\n",
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event replayed and removed from the dead-letter table"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - admin access required"
+          },
+          "404": {
+            "description": "Dead-letter event not found"
+          },
+          "422": {
+            "description": "Replay ran but failed, or the payload is undecodable"
+          }
+        }
+      }
+    },
+    "/v1/admin/indexer/dead-letter/{id}": {
+      "delete": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Permanently discard a quarantined event",
+        "description": "Deletes an unrecoverable record. The discard is written to the\napplication log with the acting admin key so the loss of an on-chain\nevent remains auditable.\n",
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Record discarded"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden - admin access required"
+          },
+          "404": {
+            "description": "Dead-letter event not found"
           }
         }
       }

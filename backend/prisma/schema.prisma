@@ -64,24 +64,20 @@ model IndexerState {
   updatedAt   DateTime @updatedAt
 }
 
-// IndexerDeadLetterEvent model - Soroban events that failed to process, kept
-// with their raw payload for manual triage. The worker retries an event at
-// most INDEXER_DEAD_LETTER_MAX_RETRIES times, then abandons it and advances
-// the cursor so a single malformed event can never freeze the indexer.
-model IndexerDeadLetterEvent {
-  id              String   @id @default(uuid())
-  eventId         String   @unique // RPC paging-token id of the event
-  ledger          Int      // Ledger sequence the event was emitted in
-  transactionHash String   // Stellar transaction hash
-  rawPayload      String   // Full raw event JSON for manual triage/replay
-  errorMessage    String   // Last error thrown while processing
-  attempts        Int      @default(1) // Number of failed processing attempts
-  lastAttemptAt   DateTime @default(now())
-  createdAt       DateTime @default(now())
+// LedgerCheckpoint model - durable proof of the exact ledger sequence, hash
+// signature, and event count the indexer ingested. Written on every ingestion
+// cycle so the worker can (a) prove the canonical chain still contains what it
+// indexed and (b) roll back deterministically when a fork replaces it.
+model LedgerCheckpoint {
+  ledgerSequence Int      @id
+  ledgerHash     String
+  parentHash     String
+  processedAt    DateTime @default(now())
+  eventsCount    Int
+  stateRootHash  String?
+  isReverted     Boolean  @default(false)
 
-  @@index([ledger])
-  @@index([transactionHash])
-  @@index([createdAt])
+  @@index([processedAt])
 }
 
 // StreamEvent model - indexer events for tracking all on-chain stream activities
@@ -154,6 +150,47 @@ model AlertHistory {
   @@unique([streamId, alertType, sentAt])
   @@index([streamId])
   @@index([sentAt])
+}
+
+// ComplianceAuditLog model - immutable security audit trail for sanctions /
+// risk screening outcomes (Issue #1470). Every blocked interaction records the
+// originating address, request IP, risk score and provider tags so enterprise
+// deployments have audit-ready proof that wallets were screened before funds
+// moved.
+model ComplianceAuditLog {
+  id           String   @id @default(uuid())
+  eventType    String   // e.g. "SCREENING_BLOCKED", "SCREENING_ERROR", "KYC_ATTESTATION_SUBMITTED"
+  action       String?  // Route action, e.g. "stream.create"
+  address      String   // Stellar address that was screened
+  ipAddress    String?  // Originating request IP
+  riskScore    Int      // 0 (clean) to 100 (blocked)
+  tags         String[] // Provider tags, e.g. ["OFAC", "Darknet"]
+  isSanctioned Boolean  @default(false)
+  metadata     String?  // JSON string for extra screening context
+  createdAt    DateTime @default(now())
+
+  @@index([address])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// KycAttestation model - SEP-0009 identity attestations submitted by
+// organizations. Stores the standardised KYC/AML field payload alongside the
+// cryptographic proof so a deployment can prove a recipient was verified.
+model KycAttestation {
+  id             String   @id @default(uuid())
+  organization   String   // Organization / wallet that submitted the attestation
+  subjectAddress String   // Wallet the identity belongs to
+  sep9Fields     String   // JSON string of the SEP-0009 KYC/AML field payload
+  proof          String   // Cryptographic proof / signature over the payload
+  proofType      String?  // Signature scheme, e.g. "ed25519"
+  status         String   @default("PENDING") // PENDING | VERIFIED | REJECTED
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organization])
+  @@index([subjectAddress])
+  @@index([status])
 }
 
 // IndexerDeadLetterEvent model - quarantines Soroban events whose processing

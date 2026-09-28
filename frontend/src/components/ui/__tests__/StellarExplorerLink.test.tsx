@@ -1,14 +1,21 @@
 import { render, screen } from "@testing-library/react";
-import { StellarExplorerLink } from "../StellarExplorerLink";
-import { NetworkProvider } from "@/context/NetworkContext";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const { useNetworkMock } = vi.hoisted(() => ({ useNetworkMock: vi.fn() }));
 
 // Mock the NetworkContext
-jest.mock("@/context/NetworkContext", () => ({
-  ...jest.requireActual("@/context/NetworkContext"),
-  useNetwork: () => ({ networkId: "testnet" }),
+vi.mock("@/context/NetworkContext", () => ({
+  useNetwork: useNetworkMock,
 }));
 
+import { StellarExplorerLink } from "../StellarExplorerLink";
+
 describe("StellarExplorerLink", () => {
+  beforeEach(() => {
+    useNetworkMock.mockReset();
+    useNetworkMock.mockReturnValue({ networkId: "testnet" });
+  });
+
   it("generates correct Testnet URL", () => {
     render(
       <StellarExplorerLink type="tx" id="abc123hash" />
@@ -22,9 +29,7 @@ describe("StellarExplorerLink", () => {
   });
 
   it("generates correct Mainnet URL when network is mainnet", () => {
-    jest.spyOn(require("@/context/NetworkContext"), "useNetwork").mockReturnValue({
-      networkId: "mainnet",
-    });
+    useNetworkMock.mockReturnValue({ networkId: "mainnet" });
 
     render(
       <StellarExplorerLink type="account" id="GABC123" />

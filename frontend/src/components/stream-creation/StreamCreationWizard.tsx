@@ -221,13 +221,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       case 5:
         return (
           <ScheduleStep
-            duration={formData.duration}
-            durationUnit={formData.durationUnit}
-            onDurationChange={(value) => updateFormData({ duration: value })}
-            onUnitChange={(value) => updateFormData({ durationUnit: value })}
-            error={errors.duration}
-            amount={formData.amount}
-            token={formData.token}
+            formData={formData}
+            errors={errors}
+            onUpdate={updateFormData}
           />
         );
       default:

@@ -72,6 +72,11 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         name: 'Observability',
         description: 'Prometheus metrics scrape endpoint',
       },
+      {
+        name: 'Compliance',
+        description:
+          'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
+      },
     ],
     components: {
       securitySchemes: {

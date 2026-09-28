@@ -47,7 +47,9 @@ export function transactionSuccessToast(
   options?: ToastOptions
 ): string {
   playTransactionSuccessSound();
-  return toast.success(message, options);
+  // Pass options only when present: `toast.success(message, undefined)` would
+  // still be a two-argument call and defeats option-less callers/tests.
+  return options ? toast.success(message, options) : toast.success(message);
 }
 
 export { SOUND_STORAGE_KEY };

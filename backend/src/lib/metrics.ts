@@ -62,6 +62,26 @@ export const indexerEventsProcessedTotal = new Counter({
   registers: [registry],
 });
 
+/**
+ * Ledger reorg / fork recoveries. Incremented once per recovery so a sustained
+ * non-zero rate (or a single spike) can page an operator: on Stellar a reorg
+ * means either an RPC node served us a stale fork or the indexer is desynced,
+ * both of which need human review even when the rollback itself succeeded.
+ */
+export const indexerReorgEventsTotal = new Counter({
+  name: 'flowfi_indexer_reorg_events_total',
+  help: 'Ledger reorg / fork recoveries triggered by the indexer, by outcome',
+  labelNames: ['outcome'] as const,
+  registers: [registry],
+});
+
+/** Ledgers above the last verified checkpoint that the most recent rollback reverted. */
+export const indexerRevertedLedgers = new Gauge({
+  name: 'flowfi_indexer_reverted_ledgers',
+  help: 'Ledger count reverted by the most recent indexer rollback',
+  registers: [registry],
+});
+
 // ─── SSE ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -187,6 +207,11 @@ export const httpRequestDuration = new Histogram({
  * be resolved; in that case the previous lag value is cleared rather than
  * reported as a bogus full-network lag.
  */
+/** Record a completed rollback for alerting; 0 clears the gauge after a clean run. */
+export function setIndexerRevertedLedgers(count: number): void {
+  indexerRevertedLedgers.set(count);
+}
+
 export function setIndexerLedgers(currentLedger: number, networkLedger: number): void {
   indexerCurrentLedger.set(currentLedger);
   indexerNetworkLedger.set(networkLedger);
