@@ -9,7 +9,7 @@ import { TokenStep } from "./TokenStep";
 import { AmountStep } from "./AmountStep";
 import { ScheduleStep } from "./ScheduleStep";
 import { TemplateStep } from "./TemplateStep";
-import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import {
@@ -135,7 +135,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         if (streams && streams.length > 0) {
           // Found!
           const newStream = streams[0]; // Simplification
-          toast.success("Stream indexed and confirmed!");
+          transactionSuccessToast("Stream indexed and confirmed!");
           router.push(`/streams/${newStream.streamId}`); // Updated path to match new structure
           return;
         }

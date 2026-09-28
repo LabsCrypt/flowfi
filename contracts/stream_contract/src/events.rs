@@ -259,109 +259,65 @@ pub struct StateMigratedEvent {
     pub new_version: u32,
 }
 
-/// Emitted when a terminal stream is pruned from storage.
+/// Emitted when a sender modifies a stream's rate (for #1320).
+///
+/// Topic: `("stream_rate_modified", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamRateModifiedEvent {
+    pub stream_id: u64,
+    pub sender: Address,
+    pub old_rate_per_second: i128,
+    pub new_rate_per_second: i128,
+    pub new_end_time: u64,
+    pub timestamp: u64,
+}
+
+/// Emitted when a cancellation dispute is initiated (for #1319).
+///
+/// Topic: `("dispute_requested", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeRequestedEvent {
+    pub stream_id: u64,
+    pub sender: Address,
+    pub arbiter: Address,
+    pub timestamp: u64,
+}
+
+/// Emitted when a dispute is resolved (for #1319).
+///
+/// Topic: `("dispute_resolved", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeResolvedEvent {
+    pub stream_id: u64,
+    pub arbiter: Address,
+    pub approved: bool,
+    pub timestamp: u64,
+}
+
+/// Emitted when an allowance-based stream is created (for #1318).
+///
+/// Topic: `("allowance_stream_created", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllowanceStreamCreatedEvent {
+    pub stream_id: u64,
+    pub sender: Address,
+    pub recipient: Address,
+    pub token_address: Address,
+    pub rate_per_second: i128,
+    pub start_time: u64,
+}
+
+/// Emitted when a stream is closed and purged from storage.
 ///
 /// Topic: `("stream_closed", stream_id)`
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamClosedEvent {
     pub stream_id: u64,
-    /// Address that requested the prune (sender, recipient, or admin).
     pub closer: Address,
-    pub timestamp: u64,
-}
-
-/// Emitted when a stream's position receipt is minted.
-///
-/// Topic: `("position_minted", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PositionMintedEvent {
-    pub stream_id: u64,
-    pub role: PositionRole,
-    pub owner: Address,
-    pub is_transferable: bool,
-    pub timestamp: u64,
-}
-
-/// Emitted when a position receipt changes owner.
-///
-/// Topic: `("position_transferred", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PositionTransferredEvent {
-    pub stream_id: u64,
-    pub role: PositionRole,
-    pub from: Address,
-    pub to: Address,
-    pub timestamp: u64,
-}
-
-/// Emitted when a position receipt's transferability toggle changes.
-///
-/// Topic: `("position_transferability_updated", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PositionTransferabilityUpdatedEvent {
-    pub stream_id: u64,
-    pub role: PositionRole,
-    pub is_transferable: bool,
-}
-
-/// Emitted when a position receipt is settled (its stream completed/cancelled).
-///
-/// Topic: `("position_settled", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PositionSettledEvent {
-    pub stream_id: u64,
-    pub role: PositionRole,
-    pub owner: Address,
-    pub timestamp: u64,
-}
-
-/// Emitted when the dynamic multi-recipient fee configuration changes.
-///
-/// Topic: `("fee_split_config_updated",)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeSplitConfigUpdatedEvent {
-    pub admin: Address,
-    pub fee_bps: u32,
-    pub recipient_count: u32,
-    pub is_enabled: bool,
-}
-
-/// Emitted when a dynamic protocol fee is collected and split.
-///
-/// Topic: `("protocol_fee_collected", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProtocolFeeCollectedEvent {
-    pub stream_id: u64,
-    pub token: Address,
-    /// Total fee deducted from the gross amount, before splitting.
-    pub total_fee: i128,
-    /// Destinations the fee was split across.
-    pub recipients: Vec<FeeRecipient>,
-    /// Per-recipient amounts actually transferred, positionally matching `recipients`.
-    pub amounts: Vec<i128>,
-}
-
-/// Emitted when a recipient withdraws and atomically swaps into another asset.
-///
-/// Topic: `("cross_asset_withdrawal_executed", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CrossAssetWithdrawalExecutedEvent {
-    pub stream_id: u64,
-    pub recipient: Address,
-    pub input_token: Address,
-    pub output_token: Address,
-    pub input_amount: i128,
-    pub output_amount: i128,
-    /// Minimum output the caller was willing to accept (slippage guard).
-    pub min_target_amount: i128,
-    pub deadline: u64,
     pub timestamp: u64,
 }

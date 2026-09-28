@@ -11,23 +11,20 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 use crate::errors::StreamError;
 use crate::types::{
-    DataKey, LegacyProtocolConfig, LegacyStream, PositionRef, PositionRole, ProtocolConfig,
-    ProtocolFeeConfig, Stream, StreamPositionMetadata, VestingSchedule,
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
+    VestingSchedule,
 };
 
 // ─── Version-Tolerant Decoding ────────────────────────────────────────────────
 
-/// Field counts of the current and pre-v2 record shapes.
+/// Field counts of the current and pre-v3 record shapes.
 ///
 /// A `#[contracttype]` struct is stored as a host `Map` with one entry per field,
 /// and decoding it walks the map positionally. The current shapes are described
 /// here only so the two can be told apart before a decode is attempted.
 const CONFIG_FIELD_COUNT: u32 = 5;
 const LEGACY_CONFIG_FIELD_COUNT: u32 = 3;
-// 14 fields: sender, recipient, token_address, rate_per_second,
-// deposited_amount, withdrawn_amount, start_time, last_update_time,
-// cliff_time, is_active, paused, paused_at, status, schedule.
-const STREAM_FIELD_COUNT: u32 = 14;
+const STREAM_FIELD_COUNT: u32 = 16;
 const LEGACY_STREAM_FIELD_COUNT: u32 = 12;
 
 /// Returns the number of fields in a stored record, or `None` if it is not a map.
@@ -134,6 +131,10 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         // A stream with no schedule field predates step vesting: it is a
         // continuous drip by construction.
         schedule: VestingSchedule::Linear,
+        // New fields default to no arbiter, no dispute, and non-allowance-based.
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
     }
 }
 
@@ -240,124 +241,12 @@ pub fn save_recorded_wasm_hash(env: &Env, hash: &soroban_sdk::BytesN<32>) {
         .set(&DataKey::ContractWasmHash, hash);
 }
 
-// ─── Stream Pruning ──────────────────────────────────────────────────────────
+// ─── Stream Deletion ──────────────────────────────────────────────────────────
 
-/// Permanently removes a settled stream record from persistent storage.
+/// Removes a stream record from persistent storage.
 ///
-/// Used by `close_stream` to reclaim rent once a stream is terminal and holds
-/// no funds. Position receipts are left untouched so the settlement history
-/// remains queryable after the stream itself is pruned.
+/// Used to prune fully settled streams and reclaim storage rent.
 pub fn remove_stream(env: &Env, stream_id: u64) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::Stream(stream_id));
-}
-
-// ─── Position Receipts ────────────────────────────────────────────────────────
-
-/// Persists a position receipt, refreshing its TTL.
-pub fn save_position(
-    env: &Env,
-    stream_id: u64,
-    role: &PositionRole,
-    metadata: &StreamPositionMetadata,
-) {
-    let key = DataKey::Position(stream_id, role.clone());
-    env.storage().persistent().set(&key, metadata);
-    env.storage().persistent().extend_ttl(
-        &key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
-}
-
-/// Loads a position receipt, or `None` if it was never minted.
-pub fn load_position(
-    env: &Env,
-    stream_id: u64,
-    role: &PositionRole,
-) -> Option<StreamPositionMetadata> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Position(stream_id, role.clone()))
-}
-
-/// Removes a position receipt entirely.
-pub fn remove_position(env: &Env, stream_id: u64, role: &PositionRole) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::Position(stream_id, role.clone()));
-}
-
-/// Reads the position index for an owner, defaulting to an empty vector.
-pub fn load_owner_index(env: &Env, owner: &soroban_sdk::Address) -> Vec<PositionRef> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::PositionOwnerIndex(owner.clone()))
-        .unwrap_or_else(|| Vec::new(env))
-}
-
-/// Persists an owner's position index, refreshing its TTL.
-fn save_owner_index(env: &Env, owner: &soroban_sdk::Address, refs: &Vec<PositionRef>) {
-    let key = DataKey::PositionOwnerIndex(owner.clone());
-    env.storage().persistent().set(&key, refs);
-    env.storage().persistent().extend_ttl(
-        &key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
-}
-
-/// Adds a receipt to an owner's index if not already present (idempotent).
-pub fn add_owner_position(
-    env: &Env,
-    owner: &soroban_sdk::Address,
-    stream_id: u64,
-    role: &PositionRole,
-) {
-    let mut refs = load_owner_index(env, owner);
-    for existing in refs.iter() {
-        if existing.stream_id == stream_id && &existing.role == role {
-            return;
-        }
-    }
-    refs.push_back(PositionRef {
-        stream_id,
-        role: role.clone(),
-    });
-    save_owner_index(env, owner, &refs);
-}
-
-/// Removes a receipt from an owner's index (no-op if absent).
-pub fn remove_owner_position(
-    env: &Env,
-    owner: &soroban_sdk::Address,
-    stream_id: u64,
-    role: &PositionRole,
-) {
-    let refs = load_owner_index(env, owner);
-    let mut kept = Vec::new(env);
-    for existing in refs.iter() {
-        if existing.stream_id != stream_id || &existing.role != role {
-            kept.push_back(existing);
-        }
-    }
-    save_owner_index(env, owner, &kept);
-}
-
-// ─── Dynamic Protocol Fees ────────────────────────────────────────────────────
-
-/// Loads the dynamic fee configuration, or `None` if never configured.
-pub fn try_load_fee_config(env: &Env) -> Option<ProtocolFeeConfig> {
-    env.storage().instance().get(&DataKey::ProtocolFeeConfig)
-}
-
-/// Persists the dynamic fee configuration.
-pub fn save_fee_config(env: &Env, config: &ProtocolFeeConfig) {
-    env.storage()
-        .instance()
-        .set(&DataKey::ProtocolFeeConfig, config);
-    env.storage()
-        .instance()
-        .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+    let key = DataKey::Stream(stream_id);
+    env.storage().persistent().remove(&key);
 }

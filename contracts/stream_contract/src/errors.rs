@@ -69,25 +69,16 @@ pub enum StreamError {
     /// as unclaimable residue. Rejecting is the only option that never lies to
     /// the recipient about when funds become available.
     TopUpUnsupported = 27,
-    /// An amount or timestamp calculation exceeded the range of its type.
-    ///
-    /// Returned instead of letting `overflow-checks` panic and abort the whole
-    /// transaction, so callers get a typed failure they can handle.
-    ArithmeticOverflow = 28,
-    /// `resume_stream` was called on a stream that is inactive (cancelled or completed).
-    StreamNotActive = 29,
-    /// `close_stream` was called on a stream that still holds funds or is not terminal.
-    StreamStillActive = 30,
-    /// No position receipt exists for the supplied stream ID and role.
-    PositionNotFound = 31,
-    /// The position is soulbound and cannot be transferred.
-    PositionNotTransferable = 32,
-    /// `configure_protocol_fees` was called with `fee_bps` above the protocol maximum.
-    FeeExceedsMaximum = 33,
-    /// A fee split set does not sum to 10 000 bps (100 %) or is otherwise malformed.
-    InvalidFeeSplit = 34,
-    /// `withdraw_and_swap` was called with a deadline that has already elapsed.
-    DeadlineExpired = 35,
-    /// A DEX swap failed to deliver at least the caller's minimum output amount.
-    SwapFailed = 36,
+    /// Rate modification attempted on unsupported schedule type.
+    RateModificationUnsupported = 28,
+    /// New rate is invalid (e.g., zero or too small).
+    InvalidNewRate = 29,
+    /// Dispute operation attempted on non-disputable stream.
+    DisputeNotSupported = 30,
+    /// Stream does not have an active dispute.
+    NoActiveDispute = 31,
+    /// Caller is not the arbiter for this stream's dispute.
+    NotArbiter = 32,
+    /// Allowance-based stream operation failed.
+    AllowanceLocked = 33,
 }

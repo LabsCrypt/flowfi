@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { Copy, Check, LogOut, Moon, Sun, Bell, Globe } from "lucide-react";
+import { Copy, Check, LogOut, Moon, Sun, Bell, Globe, Volume2 } from "lucide-react";
 import { STELLAR_NETWORK, shortenPublicKey } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
 import { useRouter } from "next/navigation";
@@ -12,6 +12,7 @@ import { getApiBaseUrl } from "@/lib/api/_shared";
 import { copyToClipboard } from "@/lib/clipboard";
 import { DisconnectConfirmModal } from "@/components/wallet/DisconnectConfirmModal";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
+import { SOUND_STORAGE_KEY } from "@/lib/transaction-feedback";
 
 type DisplayCurrency = "USD" | "EUR" | "GBP" | "XLM" | "USDC";
 type AmountFormat = "full" | "compact";
@@ -22,6 +23,7 @@ interface Settings {
   displayCurrency: DisplayCurrency;
   amountFormat: AmountFormat;
   decimalPlaces: DecimalPlaces;
+  transactionSounds: boolean;
 }
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
@@ -33,6 +35,7 @@ const STORAGE_KEYS = {
   displayCurrency: "flowfi-currency",
   amountFormat: "flowfi-amount-format",
   decimalPlaces: "flowfi-decimal-places",
+  transactionSounds: SOUND_STORAGE_KEY,
 } as const;
 
 const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +43,7 @@ const DEFAULT_SETTINGS: Settings = {
   displayCurrency: "USD",
   amountFormat: "full",
   decimalPlaces: 7,
+  transactionSounds: false,
 };
 
 function loadSavedSettings(): Settings {
@@ -58,6 +62,7 @@ function loadSavedSettings(): Settings {
     decimalPlaces: savedDecimals
       ? (parseInt(savedDecimals, 10) as DecimalPlaces)
       : DEFAULT_SETTINGS.decimalPlaces,
+    transactionSounds: localStorage.getItem(STORAGE_KEYS.transactionSounds) === "true",
   };
 }
 
@@ -76,6 +81,7 @@ function persistSettings(settings: Settings): void {
   localStorage.setItem(STORAGE_KEYS.displayCurrency, settings.displayCurrency);
   localStorage.setItem(STORAGE_KEYS.amountFormat, settings.amountFormat);
   localStorage.setItem(STORAGE_KEYS.decimalPlaces, settings.decimalPlaces.toString());
+  localStorage.setItem(STORAGE_KEYS.transactionSounds, String(settings.transactionSounds));
 }
 
 export default function SettingsContent() {
@@ -93,7 +99,8 @@ export default function SettingsContent() {
       draft.theme !== saved.theme ||
       draft.displayCurrency !== saved.displayCurrency ||
       draft.amountFormat !== saved.amountFormat ||
-      draft.decimalPlaces !== saved.decimalPlaces,
+      draft.decimalPlaces !== saved.decimalPlaces ||
+      draft.transactionSounds !== saved.transactionSounds,
     [draft, saved]
   );
 
@@ -240,6 +247,28 @@ export default function SettingsContent() {
                     : "translate-x-0"
                 }`}
               />
+            </button>
+          </div>
+
+          {/* Transaction Sound Effects */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-cyan-500/20 text-cyan-400">
+                <Volume2 size={18} />
+              </div>
+              <div>
+                <p className="font-medium text-white dark:text-black">Transaction Sounds</p>
+                <p className="text-sm opacity-60">Play a short chime after a transaction succeeds</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDraft((prev) => ({ ...prev, transactionSounds: !prev.transactionSounds }))}
+              aria-label="Toggle transaction sounds"
+              aria-pressed={draft.transactionSounds}
+              className={`relative w-14 h-7 rounded-full transition-colors ${draft.transactionSounds ? "bg-cyan-600" : "bg-zinc-600"}`}
+            >
+              <span className={`absolute top-1 left-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${draft.transactionSounds ? "translate-x-7" : "translate-x-0"}`} />
             </button>
           </div>
 

@@ -33,6 +33,15 @@ pub enum StreamStatus {
     Completed,
 }
 
+/// Dispute status for escrow-based stream cancellations.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DisputeStatus {
+    None,
+    Requested,
+    Resolved(bool), // true = approval, false = rejection
+}
+
 /// A single discrete unlock of a step-tranche (milestone) vesting schedule.
 ///
 /// `unlock_time` is an **absolute** ledger timestamp, not an offset from the
@@ -222,6 +231,12 @@ pub struct Stream {
     pub status: StreamStatus,
     /// Unlock curve governing how this stream's tokens vest.
     pub schedule: VestingSchedule,
+    /// Optional arbiter for dispute-based cancellation (for #1319).
+    pub arbiter: Option<Address>,
+    /// Dispute status for escrow cancellations (for #1319).
+    pub dispute_status: DisputeStatus,
+    /// Whether this stream uses allowance-based funding (for #1318).
+    pub is_allowance_based: bool,
 }
 
 /// Protocol-wide configuration, fee circuit breaker and guardian role.
@@ -262,12 +277,10 @@ pub struct LegacyProtocolConfig {
     pub fee_rate_bps: u32,
 }
 
-/// Pre-v2 shape of [`Stream`], which lacked the `schedule` discriminator.
+/// Pre-v3 shape of [`Stream`], which lacked the dispute/allowance fields.
 ///
-/// Decoded by `load_stream` for records written before step vesting existed; a
-/// legacy stream is by definition a continuous drip, so the upgraded record gets
-/// [`VestingSchedule::Linear`]. See [`crate::StreamContract::migrate`] for why
-/// migration happens lazily instead of in bulk.
+/// Decoded by `load_stream` for records written before these features existed.
+/// Upgraded records default to no arbiter, no dispute, and non-allowance-based.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LegacyStream {

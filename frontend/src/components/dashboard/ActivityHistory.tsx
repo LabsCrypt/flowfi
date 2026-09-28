@@ -7,6 +7,7 @@ import { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount } from "@/utils/amount";
 import { downloadCSV } from "@/utils/csvExport";
 import TransactionTracker from "@/components/TransactionTracker";
+import { eventTypeToAction } from "@/utils/eventTypeToAction";
 import { Download, ExternalLink, Clock } from "lucide-react";
 import { Button } from "../ui/Button";
 
@@ -199,12 +200,14 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
 
                     {event.transactionHash && (
                       <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
-                        <TransactionTracker
-                          status="confirmed"
-                          action="withdraw"
-                          txHash={event.transactionHash}
-                          streamId={event.streamId.toString()}
-                        />
+                        {eventTypeToAction(event.eventType) && (
+                          <TransactionTracker
+                            status="confirmed"
+                            action={eventTypeToAction(event.eventType)!}
+                            txHash={event.transactionHash}
+                            streamId={event.streamId.toString()}
+                          />
+                        )}
                         <a
                           href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                           target="_blank"
@@ -252,12 +255,14 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
 
                 {event.transactionHash && (
                   <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
-                    <TransactionTracker
-                      status="confirmed"
-                      action="withdraw"
-                      txHash={event.transactionHash}
-                      streamId={event.streamId.toString()}
-                    />
+                    {eventTypeToAction(event.eventType) && (
+                      <TransactionTracker
+                        status="confirmed"
+                        action={eventTypeToAction(event.eventType)!}
+                        txHash={event.transactionHash}
+                        streamId={event.streamId.toString()}
+                      />
+                    )}
                     <a
                       href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                       target="_blank"
