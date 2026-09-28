@@ -21,6 +21,32 @@ services:
       timeout: 5s
       retries: 5
 
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: flowfi-pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: flowfi
+      DB_PASSWORD: flowfi_dev_password
+      DB_NAME: flowfi
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      MAX_DB_CONNECTIONS: 20
+      MAX_PREPARED_STATEMENTS: 100
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "flowfi", "-d", "flowfi"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -29,7 +55,8 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      DATABASE_URL: postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi
+      DATABASE_URL: postgresql://flowfi:flowfi_dev_password@pgbouncer:5432/flowfi?pgbouncer=true
+      DATABASE_READ_REPLICA_URL: ${DATABASE_READ_REPLICA_URL:-}
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       # Uncomment and set values for Soroban integration
       # SOROBAN_RPC_URL: https://rpc.testnet.stellar.org
@@ -37,7 +64,7 @@ services:
     ports:
       - "3001:3001"
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]

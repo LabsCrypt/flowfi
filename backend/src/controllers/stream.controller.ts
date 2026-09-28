@@ -286,7 +286,7 @@ export const getStream = async (req: Request, res: Response) => {
       return sendApiError(res, 400, "INVALID_STREAM_ID", "Invalid streamId parameter");
     }
 
-    const stream = await prisma.stream.findUnique({
+    const stream = await withReplicaFallback((client) => client.stream.findUnique({
       where: { streamId: parsedStreamId },
       include: {
         senderUser: true,
@@ -295,7 +295,7 @@ export const getStream = async (req: Request, res: Response) => {
           orderBy: { timestamp: "desc" },
         },
       },
-    });
+    }));
 
     if (!stream) {
       // Fallback: try live RPC
@@ -385,8 +385,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       whereClause.eventType = eventType;
     }
 
-    const [events, total] = await Promise.all([
-      prisma.streamEvent.findMany({
+    const [events, total] = await withReplicaFallback((client) => Promise.all([
+      client.streamEvent.findMany({
         where: whereClause,
         // `timestamp` is not unique (events in the same block/ledger can
         // share a timestamp), so it can't be the sole sort key for cursor
@@ -396,8 +396,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
         take: limit,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
       }),
-      prisma.streamEvent.count({ where: whereClause }),
-    ]);
+      client.streamEvent.count({ where: whereClause }),
+    ]));
 
     const hasMore = cursor
       ? events.length === limit
@@ -433,7 +433,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
       }
     }
 
-    const stream = await prisma.stream.findUnique({
+    const stream = await withReplicaFallback((client) => client.stream.findUnique({
       where: { streamId: parsedStreamId },
       select: {
         streamId: true,
@@ -448,7 +448,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
         totalPausedDuration: true,
         updatedAt: true,
       },
-    });
+    }));
 
     if (!stream) {
       // Fallback: try live RPC for claimable amount
@@ -521,8 +521,8 @@ export const getUserStreamSummary = async (
     // unbounded DB queries.  Power users with more than MAX_USER_STREAMS
     // streams receive a truncated summary (the `truncated` flag lets the
     // frontend offer a pagination/export fallback).
-    const [outgoingStreams, incomingStreams] = await Promise.all([
-      prisma.stream.findMany({
+    const [outgoingStreams, incomingStreams] = await withReplicaFallback((client) => Promise.all([
+      client.stream.findMany({
         where: { sender: address },
         orderBy: { startTime: "desc" },
         take: MAX_USER_STREAMS,
@@ -540,7 +540,7 @@ export const getUserStreamSummary = async (
           updatedAt: true,
         },
       }),
-      prisma.stream.findMany({
+      client.stream.findMany({
         where: { recipient: address },
         orderBy: { startTime: "desc" },
         take: MAX_USER_STREAMS,
@@ -558,7 +558,7 @@ export const getUserStreamSummary = async (
           updatedAt: true,
         },
       }),
-    ]);
+    ]));
 
     const calculatedAt = Math.floor(nowMs / 1000);
 

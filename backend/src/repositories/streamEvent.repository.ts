@@ -136,16 +136,16 @@ export async function listEventsForWallet(
     where.eventType = { in: types };
   }
 
-  const [events, total] = await Promise.all([
-    prisma.streamEvent.findMany({
+  const [events, total] = await withReplicaFallback((client) => Promise.all([
+    client.streamEvent.findMany({
       where,
       orderBy: { timestamp: "desc" },
       skip: offset,
       take: limit,
       ...(includeStream ? { include: { stream: true } } : {}),
     }),
-    prisma.streamEvent.count({ where }),
-  ]);
+    client.streamEvent.count({ where }),
+  ]));
 
   return {
     events,
