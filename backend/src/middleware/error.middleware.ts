@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
-import { Prisma } from '../generated/prisma/index.js';
 import { ZodError, type ZodIssue } from 'zod';
 import logger from '../logger.js';
-import { ApiError, sendApiError } from '../types/api-error.js';
+import { ApiError as TypeApiError, sendApiError } from '../types/api-error.js';
+import { ApiError as LibApiError, fromPrismaError, sanitizeDatabaseErrorMessage } from '../lib/api-error.js';
 
 /**
  * Global error handler middleware
@@ -41,27 +41,30 @@ export const errorHandler = (
         })));
     }
 
-    if (err instanceof ApiError) {
-        return sendApiError(res, err.statusCode, err.code, err.message, err.details);
+    // Intercept Prisma database errors to prevent schema disclosure
+    const prismaError = fromPrismaError(err);
+    if (prismaError) {
+        return sendApiError(res, prismaError.status, prismaError.code, prismaError.message);
     }
 
-    // Handle Prisma Errors
-    if (err instanceof Prisma.PrismaClientKnownRequestError) {
-        // Unique constraint violation
-        if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-            const target = ((err as Prisma.PrismaClientKnownRequestError).meta?.target as string[])?.join(', ') || 'field';
-            return sendApiError(res, 409, 'CONFLICT', `Record with this ${target} already exists.`);
-        }
-
-        // Record not found
-        if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
-            return sendApiError(res, 404, 'NOT_FOUND', 'The requested record was not found.');
-        }
+    if (
+        err instanceof TypeApiError ||
+        err instanceof LibApiError ||
+        (err instanceof Error && 'statusCode' in err && 'code' in err) ||
+        (err instanceof Error && 'status' in err && 'code' in err)
+    ) {
+        const statusCode = (err as any).statusCode ?? (err as any).status ?? 500;
+        const code = (err as any).code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR');
+        let message = (err as any).message || 'Request failed';
+        message = sanitizeDatabaseErrorMessage(message, statusCode);
+        return sendApiError(res, statusCode, code, message, (err as any).details);
     }
 
     // Default Error
     const statusCode = (err instanceof Error && (err as any).status) || (err instanceof Error && (err as any).statusCode) || 500;
-    const message = statusCode === 500 ? 'A technical error occurred. Please try again later.' : (err instanceof Error ? err.message : 'Request failed');
+    let message = statusCode === 500 ? 'A technical error occurred. Please try again later.' : (err instanceof Error ? err.message : 'Request failed');
+    message = sanitizeDatabaseErrorMessage(message, statusCode);
     const code = statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR';
     return sendApiError(res, statusCode, code, message);
 };
+
