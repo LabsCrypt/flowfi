@@ -55,6 +55,15 @@ vi.mock("@/lib/api/_shared", () => ({
   getApiBaseUrl: () => "http://localhost:4000",
 }));
 
+// The component reads the token price through react-query. This suite covers UI
+// behaviour, not the price feed, so stub the hook instead of wiring up a
+// QueryClientProvider (and a network layer) just to render.
+vi.mock("@/hooks/useTokenPrice", () => ({
+  useTokenPrice: () => ({ data: undefined }),
+  convertToFiat: () => 0,
+  formatFiatAmount: () => "$0.00",
+}));
+
 vi.mock("@/lib/logger", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -124,7 +133,14 @@ function createMockStream() {
 describe("StreamDetailsContent loading skeleton", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -175,8 +191,9 @@ describe("StreamDetailsContent loading skeleton", () => {
     // Skeleton should be gone
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    // Stream-specific content should be visible
-    expect(screen.getByText(/stream #42/i)).toBeInTheDocument();
+    // Stream-specific content should be visible (the header and receipt rows
+    // both reference the stream id, so assert on all matches).
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThan(0);
   });
 
   it("transitions from skeleton to not-found state when stream is confirmed missing", async () => {
@@ -293,7 +310,14 @@ describe("StreamDetailsContent handleWithdraw", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     mockWalletForRecipient();
   });
 
@@ -342,7 +366,14 @@ describe("StreamDetailsContent handleTopUp", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     // TopUp is only visible for the sender
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -400,7 +431,7 @@ describe("StreamDetailsContent handleTopUp", () => {
     const addFundsBtn = screen.getByRole("button", { name: /add funds/i });
     await user.click(addFundsBtn);
 
-    expect(mockToast.error).toHaveBeenCalledWith("Please enter a valid amount");
+    expect(mockToast.error).toHaveBeenCalledWith("Amount is required");
     expect(mockSoroban.topUpStream).not.toHaveBeenCalled();
   });
 });
@@ -411,7 +442,14 @@ describe("StreamDetailsContent handlePause", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -453,7 +491,14 @@ describe("StreamDetailsContent handleResume", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -495,7 +540,14 @@ describe("StreamDetailsContent handleCancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -542,7 +594,14 @@ describe("StreamDetailsContent live-claimable interval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
   });
 
   it("shows live claimable indicator with a pulsing dot", async () => {

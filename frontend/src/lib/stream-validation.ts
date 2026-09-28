@@ -30,6 +30,13 @@ export interface StreamFormData {
   duration: string;
   durationUnit: DurationUnit;
   descriptionTag?: string;
+  /**
+   * Optional free-text note attached to the stream transaction.
+   *
+   * The schedule step edits it and caps it at 28 UTF-8 bytes, the Stellar memo
+   * limit; it is not otherwise validated.
+   */
+  memo?: string;
 }
 
 export type StreamFormErrors = Partial<Record<keyof StreamFormData, string>>;

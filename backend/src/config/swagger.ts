@@ -72,6 +72,11 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         name: 'Observability',
         description: 'Prometheus metrics scrape endpoint',
       },
+      {
+        name: 'Compliance',
+        description:
+          'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
+      },
     ],
     components: {
       securitySchemes: {
@@ -438,6 +443,41 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             },
             active: { type: 'boolean' },
             createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        SentinelIncident: {
+          type: 'object',
+          required: ['id', 'ruleId', 'severity', 'title', 'description', 'detectedAt', 'threatScore'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            ruleId: {
+              type: 'string',
+              enum: [
+                'VELOCITY_SPIKE',
+                'MULTI_STREAM_DRAIN',
+                'HIGH_VALUE_DRAIN',
+                'TOKEN_VELOCITY_SPIKE',
+                'ZERO_RUNWAY_FLOOD',
+                'STREAM_CREATION_SPIKE',
+              ],
+            },
+            severity: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            address: { type: 'string', nullable: true, description: 'Stellar public key involved' },
+            token: { type: 'string', nullable: true },
+            streamId: { type: 'string', nullable: true },
+            ledger: { type: 'integer', nullable: true },
+            detectedAt: { type: 'string', format: 'date-time' },
+            threatScore: { type: 'integer', description: 'Per-incident severity weight (10-90)' },
+            evidence: { type: 'object', additionalProperties: true },
+            circuitBreaker: {
+              type: 'object',
+              nullable: true,
+              description: 'HMAC-signed emergency pause proposal (CRITICAL incidents only)',
+              additionalProperties: true,
+            },
+            acknowledged: { type: 'boolean' },
           },
         },
         HealthResponse: {

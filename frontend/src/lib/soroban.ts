@@ -349,7 +349,10 @@ export async function batchWithdrawFromStreams(
 ): Promise<SorobanResult> {
   const { nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "batch_withdraw", [
-    nativeToScVal(params.streamIds, { type: "vec" }),
+    // A Vec needs its element type, not the bare "vec" tag: `nativeToScVal`
+    // encodes each entry as the given type. Produces the same ScVal as
+    // `xdr.ScVal.scvVec(ids.map(...))`.
+    nativeToScVal(params.streamIds, { type: ["u64"] }),
   ]);
 }
 

@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { setIndexerLedgers } from '../lib/metrics.js';
+import { isRedisAvailable } from '../lib/redis.js';
+import { sorobanEventWorker } from '../workers/soroban-event-worker.js';
 
 const router = Router();
 
@@ -76,12 +78,29 @@ router.get('/', async (_req: Request, res: Response) => {
     }
   }
 
-  // 503 only when: DB is down, OR the indexer is enabled and its state row is
-  // stale (lag > 60). A missing state row (lag === -1) is a cold-start
-  // condition, not a failure, even when the indexer is enabled.
-  const indexerDegraded = indexerEnabled && indexerLag > 60;
-  const isHealthy = dbStatus === 'connected' && !indexerDegraded;
+  // Event-processing failures surface independently of lag: `updatedAt` is
+  // bumped by the IndexerState upsert on every poll, so a broken indexer can
+  // still look "fresh". Read the worker's sliding-window counters for that.
+  const counters = sorobanEventWorker.getEventCounters();
+  const indexerFailureDegraded = indexerEnabled && counters.degraded;
+  const indexerLagDegraded = indexerEnabled && indexerLag > 60;
+  // `indexerDegraded` reports the failure-rate signal specifically (#1294):
+  // `checks.indexer.status` folds in lag degradation, but the top-level flag
+  // must stay false for a lag-only incident.
+  const indexerDegraded = indexerFailureDegraded;
+
+  // 503 when: DB is down, OR the indexer is enabled and its state row is stale
+  // (lag > 60), OR its recent failure rate spiked. A missing state row
+  // (lag === -1) is a cold-start condition, not a failure, even when enabled.
+  const isHealthy =
+    dbStatus === 'connected' && !indexerLagDegraded && !indexerFailureDegraded;
   const status = isHealthy ? 'ok' : 'degraded';
+
+  const redisStatus = isRedisAvailable() ? 'ok' : 'unavailable';
+  // Reuse the ledger tip already resolved above instead of issuing a second
+  // RPC probe; an unresolved tip (0) counts as unreachable only when the
+  // indexer is actually enabled.
+  const sorobanRpcOk = !indexerEnabled || networkLedger > 0;
 
   // Keep the Prometheus gauges in step with what /health reports, so a scrape
   // taken between poll cycles still reflects the ledger the indexer reached.
@@ -92,6 +111,10 @@ router.get('/', async (_req: Request, res: Response) => {
     db: dbStatus,
     indexerEnabled,
     indexerLag: indexerLag === -1 ? null : indexerLag,
+    eventsProcessed: counters.eventsProcessed,
+    eventsFailed: counters.eventsFailed,
+    lastErrorAt: counters.lastErrorAt,
+    indexerDegraded,
     // Ledger-level lag, which is what `flowfi_indexer_lag_ledgers` tracks.
     // Null when the network tip could not be resolved.
     indexerLedgerLag:
@@ -102,7 +125,11 @@ router.get('/', async (_req: Request, res: Response) => {
         status: dbStatus === 'connected' ? 'ok' : 'down',
       },
       indexer: {
-        status: !indexerEnabled ? 'disabled' : indexerFailureDegraded || indexerLagDegraded ? 'degraded' : 'ok',
+        status: !indexerEnabled
+          ? 'disabled'
+          : indexerLagDegraded || indexerFailureDegraded
+            ? 'degraded'
+            : 'ok',
         enabled: indexerEnabled,
         lagSeconds: indexerLag === -1 ? null : indexerLag,
       },

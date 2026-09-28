@@ -5,6 +5,7 @@ import userRoutes from "./user.routes.js";
 import authRoutes from "./auth.routes.js";
 import adminRoutes from "./admin.routes.js";
 import webhookRoutes from "./webhook.routes.js";
+import complianceRoutes from "./compliance.routes.js";
 
 const router = Router();
 
@@ -14,6 +15,7 @@ router.use("/events", eventsRoutes);
 router.use("/users", userRoutes);
 router.use("/auth", authRoutes);
 router.use("/webhooks", webhookRoutes);
+router.use("/compliance", complianceRoutes);
 
 // Admin routes
 router.use("/admin", adminRoutes);
