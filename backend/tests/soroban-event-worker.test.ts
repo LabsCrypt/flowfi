@@ -22,6 +22,10 @@ const mockPrismaObj = vi.hoisted(() => ({
   indexerDeadLetterEvent: {
     upsert: vi.fn(),
   },
+  ledgerCheckpoint: {
+    findMany: vi.fn(),
+    upsert: vi.fn(),
+  },
   $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() } })),
   $disconnect: vi.fn(),
 }));
@@ -887,6 +891,77 @@ describe('SorobanEventWorker', () => {
       await Promise.all([triggerPromise, drainPromise]);
       expect(drained).toBe(true);
       expect((worker as any).activeBatch).toBeNull();
+    });
+  });
+
+  describe('ledger checkpointing (#1468)', () => {
+    it('records a hash-signed checkpoint for every ingested ledger', async () => {
+      const previousContractId = process.env.STREAM_CONTRACT_ID;
+      process.env.STREAM_CONTRACT_ID =
+        'CCONTRACTCONTRACTCONTRACTCONTRACTCONTRACTCONTRACTCONTRACTCONT';
+
+      try {
+        const checkpointWorker = new SorobanEventWorker();
+
+        (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+          id: 'singleton',
+          lastLedger: 1000,
+          lastCursor: 'cursor-1000',
+          updatedAt: new Date(),
+        });
+        (prisma.ledgerCheckpoint.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+        (prisma.ledgerCheckpoint.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({});
+
+        const event: rpc.Api.EventResponse = {
+          id: 'checkpoint-event-1',
+          type: 'contract',
+          ledger: 1005,
+          ledgerClosedAt: '2024-01-01T00:00:00Z',
+          txHash: 'checkpoint-tx-1',
+          transactionIndex: 0,
+          operationIndex: 0,
+          inSuccessfulContractCall: true,
+          topic: [mockSym('admin_transferred')],
+          value: {
+            type: 'scvMap',
+            map: [
+              mockMapEntry('previous_admin', mockAccountAddr()),
+              mockMapEntry('new_admin', mockAccountAddr()),
+            ],
+          } as any,
+        };
+
+        vi.spyOn((checkpointWorker as any).server, 'getEvents').mockResolvedValue({
+          events: [event],
+        });
+        const getLedgers = vi
+          .spyOn((checkpointWorker as any).server, 'getLedgers')
+          .mockResolvedValue({
+            ledgers: [
+              { sequence: 1004, hash: 'hash-1004' },
+              { sequence: 1005, hash: 'hash-1005' },
+            ],
+          });
+
+        await (checkpointWorker as any).fetchAndProcessEvents();
+
+        expect(getLedgers).toHaveBeenCalled();
+        expect(prisma.ledgerCheckpoint.upsert).toHaveBeenCalledTimes(1);
+        const call = (prisma.ledgerCheckpoint.upsert as ReturnType<typeof vi.fn>).mock
+          .calls[0]![0];
+        expect(call.create).toMatchObject({
+          ledgerSequence: 1005,
+          ledgerHash: 'hash-1005',
+          eventsCount: 1,
+        });
+        // Parent hash is derived from the ledger below the fetched window.
+        expect(call.create.parentHash).toBe('hash-1004');
+        // The cursor still advances so ingestion keeps moving forward.
+        expect(prisma.indexerState.upsert).toHaveBeenCalled();
+      } finally {
+        if (previousContractId === undefined) delete process.env.STREAM_CONTRACT_ID;
+        else process.env.STREAM_CONTRACT_ID = previousContractId;
+      }
     });
   });
 });

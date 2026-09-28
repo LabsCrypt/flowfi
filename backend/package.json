@@ -28,6 +28,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "overrides": {
+    "@types/pg": "8.23.1"
+  },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/auto-instrumentations-node": "^0.80.0",

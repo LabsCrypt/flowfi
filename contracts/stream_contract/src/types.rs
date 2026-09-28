@@ -13,6 +13,12 @@ pub const MAX_VESTING_STEPS: u32 = 12;
 /// transactions.
 pub const MAX_BATCH_WITHDRAW: u32 = 30;
 
+/// Maximum number of streams a single `batch_create_streams` call may create.
+///
+/// Bounded so one payroll transaction stays inside the Soroban CPU and memory
+/// budget; a larger payroll must be split across several transactions.
+pub const MAX_BATCH_CREATE: u32 = 50;
+
 /// Status of a payment stream.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -142,6 +148,22 @@ pub struct Stream {
     pub dispute_status: DisputeStatus,
     /// Whether this stream uses allowance-based funding (for #1318).
     pub is_allowance_based: bool,
+}
+
+/// A single stream to create inside `batch_create_streams`.
+///
+/// The batch entrypoint takes one struct per stream rather than N parallel
+/// vectors so that a malformed payroll cannot desynchronise its fields.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchStreamInput {
+    pub recipient: Address,
+    pub token_address: Address,
+    pub amount: i128,
+    pub duration: u64,
+    /// Seconds after creation before anything becomes claimable. `None` drips
+    /// from the first ledger-second.
+    pub cliff_duration: Option<u64>,
 }
 
 /// Protocol-wide configuration, fee circuit breaker and guardian role.

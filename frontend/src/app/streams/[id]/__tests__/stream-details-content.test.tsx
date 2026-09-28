@@ -70,6 +70,14 @@ vi.mock("@/hooks/useStreamingAmount", () => ({
   useStreamingAmount: mockUseStreamingAmount,
 }));
 
+// `useTokenPrice` is a react-query hook; the details page is rendered here
+// without the app's QueryClientProvider, so stub only the hook and keep the
+// pure conversion/formatting helpers real.
+vi.mock("@/hooks/useTokenPrice", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useTokenPrice")>();
+  return { ...actual, useTokenPrice: () => ({ data: undefined }) };
+});
+
 vi.mock("@/lib/soroban", () => mockSoroban);
 
 vi.mock("@/components/stream-creation/CancelConfirmModal", () => ({
@@ -160,6 +168,11 @@ describe("StreamDetailsContent loading skeleton", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ events: [], total: 0 }),
+      } as Response)
+      // The receipt-lookup effect issues a second events request.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
       } as Response);
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
@@ -175,8 +188,9 @@ describe("StreamDetailsContent loading skeleton", () => {
     // Skeleton should be gone
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    // Stream-specific content should be visible
-    expect(screen.getByText(/stream #42/i)).toBeInTheDocument();
+    // Stream-specific content should be visible (the id appears in both the
+    // breadcrumb and the page heading).
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it("transitions from skeleton to not-found state when stream is confirmed missing", async () => {
@@ -231,6 +245,11 @@ describe("StreamDetailsContent loading skeleton", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ events: [], total: 0 }),
+      } as Response)
+      // The receipt-lookup effect issues a second events request.
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
       } as Response);
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
@@ -255,6 +274,11 @@ async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
       ok: true,
       json: async () => mockStream,
     } as Response)
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ events: [], total: 0 }),
+    } as Response)
+    // The receipt-lookup effect issues a second events request.
     .mockResolvedValueOnce({
       ok: true,
       json: async () => ({ events: [], total: 0 }),
@@ -400,7 +424,7 @@ describe("StreamDetailsContent handleTopUp", () => {
     const addFundsBtn = screen.getByRole("button", { name: /add funds/i });
     await user.click(addFundsBtn);
 
-    expect(mockToast.error).toHaveBeenCalledWith("Please enter a valid amount");
+    expect(mockToast.error).toHaveBeenCalledWith("Amount is required");
     expect(mockSoroban.topUpStream).not.toHaveBeenCalled();
   });
 });

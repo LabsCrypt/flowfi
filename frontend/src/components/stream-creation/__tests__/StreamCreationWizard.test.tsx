@@ -14,8 +14,28 @@ vi.mock("@/lib/logger", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("@/lib/soroban", () => ({
-  fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("1000"),
+vi.mock("@/lib/soroban", () => {
+  class MultisigRequiredError extends Error {
+    constructor(
+      message: string,
+      public readonly signedXdr: string,
+      public readonly routing: unknown,
+    ) {
+      super(message);
+      this.name = "MultisigRequiredError";
+    }
+  }
+
+  return {
+    fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("1000"),
+    MultisigRequiredError,
+  };
+});
+
+vi.mock("../../wallet/MultisigSignModal", () => ({
+  MultisigSignModal: ({ initialXdr }: { initialXdr: string }) => (
+    <div data-testid="multisig-modal">{initialXdr}</div>
+  ),
 }));
 
 vi.mock("@/lib/stellar", () => ({
@@ -113,25 +133,21 @@ vi.mock("../AmountStep", () => ({
 
 vi.mock("../ScheduleStep", () => ({
   ScheduleStep: ({
-    duration,
-    onDurationChange,
-    error,
+    formData,
+    errors,
+    onUpdate,
   }: {
-    duration: string;
-    onDurationChange: (v: string) => void;
-    error?: string;
-    durationUnit?: string;
-    amount?: string;
-    token?: string;
-    onUnitChange?: (v: string) => void;
+    formData: { duration: string; memo?: string };
+    errors: { duration?: string };
+    onUpdate: (data: { duration?: string }) => void;
   }) => (
     <div data-testid="schedule-step">
       <input
         aria-label="Duration"
-        value={duration}
-        onChange={(e) => onDurationChange(e.target.value)}
+        value={formData.duration}
+        onChange={(e) => onUpdate({ duration: e.target.value })}
       />
-      {error && <span role="alert">{error}</span>}
+      {errors.duration && <span role="alert">{errors.duration}</span>}
     </div>
   ),
 }));
@@ -641,6 +657,39 @@ describe("StreamCreationWizard", () => {
   });
 
   // ── Error handling ────────────────────────────────────────────────────────
+
+  it("opens the multisig co-signing modal when onSubmit needs more signatures", async () => {
+    const { MultisigRequiredError } = await import("@/lib/soroban");
+    const routing = {
+      account: { publicKey: VALID_KEY },
+      progress: { collectedWeight: 1, requiredWeight: 2 },
+      needsProposal: true,
+    } as unknown as ConstructorParameters<typeof MultisigRequiredError>[2];
+    const onSubmit = vi.fn().mockRejectedValue(
+      new MultisigRequiredError("needs signatures", "PARTIAL_XDR_VALUE", routing),
+    );
+    const push = vi.fn();
+    (useRouter as ReturnType<typeof vi.fn>).mockReturnValue({ push });
+
+    render(
+      <StreamCreationWizard
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+        walletPublicKey={VALID_KEY}
+      />
+    );
+
+    advanceToStep5();
+
+    await act(async () => {
+      clickCreate();
+    });
+
+    const modal = await screen.findByTestId("multisig-modal");
+    expect(modal).toHaveTextContent("PARTIAL_XDR_VALUE");
+    // The wizard must not fall through to the indexer-polling UI.
+    expect(screen.queryByText("Waiting for confirmation...")).not.toBeInTheDocument();
+  });
 
   it("catches onSubmit errors and stops submitting", async () => {
     const onSubmit = vi.fn().mockRejectedValue(new Error("wallet rejected"));

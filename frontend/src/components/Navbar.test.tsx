@@ -18,6 +18,12 @@ vi.mock('./NotificationDropdown', () => ({
   NotificationDropdown: () => <div data-testid="notification-dropdown" />,
 }));
 
+// NetworkSelector reads the active network from NetworkContext, so stub it out
+// alongside the other chrome instead of wrapping every render in a provider.
+vi.mock('./NetworkSelector', () => ({
+  NetworkSelector: () => <div data-testid="network-selector" />,
+}));
+
 vi.mock('next/link', () => ({
   default: ({ children, href }: React.PropsWithChildren<{ href: string }>) => (
     <a href={href}>{children}</a>

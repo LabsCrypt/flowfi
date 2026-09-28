@@ -167,6 +167,19 @@ pub struct StreamCompletedEvent {
     pub total_withdrawn: i128,
 }
 
+/// Emitted when a terminal stream record is pruned from storage.
+///
+/// Topic: `("stream_closed", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamClosedEvent {
+    pub stream_id: u64,
+    /// Address that asked for the record to be pruned: the sender, the
+    /// recipient, or the protocol admin.
+    pub closer: Address,
+    pub timestamp: u64,
+}
+
 /// Emitted whenever the protocol circuit breaker changes state.
 ///
 /// Topic: `("protocol_pause_status",)`
@@ -308,15 +321,4 @@ pub struct AllowanceStreamCreatedEvent {
     pub token_address: Address,
     pub rate_per_second: i128,
     pub start_time: u64,
-}
-
-/// Emitted when a stream is closed and purged from storage.
-///
-/// Topic: `("stream_closed", stream_id)`
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StreamClosedEvent {
-    pub stream_id: u64,
-    pub closer: Address,
-    pub timestamp: u64,
 }
