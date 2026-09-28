@@ -5,6 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 
 /**
  * components/dashboard/dashboard-view.tsx
@@ -651,7 +652,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       addStreamLocally(data);
       // We don't call setShowWizard(false) here anymore, the wizard handles its own flow
-      toast.success("Transaction confirmed on-chain!", { id: toastId });
+      transactionSuccessToast("Transaction confirmed on-chain!", { id: toastId });
       return result;
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
@@ -668,7 +669,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       topUpStreamLocally(streamId, parseFloat(amountStr));
       setModal(null);
-      toast.success("Stream topped up successfully!", { id: toastId });
+      transactionSuccessToast("Stream topped up successfully!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;
@@ -683,7 +684,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       removeStreamLocally(streamId);
       setModal(null);
-      toast.success("Stream cancelled.", { id: toastId });
+      transactionSuccessToast("Stream cancelled.", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;
@@ -698,7 +699,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         streamId: BigInt(stream.id.replace(/\D/g, "") || "0"),
       });
       await refetchSnapshot();
-      toast.success("Withdrawal successful!", { id: toastId });
+      transactionSuccessToast("Withdrawal successful!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;

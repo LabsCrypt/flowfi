@@ -47,8 +47,8 @@ use soroban_sdk::{
 use errors::StreamError;
 use events::{
     AdminTransferredEvent, AllowanceStreamCreatedEvent, ContractUpgradedEvent,
-    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent,
-    FeeCollectedEvent, FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
+    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
+    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
     ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
     StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
     StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
@@ -386,7 +386,7 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Deduct protocol fee; returns net amount (== amount when no fee config).
-        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id)?;
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
         let rate_per_second = net_amount / (duration as i128);
 
         // Reject streams where integer division rounds the rate to zero.
@@ -422,6 +422,8 @@ impl StreamContract {
                 is_allowance_based: false,
             },
         );
+
+        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
 
         env.events().publish(
             (Symbol::new(&env, "stream_created"), stream_id),
@@ -499,7 +501,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
 
         // Structural validation. Runs *after* the transfer so that the real
         // net amount is known, but a returned Err rolls the whole transaction
@@ -531,6 +533,8 @@ impl StreamContract {
                 is_allowance_based: false,
             },
         );
+
+        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
 
         env.events().publish(
             (Symbol::new(&env, "step_vesting_stream_created"), stream_id),
@@ -589,7 +593,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let net_amount = Self::collect_fee(&env, &token_address, amount, stream_id);
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
 
         // The cliff must land strictly after creation, and must leave a
         // non-empty remainder so the linear component is well defined.
@@ -626,6 +630,8 @@ impl StreamContract {
                 is_allowance_based: false,
             },
         );
+
+        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
 
         env.events().publish(
             (Symbol::new(&env, "hybrid_cliff_stream_created"), stream_id),
@@ -730,7 +736,8 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Collect protocol fee and get net amount
-        let net_amount = Self::collect_fee(&env, &stream.token_address, amount, stream_id)?;
+        let (net_amount, fee_amount, treasury) =
+            Self::collect_fee(&env, &stream.token_address, amount)?;
 
         // Update stream state. `last_update_time` is intentionally left untouched:
         // it is the accrual anchor for `calculate_claimable`, and advancing it to
@@ -749,6 +756,8 @@ impl StreamContract {
         let new_end_time = Self::project_end_time(now, remaining, stream.rate_per_second)?;
 
         save_stream(&env, stream_id, &stream);
+
+        Self::transfer_fee(&env, &stream.token_address, stream_id, fee_amount, treasury);
 
         // Emit top-up event
         env.events().publish(
@@ -1681,7 +1690,7 @@ impl StreamContract {
             &Symbol::new(&env, "allowance"),
             vec![&env, &sender, &env.current_contract_address()],
         ) {
-            Ok(Ok(allowance)) if allowance > 0 => {},
+            Ok(Ok(allowance)) if allowance > 0 => {}
             _ => return Err(StreamError::AllowanceLocked),
         }
 
@@ -1740,11 +1749,7 @@ impl StreamContract {
     /// - `Unauthorized`         — caller is not the stream's sender.
     /// - `StreamInactive`       — stream is inactive.
     /// - `DisputeNotSupported`  — stream has no arbiter configured.
-    pub fn request_dispute(
-        env: Env,
-        sender: Address,
-        stream_id: u64,
-    ) -> Result<(), StreamError> {
+    pub fn request_dispute(env: Env, sender: Address, stream_id: u64) -> Result<(), StreamError> {
         sender.require_auth();
 
         let mut stream = load_stream(&env, stream_id)?;
@@ -1872,8 +1877,8 @@ impl StreamContract {
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
-    /// Deducts the protocol fee from `amount`, transfers it to the treasury,
-    /// emits a `fee_collected` event, and returns the net amount.
+    /// Calculates the protocol fee without making an external call. Callers
+    /// persist their updated stream before invoking [`Self::transfer_fee`].
     ///
     /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
     /// If fee calculation truncates to 0, no transfer/event occurs and `amount` is unchanged.
@@ -1882,8 +1887,7 @@ impl StreamContract {
         env: &Env,
         token_address: &Address,
         amount: i128,
-        stream_id: u64,
-    ) -> Result<i128, StreamError> {
+    ) -> Result<(i128, i128, Option<Address>), StreamError> {
         match try_load_config(env) {
             Some(cfg) if cfg.fee_rate_bps > 0 => {
                 // `amount` is caller-supplied and can reach i128::MAX, so the
@@ -1892,24 +1896,35 @@ impl StreamContract {
                     .checked_mul(cfg.fee_rate_bps as i128)
                     .ok_or(StreamError::ArithmeticOverflow)?
                     / 10_000;
-                if fee > 0 {
-                    let token_client = token::Client::new(env, token_address);
-                    token_client.transfer(&env.current_contract_address(), &cfg.treasury, &fee);
-                    env.events().publish(
-                        (Symbol::new(env, "fee_collected"), stream_id),
-                        FeeCollectedEvent {
-                            stream_id,
-                            treasury: cfg.treasury,
-                            fee_amount: fee,
-                            token: token_address.clone(),
-                        },
-                    );
-                }
                 // `fee_rate_bps` is capped at MAX_FEE_RATE_BPS (10%), so `fee`
                 // is always well below `amount` and this cannot underflow.
-                Ok(amount - fee)
+                Ok((amount - fee, fee, (fee > 0).then_some(cfg.treasury)))
             }
-            _ => Ok(amount),
+            _ => Ok((amount, 0, None)),
+        }
+    }
+
+    /// Transfers the previously calculated fee after the caller has persisted
+    /// all stream state changes for this operation.
+    fn transfer_fee(
+        env: &Env,
+        token_address: &Address,
+        stream_id: u64,
+        fee: i128,
+        treasury: Option<Address>,
+    ) {
+        if let Some(treasury) = treasury {
+            let token_client = token::Client::new(env, token_address);
+            token_client.transfer(&env.current_contract_address(), &treasury, &fee);
+            env.events().publish(
+                (Symbol::new(env, "fee_collected"), stream_id),
+                FeeCollectedEvent {
+                    stream_id,
+                    treasury,
+                    fee_amount: fee,
+                    token: token_address.clone(),
+                },
+            );
         }
     }
 }
