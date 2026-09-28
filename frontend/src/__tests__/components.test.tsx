@@ -94,6 +94,9 @@ describe('CancelConfirmModal', () => {
 // ─── RecipientStep ────────────────────────────────────────────────────────────
 
 describe('RecipientStep', () => {
+  const VALID_KEY = 'GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7';
+  const INVALID_CHECKSUM = 'GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR8';
+
   it('renders the input field', () => {
     render(<RecipientStep value="" onChange={vi.fn()} />);
     expect(screen.getByPlaceholderText(/GABCDEF/i)).toBeInTheDocument();
@@ -114,6 +117,34 @@ describe('RecipientStep', () => {
   it('does not show an error when error prop is absent', () => {
     render(<RecipientStep value="" onChange={vi.fn()} />);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows an inline error in real time for an invalid checksum', () => {
+    render(<RecipientStep value={INVALID_CHECKSUM} onChange={vi.fn()} />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Invalid Stellar public key (must start with 'G' and be 56 characters)",
+    );
+  });
+
+  it('shows no error for a valid recipient key', () => {
+    render(<RecipientStep value={VALID_KEY} onChange={vi.fn()} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('trims whitespace from pasted values', () => {
+    const onChange = vi.fn();
+    render(<RecipientStep value="" onChange={onChange} />);
+    fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: { getData: () => `  ${VALID_KEY}  ` },
+    });
+    expect(onChange).toHaveBeenCalledWith(VALID_KEY);
+  });
+
+  it('trims whitespace on blur', () => {
+    const onChange = vi.fn();
+    render(<RecipientStep value={`  ${VALID_KEY}  `} onChange={onChange} />);
+    fireEvent.blur(screen.getByRole('textbox'));
+    expect(onChange).toHaveBeenCalledWith(VALID_KEY);
   });
 });
 

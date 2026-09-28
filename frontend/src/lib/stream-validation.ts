@@ -60,7 +60,7 @@ export function validateRecipient(
     return "Recipient address is required";
   }
   if (!isValidStellarPublicKey(trimmed)) {
-    return "Invalid Stellar public key format";
+    return "Invalid Stellar public key (must start with 'G' and be 56 characters)";
   }
   return null;
 }
