@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { Loader2, CheckCircle, XCircle, ExternalLink, RefreshCw, Clock, Ban, FileSearch } from "lucide-react";
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import type { BackendStream } from "@/lib/api-types";
 import { formatAmount } from "@/utils/amount";
 import { getApiBaseUrl } from "@/lib/api/_shared";
@@ -134,7 +135,7 @@ export default function TransactionTracker({
         const isConfirmed = checkConfirmation(data, expectedChanges);
 
         if (isConfirmed && !cancelled) {
-          toast.success(`${ACTION_LABELS[action].past} successfully!`);
+          transactionSuccessToast(`${ACTION_LABELS[action].past} successfully!`);
           onConfirmed?.();
           return; // Stop polling, parent should transition to confirmed
         }
