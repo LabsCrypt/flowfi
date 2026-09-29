@@ -180,3 +180,51 @@ model IndexerDeadLetterEvent {
   @@index([attempts])
   @@index([eventType])
 }
+
+// ---------------------------------------------------------------------------
+// Notifications (Web Push + Telegram / Discord)
+// ---------------------------------------------------------------------------
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  address   String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([address])
+}
+
+model NotificationChannel {
+  id             String   @id @default(cuid())
+  address        String   @unique
+  telegramChatId String?
+  discordWebhook String?
+  events         String[] @default(["STREAM_CREATED", "CLIFF_REACHED", "RUNWAY_WARNING", "TOKENS_CLAIMED"])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model LinkCode {
+  code      String    @id
+  address   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([address])
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  address   String
+  event     String
+  channel   String
+  status    String
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([address, createdAt])
+}
