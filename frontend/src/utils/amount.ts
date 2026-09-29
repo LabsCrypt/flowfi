@@ -377,3 +377,53 @@ export function getTokenDecimalsSync(
 
   return 7; // Return default while fetching
 }
+
+/**
+ * Compact display formatting for large token balances (issue #1509).
+ *
+ * Returns BOTH a compact form ("1.45M", "12.5K") for the visible cell and the
+ * exact decimal string for a hover tooltip. Callers should always render the
+ * compact form and attach the exact form to `title=` (or an accessible label)
+ * so the full precision is never lost — only hidden.
+ *
+ *   formatTokenCompact(14_502_934_910_293n, 7)
+ *   // => { compact: "1.45M", exact: "1450293.4910293" }
+ *
+ * `decimals` is the token's fixed-point scale (7 for Stellar assets). The
+ * compact form uses the en locale's `compact` notation — the same
+ * "12.5K / 1.45M" shape the issue specifies. The exact form is trimmed of
+ * trailing zeros so it reads like the raw on-chain amount rather than a
+ * padded fixed-width number.
+ */
+export function formatTokenCompact(
+  amount: bigint,
+  decimals: number,
+  opts: { locale?: string; maximumFractionDigits?: number } = {},
+): { compact: string; exact: string } {
+  const locale = opts.locale ?? "en";
+  const maxFractionDigits = opts.maximumFractionDigits ?? 2;
+
+  const negative = amount < 0n;
+  const abs = negative ? -amount : amount;
+  const divisor = 10n ** BigInt(decimals);
+  const whole = abs / divisor;
+  const frac = abs % divisor;
+
+  // Build the exact decimal string without float imprecision.
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  const exactAbs = fracStr.length > 0 ? `${whole}.${fracStr}` : whole.toString();
+  const exact = negative ? `-${exactAbs}` : exactAbs;
+
+  // Convert to a Number only for the Intl compact formatting. Values beyond
+  // Number.MAX_SAFE_INTEGER lose sub-unit precision here, but that precision
+  // is already shown in `exact`, and the compact form is a display hint.
+  const asNumber = Number(exact);
+  const compactAbs = new Intl.NumberFormat(locale, {
+    notation: "compact",
+    maximumFractionDigits: maxFractionDigits,
+  }).format(Math.abs(asNumber));
+
+  const compact = negative ? `-${compactAbs}` : compactAbs;
+
+  return { compact, exact };
+}
