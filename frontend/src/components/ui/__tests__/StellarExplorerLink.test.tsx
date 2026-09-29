@@ -1,10 +1,10 @@
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { StellarExplorerLink } from "../StellarExplorerLink";
-import { NetworkProvider } from "@/context/NetworkContext";
 
 // Mock the NetworkContext
-jest.mock("@/context/NetworkContext", () => ({
-  ...jest.requireActual("@/context/NetworkContext"),
+vi.mock("@/context/NetworkContext", () => ({
+  ...vi.importActual("@/context/NetworkContext"),
   useNetwork: () => ({ networkId: "testnet" }),
 }));
 
@@ -22,7 +22,7 @@ describe("StellarExplorerLink", () => {
   });
 
   it("generates correct Mainnet URL when network is mainnet", () => {
-    jest.spyOn(require("@/context/NetworkContext"), "useNetwork").mockReturnValue({
+    vi.spyOn(require("@/context/NetworkContext"), "useNetwork").mockReturnValue({
       networkId: "mainnet",
     });
 
