@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";
@@ -30,6 +30,7 @@ import type { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount, streamProgressPercent, validateAmountInput } from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
 import { LiquidStreamVisualizer } from "@/components/LiquidStreamVisualizer";
+import { TokenAvatar } from "@/components/TokenAvatar";
 
 interface StreamDetail {
   id: string;
@@ -471,7 +472,18 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             <div className="space-y-4">
               <InfoRow label="Sender" value={shortenPublicKey(stream.sender)} />
               <InfoRow label="Recipient" value={shortenPublicKey(stream.recipient)} />
-              <InfoRow label="Token" value={tokenSymbol} />
+              <InfoRow
+                label="Token"
+                value={tokenSymbol}
+                icon={
+                  <TokenAvatar
+                    symbol={tokenSymbol}
+                    address={stream.tokenAddress}
+                    size={20}
+                    decorative
+                  />
+                }
+              />
             </div>
             <div className="space-y-4">
               <InfoRow
@@ -762,11 +774,22 @@ function StatusBadge({ status, isPaused }: { status: string; isPaused?: boolean 
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon?: ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
       <span className="text-slate-400 text-sm">{label}</span>
-      <span className="font-mono text-sm">{value}</span>
+      <span className={icon ? "inline-flex items-center gap-2 font-mono text-sm" : "font-mono text-sm"}>
+        {icon}
+        {value}
+      </span>
     </div>
   );
 }
