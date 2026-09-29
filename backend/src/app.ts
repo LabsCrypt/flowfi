@@ -11,7 +11,7 @@ import {
   type VersionedRequest,
 } from "./middleware/api-version.middleware.js";
 import { sandboxMiddleware } from "./middleware/sandbox.middleware.js";
-import { globalRateLimiter } from "./middleware/rate-limiter.middleware.js";
+import { globalRateLimiter, healthRateLimiter } from "./middleware/rate-limiter.middleware.js";
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import v1Routes from "./routes/v1/index.js";
@@ -141,7 +141,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // Health check routes
-app.use("/health", healthRoutes);
+app.use("/health", healthRateLimiter, healthRoutes);
 
 // Prometheus scrape endpoint. Mounted after the metrics middleware so scrapes
 // are themselves counted, and outside the versioned API surface because
