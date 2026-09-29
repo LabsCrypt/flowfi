@@ -40,10 +40,41 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      # Probe 127.0.0.1 explicitly: busybox wget resolves `localhost` to IPv6
+      # first, which the IPv4-bound server does not answer.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3001/health"]
       interval: 10s
       timeout: 5s
       retries: 5
+      # Prisma + DB warm-up happens after the port opens; give it room before
+      # the first probe is counted against the retry budget.
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # NEXT_PUBLIC_* are inlined into the client bundle at build time. The
+        # browser talks to the backend over the published host port, so use
+        # localhost here rather than the in-network service name.
+        NEXT_PUBLIC_API_URL: http://localhost:3001/v1
+    container_name: flowfi-frontend
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
 volumes:
