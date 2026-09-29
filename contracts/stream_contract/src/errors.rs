@@ -1,4 +1,4 @@
-use soroban_sdk::contracterror;
+﻿use soroban_sdk::contracterror;
 
 /// Exhaustive error surface for `StreamContract`.
 ///
@@ -27,7 +27,7 @@ pub enum StreamError {
     InvalidDuration = 9,
     /// Supplied token address is not a valid token contract.
     InvalidTokenAddress = 10,
-    /// `amount / duration` rounds to zero — the stream would lock tokens but never accrue.
+    /// `amount / duration` rounds to zero â€” the stream would lock tokens but never accrue.
     InvalidRate = 11,
     /// Operation requires an active stream, but the stream is currently paused.
     StreamPaused = 12,
@@ -81,4 +81,9 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// Arithmetic overflowed while computing stream state (checked_mul / checked_add / u64 conversion).
+    ArithmeticOverflow = 34,
+    /// A stream was expected to be terminal (cancelled or fully withdrawn) but is not.
+    StreamStillActive = 35,
 }
+

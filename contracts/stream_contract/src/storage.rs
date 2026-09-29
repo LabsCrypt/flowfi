@@ -15,7 +15,7 @@ use crate::types::{
     VestingSchedule,
 };
 
-// ─── Version-Tolerant Decoding ────────────────────────────────────────────────
+// â”€â”€â”€ Version-Tolerant Decoding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Field counts of the current and pre-v3 record shapes.
 ///
@@ -41,7 +41,7 @@ fn record_field_count(env: &Env, raw: &Val) -> Option<u32> {
         .map(|m| m.len())
 }
 
-// ─── Stream Counter ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Stream Counter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Returns the next stream ID and persists the updated counter.
 ///
@@ -61,14 +61,14 @@ pub fn next_stream_id(env: &Env) -> u64 {
     id
 }
 
-// ─── Stream CRUD ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Stream CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Loads a stream by ID from persistent storage, tolerating the legacy shape.
 ///
 /// A pre-v2 record has no `schedule` field, so decoding it as the current
 /// [`Stream`] fails. Rather than bricking escrowed funds after an in-place code
 /// upgrade, fall back to [`LegacyStream`] and report it as the linear drip it
-/// was created as. The upgraded record is not written back here — the next
+/// was created as. The upgraded record is not written back here â€” the next
 /// `save_stream` for that ID persists the current shape, which is how
 /// `migrate`'s lazy per-stream healing works.
 ///
@@ -89,6 +89,11 @@ pub fn save_stream(env: &Env, stream_id: u64, stream: &Stream) {
         PERSISTENT_LIFETIME_THRESHOLD,
         PERSISTENT_BUMP_AMOUNT,
     );
+}
+/// Removes a stream record from persistent storage.
+pub fn remove_stream(env: &Env, stream_id: u64) {
+    let key = DataKey::Stream(stream_id);
+    env.storage().persistent().remove(&key);
 }
 
 /// Returns the stream if it exists, `None` otherwise (used by read-only queries).
@@ -128,6 +133,7 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         status: legacy.status,
         // A stream with no schedule field predates step vesting: it is a
         // continuous drip by construction.
+        cliff_time: None,
         schedule: VestingSchedule::Linear,
         // New fields default to no arbiter, no dispute, and non-allowance-based.
         arbiter: None,
@@ -136,7 +142,7 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
     }
 }
 
-// ─── Protocol Config ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Protocol Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Checks whether the protocol config has already been initialized.
 pub fn config_exists(env: &Env) -> bool {
@@ -148,16 +154,16 @@ pub fn config_exists(env: &Env) -> bool {
 /// An older deployment persisted a three-field [`LegacyProtocolConfig`]. A
 /// `#[contracttype]` struct decodes field-by-field from a Soroban `Map`, so
 /// reading the five-field [`ProtocolConfig`] out of a legacy record does not
-/// fail cleanly — see [`record_field_count`]. Rather than bricking the contract
+/// fail cleanly â€” see [`record_field_count`]. Rather than bricking the contract
 /// after an in-place code upgrade, the record's field count selects the legacy
 /// shape and reports it with the safe defaults `is_protocol_paused: false` and
 /// `emergency_guardian: None`.
 ///
-/// The upgraded value is *not* written back here — `load_config` is read-only.
+/// The upgraded value is *not* written back here â€” `load_config` is read-only.
 /// [`crate::StreamContract::migrate`] performs the actual persisted upgrade.
 ///
 /// # Errors
-/// - `NotInitialized` — no config present in either shape.
+/// - `NotInitialized` â€” no config present in either shape.
 pub fn load_config(env: &Env) -> Result<ProtocolConfig, StreamError> {
     try_load_config(env).ok_or(StreamError::NotInitialized)
 }
@@ -199,7 +205,7 @@ pub fn save_config(env: &Env, config: &ProtocolConfig) {
         .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 }
 
-// ─── State Schema Versioning ──────────────────────────────────────────────────
+// â”€â”€â”€ State Schema Versioning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Reads the persisted state schema version.
 ///
@@ -219,7 +225,7 @@ pub fn save_contract_version(env: &Env, version: u32) {
         .set(&DataKey::ContractVersion, &version);
 }
 
-// ─── Executable Hash Tracking ─────────────────────────────────────────────────
+// â”€â”€â”€ Executable Hash Tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Reads the executable hash recorded by the most recent `upgrade`.
 ///
@@ -237,14 +243,4 @@ pub fn save_recorded_wasm_hash(env: &Env, hash: &soroban_sdk::BytesN<32>) {
     env.storage()
         .instance()
         .set(&DataKey::ContractWasmHash, hash);
-}
-
-// ─── Stream Deletion ──────────────────────────────────────────────────────────
-
-/// Removes a stream record from persistent storage.
-///
-/// Used to prune fully settled streams and reclaim storage rent.
-pub fn remove_stream(env: &Env, stream_id: u64) {
-    let key = DataKey::Stream(stream_id);
-    env.storage().persistent().remove(&key);
 }

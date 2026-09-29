@@ -304,7 +304,8 @@ jobs:
             filename=$(basename "$w")
             out="$RELEASE_DIR/${filename%.wasm}.optimized.wasm"
             echo "Optimizing $filename -> $(basename "$out")"
-            stellar contract optimize --wasm "$w" --wasm-out "$out"
+            stellar contract build --optimize
+            cp "$RELEASE_DIR/stream_contract.wasm" "$out"
           done
         shell: bash
 
