@@ -349,7 +349,7 @@ export async function batchWithdrawFromStreams(
 ): Promise<SorobanResult> {
   const { nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "batch_withdraw", [
-    nativeToScVal(params.streamIds, { type: "vec" }),
+    nativeToScVal(params.streamIds, { type: "vec" as any }),
   ]);
 }
 

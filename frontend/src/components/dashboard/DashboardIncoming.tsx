@@ -1,7 +1,6 @@
 import { useState } from "react";
 import IncomingStreams from "../IncomingStreams";
 import type { Stream } from "@/lib/dashboard";
-import { InboxIcon } from "./dashboard-view";
 import { BatchClaimDrawer } from "./BatchClaimDrawer";
 import { ShareAddressModal } from "./ShareAddressModal";
 import { Share2, Waves } from "lucide-react";
