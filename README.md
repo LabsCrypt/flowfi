@@ -273,6 +273,7 @@ For architecture details, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 - **Architecture Decision Records:** [docs/adr/](docs/adr/) — TTL strategy, keeper-key deprecation, indexer cursor/dead-letter, SSE/WebSocket coexistence.
 - **STRIDE Threat Model:** [docs/security/STRIDE_THREAT_MODEL.md](docs/security/STRIDE_THREAT_MODEL.md) — trust boundaries, threat matrix, mitigations, residual risks.
+- **Batch Withdrawal Flow:** [docs/architecture/BATCH_WITHDRAWAL.md](docs/architecture/BATCH_WITHDRAWAL.md) — end-to-end sequence diagram for batch claims across frontend, SDK, contract, indexer, and SSE.
 - **TypeScript SDK (client-side signing):** [packages/flowfi-sdk/](packages/flowfi-sdk/) — standalone `FlowFiClient` for direct ledger access without the backend API.
 - **Preview environments:** every PR gets an ephemeral full-stack preview (migrated + seeded DB) via `.github/workflows/pr-preview.yml`; resources are torn down by `pr-preview-cleanup.yml` on close.
 
