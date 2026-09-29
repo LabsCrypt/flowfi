@@ -81,4 +81,16 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// Operation requires an active stream, but the stream is inactive (cancelled or completed).
+    StreamNotActive = 34,
+    /// An amount or timestamp calculation exceeded the range of its type.
+    ArithmeticOverflow = 35,
+    /// Operation requires a fully settled stream, but unwithdrawn funds remain.
+    StreamStillActive = 36,
+}
+
+impl StreamError {
+    /// Alias for `InvalidDuration` representing an invalid time range (e.g. end_time <= start_time or zero duration).
+    #[allow(non_upper_case_globals)]
+    pub const InvalidTimeRange: StreamError = StreamError::InvalidDuration;
 }
