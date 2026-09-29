@@ -1,7 +1,7 @@
-version: 2
+﻿version: 2
 
 updates:
-  # ── npm: root workspace ────────────────────────────────────────────────────
+  # â”€â”€ npm: root workspace â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   # flowfi is a single npm workspace (frontend + backend hoisted into one root
   # package-lock.json). Dependabot must update from the workspace root so the
   # root lockfile CI runs `npm ci` against stays in sync. Per-directory entries
@@ -20,7 +20,7 @@ updates:
           - "minor"
           - "patch"
 
-  # ── Cargo: contracts ───────────────────────────────────────────────────────
+  # â”€â”€ Cargo: contracts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   # Rust/soroban-sdk crate updates (including security patches) for the
   # Soroban contracts under /contracts. Schedule mirrors the npm entry above.
   - package-ecosystem: "cargo"
@@ -30,12 +30,11 @@ updates:
       day: "monday"
     open-pull-requests-limit: 5
     groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      rust-dependencies:
+        patterns:
+          - "*"
 
-  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  # â”€â”€ GitHub Actions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -48,7 +47,7 @@ updates:
           - "minor"
           - "patch"
 
-  # ── Docker ─────────────────────────────────────────────────────────────────
+  # â”€â”€ Docker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   - package-ecosystem: "docker"
     directory: "/backend"
     schedule:
