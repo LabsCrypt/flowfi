@@ -47,7 +47,10 @@ export function transactionSuccessToast(
   options?: ToastOptions
 ): string {
   playTransactionSuccessSound();
-  return toast.success(message, options);
+  // Only forward options when they exist: `toast.success(msg, undefined)` is
+  // equivalent at runtime, but the explicit second argument breaks callers
+  // (and tests) that match against the single-argument call.
+  return options ? toast.success(message, options) : toast.success(message);
 }
 
 export { SOUND_STORAGE_KEY };
