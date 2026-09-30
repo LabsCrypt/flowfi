@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { StellarExplorerLink } from "../StellarExplorerLink";
-import { NetworkProvider } from "@/context/NetworkContext";
+import * as NetworkContext from "@/context/NetworkContext";
 
 // Mock the NetworkContext
 jest.mock("@/context/NetworkContext", () => ({
@@ -22,7 +22,7 @@ describe("StellarExplorerLink", () => {
   });
 
   it("generates correct Mainnet URL when network is mainnet", () => {
-    jest.spyOn(require("@/context/NetworkContext"), "useNetwork").mockReturnValue({
+    jest.spyOn(NetworkContext, "useNetwork").mockReturnValue({
       networkId: "mainnet",
     });
 

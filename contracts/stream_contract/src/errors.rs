@@ -81,4 +81,16 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// An amount or timestamp calculation exceeded the range of its type.
+    ///
+    /// Returned instead of letting `overflow-checks` panic and abort the whole
+    /// transaction, so callers get a typed failure they can handle.
+    ArithmeticOverflow = 34,
+    /// Operation requires a fully settled stream, but unwithdrawn funds remain.
+    ///
+    /// Returned by `close_stream` when the stream is still active, has a
+    /// non-terminal status, or still holds a claimable / undeposited balance.
+    StreamStillActive = 35,
+    /// Operation requires an active stream, but the stream is inactive (cancelled or completed).
+    StreamNotActive = 36,
 }

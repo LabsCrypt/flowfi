@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo } from "react";
 import { AlertTriangle } from "lucide-react";
 
 interface ScheduleStepProps {
@@ -17,14 +17,8 @@ interface ScheduleStepProps {
 const MAX_MEMO_BYTES = 28;
 
 export function ScheduleStep({ formData, errors, onUpdate }: ScheduleStepProps) {
-  const [memoByteCount, setMemoByteCount] = useState(0);
   const memo = formData.memo || "";
-
-  useEffect(() => {
-    // Calculate UTF-8 byte length
-    const bytes = new TextEncoder().encode(memo).length;
-    setMemoByteCount(bytes);
-  }, [memo]);
+  const memoByteCount = useMemo(() => new TextEncoder().encode(memo).length, [memo]);
 
   const isNearLimit = memoByteCount >= MAX_MEMO_BYTES * 0.8;
   const isOverLimit = memoByteCount > MAX_MEMO_BYTES;

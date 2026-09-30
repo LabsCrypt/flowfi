@@ -123,8 +123,6 @@ pub struct Stream {
     pub start_time: u64,
     /// Ledger timestamp of the last state mutation, in Unix epoch seconds.
     pub last_update_time: u64,
-    /// Optional timestamp before which no tokens are claimable.
-    pub cliff_time: Option<u64>,
     /// `false` once fully withdrawn or cancelled. Always set.
     pub is_active: bool,
     /// `true` while the stream is paused; accrual is frozen at `paused_at`. Always set.
@@ -143,6 +141,9 @@ pub struct Stream {
     /// Whether this stream uses allowance-based funding (for #1318).
     pub is_allowance_based: bool,
 }
+
+/// Alias for DataKey representing storage keys in the contract.
+pub type StorageKey = DataKey;
 
 /// Protocol-wide configuration, fee circuit breaker and guardian role.
 ///

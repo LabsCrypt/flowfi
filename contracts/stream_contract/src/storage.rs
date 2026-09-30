@@ -11,7 +11,7 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 use crate::errors::StreamError;
 use crate::types::{
-    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, StorageKey, Stream,
     VestingSchedule,
 };
 
@@ -63,6 +63,18 @@ pub fn next_stream_id(env: &Env) -> u64 {
 
 // ─── Stream CRUD ─────────────────────────────────────────────────────────────
 
+/// Extends the persistent storage TTL for a position or stream metadata entry
+/// up to the contract maximum lifetime.
+pub fn bump_position_ttl(env: &Env, key: &StorageKey) {
+    if env.storage().persistent().has(key) {
+        env.storage().persistent().extend_ttl(
+            key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+    }
+}
+
 /// Loads a stream by ID from persistent storage, tolerating the legacy shape.
 ///
 /// A pre-v2 record has no `schedule` field, so decoding it as the current
@@ -84,21 +96,20 @@ pub fn load_stream(env: &Env, stream_id: u64) -> Result<Stream, StreamError> {
 pub fn save_stream(env: &Env, stream_id: u64, stream: &Stream) {
     let key = DataKey::Stream(stream_id);
     env.storage().persistent().set(&key, stream);
-    env.storage().persistent().extend_ttl(
-        &key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
+    bump_position_ttl(env, &key);
 }
 
 /// Returns the stream if it exists, `None` otherwise (used by read-only queries).
 pub fn try_load_stream(env: &Env, stream_id: u64) -> Option<Stream> {
-    let raw: Option<Val> = env.storage().persistent().get(&DataKey::Stream(stream_id));
+    let key = DataKey::Stream(stream_id);
+    let raw: Option<Val> = env.storage().persistent().get(&key);
 
     // Reading as a bare `Val` is what makes the legacy fallback possible:
     // `storage.get::<_, Stream>` collapses "absent" and "undecodable" into the
     // same `None`, so the value is inspected before anything is decoded.
     let raw = raw?;
+
+    bump_position_ttl(env, &key);
 
     match record_field_count(env, &raw)? {
         STREAM_FIELD_COUNT => Stream::try_from_val(env, &raw).ok(),

@@ -5,7 +5,7 @@ use std::string::ToString;
 use super::*;
 use soroban_sdk::{
     contract, contractimpl,
-    testutils::{Address as _, Events, Ledger},
+    testutils::{storage::Persistent as _, Address as _, Events, Ledger},
     token, vec, xdr, Address, Bytes, BytesN, Env, Symbol, TryFromVal, Val, Vec as SorobanVec,
 };
 
@@ -41,13 +41,13 @@ impl ReentrantFeeToken {
                 .instance()
                 .get(&Symbol::new(&env, "stream_contract"))
                 .unwrap();
-            let stream = StreamContractClient::new(&env, &stream_contract)
-                .get_stream(&1)
-                .unwrap();
-            env.storage().instance().set(
-                &Symbol::new(&env, "observed_deposit"),
-                &stream.deposited_amount,
-            );
+            let deposit = env.as_contract(&stream_contract, || {
+                let stream: Stream = env.storage().persistent().get(&DataKey::Stream(1)).unwrap();
+                stream.deposited_amount
+            });
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "observed_deposit"), &deposit);
         }
     }
 }
@@ -160,12 +160,14 @@ fn test_datakey_stream_serializes_deterministically() {
         withdrawn_amount: 0,
         start_time: 1,
         last_update_time: 1,
-        cliff_time: None,
         is_active: true,
         paused: false,
         paused_at: None,
         status: StreamStatus::Active,
         schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -2351,7 +2353,6 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             withdrawn_amount: withdrawn,
             start_time: 0,
             last_update_time: 0,
-            cliff_time: None,
             is_active: true,
             paused,
             paused_at: if paused {
@@ -2365,6 +2366,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+            arbiter: None,
+            dispute_status: DisputeStatus::None,
+            is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
@@ -4576,7 +4580,7 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
     // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    raw_stream_field_count(env, contract, stream_id) == 16
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].
@@ -5829,4 +5833,187 @@ fn test_batch_withdraw_never_exceeds_escrow_across_many_streams() {
     client.batch_withdraw(&recipient, &ids);
     assert_eq!(balances.balance(&recipient), 10_000);
     assert_eq!(balances.balance(&contract), 0, "escrow not fully drained");
+}
+
+// ─── Storage TTL Extension & Position Bumping (Issue #1519) ───────────────────
+
+#[test]
+fn test_querying_stream_metadata_automatically_extends_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+    let key = DataKey::Stream(id);
+
+    let initial_ttl = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(initial_ttl >= storage::PERSISTENT_LIFETIME_THRESHOLD);
+
+    // Mock ledger sequence increment: advance ledger by 400,000 ledgers
+    // This simulates infrequent access over a long timeframe (e.g. 4-year vesting)
+    // reducing the remaining TTL well below PERSISTENT_LIFETIME_THRESHOLD (120,960)
+    env.ledger().with_mut(|l| {
+        l.sequence_number += 400_000;
+    });
+
+    let ttl_before_query = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(
+        ttl_before_query < storage::PERSISTENT_LIFETIME_THRESHOLD,
+        "TTL before query ({ttl_before_query}) must be below threshold ({})",
+        storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+
+    // Querying stream metadata via get_stream automatically triggers bump_position_ttl
+    let stream = client.get_stream(&id).expect("stream must exist");
+    assert_eq!(stream.deposited_amount, 1_000);
+
+    let ttl_after_query = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(
+        ttl_after_query >= storage::PERSISTENT_BUMP_AMOUNT - 10,
+        "TTL after get_stream query ({ttl_after_query}) should be bumped near max ({})",
+        storage::PERSISTENT_BUMP_AMOUNT
+    );
+    assert!(ttl_after_query > ttl_before_query);
+}
+
+#[test]
+fn test_all_read_only_position_queries_extend_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+    let key = DataKey::Stream(id);
+
+    let refresh_instance = || {
+        env.as_contract(&contract, || {
+            env.storage().instance().extend_ttl(
+                storage::INSTANCE_LIFETIME_THRESHOLD,
+                storage::INSTANCE_BUMP_AMOUNT,
+            );
+        });
+    };
+
+    // Test get_claimable_amount extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert!(client.get_claimable_amount(&id).is_some());
+    let ttl_after_claimable =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_claimable >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Test get_vesting_schedule extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert_eq!(
+        client.get_vesting_schedule(&id),
+        Some(VestingSchedule::Linear)
+    );
+    let ttl_after_schedule =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_schedule >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Test get_projected_end_time extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert!(client.get_projected_end_time(&id).is_some());
+    let ttl_after_end_time =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_end_time >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Test is_stream_completed extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert!(!client.is_stream_completed(&id));
+    let ttl_after_completed =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_completed >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+}
+
+#[test]
+fn test_bump_position_ttl_helper_directly() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+    let key: types::StorageKey = types::DataKey::Stream(id);
+
+    let refresh_instance = || {
+        env.as_contract(&contract, || {
+            env.storage().instance().extend_ttl(
+                storage::INSTANCE_LIFETIME_THRESHOLD,
+                storage::INSTANCE_BUMP_AMOUNT,
+            );
+        });
+    };
+
+    // Advance sequence number to drain TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    let ttl_before = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_before < storage::PERSISTENT_LIFETIME_THRESHOLD);
+
+    // Call bump_position_ttl helper directly
+    env.as_contract(&contract, || {
+        storage::bump_position_ttl(&env, &key);
+    });
+
+    let ttl_after = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Calling bump_position_ttl on a non-existent key gracefully does not panic
+    let non_existent_key = types::DataKey::Stream(999_999);
+    env.as_contract(&contract, || {
+        storage::bump_position_ttl(&env, &non_existent_key);
+    });
+
+    // Test explicit contract method bump_stream_ttl
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    client.bump_stream_ttl(&id);
+    let ttl_after_contract_bump =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_contract_bump >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Contract method bump_stream_ttl returns StreamNotFound on non-existent stream
+    assert_eq!(
+        client.try_bump_stream_ttl(&999_999),
+        Err(Ok(StreamError::StreamNotFound))
+    );
 }
