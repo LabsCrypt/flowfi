@@ -81,4 +81,26 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// An arithmetic operation overflowed its integer type. Specific triggers:
+    /// - **Fee calculation** — `amount × fee_rate_bps` overflows `i128`.
+    /// - **Withdrawal accounting** — `withdrawn_amount + claimable` overflows `i128`.
+    /// - **End-time projection** — `remaining / rate` does not fit in `u64`,
+    ///   or `now + seconds_remaining` overflows `u64` in `project_end_time`.
+    ///
+    /// Returned by: `top_up_stream`, `top_up_from`, `resume_stream`, `modify_rate`
+    /// (via `project_end_time`), and any entrypoint that calls `collect_fee`
+    /// or `apply_withdrawal` with an extreme token amount.
+    ArithmeticOverflow = 34,
+    /// `close_stream` was called on a stream that is not yet eligible for
+    /// on-chain pruning: still active, not in a terminal status, or still
+    /// holds unclaimed or un-refunded tokens.
+    ///
+    /// Returned by: `close_stream`.
+    StreamStillActive = 35,
+    /// `resume_stream` was called on a stream whose `is_active` flag is
+    /// `false` (cancelled or fully completed). Distinct from `StreamNotPaused`,
+    /// which applies to a stream that is still active but not currently paused.
+    ///
+    /// Returned by: `resume_stream`.
+    StreamNotActive = 36,
 }

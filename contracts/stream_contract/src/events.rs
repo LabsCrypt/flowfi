@@ -57,6 +57,27 @@ pub struct StreamToppedUpEvent {
     pub new_end_time: u64,
 }
 
+/// Emitted when a third-party funder extends an active stream via `top_up_from`.
+///
+/// Topic: `("stream_refueled", stream_id)`
+///
+/// Distinct from [`StreamToppedUpEvent`] (emitted by the stream creator via
+/// `top_up_stream`) so that indexers and UIs can attribute runway extensions
+/// to their correct actor — the external funder rather than the original sender.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamRefueledEvent {
+    pub stream_id: u64,
+    /// Address that supplied the tokens — the third-party funder, not the stream creator.
+    pub funder: Address,
+    /// Net amount credited to the stream after protocol fee deduction.
+    pub amount: i128,
+    /// Total deposited amount on the stream after this refuel.
+    pub new_deposited_amount: i128,
+    /// Projected ledger timestamp at which the stream will fully drain after this refuel.
+    pub new_end_time: u64,
+}
+
 /// Emitted when the recipient withdraws accrued tokens.
 ///
 /// Topic: `("tokens_withdrawn", stream_id)`

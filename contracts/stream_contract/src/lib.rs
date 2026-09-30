@@ -51,8 +51,8 @@ use events::{
     FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
     ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
     StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    StreamPausedEvent, StreamRateModifiedEvent, StreamRefueledEvent, StreamResumedEvent,
+    StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     config_exists, get_contract_version, get_recorded_wasm_hash, load_config, load_stream,
@@ -523,6 +523,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -620,6 +621,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -765,6 +767,107 @@ impl StreamContract {
             StreamToppedUpEvent {
                 stream_id,
                 sender,
+                amount: net_amount,
+                new_deposited_amount: stream.deposited_amount,
+                new_end_time,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Top up an active stream with tokens from a third-party funder.
+    ///
+    /// Unlike [`top_up_stream`], this entrypoint does **not** require the caller
+    /// to be the original stream creator. Any address — a keeper bot, a DAO
+    /// multisig, a grant sponsor, or a subsidiary wallet — may extend a stream's
+    /// runway by depositing additional collateral.
+    ///
+    /// # Authorization & Accounting
+    /// - `funder.require_auth()` is enforced; the funder must sign the transaction.
+    /// - The protocol fee (if configured) is deducted from `amount` before the
+    ///   net is credited to `stream.deposited_amount`.
+    /// - `last_update_time` is intentionally left untouched: it is the accrual
+    ///   anchor for `calculate_claimable`, and advancing it to `now` would
+    ///   discard already-vested, unwithdrawn tokens.
+    ///
+    /// # Cancellation Refund Equity
+    /// Third-party top-ups are **irrevocable donations** to the stream principal.
+    /// If the stream is later cancelled, the unvested balance is refunded to the
+    /// **original `stream.sender`**, not to past funders. Funders should treat
+    /// this call as a one-way contribution (grant match, payroll emergency
+    /// deposit) with no expectation of recovery.
+    ///
+    /// # Schedule Restrictions
+    /// Rejected for [`VestingSchedule::StepTranches`] with `TopUpUnsupported`
+    /// — a step schedule must sum to exactly the deposited amount, so extra
+    /// tokens have nowhere to go without either stranding them as unclaimable
+    /// residue or silently deferring them to the final milestone.
+    ///
+    /// # Errors
+    /// - `ProtocolPaused`     — the circuit breaker is engaged.
+    /// - `InvalidAmount`      — `amount` ≤ 0.
+    /// - `StreamNotFound`     — no stream exists with `stream_id`.
+    /// - `StreamInactive`     — stream has been cancelled or fully withdrawn.
+    /// - `TopUpUnsupported`   — the stream uses a step-tranche schedule.
+    /// - `ArithmeticOverflow` — `deposited_amount + net_amount` overflows `i128`.
+    pub fn top_up_from(
+        env: Env,
+        funder: Address,
+        stream_id: u64,
+        amount: i128,
+    ) -> Result<(), StreamError> {
+        funder.require_auth();
+        Self::require_not_protocol_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
+        let mut stream = load_stream(&env, stream_id)?;
+
+        // Active check — same guard as top_up_stream, without the ownership
+        // check. Any authenticated funder may extend an active stream.
+        Self::validate_stream_active(&stream)?;
+
+        if matches!(stream.schedule, VestingSchedule::StepTranches(_)) {
+            return Err(StreamError::TopUpUnsupported);
+        }
+
+        // Transfer gross amount from funder to contract.
+        let token_client = token::Client::new(&env, &stream.token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&funder, &contract_address, &amount);
+
+        // Deduct protocol fee; returns net amount (== amount when fee_rate_bps == 0).
+        let (net_amount, fee_amount, treasury) =
+            Self::collect_fee(&env, &stream.token_address, amount)?;
+
+        // Extend deposited balance. `last_update_time` is intentionally left
+        // untouched: advancing it to `now` would silently discard already-vested
+        // but unwithdrawn tokens.
+        stream.deposited_amount = stream
+            .deposited_amount
+            .checked_add(net_amount)
+            .ok_or(StreamError::ArithmeticOverflow)?;
+
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(claimable);
+        let new_end_time = Self::project_end_time(now, remaining, stream.rate_per_second)?;
+
+        save_stream(&env, stream_id, &stream);
+
+        Self::transfer_fee(&env, &stream.token_address, stream_id, fee_amount, treasury);
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_refueled"), stream_id),
+            StreamRefueledEvent {
+                stream_id,
+                funder,
                 amount: net_amount,
                 new_deposited_amount: stream.deposited_amount,
                 new_end_time,
@@ -1400,7 +1503,8 @@ impl StreamContract {
 
             // Each stream is committed to storage before its own token transfer
             // (CEI), so a malicious token cannot re-enter against stale state.
-            Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now);
+            let _ =
+                Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now);
 
             let completed = stream.status == StreamStatus::Completed;
 
@@ -1682,13 +1786,15 @@ impl StreamContract {
         let stream_id = next_stream_id(&env);
         let start_time = env.ledger().timestamp();
 
-        // Check allowance: just verify it's callable, don't lock it yet
-        let token_client = token::Client::new(&env, &token_address);
         // Try to get allowance to validate approval was made
         match env.try_invoke_contract::<i128, soroban_sdk::InvokeError>(
             &token_address,
             &Symbol::new(&env, "allowance"),
-            vec![&env, &sender, &env.current_contract_address()],
+            vec![
+                &env,
+                sender.to_val(),
+                env.current_contract_address().to_val(),
+            ],
         ) {
             Ok(Ok(allowance)) if allowance > 0 => {}
             _ => return Err(StreamError::AllowanceLocked),
@@ -1710,6 +1816,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -1885,7 +1992,7 @@ impl StreamContract {
     /// Time complexity: O(1).
     fn collect_fee(
         env: &Env,
-        token_address: &Address,
+        _token_address: &Address,
         amount: i128,
     ) -> Result<(i128, i128, Option<Address>), StreamError> {
         match try_load_config(env) {

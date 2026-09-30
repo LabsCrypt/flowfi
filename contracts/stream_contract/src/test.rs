@@ -15,7 +15,7 @@ use events::{
     FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
     ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
     StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
-    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    StreamRefueledEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{
     DataKey, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream, StreamStatus,
@@ -41,13 +41,13 @@ impl ReentrantFeeToken {
                 .instance()
                 .get(&Symbol::new(&env, "stream_contract"))
                 .unwrap();
-            let stream = StreamContractClient::new(&env, &stream_contract)
-                .get_stream(&1)
-                .unwrap();
-            env.storage().instance().set(
-                &Symbol::new(&env, "observed_deposit"),
-                &stream.deposited_amount,
-            );
+            let observed_deposit = env.as_contract(&stream_contract, || {
+                let stream: Stream = env.storage().persistent().get(&DataKey::Stream(1)).unwrap();
+                stream.deposited_amount
+            });
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "observed_deposit"), &observed_deposit);
         }
     }
 }
@@ -166,6 +166,9 @@ fn test_datakey_stream_serializes_deterministically() {
         paused_at: None,
         status: StreamStatus::Active,
         schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: types::DisputeStatus::None,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -721,6 +724,270 @@ fn test_top_up_then_cancel_pays_pre_topup_accrued() {
 
     let recipient_balance_after = token_client.balance(&recipient);
     assert_eq!(recipient_balance_after - recipient_balance_before, 900);
+}
+
+// ─── top_up_from ──────────────────────────────────────────────────────────────
+
+#[test]
+fn test_top_up_from_third_party_increases_deposited_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder, 5_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    let before = client.get_stream(&id).unwrap().deposited_amount;
+
+    client.top_up_from(&funder, &id, &5_000);
+
+    let after = client.get_stream(&id).unwrap().deposited_amount;
+    assert!(
+        after > before,
+        "deposited_amount must increase after third-party top-up"
+    );
+    assert_eq!(after, before + 5_000);
+}
+
+#[test]
+fn test_top_up_from_extends_projected_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder, 10_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    let end_before = client.get_projected_end_time(&id).unwrap();
+
+    client.top_up_from(&funder, &id, &10_000);
+
+    let end_after = client.get_projected_end_time(&id).unwrap();
+    assert!(
+        end_after > end_before,
+        "projected end time must extend after refuel"
+    );
+}
+
+#[test]
+fn test_top_up_from_rejects_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    assert_eq!(
+        client.try_top_up_from(&funder, &id, &0),
+        Err(Ok(StreamError::InvalidAmount))
+    );
+}
+
+#[test]
+fn test_top_up_from_rejects_negative_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+
+    assert_eq!(
+        client.try_top_up_from(&funder, &id, &-100),
+        Err(Ok(StreamError::InvalidAmount))
+    );
+}
+
+#[test]
+fn test_top_up_from_rejects_nonexistent_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let funder = Address::generate(&env);
+
+    assert_eq!(
+        client.try_top_up_from(&funder, &9999, &1_000),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+#[test]
+fn test_top_up_from_rejects_inactive_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder, 5_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    client.cancel_stream(&sender, &id);
+
+    assert_eq!(
+        client.try_top_up_from(&funder, &id, &5_000),
+        Err(Ok(StreamError::StreamInactive))
+    );
+}
+
+#[test]
+fn test_top_up_from_rejects_step_tranche_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder, 5_000);
+
+    let client = create_contract(&env);
+    let steps = step_schedule(&env, &[(50, 5_000), (100, 5_000)]);
+    let id = client.create_step_vesting_stream(
+        &sender,
+        &Address::generate(&env),
+        &token,
+        &10_000,
+        &steps,
+    );
+
+    assert_eq!(
+        client.try_top_up_from(&funder, &id, &5_000),
+        Err(Ok(StreamError::TopUpUnsupported))
+    );
+}
+
+#[test]
+fn test_top_up_from_emits_stream_refueled_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder, 5_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    client.top_up_from(&funder, &id, &5_000);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "stream_refueled")
+        })
+        .expect("stream_refueled event not found");
+
+    let payload: StreamRefueledEvent = StreamRefueledEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.funder, funder);
+    assert_eq!(payload.amount, 5_000);
+    assert_eq!(payload.new_deposited_amount, 15_000);
+}
+
+#[test]
+fn test_top_up_from_multi_funder_runway_extension() {
+    // Multiple independent funders can each extend the stream in sequence.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let funder_a = Address::generate(&env);
+    let funder_b = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder_a, 5_000);
+    mint(&env, &token, &funder_b, 5_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    let end_initial = client.get_projected_end_time(&id).unwrap();
+
+    client.top_up_from(&funder_a, &id, &5_000);
+    let end_after_a = client.get_projected_end_time(&id).unwrap();
+
+    client.top_up_from(&funder_b, &id, &5_000);
+    let end_after_b = client.get_projected_end_time(&id).unwrap();
+
+    assert!(end_after_a > end_initial, "first funder must extend runway");
+    assert!(
+        end_after_b > end_after_a,
+        "second funder must extend runway further"
+    );
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 20_000);
+}
+
+#[test]
+fn test_top_up_from_preserves_already_accrued_claimable() {
+    // Already-vested, unwithdrawn tokens must survive a third-party refuel.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    mint(&env, &token, &funder, 500);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Vest 900 tokens before the refuel.
+    advance(&env, 900);
+    assert_eq!(client.get_claimable_amount(&id), Some(900));
+
+    client.top_up_from(&funder, &id, &100);
+
+    // Already-accrued balance must be unchanged.
+    assert_eq!(client.get_claimable_amount(&id), Some(900));
+}
+
+#[test]
+fn test_top_up_from_cancel_refunds_unvested_to_original_sender() {
+    // Irrevocable donation: when a refueled stream is cancelled, the unvested
+    // balance goes back to the ORIGINAL sender, not the funder.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let funder = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    mint(&env, &token, &funder, 5_000);
+
+    let client = create_contract(&env);
+    let token_client = token::Client::new(&env, &token);
+    let id = client.create_stream(&sender, &recipient, &token, &10_000, &1_000);
+
+    client.top_up_from(&funder, &id, &5_000);
+
+    let sender_balance_before = token_client.balance(&sender);
+    let funder_balance_before = token_client.balance(&funder);
+
+    // Cancel immediately — no time has elapsed, so no tokens accrued to recipient.
+    client.cancel_stream(&sender, &id);
+
+    let sender_balance_after = token_client.balance(&sender);
+    let funder_balance_after = token_client.balance(&funder);
+
+    // All 15_000 unvested tokens must be returned to the original sender.
+    assert_eq!(sender_balance_after - sender_balance_before, 15_000);
+    // Funder gets nothing back — top-up is an irrevocable donation.
+    assert_eq!(funder_balance_after, funder_balance_before);
 }
 
 // ─── withdraw ────────────────────────────────────────────────────────────────
@@ -2365,6 +2632,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+            arbiter: None,
+            dispute_status: types::DisputeStatus::None,
+            is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
@@ -4575,8 +4845,8 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    // Current `Stream` has 17 fields (including schedule, cliff_time, dispute fields, etc.).
+    raw_stream_field_count(env, contract, stream_id) == 17
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].
