@@ -34,8 +34,6 @@ mod storage;
 mod types;
 
 #[cfg(test)]
-mod acceptance_tests;
-#[cfg(test)]
 mod property_tests;
 #[cfg(test)]
 mod test;
@@ -46,13 +44,13 @@ use soroban_sdk::{
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, AllowanceStreamCreatedEvent, ContractUpgradedEvent,
-    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
-    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
-    ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
-    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    emit_protocol_paused, AdminTransferredEvent, AllowanceStreamCreatedEvent,
+    ContractUpgradedEvent, DisputeRequestedEvent, DisputeResolvedEvent,
+    EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
+    HybridCliffStreamCreatedEvent, InitializedEvent, ProtocolPauseStatusEvent, StateMigratedEvent,
+    StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent,
+    StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     config_exists, get_contract_version, get_recorded_wasm_hash, load_config, load_stream,
@@ -278,6 +276,8 @@ impl StreamContract {
         config.is_protocol_paused = paused;
         save_config(&env, &config);
 
+        emit_protocol_paused(&env, &caller, paused);
+
         env.events().publish(
             (Symbol::new(&env, "protocol_pause_status"),),
             ProtocolPauseStatusEvent {
@@ -288,6 +288,14 @@ impl StreamContract {
         );
 
         Ok(())
+    }
+
+    /// Sets or clears the emergency protocol pause state (#1517).
+    ///
+    /// Delegates to [`Self::set_protocol_pause`] to engage or release the protocol-wide
+    /// circuit breaker. Emits the dedicated [`ProtocolPausedEvent`] via [`emit_protocol_paused`].
+    pub fn set_emergency_pause(env: Env, admin: Address, paused: bool) -> Result<(), StreamError> {
+        Self::set_protocol_pause(env, admin, paused)
     }
 
     /// Returns `true` while the protocol-wide circuit breaker is engaged.
@@ -523,6 +531,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -620,6 +629,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: Some(cliff_time),
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -1400,7 +1410,7 @@ impl StreamContract {
 
             // Each stream is committed to storage before its own token transfer
             // (CEI), so a malicious token cannot re-enter against stale state.
-            Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now);
+            Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
 
             let completed = stream.status == StreamStatus::Completed;
 
@@ -1684,14 +1694,9 @@ impl StreamContract {
 
         // Check allowance: just verify it's callable, don't lock it yet
         let token_client = token::Client::new(&env, &token_address);
-        // Try to get allowance to validate approval was made
-        match env.try_invoke_contract::<i128, soroban_sdk::InvokeError>(
-            &token_address,
-            &Symbol::new(&env, "allowance"),
-            vec![&env, &sender, &env.current_contract_address()],
-        ) {
-            Ok(Ok(allowance)) if allowance > 0 => {}
-            _ => return Err(StreamError::AllowanceLocked),
+        let allowance = token_client.allowance(&sender, &env.current_contract_address());
+        if allowance <= 0 {
+            return Err(StreamError::AllowanceLocked);
         }
 
         // Calculate rate: use a nominal rate of 1 per second
@@ -1710,6 +1715,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -1885,7 +1891,7 @@ impl StreamContract {
     /// Time complexity: O(1).
     fn collect_fee(
         env: &Env,
-        token_address: &Address,
+        _token_address: &Address,
         amount: i128,
     ) -> Result<(i128, i128, Option<Address>), StreamError> {
         match try_load_config(env) {

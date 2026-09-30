@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Symbol};
 
 // ─── Wire Format ─────────────────────────────────────────────────────────────
 //
@@ -319,4 +319,28 @@ pub struct StreamClosedEvent {
     pub stream_id: u64,
     pub closer: Address,
     pub timestamp: u64,
+}
+
+/// Dedicated event emitted on protocol pause toggle (#1517).
+///
+/// Topics: `("FlowFi", "ProtocolPaused")`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolPausedEvent {
+    pub admin: Address,
+    pub is_paused: bool,
+}
+
+/// Emits the dedicated ProtocolPaused event on pause toggle (#1517).
+pub fn emit_protocol_paused(env: &Env, admin: &Address, is_paused: bool) {
+    env.events().publish(
+        (
+            Symbol::new(env, "FlowFi"),
+            Symbol::new(env, "ProtocolPaused"),
+        ),
+        ProtocolPausedEvent {
+            admin: admin.clone(),
+            is_paused,
+        },
+    );
 }
