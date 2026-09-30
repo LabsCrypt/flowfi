@@ -1,6 +1,10 @@
+#!/bin/sh
+
+# Guard: Check that lint-staged is installed locally before executing
 if [ ! -x ./node_modules/.bin/lint-staged ]; then
   echo "lint-staged is not installed locally. Run 'npm install' before committing." >&2
   exit 1
 fi
 
 ./node_modules/.bin/lint-staged
+
