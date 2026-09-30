@@ -10,7 +10,8 @@ coverage:
         flags:
           - contracts
       frontend:
-        target: auto
+        # Fixed 60% coverage floor, aligned with backend target
+        target: 60%
         flags:
           - frontend
     patch:
