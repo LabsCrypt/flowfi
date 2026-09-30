@@ -24,7 +24,11 @@ use crate::types::{
 /// here only so the two can be told apart before a decode is attempted.
 const CONFIG_FIELD_COUNT: u32 = 5;
 const LEGACY_CONFIG_FIELD_COUNT: u32 = 3;
-const STREAM_FIELD_COUNT: u32 = 16;
+const STREAM_FIELD_COUNT: u32 = 17; // sender, recipient, token_address, rate_per_second,
+                                    // deposited_amount, withdrawn_amount, start_time,
+                                    // last_update_time, cliff_time, is_active, paused,
+                                    // paused_at, status, schedule, arbiter,
+                                    // dispute_status, is_allowance_based
 const LEGACY_STREAM_FIELD_COUNT: u32 = 12;
 
 /// Returns the number of fields in a stored record, or `None` if it is not a map.
@@ -122,6 +126,9 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         withdrawn_amount: legacy.withdrawn_amount,
         start_time: legacy.start_time,
         last_update_time: legacy.last_update_time,
+        // Legacy streams predate the cliff field; they are continuous drips
+        // with no cliff by construction.
+        cliff_time: None,
         is_active: legacy.is_active,
         paused: legacy.paused,
         paused_at: legacy.paused_at,
