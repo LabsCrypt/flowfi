@@ -14,6 +14,7 @@ import { sandboxMiddleware } from "./middleware/sandbox.middleware.js";
 import { globalRateLimiter } from "./middleware/rate-limiter.middleware.js";
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
+import { getRequestId } from "./lib/request-context.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
@@ -31,11 +32,13 @@ if (!process.env.CORS_ALLOWED_ORIGINS && !isProduction) {
   allowedOrigins.push("http://localhost:3000");
 }
 
-// Apply global rate limiter first
-app.use(globalRateLimiter);
-
-// Request ID tracing
+// Request ID tracing must be the very first middleware so that every response
+// carries X-Request-ID — including responses short-circuited by later
+// middleware such as the rate limiter's 429 or the CORS 403 (Issue #1494).
 app.use(requestIdMiddleware);
+
+// Apply global rate limiter
+app.use(globalRateLimiter);
 
 // Request counting/latency for the Prometheus registry
 app.use(metricsMiddleware);
@@ -90,7 +93,14 @@ app.use(
 // Convert CORS errors into 403 responses so callers get a clear status code
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (err instanceof Error && err.message === "CORS origin not allowed") {
-    res.status(403).json({ error: "CORS origin not allowed" });
+    const requestId = getRequestId();
+    res
+      .status(403)
+      .json(
+        requestId
+          ? { error: "CORS origin not allowed", requestId }
+          : { error: "CORS origin not allowed" },
+      );
     return;
   }
   next(err);

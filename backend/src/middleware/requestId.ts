@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
-import logger, { requestContext } from '../logger.js';
+import logger from '../logger.js';
+import { requestContext } from '../lib/request-context.js';
 
 const MAX_REQUEST_ID_LENGTH = 128;
 
@@ -18,6 +19,9 @@ export function requestIdMiddleware(req: Request, res: Response, next: NextFunct
   const header = req.headers['x-request-id'];
   const requestId = typeof header === 'string' && isValidRequestId(header) ? header : randomUUID();
 
+  // Attach to the request as well as the response so downstream handlers,
+  // error formatters and tests can read the same id without re-parsing headers.
+  (req as Request & { id?: string }).id = requestId;
   res.setHeader('X-Request-ID', requestId);
 
   const startMs = Date.now();

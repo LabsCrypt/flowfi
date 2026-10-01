@@ -1,7 +1,9 @@
-import { AsyncLocalStorage } from 'async_hooks';
 import { createLogger, format, transports } from 'winston';
+import { requestContext } from './lib/request-context.js';
 
-export const requestContext = new AsyncLocalStorage<{ requestId: string }>();
+// Re-exported so callers that already read the request context from the logger
+// module (worker correlation ids, SSE controller) keep working unchanged.
+export { requestContext };
 
 const logger = createLogger({
   level: process.env.LOG_LEVEL || 'info',
