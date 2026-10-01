@@ -437,6 +437,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
       where: { streamId: parsedStreamId },
       select: {
         streamId: true,
+        tokenAddress: true,
         ratePerSecond: true,
         depositedAmount: true,
         withdrawnAmount: true,
@@ -528,6 +529,7 @@ export const getUserStreamSummary = async (
         take: MAX_USER_STREAMS,
         select: {
           streamId: true,
+          tokenAddress: true,
           ratePerSecond: true,
           depositedAmount: true,
           withdrawnAmount: true,
@@ -546,6 +548,7 @@ export const getUserStreamSummary = async (
         take: MAX_USER_STREAMS,
         select: {
           streamId: true,
+          tokenAddress: true,
           ratePerSecond: true,
           depositedAmount: true,
           withdrawnAmount: true,

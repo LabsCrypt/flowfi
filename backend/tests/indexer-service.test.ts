@@ -10,6 +10,7 @@ const hoisted = vi.hoisted(() => ({
   delete: vi.fn(),
   triggerPoll: vi.fn(),
   processEvent: vi.fn(),
+  runExclusive: vi.fn(async (fn: () => Promise<void>) => fn()),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -33,16 +34,24 @@ vi.mock('../src/workers/soroban-event-worker.js', () => ({
   sorobanEventWorker: {
     triggerPoll: hoisted.triggerPoll,
     processEvent: hoisted.processEvent,
+    runExclusive: hoisted.runExclusive,
   },
 }));
 
-vi.mock('../src/logger.js', () => ({
-  default: {
-    info: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-  },
-}));
+vi.mock('../src/logger.js', () => {
+  const requestContext = {
+    getStore: () => undefined,
+    run: <T>(_store: { requestId: string }, fn: () => T): T => fn(),
+  };
+  return {
+    default: {
+      info: vi.fn(),
+      error: vi.fn(),
+      warn: vi.fn(),
+    },
+    requestContext,
+  };
+});
 
 // Metrics and tracing are side-effect-only here; stub them so the assertions
 // below are not perturbed by the shared Prometheus registry.
@@ -92,6 +101,7 @@ const mockedPrisma = prisma as unknown as {
 const mockedWorker = sorobanEventWorker as unknown as {
   triggerPoll: ReturnType<typeof vi.fn>;
   processEvent: ReturnType<typeof vi.fn>;
+  runExclusive: ReturnType<typeof vi.fn>;
 };
 
 /** Build a minimal but structurally valid Soroban EventResponse. */
@@ -289,8 +299,8 @@ describe('Dead-letter payload serialisation', () => {
     expect(restored.transactionIndex).toBe(event.transactionIndex);
     expect(restored.operationIndex).toBe(event.operationIndex);
     expect(restored.inSuccessfulContractCall).toBe(true);
-    expect(restored.topic[0]!.sym().toString()).toBe('stream_created');
-    expect(restored.topic[1]!.u64().toString()).toBe('7');
+    expect((restored.topic[0] as xdr.ScValSymbol).sym.toString()).toBe('stream_created');
+    expect((restored.topic[1] as xdr.ScValU64).u64.toString()).toBe('7');
     expect(restored.value.toXDR()).toEqual(event.value.toXDR());
   });
 
@@ -472,7 +482,7 @@ describe('replayDeadLetterEvent', () => {
     const replayed = mockedWorker.processEvent.mock.calls[0]![0];
     expect(replayed.id).toBe('event-0001');
     expect(replayed.ledger).toBe(482910);
-    expect(replayed.topic[0].sym().toString()).toBe('stream_created');
+    expect((replayed.topic[0] as xdr.ScValSymbol).sym.toString()).toBe('stream_created');
   });
 
   it('increments attempts and refreshes the error when the replay throws', async () => {

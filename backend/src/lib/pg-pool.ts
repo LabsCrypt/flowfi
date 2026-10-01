@@ -24,6 +24,26 @@ export const createPgPoolConfig = (overrides?: Partial<pg.PoolConfig>): pg.PoolC
   ...overrides,
 });
 
+export interface PoolMetrics {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+}
+
+/**
+ * Snapshot the pool's utilisation for the admin metrics endpoint.
+ *
+ * Exposed separately from `publishPoolMetrics` so callers can report the same
+ * numbers without depending on Prometheus being configured.
+ */
+export function getPoolMetrics(pool: pg.Pool): PoolMetrics {
+  return {
+    totalCount: pool.totalCount ?? 0,
+    idleCount: pool.idleCount ?? 0,
+    waitingCount: pool.waitingCount ?? 0,
+  };
+}
+
 /**
  * Publish pool utilisation gauges.
  *
@@ -109,8 +129,8 @@ const POOL_METRICS_INTERVAL_MS = Number(
   process.env.PG_POOL_METRICS_INTERVAL_MS ?? 5_000,
 );
 
-export const createPgPool = (): pg.Pool => {
-  const pool = new pg.Pool(createPgPoolConfig());
+export const createPgPool = (overrides?: Partial<pg.PoolConfig>): pg.Pool => {
+  const pool = new pg.Pool(createPgPoolConfig(overrides));
 
   instrumentPoolQueryTiming(pool);
 

@@ -7,6 +7,7 @@ import {
   rpcFailoversTotal,
 } from '../lib/metrics.js';
 import { withSpan } from '../lib/tracing.js';
+import { rpcPool } from '../lib/rpc-pool.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 
@@ -355,6 +356,49 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 }
 
 /**
+ * Poll Soroban RPC getTransaction until the transaction reaches a terminal
+ * status (SUCCESS or FAILED) or until the bounded timeout expires.
+ */
+export async function pollTransactionStatus(
+  txHash: string,
+  timeoutMs: number = getTxConfirmationTimeoutMs(),
+  pollIntervalMs: number = getTxPollIntervalMs(),
+): Promise<rpc.Api.GetSuccessfulTransactionResponse> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const txResponse = await withRpcRetry('getTransaction', () =>
+      withRpcTimeout('getTransaction', () =>
+        executeRpc('getTransaction', (server) => server.getTransaction(txHash)),
+      ),
+    );
+
+    if (
+      txResponse.status === rpc.Api.GetTransactionStatus.SUCCESS ||
+      (txResponse.status as string) === 'SUCCESS'
+    ) {
+      return txResponse as rpc.Api.GetSuccessfulTransactionResponse;
+    }
+
+    if (
+      txResponse.status === rpc.Api.GetTransactionStatus.FAILED ||
+      (txResponse.status as string) === 'FAILED'
+    ) {
+      const errorDetail = (txResponse as rpc.Api.GetFailedTransactionResponse).resultXdr
+        ? ` (resultXdr: ${(txResponse as rpc.Api.GetFailedTransactionResponse).resultXdr.toXDR('base64')})`
+        : '';
+      throw new Error(`Transaction failed on-chain: ${txHash}${errorDetail}`);
+    }
+
+    if (pollIntervalMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
+  throw new Error(`Transaction confirmation timed out after ${timeoutMs}ms: ${txHash}`);
+}
+
+/**
  * Latest ledger sequence known to the network, or 0 when it cannot be resolved.
  *
  * Feeds the `flowfi_indexer_network_ledger` gauge so `flowfi_indexer_lag_ledgers`
@@ -363,7 +407,9 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 export async function getLatestLedger(): Promise<number> {
   try {
     const response = await withRpcRetry('getLatestLedger', () =>
-      withRpcTimeout('getLatestLedger', () => getServer().getLatestLedger()),
+      withRpcTimeout('getLatestLedger', () =>
+        executeRpc('getLatestLedger', (server) => server.getLatestLedger()),
+      ),
     );
     return Number(response.sequence);
   } catch (err) {
@@ -372,7 +418,7 @@ export async function getLatestLedger(): Promise<number> {
   }
 }
 
-export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
+export async function getStreamFromChain(streamId: bigint): Promise<ChainStream | null> {
   if (!getContractId()) return null;
 
   try {
@@ -838,10 +884,10 @@ function readResourceFootprint(
 ): { cpuInstructions: number; memoryBytes: number } {
   try {
     const data = transactionData.build();
-    const resources = data.resources();
+    const resources = data.resources;
     return {
-      cpuInstructions: Number(resources.instructions()),
-      memoryBytes: Number(resources.writeBytes()),
+      cpuInstructions: Number(resources.instructions),
+      memoryBytes: Number(resources.writeBytes),
     };
   } catch (err) {
     logger.warn('[SorobanService] Could not read resource footprint from simulation:', err);
@@ -855,19 +901,19 @@ function decodeSimulatedReturn(result: rpc.Api.SimulateTransactionSuccessRespons
   if (!retval) return '';
 
   try {
-    switch (retval.switch().value) {
-      case xdr.ScValType.scvI128().value:
+    switch (retval.type) {
+      case 'scvI128':
         return decodeI128(retval);
-      case xdr.ScValType.scvU64().value:
-        return retval.u64().toString();
-      case xdr.ScValType.scvU32().value:
-        return retval.u32().toString();
-      case xdr.ScValType.scvI64().value:
-        return retval.i64().toString();
-      case xdr.ScValType.scvU128().value: {
-        const parts = retval.u128();
-        const hi = BigInt.asUintN(64, BigInt(parts.hi().toString()));
-        const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+      case 'scvU64':
+        return (retval as xdr.ScValU64).u64.toString();
+      case 'scvU32':
+        return (retval as xdr.ScValU32).u32.toString();
+      case 'scvI64':
+        return (retval as xdr.ScValI64).i64.toString();
+      case 'scvU128': {
+        const parts = (retval as xdr.ScValU128).u128;
+        const hi = BigInt.asUintN(64, BigInt(parts.hi.toString()));
+        const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
         return ((hi << 64n) | lo).toString();
       }
       default:
@@ -911,7 +957,9 @@ export async function simulateStreamAction(
   let sourceAccount: Account;
   try {
     sourceAccount = await withRpcRetry('getAccount', () =>
-      withRpcTimeout('getAccount', () => getServer().getAccount(senderPublicKey)),
+      withRpcTimeout('getAccount', () =>
+        executeRpc('getAccount', (server) => server.getAccount(senderPublicKey)),
+      ),
     );
   } catch (err) {
     logger.warn(
@@ -934,7 +982,9 @@ export async function simulateStreamAction(
   const tx = builder.setTimeout(TX_TIMEOUT_SECONDS).build();
 
   const simulation = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () =>
+      executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx)),
+    ),
   );
 
   if (rpc.Api.isSimulationError(simulation)) {
