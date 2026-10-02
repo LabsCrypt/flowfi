@@ -59,6 +59,62 @@ If you have not heard from us within 48 hours, please reach out through our [com
 - We will credit you in our security advisory (unless you prefer to remain anonymous)
 - We ask that you do not publicly disclose the vulnerability until we have had a chance to address it
 
+## Automated Security Scanning Pipeline
+
+FlowFi runs a continuous security scanning pipeline defined in [`.github/workflows/security.yml`](.github/workflows/security.yml). Every pull request targeting `main` or `develop` must pass all four scans before it can be merged. The pipeline also runs automatically on a weekly schedule (Sundays at 02:00 UTC) to catch newly published CVEs in pinned dependencies.
+
+### Scans at a Glance
+
+| Job | Tool | What it checks | Blocks PR? |
+|---|---|---|---|
+| `dependency-check` | `npm audit` + `cargo audit` | High/critical CVEs in Node.js (frontend, backend) and Rust (contracts) dependencies | Yes |
+| `secret-scan` | [gitleaks](https://github.com/gitleaks/gitleaks) | Secrets, tokens, and API keys committed anywhere in git history | Yes |
+| `sast` | [Semgrep](https://semgrep.dev) | Static code anti-patterns (OWASP Top-10, Node.js, React, TypeScript, Rust) | Yes |
+| `codeql-analysis` | [GitHub CodeQL](https://codeql.github.com) | Deep semantic analysis of JavaScript/TypeScript and Rust code paths | Yes |
+
+### SARIF Security Reports
+
+Semgrep and CodeQL both produce [SARIF](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) reports that are automatically uploaded to the **GitHub Security tab** (`Security → Code scanning alerts`). Each finding includes the file path, line number, rule description, and remediation guidance.
+
+To view scan results:
+1. Navigate to the repository on GitHub.
+2. Click the **Security** tab.
+3. Select **Code scanning** in the left sidebar.
+4. Filter by tool (`CodeQL`, `Semgrep`) or severity.
+
+### Interpreting Dependency Audit Failures
+
+`npm audit` and `cargo audit` are configured to fail on **high** or **critical** severity advisories in production dependencies (`--omit=dev` / `--deny warnings`). If a scan fails:
+
+1. Review the advisory output in the workflow logs.
+2. Update the affected dependency to a patched version, or apply an `npm audit fix`.
+3. If no patch is available, open a tracking issue with the `security` label and document the accepted risk in a `npm-audit-resolve` entry or Cargo `audit.toml` advisory ignore block.
+
+### Interpreting Secret Scan Failures
+
+If gitleaks flags a finding:
+
+1. Treat the secret as **compromised** — revoke and rotate it immediately.
+2. Remove the secret from git history using `git filter-repo` or BFG Repo Cleaner.
+3. Force-push the cleaned history (requires admin approval).
+4. Verify the secret no longer appears in history before re-opening the PR.
+
+Do **not** simply delete the file in a new commit — the secret remains accessible in git history.
+
+### Suppressing False Positives
+
+**Semgrep** — add a `# nosemgrep: <rule-id>` comment on the flagged line and include a justification comment above it.
+
+**gitleaks** — add a `gitleaks:allow` comment on the same line as the false-positive pattern, or add an entry to a `.gitleaks.toml` allowlist at the repository root.
+
+**CodeQL** — dismiss the alert in the GitHub Security tab with a reason (e.g., "false positive", "risk accepted") and a comment.
+
+All suppressions are reviewed during security audits. Never suppress a finding without understanding the underlying pattern.
+
+### Weekly CVE Sweep
+
+The weekly cron job (`0 2 * * 0`) re-runs all scans against the current `main` branch using the latest advisory databases. Failures create a workflow run that is visible in the **Actions** tab. Maintainers are notified via the standard GitHub Actions notification settings and should address any new findings within the response timeline defined above.
+
 ## Security Considerations
 
 ### Smart Contract Security
