@@ -9,7 +9,16 @@ const NetworkContext = createContext<NetworkContextValue | undefined>(undefined)
 
 export function NetworkProvider({ children }: { children: React.ReactNode }) {
   const [networkId, setNetworkId] = useState<NetworkId>("testnet"); const [isHydrated, setHydrated] = useState(false);
-  useEffect(() => { const stored = window.localStorage.getItem(STORAGE_KEY) as NetworkId | null; if (stored && stored in NETWORK_CONFIGS) setNetworkId(stored); setHydrated(true); }, []);
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      const stored = window.localStorage.getItem(STORAGE_KEY) as NetworkId | null;
+      if (stored && stored in NETWORK_CONFIGS) setNetworkId(stored);
+      setHydrated(true);
+    });
+    return () => { active = false; };
+  }, []);
   const setPersistedNetwork = (id: NetworkId) => { setNetworkId(id); window.localStorage.setItem(STORAGE_KEY, id); };
   const value = useMemo(() => ({ network: getNetworkConfig(networkId), networkId, setNetworkId: setPersistedNetwork, isHydrated }), [networkId, isHydrated]);
   return <NetworkContext.Provider value={value}>{children}</NetworkContext.Provider>;

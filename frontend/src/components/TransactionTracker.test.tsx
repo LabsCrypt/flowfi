@@ -176,7 +176,7 @@ describe("TransactionTracker polling effect", () => {
       await Promise.resolve();
     });
 
-    expect(toast.success).toHaveBeenCalledWith("Stream created successfully!");
+    expect(toast.success).toHaveBeenCalledWith("Stream created successfully!", undefined);
     // Capture fetch + first poll; any further polls would add more calls.
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -260,7 +260,7 @@ describe("delayed withdrawal confirmation (#1206)", () => {
       await vi.advanceTimersByTimeAsync(6_000);
     });
     expect(onConfirmed).toHaveBeenCalledTimes(1);
-    expect(toast.success).toHaveBeenCalledWith("Withdrawn successfully!");
+    expect(toast.success).toHaveBeenCalledWith("Withdrawn successfully!", undefined);
   });
 
   it("checkConfirmation requires withdrawnAmount to exceed the baseline", () => {

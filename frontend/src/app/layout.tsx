@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, Sora } from "next/font/google";
 import React from "react";
 
@@ -6,6 +6,10 @@ import "./globals.css";
 import { WalletProvider } from "@/context/wallet-context";
 import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/context/theme-provider";
+import { I18nProvider } from "@/context/i18n-provider";
+import { THEMES, THEME_STORAGE_KEY } from "@/lib/themes";
+import { OfflineBanner } from "@/components/OfflineBanner";
+import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 import { Navbar } from "@/components/Navbar";
 import { QueryProvider } from "@/components/providers/query-provider";
 import { NetworkProvider } from "@/context/NetworkContext";
@@ -23,7 +27,13 @@ const mono = IBM_Plex_Mono({
   weight: ["400", "500"],
 });
 
+export const viewport: Viewport = {
+  themeColor: "#020617",
+};
+
 export const metadata: Metadata = {
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "FlowFi", statusBarStyle: "black-translucent" },
   title: "FlowFi | Real-time Payment Streams",
   description:
     "The trustless infrastructure to stream salaries, tokens, and rewards in real-time.",
@@ -77,15 +87,19 @@ export default function RootLayout({
       <head />
       <body className={`${sora.variable} ${mono.variable} antialiased`}>
         <ThemeProvider
-          attribute="class"
+          attribute={["class", "data-theme"]}
+          themes={[...THEMES]}
           defaultTheme="dark"
           enableSystem={true}
-          storageKey="flowfi-theme"
+          storageKey={THEME_STORAGE_KEY}
           disableTransitionOnChange
         >
+          <I18nProvider>
           <QueryProvider>
             <NetworkProvider>
               <WalletProvider>
+                <OfflineBanner />
+                <ServiceWorkerRegistrar />
                 <Navbar />
                 <WalletMismatchBanner />
               <Toaster
@@ -104,6 +118,7 @@ export default function RootLayout({
               </WalletProvider>
             </NetworkProvider>
           </QueryProvider>
+          </I18nProvider>
         </ThemeProvider>
       </body>
     </html>

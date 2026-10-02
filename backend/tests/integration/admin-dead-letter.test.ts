@@ -91,11 +91,23 @@ function app(): express.Express {
 }
 
 function adminToken(): string {
-  return signJwt({ sub: ADMIN_KEY, exp: Math.floor(Date.now() / 1000) + 3600 });
+  // iss/aud are required: verifyJwt rejects tokens without them
+  // (defaults 'flowfi-api'), matching signJwt usage in admin-metrics.test.ts.
+  return signJwt({
+    sub: ADMIN_KEY,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    iss: 'flowfi-api',
+    aud: 'flowfi-api',
+  });
 }
 
 function userToken(): string {
-  return signJwt({ sub: USER_KEY, exp: Math.floor(Date.now() / 1000) + 3600 });
+  return signJwt({
+    sub: USER_KEY,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    iss: 'flowfi-api',
+    aud: 'flowfi-api',
+  });
 }
 
 /** A serialisable dead-letter payload, as the worker would have written it. */

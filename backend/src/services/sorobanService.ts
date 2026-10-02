@@ -1,6 +1,7 @@
 import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks, Account, Address } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 import { ApiError } from '../lib/api-error.js';
+import { rpcPool } from '../lib/rpc-pool.js';
 import {
   recordRpcRequest,
   rpcCircuitBreakerTripsTotal,
@@ -355,6 +356,39 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 }
 
 /**
+ * Poll a submitted transaction until it reaches a final on-chain state.
+ *
+ * `sendTransaction` only queues the transaction; without this wait a caller
+ * could immediately read chain state and see a pre-transaction view. Returns
+ * the final successful transaction response, or throws when the transaction
+ * fails on-chain or the confirmation window lapses.
+ */
+export async function pollTransactionStatus(
+  txHash: string,
+  timeoutMs: number = getTxConfirmationTimeoutMs(),
+  pollIntervalMs: number = getTxPollIntervalMs(),
+): Promise<rpc.Api.GetTransactionResponse> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await withRpcTimeout('getTransaction', () =>
+      executeRpc('getTransaction', (server) => server.getTransaction(txHash)),
+    );
+
+    if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) return status;
+    if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error(`Transaction failed on-chain: ${txHash}`);
+    }
+    // STILL_PENDING / NOT_FOUND — stop on timeout, otherwise wait and poll again.
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Transaction confirmation timed out after ${timeoutMs}ms: ${txHash}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+}
+
+/**
  * Latest ledger sequence known to the network, or 0 when it cannot be resolved.
  *
  * Feeds the `flowfi_indexer_network_ledger` gauge so `flowfi_indexer_lag_ledgers`
@@ -363,7 +397,7 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 export async function getLatestLedger(): Promise<number> {
   try {
     const response = await withRpcRetry('getLatestLedger', () =>
-      withRpcTimeout('getLatestLedger', () => getServer().getLatestLedger()),
+      withRpcTimeout('getLatestLedger', () => executeRpc('getLatestLedger', (server) => server.getLatestLedger())),
     );
     return Number(response.sequence);
   } catch (err) {
@@ -372,7 +406,7 @@ export async function getLatestLedger(): Promise<number> {
   }
 }
 
-export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
+export async function getStreamFromChain(streamId: bigint): Promise<ChainStream | null> {
   if (!getContractId()) return null;
 
   try {
@@ -838,10 +872,10 @@ function readResourceFootprint(
 ): { cpuInstructions: number; memoryBytes: number } {
   try {
     const data = transactionData.build();
-    const resources = data.resources();
+    const resources = data.resources;
     return {
-      cpuInstructions: Number(resources.instructions()),
-      memoryBytes: Number(resources.writeBytes()),
+      cpuInstructions: resources.instructions,
+      memoryBytes: resources.writeBytes,
     };
   } catch (err) {
     logger.warn('[SorobanService] Could not read resource footprint from simulation:', err);
@@ -855,25 +889,27 @@ function decodeSimulatedReturn(result: rpc.Api.SimulateTransactionSuccessRespons
   if (!retval) return '';
 
   try {
-    switch (retval.switch().value) {
-      case xdr.ScValType.scvI128().value:
+    // SDK 17 models ScVal as a discriminated union keyed on `type`; each
+    // variant exposes its arm payload via the `value` getter.
+    switch (retval.type) {
+      case 'scvI128':
         return decodeI128(retval);
-      case xdr.ScValType.scvU64().value:
-        return retval.u64().toString();
-      case xdr.ScValType.scvU32().value:
-        return retval.u32().toString();
-      case xdr.ScValType.scvI64().value:
-        return retval.i64().toString();
-      case xdr.ScValType.scvU128().value: {
-        const parts = retval.u128();
-        const hi = BigInt.asUintN(64, BigInt(parts.hi().toString()));
-        const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+      case 'scvU64':
+        return retval.value.toString();
+      case 'scvU32':
+        return retval.value.toString();
+      case 'scvI64':
+        return retval.value.toString();
+      case 'scvU128': {
+        const parts = retval.value;
+        const hi = BigInt.asUintN(64, BigInt(parts.hi.toString()));
+        const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
         return ((hi << 64n) | lo).toString();
       }
       default:
         // Non-numeric returns (addresses, maps, void markers) are surfaced as
         // base64 XDR so the client can decode them with the SDK if it needs to.
-        return Buffer.from(retval.toXDR()).toString('base64');
+        return Buffer.from(retval.toXdr()).toString('base64');
     }
   } catch {
     return '';
@@ -911,7 +947,7 @@ export async function simulateStreamAction(
   let sourceAccount: Account;
   try {
     sourceAccount = await withRpcRetry('getAccount', () =>
-      withRpcTimeout('getAccount', () => getServer().getAccount(senderPublicKey)),
+      withRpcTimeout('getAccount', () => executeRpc('getAccount', (server) => server.getAccount(senderPublicKey))),
     );
   } catch (err) {
     logger.warn(
@@ -934,7 +970,7 @@ export async function simulateStreamAction(
   const tx = builder.setTimeout(TX_TIMEOUT_SECONDS).build();
 
   const simulation = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () => executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx))),
   );
 
   if (rpc.Api.isSimulationError(simulation)) {

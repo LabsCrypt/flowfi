@@ -10,6 +10,7 @@ const hoisted = vi.hoisted(() => ({
   delete: vi.fn(),
   triggerPoll: vi.fn(),
   processEvent: vi.fn(),
+  runExclusive: vi.fn(async (fn: () => Promise<unknown>) => fn()),
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -33,6 +34,7 @@ vi.mock('../src/workers/soroban-event-worker.js', () => ({
   sorobanEventWorker: {
     triggerPoll: hoisted.triggerPoll,
     processEvent: hoisted.processEvent,
+    runExclusive: hoisted.runExclusive,
   },
 }));
 
@@ -42,6 +44,7 @@ vi.mock('../src/logger.js', () => ({
     error: vi.fn(),
     warn: vi.fn(),
   },
+  requestContext: { getStore: vi.fn(() => undefined), run: (_ctx: unknown, fn: () => unknown) => fn() },
 }));
 
 // Metrics and tracing are side-effect-only here; stub them so the assertions
@@ -92,6 +95,7 @@ const mockedPrisma = prisma as unknown as {
 const mockedWorker = sorobanEventWorker as unknown as {
   triggerPoll: ReturnType<typeof vi.fn>;
   processEvent: ReturnType<typeof vi.fn>;
+  runExclusive: ReturnType<typeof vi.fn>;
 };
 
 /** Build a minimal but structurally valid Soroban EventResponse. */
@@ -289,9 +293,9 @@ describe('Dead-letter payload serialisation', () => {
     expect(restored.transactionIndex).toBe(event.transactionIndex);
     expect(restored.operationIndex).toBe(event.operationIndex);
     expect(restored.inSuccessfulContractCall).toBe(true);
-    expect(restored.topic[0]!.sym().toString()).toBe('stream_created');
-    expect(restored.topic[1]!.u64().toString()).toBe('7');
-    expect(restored.value.toXDR()).toEqual(event.value.toXDR());
+    expect(restored.topic[0]!.type === 'scvSymbol' && restored.topic[0].sym.toString()).toBe('stream_created');
+    expect(restored.topic[1]!.type === 'scvU64' && restored.topic[1].u64.toString()).toBe('7');
+    expect(restored.value.toXdr()).toEqual(event.value.toXdr());
   });
 
   it('preserves contractId so handlers can filter by stream contract', () => {
@@ -472,7 +476,7 @@ describe('replayDeadLetterEvent', () => {
     const replayed = mockedWorker.processEvent.mock.calls[0]![0];
     expect(replayed.id).toBe('event-0001');
     expect(replayed.ledger).toBe(482910);
-    expect(replayed.topic[0].sym().toString()).toBe('stream_created');
+    expect(replayed.topic[0].sym.toString()).toBe('stream_created');
   });
 
   it('increments attempts and refreshes the error when the replay throws', async () => {

@@ -1,4 +1,4 @@
-import { rateLimit } from 'express-rate-limit';
+import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
 import type { Request, Response } from 'express';
 
 export const adminRateLimiter = rateLimit({
@@ -12,12 +12,14 @@ export const adminRateLimiter = rateLimit({
     status: 429,
   },
   keyGenerator: (req: Request): string => {
-    // Use x-forwarded-for or remote address as key
+    // Prefer the left-most proxy hop; fall back to the subnet-scoped request
+    // IP (ipKeyGenerator buckets IPv6 clients by /64 so a single user cannot
+    // rotate addresses to bypass the limit — express-rate-limit's
+    // ERR_ERL_KEY_GEN_IPV6 requirement).
     const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string') {
-      return forwarded.split(',')[0]?.trim() ?? 'unknown';
-    }
-    return req.ip ?? 'unknown';
+    const firstHop = typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : undefined;
+    if (firstHop) return firstHop;
+    return req.ip ? ipKeyGenerator(req.ip) : 'unknown';
   },
   skip: (req: Request): boolean => {
     // Skip rate limiting in test environment

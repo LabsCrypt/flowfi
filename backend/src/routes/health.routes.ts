@@ -2,6 +2,9 @@ import { Router, type Request, type Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { setIndexerLedgers } from '../lib/metrics.js';
+import { isRedisAvailable } from '../lib/redis.js';
+import { rpcPoolHealthy } from '../lib/rpc-pool.js';
+import { sorobanEventWorker } from '../workers/soroban-event-worker.js';
 
 const router = Router();
 
@@ -76,10 +79,22 @@ router.get('/', async (_req: Request, res: Response) => {
     }
   }
 
-  // 503 only when: DB is down, OR the indexer is enabled and its state row is
-  // stale (lag > 60). A missing state row (lag === -1) is a cold-start
-  // condition, not a failure, even when the indexer is enabled.
-  const indexerDegraded = indexerEnabled && indexerLag > 60;
+  // Per-event processing counters for the failure-spike breakdown (#844).
+  // `degraded` is true when ≥50% of attempts in the last 5 minutes failed
+  // (with ≥3 samples) — a broken indexer that still bumps `updatedAt`.
+  const counters = sorobanEventWorker.getEventCounters();
+
+  // Dependency statuses for the granular breakdown; neither blocks the
+  // overall verdict (DB + indexer health are the liveness signals).
+  const redisOk = isRedisAvailable();
+  const rpcOk = rpcPoolHealthy();
+
+  // 503 when: DB is down, OR the indexer is enabled and (its state row is
+  // stale (lag > 60) OR event processing is failing at a spike rate). A
+  // missing state row (lag === -1) is a cold-start condition, not a failure.
+  const indexerLagDegraded = indexerEnabled && indexerLag > 60;
+  const indexerFailureDegraded = indexerEnabled && counters.degraded;
+  const indexerDegraded = indexerLagDegraded || indexerFailureDegraded;
   const isHealthy = dbStatus === 'connected' && !indexerDegraded;
   const status = isHealthy ? 'ok' : 'degraded';
 
@@ -92,6 +107,10 @@ router.get('/', async (_req: Request, res: Response) => {
     db: dbStatus,
     indexerEnabled,
     indexerLag: indexerLag === -1 ? null : indexerLag,
+    eventsProcessed: counters.eventsProcessed,
+    eventsFailed: counters.eventsFailed,
+    lastErrorAt: counters.lastErrorAt,
+    indexerDegraded: indexerFailureDegraded,
     // Ledger-level lag, which is what `flowfi_indexer_lag_ledgers` tracks.
     // Null when the network tip could not be resolved.
     indexerLedgerLag:
@@ -102,15 +121,15 @@ router.get('/', async (_req: Request, res: Response) => {
         status: dbStatus === 'connected' ? 'ok' : 'down',
       },
       indexer: {
-        status: !indexerEnabled ? 'disabled' : indexerFailureDegraded || indexerLagDegraded ? 'degraded' : 'ok',
+        status: !indexerEnabled ? 'disabled' : indexerDegraded ? 'degraded' : 'ok',
         enabled: indexerEnabled,
         lagSeconds: indexerLag === -1 ? null : indexerLag,
       },
       redis: {
-        status: redisStatus,
+        status: redisOk ? 'ok' : 'disabled',
       },
       sorobanRpc: {
-        status: sorobanRpcOk ? 'ok' : 'down',
+        status: rpcOk ? 'ok' : 'down',
       },
     },
   });

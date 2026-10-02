@@ -81,4 +81,8 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// An arithmetic operation exceeded the supported amount range.
+    ArithmeticOverflow = 34,
+    /// A stream must be completed or cancelled before it can be closed.
+    StreamStillActive = 35,
 }

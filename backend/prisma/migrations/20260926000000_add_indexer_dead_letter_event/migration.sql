@@ -1,3 +1,8 @@
+-- An earlier, superseded migration (20260830000000) created a table of the
+-- same name with a different shape. Drop it first so this migration is
+-- idempotent whether or not that older table exists.
+DROP TABLE IF EXISTS "IndexerDeadLetterEvent";
+
 -- CreateTable
 CREATE TABLE "IndexerDeadLetterEvent" (
     "id" TEXT NOT NULL,

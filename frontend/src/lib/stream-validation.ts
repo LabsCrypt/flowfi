@@ -30,6 +30,7 @@ export interface StreamFormData {
   duration: string;
   durationUnit: DurationUnit;
   descriptionTag?: string;
+  memo?: string;
 }
 
 export type StreamFormErrors = Partial<Record<keyof StreamFormData, string>>;
