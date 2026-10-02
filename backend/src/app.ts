@@ -14,22 +14,17 @@ import { sandboxMiddleware } from "./middleware/sandbox.middleware.js";
 import { globalRateLimiter } from "./middleware/rate-limiter.middleware.js";
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
+import { buildCorsOptions, CorsError } from "./config/cors.js";
+import logger from "./logger.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
 
 const app = express();
-const isProduction = process.env.NODE_ENV === "production";
-const rawCors = process.env.CORS_ALLOWED_ORIGINS ?? "";
-const allowedOrigins = rawCors
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 
-// Default in development to only localhost:3000 (frontend dev server)
-if (!process.env.CORS_ALLOWED_ORIGINS && !isProduction) {
-  allowedOrigins.push("http://localhost:3000");
-}
+// Resolved once at startup; throws in production when FRONTEND_URL is missing
+// or invalid, so the server never runs with an open CORS policy.
+const corsOptions = buildCorsOptions();
 
 // Apply global rate limiter first
 app.use(globalRateLimiter);
@@ -66,31 +61,19 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Allow non-browser clients (no Origin header)
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-
-      // Not allowed
-      callback(new Error("CORS origin not allowed"));
-    },
-    credentials: true,
-  }),
-);
+// CORS runs before the body parser, auth and routes, so preflight OPTIONS
+// requests are answered here and never reach route-level auth.
+app.use(cors(corsOptions));
 
 // Convert CORS errors into 403 responses so callers get a clear status code
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
-  if (err instanceof Error && err.message === "CORS origin not allowed") {
-    res.status(403).json({ error: "CORS origin not allowed" });
+  if (err instanceof CorsError) {
+    logger.warn("CORS origin rejected", {
+      origin: err.origin.slice(0, 256),
+      method: req.method,
+      path: req.path,
+    });
+    res.status(err.statusCode).json({ error: err.message });
     return;
   }
   next(err);
