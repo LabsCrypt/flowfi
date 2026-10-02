@@ -182,6 +182,28 @@ pub struct LegacyProtocolConfig {
     pub fee_rate_bps: u32,
 }
 
+/// Input descriptor for a single stream in a `batch_create_streams` call.
+///
+/// Each entry specifies the recipient, token, amount, and duration for one
+/// stream. The optional `cliff_duration` field adds a cliff to the stream:
+/// when `Some(d)`, tokens are locked until `start_time + d` seconds have
+/// elapsed and then unlock as usual.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchStreamInput {
+    /// Address that will receive the streamed tokens.
+    pub recipient: soroban_sdk::Address,
+    /// Token to stream.
+    pub token_address: soroban_sdk::Address,
+    /// Gross deposit amount (before protocol fee), in stroops.
+    pub amount: i128,
+    /// Stream duration in seconds. Must be > 0.
+    pub duration: u64,
+    /// Optional cliff duration in seconds. When `Some(d)`, no tokens may be
+    /// claimed until `d` seconds after stream creation.
+    pub cliff_duration: Option<u64>,
+}
+
 /// Pre-v3 shape of [`Stream`], which lacked the dispute/allowance fields.
 ///
 /// Decoded by `load_stream` for records written before these features existed.

@@ -1,3 +1,13 @@
+-- Replaces the initial dead-letter table (20260830) with the richer schema
+-- that the indexer service and admin dead-letter endpoints require.
+-- The old table used a simple unique index on eventId only; the new schema
+-- uses a composite unique on (eventId, eventType) and replaces the columns
+-- `ledger`/`transactionHash`/`rawPayload` with `ledgerSequence`/`txHash`/
+-- `payload`/`eventType`/`cursor`.
+
+-- DropTable (created by 20260830000000_add_indexer_dead_letter_event)
+DROP TABLE IF EXISTS "IndexerDeadLetterEvent";
+
 -- CreateTable
 CREATE TABLE "IndexerDeadLetterEvent" (
     "id" TEXT NOT NULL,
