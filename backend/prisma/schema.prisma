@@ -64,26 +64,12 @@ model IndexerState {
   updatedAt   DateTime @updatedAt
 }
 
-// IndexerDeadLetterEvent model - Soroban events that failed to process, kept
-// with their raw payload for manual triage. The worker retries an event at
-// most INDEXER_DEAD_LETTER_MAX_RETRIES times, then abandons it and advances
-// the cursor so a single malformed event can never freeze the indexer.
-model IndexerDeadLetterEvent {
-  id              String   @id @default(uuid())
-  eventId         String   @unique // RPC paging-token id of the event
-  ledger          Int      // Ledger sequence the event was emitted in
-  transactionHash String   // Stellar transaction hash
-  rawPayload      String   // Full raw event JSON for manual triage/replay
-  errorMessage    String   // Last error thrown while processing
-  attempts        Int      @default(1) // Number of failed processing attempts
-  lastAttemptAt   DateTime @default(now())
-  createdAt       DateTime @default(now())
-
-  @@index([ledger])
-  @@index([transactionHash])
-  @@index([createdAt])
-}
-
+// The dead-letter table is shared by two producers: the Soroban event worker
+// (`ledger` / `transactionHash` / `rawPayload`) and the indexer service's
+// quarantine path (`ledgerSequence` / `txHash` / `payload` / `eventType`). A
+// single physical model carries the union of both field sets so both producers
+// type-check against one generated client; the alias columns default to empty
+// for the producer that does not populate them.
 // StreamEvent model - indexer events for tracking all on-chain stream activities
 model StreamEvent {
   id              String   @id @default(uuid())
@@ -163,19 +149,25 @@ model AlertHistory {
 // the admin dead-letter endpoints instead.
 model IndexerDeadLetterEvent {
   id             String   @id @default(uuid())
-  eventId        String   // Soroban paging token / event id of the quarantined event
-  eventType      String   // Contract event name, e.g. "stream_created"
-  txHash         String   // Stellar transaction hash
-  ledgerSequence Int      // Ledger the event was emitted in
+  eventId        String   @unique // Soroban paging token / event id of the quarantined event
+  eventType      String   @default("") // Contract event name, e.g. "stream_created"
+  ledger         Int      @default(0) // Ledger the event was emitted in (worker alias)
+  ledgerSequence Int      @default(0) // Ledger the event was emitted in (service alias)
+  transactionHash String  @default("") // Stellar transaction hash (worker alias)
+  txHash         String   @default("") // Stellar transaction hash (service alias)
+  rawPayload     String   @default("") // Full raw event JSON for manual triage/replay
+  payload        String   @default("") // JSON envelope: base64 XDR for each topic ScVal + value ScVal
   cursor         String?  // Paging token captured alongside the event
-  payload        String   // JSON envelope: base64 XDR for each topic ScVal + value ScVal
   errorMessage   String   // Failure reason from the processing attempt
   attempts       Int      @default(1)
   lastAttemptAt  DateTime @default(now())
   createdAt      DateTime @default(now())
 
   @@unique([eventId, eventType])
+  @@index([ledger])
   @@index([ledgerSequence])
+  @@index([transactionHash])
+  @@index([txHash])
   @@index([createdAt])
   @@index([attempts])
   @@index([eventType])

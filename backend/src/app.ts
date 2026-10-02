@@ -2,6 +2,7 @@ import express, {
   type Request,
   type Response,
   type NextFunction,
+  type RequestHandler,
 } from "express";
 import cors from "cors";
 import swaggerUi from "swagger-ui-express";
@@ -17,6 +18,7 @@ import { requestIdMiddleware } from "./middleware/requestId.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
+import yoga from "./graphql/index.js";
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
@@ -95,6 +97,16 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   }
   next(err);
 });
+// GraphQL gateway (Issue #1467).
+//
+// Mounted before the JSON body parser on purpose: graphql-yoga reads the raw
+// request stream itself, and an earlier `express.json()` would consume it. The
+// `originalUrl` preserved by Express lets yoga keep its canonical
+// `graphqlEndpoint` even though the mount path is stripped.
+// `yoga` is a callable request handler, not an Express `RequestHandler`, so the
+// cast is what lets Express mount it without widening the whole app type.
+app.use("/graphql", yoga as unknown as RequestHandler);
+
 app.use(express.json({ limit: "1mb" }));
 
 // Sandbox mode detection (before versioning)

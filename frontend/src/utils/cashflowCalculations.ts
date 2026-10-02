@@ -21,8 +21,12 @@ export function projectCashflow(streams: ProjectionStream[], horizonDays: number
   let cumulative = streams.filter((stream) => stream.direction === "incoming").reduce((sum, stream) => sum + stream.withdrawn, 0);
   return Array.from({ length: horizonDays + 1 }, (_, index) => {
     const date = new Date(start); date.setDate(start.getDate() + index);
+    // Index 0 is "now", so no further time has elapsed to accrue: it reports the
+    // already-withdrawn/deposited baseline and the first future day's interval
+    // is the one that starts at index 1.
+    const hasElapsedAnInterval = index > 0;
     const day = streams.reduce((total, stream) => {
-      if (!stream.isActive || stream.isPaused || (stream.startTime && stream.startTime * 1000 > date.getTime())) return total;
+      if (!hasElapsedAnInterval || !stream.isActive || stream.isPaused || (stream.startTime && stream.startTime * 1000 > date.getTime())) return total;
       const amount = stream.ratePerSecond * 86400;
       return total + (stream.direction === "incoming" ? amount : -amount);
     }, 0);

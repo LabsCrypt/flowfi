@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Map, Symbol, TryFromVal, Val};
+use soroban_sdk::{Env, Map, Symbol, TryFromVal, Val, Vec};
 
 /// Minimum ledgers remaining before a persistent entry is renewed.
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 120_960;
@@ -122,6 +122,8 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         withdrawn_amount: legacy.withdrawn_amount,
         start_time: legacy.start_time,
         last_update_time: legacy.last_update_time,
+        // Pre-v2 records predate the cliff field; they have none.
+        cliff_time: None,
         is_active: legacy.is_active,
         paused: legacy.paused,
         paused_at: legacy.paused_at,

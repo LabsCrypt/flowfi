@@ -1,4 +1,5 @@
-use soroban_sdk::{contracttype, Address, BytesN};
+use crate::types::{FeeRecipient, PositionRole};
+use soroban_sdk::{contracttype, Address, BytesN, Vec};
 
 // ─── Wire Format ─────────────────────────────────────────────────────────────
 //

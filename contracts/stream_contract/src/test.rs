@@ -4575,8 +4575,9 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    // `Stream` carries the `cliff_time` and `schedule` fields; `LegacyStream`
+    // carries neither.
+    raw_stream_field_count(env, contract, stream_id) == 14
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].
