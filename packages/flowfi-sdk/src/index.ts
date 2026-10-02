@@ -1,4 +1,9 @@
 export { FlowFiClient } from './client.js';
+export {
+  NETWORK_PASSPHRASES,
+  validateNetworkPassphrase,
+} from './networks.js';
+export type { KnownNetwork, NetworkPassphraseValidation } from './networks.js';
 export type { FlowFiClientConfig } from './types.js';
 export type {
   CreateStreamParams,

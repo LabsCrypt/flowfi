@@ -21,6 +21,9 @@
   "lint-staged": {
     "frontend/**/*.{ts,tsx,js,jsx}": [
       "npm run lint --workspace=frontend --"
+    ],
+    "contracts/**/*.rs": [
+      "bash scripts/lint-rust.sh"
     ]
   },
   "dependencies": {

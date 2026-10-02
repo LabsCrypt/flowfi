@@ -1,8 +1,6 @@
 import { useState } from "react";
 import IncomingStreams from "../IncomingStreams";
 import type { Stream } from "@/lib/dashboard";
-import { InboxIcon } from "./dashboard-view";
-import { BatchClaimDrawer } from "./BatchClaimDrawer";
 import { ShareAddressModal } from "./ShareAddressModal";
 import { Share2, Waves } from "lucide-react";
 import { Button } from "../ui/Button";
@@ -12,17 +10,20 @@ interface DashboardIncomingProps {
   incomingStreams: Stream[];
   onWithdraw: (stream: Stream) => Promise<void>;
   withdrawingStreamId: string | null;
-  onBatchClaimSuccess?: () => Promise<void> | void;
+  /** Opens the batch-claim drawer owned by the dashboard shell. */
+  onOpenBatchClaim?: () => void;
+  /** Stream highlighted by keyboard navigation (j/k). */
+  selectedStreamId?: string | null;
 }
 
 export function DashboardIncoming({
   incomingStreams,
   onWithdraw,
   withdrawingStreamId,
-  onBatchClaimSuccess,
+  onOpenBatchClaim,
+  selectedStreamId = null,
 }: DashboardIncomingProps) {
   const { session } = useWallet();
-  const [showBatchClaim, setShowBatchClaim] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   
   const claimableCount = incomingStreams.filter(
@@ -170,7 +171,7 @@ export function DashboardIncoming({
       {claimableCount >= 2 && (
         <button
           type="button"
-          onClick={() => setShowBatchClaim(true)}
+          onClick={onOpenBatchClaim}
           className="mb-4 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white"
         >
           Claim all available
@@ -180,14 +181,8 @@ export function DashboardIncoming({
         streams={incomingStreams}
         onWithdraw={onWithdraw}
         withdrawingStreamId={withdrawingStreamId}
+        selectedStreamId={selectedStreamId}
       />
-      {showBatchClaim && (
-        <BatchClaimDrawer
-          streams={incomingStreams}
-          onClose={() => setShowBatchClaim(false)}
-          onSuccess={onBatchClaimSuccess ?? (() => undefined)}
-        />
-      )}
     </div>
   );
 }

@@ -33,6 +33,7 @@ import {
   simulateAndAssemble,
   DEFAULT_FEE_BUFFER_MULTIPLIER,
 } from './builder.js';
+import { validateNetworkPassphrase } from './networks.js';
 import type { Signer } from './signers/index.js';
 import type {
   CreateStreamParams,
@@ -54,6 +55,14 @@ export class FlowFiClient {
   constructor(config: FlowFiClientConfig, opts?: { rpcClient?: unknown }) {
     if (!config.rpcUrl || !config.networkPassphrase || !config.contractId) {
       throw new Error('FlowFiClient: rpcUrl, networkPassphrase and contractId are required');
+    }
+    // Fail fast on a mistyped passphrase: otherwise it only surfaces later as
+    // an opaque signature/hash-mismatch error (see networks.ts).
+    if (!config.allowCustomNetworkPassphrase) {
+      const { valid, hint } = validateNetworkPassphrase(config.networkPassphrase);
+      if (!valid) {
+        throw new Error(`FlowFiClient: ${hint}`);
+      }
     }
     this.config = {
       rpcUrl: config.rpcUrl,
