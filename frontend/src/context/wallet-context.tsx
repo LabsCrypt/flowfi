@@ -10,12 +10,14 @@ import {
 } from "react";
 import {
   SUPPORTED_WALLETS,
+  connectMockWallet,
   connectWallet,
   toWalletErrorMessage,
   type WalletDescriptor,
   type WalletId,
   type WalletSession,
 } from "@/lib/wallet";
+import { MOCK_MODE } from "@/lib/mock-chain";
 
 type WalletStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -27,6 +29,8 @@ interface WalletContextValue {
   errorMessage: string | null;
   isHydrated: boolean;
   connect: (walletId: WalletId) => Promise<void>;
+  /** Sandbox-only: connect as one of the seeded mock accounts. */
+  connectMock: (publicKey: string) => Promise<void>;
   disconnect: () => void;
   clearError: () => void;
 }
@@ -128,12 +132,16 @@ function isWalletSession(value: unknown): value is WalletSession {
 
   return (
     typeof session.walletId === "string" &&
-    VALID_WALLET_IDS.includes(session.walletId as WalletId) &&
+    // "mock" has no descriptor in SUPPORTED_WALLETS, so it is only accepted
+    // while the sandbox flag is on.
+    (MOCK_MODE || VALID_WALLET_IDS.includes(session.walletId as WalletId)) &&
     typeof session.walletName === "string" &&
     typeof session.publicKey === "string" &&
     typeof session.connectedAt === "string" &&
     typeof session.network === "string" &&
-    session.mocked === false
+    // Mocked sessions are only ever persisted inside the sandbox; a real
+    // session is never allowed to masquerade as one.
+    (session.mocked === false || MOCK_MODE)
   );
 }
 
@@ -204,6 +212,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const connectMock = useCallback(async (publicKey: string) => {
+    dispatch({ type: "connect:start", walletId: "mock" });
+
+    try {
+      const nextSession = await connectMockWallet(publicKey);
+      dispatch({ type: "connect:success", session: nextSession });
+      storeSession(nextSession);
+    } catch (error) {
+      dispatch({
+        type: "connect:error",
+        message: toWalletErrorMessage(error),
+      });
+      removeStoredSession();
+    }
+  }, []);
+
   const disconnect = useCallback(() => {
     dispatch({ type: "disconnect" });
     removeStoredSession();
@@ -218,12 +242,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       errorMessage: state.errorMessage,
       isHydrated: state.isHydrated,
       connect,
+      connectMock,
       disconnect,
       clearError,
     }),
     [
       clearError,
       connect,
+      connectMock,
       disconnect,
       state.errorMessage,
       state.isHydrated,

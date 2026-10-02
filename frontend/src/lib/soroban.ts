@@ -1,5 +1,33 @@
 import type { WalletSession } from "@/lib/wallet";
 import { getNetworkConfig, type NetworkId } from "@/lib/stellar-config";
+import {
+  MOCK_MODE,
+  MockActionError,
+  mockContractCall,
+  mockTokenBalance,
+} from "@/lib/mock-chain";
+
+/** Maps sandbox rejections onto the error codes the UI already renders. */
+function toSorobanError(error: unknown): SorobanCallError {
+  if (error instanceof SorobanCallError) return error;
+  if (error instanceof MockActionError) {
+    const code =
+      error.code === "stream_not_found"
+        ? "StreamNotFound"
+        : error.code === "forbidden"
+          ? "Unauthorized"
+          : error.code === "conflict"
+            ? "StreamInactive"
+            : error.code.startsWith("invalid")
+              ? "InvalidAmount"
+              : "Unknown";
+    return new SorobanCallError(error.message, code);
+  }
+  return new SorobanCallError(
+    error instanceof Error ? error.message : "The mock sandbox request failed.",
+    "NetworkError",
+  );
+}
 
 function activeNetworkConfig() {
   const stored = typeof window === "undefined" ? null : window.localStorage.getItem("flowfi.network");
@@ -144,6 +172,10 @@ export async function fetchTokenBalance(
   publicKey: string,
   tokenSymbol: string,
 ): Promise<bigint> {
+  // No token contract exists offline; return a deterministic sandbox balance so
+  // balance-gated UI still renders.
+  if (MOCK_MODE) return mockTokenBalance(publicKey, tokenSymbol);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sdk: any = await import("@stellar/stellar-sdk");
   const { Address, Contract, TransactionBuilder, BASE_FEE, scValToNative } = sdk;
@@ -212,6 +244,16 @@ async function freighterCall(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   args: any[],
 ): Promise<SorobanResult> {
+  // Sandbox short-circuit: the backend applies the action locally and returns a
+  // placeholder hash, so no wallet signature or Soroban RPC call is needed.
+  if (MOCK_MODE) {
+    try {
+      return await mockContractCall(publicKey, method, args);
+    } catch (error) {
+      throw toSorobanError(error);
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sdk: any = await import("@stellar/stellar-sdk");
   const { Contract, TransactionBuilder, BASE_FEE } = sdk;
@@ -347,10 +389,11 @@ export async function batchWithdrawFromStreams(
   session: WalletSession,
   params: BatchWithdrawParams,
 ): Promise<SorobanResult> {
-  const { nativeToScVal } = await import("@stellar/stellar-sdk");
-  return freighterCall(session.publicKey, "batch_withdraw", [
-    nativeToScVal(params.streamIds, { type: "vec" }),
-  ]);
+  const { xdr } = await import("@stellar/stellar-sdk");
+  // stellar-sdk v17 has no nativeToScVal({type:"vec"}) spec, so build the ScVal
+  // vector directly from its u64 elements.
+  const streamIds = xdr.ScVal.scvVec(params.streamIds.map((id) => xdr.ScVal.scvU64(id)));
+  return freighterCall(session.publicKey, "batch_withdraw", [streamIds]);
 }
 
 export async function pauseStream(

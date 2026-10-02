@@ -16,8 +16,7 @@ import {
   replayDeadLetterHandler,
 } from '../../controllers/admin.controller.js';
 
-import { prisma, pool } from '../../lib/prisma.js';
-import { getPoolMetrics } from '../../lib/pg-pool.js';
+import { prisma, pool, getPoolMetrics } from '../../lib/prisma.js';
 import { INDEXER_STATE_ID } from '../../lib/indexer-state.js';
 import { sseService } from '../../services/sse.service.js';
 import { cache } from '../../lib/redis.js';
@@ -417,8 +416,8 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
 
   try {
     if (dryRun) {
-      const preview = await previewReset(ledger);
-      res.json({ dryRun: true, preview });
+      // Dry-run: return what would be reset without mutating state
+      res.json({ dryRun: true, preview: await previewReset(ledger) });
       return;
     }
     await resetIndexer(ledger);
@@ -496,8 +495,8 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
 
   try {
     if (dryRun) {
-      const preview = await previewReplay(fromLedger);
-      res.json({ dryRun: true, preview });
+      // Dry-run: return what would be replayed without mutating state
+      res.json({ dryRun: true, preview: await previewReplay(fromLedger) });
       return;
     }
     const requestId = await replayFromLedger(fromLedger);

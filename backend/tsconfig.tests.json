@@ -1,0 +1,12 @@
+{
+  // Typechecks the test suite. Kept out of tsconfig.json so that
+  // `npm run build` (which produces the container image) is not blocked by
+  // test-only type errors, while `npm run typecheck:tests` still surfaces them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["dist", "node_modules"]
+}

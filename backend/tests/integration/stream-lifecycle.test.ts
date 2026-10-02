@@ -25,7 +25,6 @@ import { sseService } from "../../src/services/sse.service.js";
 import EventSource from "eventsource";
 import {
   resolveDbReadiness,
-  resolveTestDatabaseUrl,
   explainSkipReason,
 } from "./_db.js";
 
@@ -252,9 +251,14 @@ describe("Stream Lifecycle Integration Tests", () => {
       "../../src/generated/prisma/index.js"
     );
     const { createPgPool } = await import("../../src/lib/pg-pool.js");
-    const connectionString = resolveTestDatabaseUrl();
-    testPool = createPgPool({ connectionString });
-    const testAdapter = new PrismaPg(testPool);
+    // createPgPool reads DATABASE_URL itself (resolveDbReadiness above has
+    // already checked it), and PrismaPg is duck-typed at runtime — see the
+    // note in src/lib/prisma.ts for why the pool is cast through the
+    // adapter's own constructor signature rather than passed directly.
+    testPool = createPgPool();
+    const testAdapter = new PrismaPg(
+      testPool as unknown as ConstructorParameters<typeof PrismaPg>[0],
+    );
     testPrisma = new PrismaClient({
       adapter: testAdapter,
       log: ["error"], // Minimal logging for tests

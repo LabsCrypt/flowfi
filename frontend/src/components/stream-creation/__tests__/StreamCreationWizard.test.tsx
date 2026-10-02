@@ -113,25 +113,21 @@ vi.mock("../AmountStep", () => ({
 
 vi.mock("../ScheduleStep", () => ({
   ScheduleStep: ({
-    duration,
-    onDurationChange,
-    error,
+    formData,
+    errors,
+    onUpdate,
   }: {
-    duration: string;
-    onDurationChange: (v: string) => void;
-    error?: string;
-    durationUnit?: string;
-    amount?: string;
-    token?: string;
-    onUnitChange?: (v: string) => void;
+    formData: { duration: string; durationUnit: string; descriptionTag: string };
+    errors: Record<string, string>;
+    onUpdate: (data: Partial<{ duration: string; durationUnit: string; descriptionTag: string }>) => void;
   }) => (
     <div data-testid="schedule-step">
       <input
         aria-label="Duration"
-        value={duration}
-        onChange={(e) => onDurationChange(e.target.value)}
+        value={formData.duration}
+        onChange={(e) => onUpdate({ duration: e.target.value })}
       />
-      {error && <span role="alert">{error}</span>}
+      {errors.duration && <span role="alert">{errors.duration}</span>}
     </div>
   ),
 }));

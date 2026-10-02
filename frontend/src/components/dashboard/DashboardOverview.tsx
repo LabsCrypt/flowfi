@@ -97,10 +97,7 @@ interface DashboardOverviewProps {
 
 export function DashboardOverview({
   snapshot,
-  isSnapshotLoading,
-  snapshotError,
   session,
-  onDisconnect,
   setShowWizard,
   queryClient,
 }: DashboardOverviewProps) {
@@ -109,7 +106,7 @@ export function DashboardOverview({
       .then((next: DashboardSnapshot) => {
         queryClient.setQueryData(dashboardQueryKey(session.publicKey), next);
       })
-      .catch((err) => {
+      .catch(() => {
         queryClient.setQueryData(dashboardQueryKey(session.publicKey), null);
       });
   }, [session.publicKey, queryClient]);

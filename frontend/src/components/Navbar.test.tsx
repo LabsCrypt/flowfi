@@ -18,6 +18,12 @@ vi.mock('./NotificationDropdown', () => ({
   NotificationDropdown: () => <div data-testid="notification-dropdown" />,
 }));
 
+// NetworkSelector reads NetworkContext; this suite is about the menu toggle, so
+// the selector is stubbed the same way as the other Navbar children.
+vi.mock('@/components/NetworkSelector', () => ({
+  NetworkSelector: () => <div data-testid="network-selector" />,
+}));
+
 vi.mock('next/link', () => ({
   default: ({ children, href }: React.PropsWithChildren<{ href: string }>) => (
     <a href={href}>{children}</a>

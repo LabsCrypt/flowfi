@@ -1502,6 +1502,41 @@ body {
   opacity: 0.72;
 }
 
+/* ── Sandbox account picker (mock mode) ───────────────────────────────────── */
+
+.wallet-mock {
+  margin-bottom: 1.35rem;
+  border: 1px dashed rgba(15, 122, 153, 0.42);
+  border-radius: 1.15rem;
+  background: linear-gradient(165deg,
+      rgba(240, 251, 255, 0.92),
+      rgba(226, 244, 250, 0.7));
+  padding: 1rem 1.05rem 1.15rem;
+}
+
+.wallet-mock__header h3 {
+  margin: 0.32rem 0 0;
+  font-size: 1.05rem;
+}
+
+.wallet-mock__header p {
+  margin: 0.4rem 0 0.85rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.wallet-mock .wallet-error {
+  margin-bottom: 0.85rem;
+}
+
+.wallet-card__key {
+  font-family: var(--font-mono), "IBM Plex Mono", monospace;
+  font-size: 0.72rem !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
 /* ── WalletButton ─────────────────────────────────────────────────────────── */
 
 .wallet-connect-btn {

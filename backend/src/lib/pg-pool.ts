@@ -124,3 +124,22 @@ export const createPgPool = (): pg.Pool => {
 
   return pool;
 };
+
+/**
+ * Returns a plain-object snapshot of the pool's current connection counters.
+ * Consumed by the admin /metrics endpoint and re-exported from prisma.ts so
+ * callers can reach it without importing pg-pool directly.
+ */
+export function getPoolMetrics(pool: pg.Pool): {
+  total: number;
+  idle: number;
+  waiting: number;
+  max: number;
+} {
+  return {
+    total: pool.totalCount ?? 0,
+    idle: pool.idleCount ?? 0,
+    waiting: pool.waitingCount ?? 0,
+    max: pool.options?.max ?? 0,
+  };
+}

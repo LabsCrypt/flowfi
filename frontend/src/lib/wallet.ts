@@ -26,7 +26,11 @@ import {
   getNetworkDetails,
 } from "@stellar/freighter-api";
 
-export type WalletId = "freighter" | "albedo" | "xbull" | "hana" | "walletconnect";
+export type WalletId = "freighter" | "albedo" | "xbull" | "hana" | "walletconnect" | "mock";
+
+/** Wallet id used by sandbox sessions (see lib/mock-chain.ts). */
+export const MOCK_WALLET_ID = "mock" satisfies WalletId;
+export const MOCK_WALLET_NAME = "Sandbox Account";
 
 export interface WalletDescriptor {
   id: WalletId;
@@ -76,21 +80,48 @@ function buildSession(
   walletId: WalletId,
   publicKey: string,
   network: string,
+  mocked = false,
 ): WalletSession {
+  // The mock wallet has no descriptor in SUPPORTED_WALLETS — it is only ever
+  // reachable from the sandbox account picker.
   const descriptor = SUPPORTED_WALLETS.find((w) => w.id === walletId);
 
-  if (!descriptor) {
+  if (!descriptor && !mocked) {
     throw new Error("Unsupported wallet selected.");
   }
 
   return {
     walletId,
-    walletName: descriptor.name,
+    walletName: descriptor?.name ?? MOCK_WALLET_NAME,
     publicKey,
     connectedAt: new Date().toISOString(),
     network,
-    mocked: false,
+    mocked,
   };
+}
+
+/**
+ * Build a sandbox session for one of the seeded mock accounts.
+ *
+ * Only called when NEXT_PUBLIC_MOCK_MODE=true; the backend refuses to issue the
+ * matching token unless it is running in mock mode outside production.
+ */
+export async function connectMockWallet(publicKey: string): Promise<WalletSession> {
+  const { MOCK_MODE, fetchMockToken } = await import("@/lib/mock-chain");
+  if (!MOCK_MODE) {
+    throw new Error("Mock wallets are disabled. Set NEXT_PUBLIC_MOCK_MODE=true to enable the sandbox.");
+  }
+
+  // Prove the account exists and is servable by the sandbox backend before
+  // handing the UI a session it would otherwise fail every request with.
+  await fetchMockToken(publicKey);
+
+  return buildSession(
+    MOCK_WALLET_ID,
+    publicKey,
+    STELLAR_NETWORK === "MAINNET" ? "Mainnet" : "Testnet",
+    true,
+  );
 }
 
 // ── Freighter ─────────────────────────────────────────────────────────────────

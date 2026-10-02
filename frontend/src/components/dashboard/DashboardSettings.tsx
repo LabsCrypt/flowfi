@@ -5,7 +5,9 @@ interface DashboardSettingsProps {
   onDisconnect: () => void;
 }
 
-export function DashboardSettings({ session, onDisconnect }: DashboardSettingsProps) {
+// `session` and `onDisconnect` are part of the dashboard's props signature but
+// are not rendered by this panel yet.
+export function DashboardSettings(_props: DashboardSettingsProps) {
   return (
     <div className="dashboard-content-stack mt-8">
       <section className="dashboard-panel dashboard-panel--stream-builder">

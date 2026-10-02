@@ -21,6 +21,9 @@ import {
 } from "../repositories/streamEvent.repository.js";
 import { findStreams } from "../repositories/stream.repository.js";
 import { sendApiError } from "../types/api-error.js";
+import { ApiError } from "../lib/api-error.js";
+import { isMockMode } from "../config/mock-mode.js";
+import * as mockChain from "../services/mock-chain.service.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
@@ -128,6 +131,31 @@ export const createStream = async (req: Request, res: Response) => {
     const existing = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
     if (existing && existing.sender !== callerPublicKey) {
       return sendApiError(res, 403, 'FORBIDDEN', 'Cannot modify a stream owned by another wallet');
+    }
+
+    // Mock mode (issue #1336): there is no chain to confirm against, so the
+    // projection is written straight from the validated request.
+    if (isMockMode()) {
+      try {
+        await mockChain.createStreamFromRequest({
+          streamId: parsedStreamId,
+          sender,
+          recipient,
+          tokenAddress,
+          ratePerSecond: parsedRatePerSecond,
+          depositedAmount: parsedDepositedAmount,
+          startTime: BigInt(parsedStartTime),
+        });
+        const created = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
+        return res.status(201).json(
+          JSON.parse(JSON.stringify({ ...created, mock: true }, (_key, value) => typeof value === 'bigint' ? value.toString() : value)),
+        );
+      } catch (error) {
+        if (error instanceof ApiError) {
+          return sendApiError(res, error.status, error.code, error.message);
+        }
+        throw error;
+      }
     }
 
     const chainStream = await getStreamFromChain(parsedStreamId);
@@ -741,6 +769,20 @@ export const pauseStream = async (req: Request, res: Response) => {
     }
 
     try {
+      // Mock mode applies the pause locally (state + event + SSE broadcast)
+      // instead of only simulating it, so the sandbox behaves like a live stack.
+      if (isMockMode()) {
+        const result = await mockChain.pauseStream(parsedStreamId, authReq.user.publicKey);
+        const updated = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
+        return res.status(200).json({
+          success: true,
+          streamId: parsedStreamId,
+          txHash: result.txHash,
+          stream: updated,
+          mock: true,
+        });
+      }
+
       // Call Soroban service to verify the pause operation would succeed
       const result = await sorobanPauseStream(
         authReq.user.publicKey,
@@ -762,6 +804,9 @@ export const pauseStream = async (req: Request, res: Response) => {
         `Soroban pause failed for stream ${parsedStreamId}:`,
         sorobanError,
       );
+      if (sorobanError instanceof ApiError) {
+        return sendApiError(res, sorobanError.status, sorobanError.code, sorobanError.message);
+      }
       return sendApiError(res, 400, "PAUSE_FAILED", "Failed to pause stream on chain");
     }
   } catch (error) {
@@ -810,6 +855,19 @@ export const resumeStream = async (req: Request, res: Response) => {
     }
 
     try {
+      // Mock mode applies the resume locally (state + event + SSE broadcast).
+      if (isMockMode()) {
+        const result = await mockChain.resumeStream(parsedStreamId, authReq.user.publicKey);
+        const updated = await prisma.stream.findUnique({ where: { streamId: parsedStreamId } });
+        return res.status(200).json({
+          success: true,
+          streamId: parsedStreamId,
+          txHash: result.txHash,
+          stream: updated,
+          mock: true,
+        });
+      }
+
       // Call Soroban service to verify the resume operation would succeed
       const result = await sorobanResumeStream(
         authReq.user.publicKey,
@@ -831,6 +889,9 @@ export const resumeStream = async (req: Request, res: Response) => {
         `Soroban resume failed for stream ${parsedStreamId}:`,
         sorobanError,
       );
+      if (sorobanError instanceof ApiError) {
+        return sendApiError(res, sorobanError.status, sorobanError.code, sorobanError.message);
+      }
       return sendApiError(res, 400, "RESUME_FAILED", "Failed to resume stream on chain");
     }
   } catch (error) {

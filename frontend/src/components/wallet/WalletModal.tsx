@@ -14,9 +14,14 @@
  */
 
 import React, { useEffect } from "react";
-import { type WalletId } from "@/lib/wallet";
+import { type WalletId, shortenPublicKey } from "@/lib/wallet";
 import { useWallet } from "@/context/wallet-context";
 import { useModalDialog } from "@/hooks/useModalDialog";
+import {
+  MOCK_MODE,
+  fetchMockAccounts,
+  type MockAccount,
+} from "@/lib/mock-chain";
 
 import { isConnected } from "@stellar/freighter-api";
 
@@ -31,11 +36,39 @@ export function WalletModal({ onClose }: WalletModalProps) {
     selectedWalletId,
     errorMessage,
     connect,
+    connectMock,
     clearError,
   } = useWallet();
 
   const isConnecting = status === "connecting";
   const [freighterInstalled, setFreighterInstalled] = React.useState(true);
+  const [mockAccounts, setMockAccounts] = React.useState<MockAccount[]>([]);
+  const [mockAccountsError, setMockAccountsError] = React.useState<string | null>(null);
+
+  // Sandbox accounts come from the backend so the picker always lists exactly
+  // the users the seed script created.
+  const mockAccountsCancelled = React.useRef(false);
+
+  useEffect(() => {
+    if (!MOCK_MODE) return;
+
+    const cancelled = mockAccountsCancelled;
+    fetchMockAccounts()
+      .then((accounts) => {
+        if (!cancelled.current) setMockAccounts(accounts);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled.current) {
+          setMockAccountsError(
+            error instanceof Error ? error.message : "Could not load sandbox accounts.",
+          );
+        }
+      });
+
+    return () => {
+      cancelled.current = true;
+    };
+  }, []);
 
   // Escape-to-close, focus trapping, focus restoration and body-scroll
   // locking. Closing stays disabled while a connection is in flight, matching
@@ -117,6 +150,48 @@ export function WalletModal({ onClose }: WalletModalProps) {
               Dismiss
             </button>
           </div>
+        )}
+
+        {/* Sandbox accounts — mock mode only */}
+        {MOCK_MODE && (
+          <section className="wallet-mock" aria-label="Sandbox accounts">
+            <header className="wallet-mock__header">
+              <p className="kicker">Mock sandbox</p>
+              <h3>Sign in without a wallet</h3>
+              <p>
+                No wallet, no funding, no testnet. Pick one of the seeded demo
+                accounts — every action is applied locally.
+              </p>
+            </header>
+
+            {mockAccountsError && (
+              <p className="wallet-error" role="alert">
+                {mockAccountsError}
+              </p>
+            )}
+
+            <div className="wallet-grid">
+              {mockAccounts.map((account) => (
+                <article key={account.publicKey} className="wallet-card">
+                  <header className="wallet-card__header">
+                    <h3>{account.label}</h3>
+                    <span className="wallet-card__key">
+                      {shortenPublicKey(account.publicKey)}
+                    </span>
+                  </header>
+                  <p>Seeded demo account with 30 days of stream history.</p>
+                  <button
+                    type="button"
+                    className="wallet-button"
+                    disabled={isConnecting}
+                    onClick={() => void connectMock(account.publicKey)}
+                  >
+                    {isConnecting ? "Signing in…" : `Continue as ${account.label}`}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
         )}
 
         {/* Wallet cards */}

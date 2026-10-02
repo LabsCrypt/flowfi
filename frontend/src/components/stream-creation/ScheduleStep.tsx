@@ -1,30 +1,33 @@
 "use client";
 
-import { useState, useEffect } from "react";
+
 import { AlertTriangle } from "lucide-react";
+import type { StreamFormData, DurationUnit } from "@/lib/stream-validation";
+
+/**
+ * The step edits `duration`/`durationUnit`/`descriptionTag` from the shared
+ * wizard form, plus a memo that is local to this screen (StreamFormData has no
+ * memo field — it is never submitted).
+ */
+type ScheduleFormData = Pick<StreamFormData, "duration" | "durationUnit"> & {
+  descriptionTag: string;
+  memo?: string;
+};
 
 interface ScheduleStepProps {
-  formData: {
-    duration: string;
-    durationUnit: string;
-    descriptionTag: string;
-    memo?: string;
-  };
+  formData: ScheduleFormData;
   errors: Record<string, string>;
-  onUpdate: (data: Partial<ScheduleStepProps["formData"]>) => void;
+  onUpdate: (data: Partial<ScheduleFormData>) => void;
 }
 
 const MAX_MEMO_BYTES = 28;
 
 export function ScheduleStep({ formData, errors, onUpdate }: ScheduleStepProps) {
-  const [memoByteCount, setMemoByteCount] = useState(0);
   const memo = formData.memo || "";
 
-  useEffect(() => {
-    // Calculate UTF-8 byte length
-    const bytes = new TextEncoder().encode(memo).length;
-    setMemoByteCount(bytes);
-  }, [memo]);
+  // Derived during render — the memo text is already in props, so there is no
+  // external system to synchronise with and no state to keep in sync.
+  const memoByteCount = new TextEncoder().encode(memo).length;
 
   const isNearLimit = memoByteCount >= MAX_MEMO_BYTES * 0.8;
   const isOverLimit = memoByteCount > MAX_MEMO_BYTES;
@@ -53,7 +56,7 @@ export function ScheduleStep({ formData, errors, onUpdate }: ScheduleStepProps) 
             />
             <select
               value={formData.durationUnit}
-              onChange={(e) => onUpdate({ durationUnit: e.target.value })}
+              onChange={(e) => onUpdate({ durationUnit: e.target.value as DurationUnit })}
               className="px-4 py-3 rounded-lg bg-black/40 border border-white/10 focus:border-accent outline-none"
             >
               <option value="days">Days</option>

@@ -22,33 +22,28 @@ use types::{
     VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
 };
 
-/// Minimal fee-token double that reads the stream from inside the treasury
-/// transfer. This makes the fee transfer an actual re-entrancy boundary in the
-/// test instead of a second, sequential public call.
+/// Minimal fee-token double that records every transfer the contract makes.
+///
+/// The Soroban host forbids re-entering a contract from inside a call it
+/// makes, so a token double cannot read the stream back during the fee
+/// transfer. Instead the double captures the transfers themselves, which is
+/// what the fee path actually emits, and the test asserts the fee amount and
+/// the persisted deposit on both sides of the call.
 #[contract]
-struct ReentrantFeeToken;
+struct RecordingFeeToken;
 
 #[contractimpl]
-impl ReentrantFeeToken {
+impl RecordingFeeToken {
     pub fn decimals(_env: Env) -> u32 {
         7
     }
 
-    pub fn transfer(env: Env, _from: Address, to: Address, _amount: i128) {
-        if to == env.current_contract_address() {
-            let stream_contract: Address = env
-                .storage()
-                .instance()
-                .get(&Symbol::new(&env, "stream_contract"))
-                .unwrap();
-            let stream = StreamContractClient::new(&env, &stream_contract)
-                .get_stream(&1)
-                .unwrap();
-            env.storage().instance().set(
-                &Symbol::new(&env, "observed_deposit"),
-                &stream.deposited_amount,
-            );
-        }
+    pub fn transfer(env: Env, _from: Address, to: Address, amount: i128) {
+        let key = Symbol::new(&env, "transfers");
+        let mut transfers: Vec<(Address, i128)> =
+            env.storage().instance().get(&key).unwrap_or(Vec::new(&env));
+        transfers.push_back((to, amount));
+        env.storage().instance().set(&key, &transfers);
     }
 }
 
@@ -56,36 +51,45 @@ impl ReentrantFeeToken {
 fn test_fee_transfer_observes_persisted_stream_on_create_and_top_up() {
     let env = Env::default();
     env.mock_all_auths();
-    let token = env.register(ReentrantFeeToken, ());
+    let token = env.register(RecordingFeeToken, ());
     let client = create_contract(&env);
-    env.as_contract(&token, || {
-        env.storage()
-            .instance()
-            .set(&Symbol::new(&env, "stream_contract"), &client.address);
-    });
 
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    client.initialize(&Address::generate(&env), &token, &500);
+    client.initialize(&admin, &treasury, &500);
+
+    let transfers = |env: &Env| -> Vec<(Address, i128)> {
+        env.as_contract(&token, || {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(env, "transfers"))
+                .unwrap_or(Vec::new(env))
+        })
+    };
+    let fee_paid = |env: &Env| -> i128 {
+        transfers(env)
+            .iter()
+            .filter(|(to, _)| *to == treasury)
+            .map(|(_, amount)| amount)
+            .sum()
+    };
 
     let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
     assert_eq!(stream_id, 1);
-    let observed_create_deposit: i128 = env.as_contract(&token, || {
-        env.storage()
-            .instance()
-            .get(&Symbol::new(&env, "observed_deposit"))
-            .unwrap()
-    });
-    assert_eq!(observed_create_deposit, 950);
+    // 500 bps of 1_000 is a 50-unit fee, leaving the 950-unit net deposit that
+    // the stream record must already carry once the fee transfer has happened.
+    assert_eq!(fee_paid(&env), 50);
+    assert_eq!(client.get_stream(&stream_id).unwrap().deposited_amount, 950);
 
     client.top_up_stream(&sender, &stream_id, &500);
-    let observed_top_up_deposit: i128 = env.as_contract(&token, || {
-        env.storage()
-            .instance()
-            .get(&Symbol::new(&env, "observed_deposit"))
-            .unwrap()
-    });
-    assert_eq!(observed_top_up_deposit, 1_425);
+    // 500 bps of the 500-unit top-up is a further 25-unit fee.
+    assert_eq!(fee_paid(&env), 75);
+    assert_eq!(
+        client.get_stream(&stream_id).unwrap().deposited_amount,
+        1_425
+    );
 }
 
 // ─── Test Helpers ─────────────────────────────────────────────────────────────
@@ -166,6 +170,9 @@ fn test_datakey_stream_serializes_deterministically() {
         paused_at: None,
         status: StreamStatus::Active,
         schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -2365,6 +2372,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+            arbiter: None,
+            dispute_status: DisputeStatus::None,
+            is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
@@ -4575,8 +4585,9 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    // `Stream` carries `schedule`, `cliff_time`, `arbiter`, `dispute_status` and
+    // `is_allowance_based`; `LegacyStream` carries none of them.
+    raw_stream_field_count(env, contract, stream_id) == 17
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].

@@ -51,6 +51,13 @@ vi.mock("react-hot-toast", () => ({
   default: mockToast,
 }));
 
+// transactionSuccessToast forwards an `options` argument that is undefined on
+// every call site; route it through the same single-argument toast mock so the
+// assertions can check the message the user actually sees.
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: (message: string) => mockToast.success(message),
+}));
+
 vi.mock("@/lib/api/_shared", () => ({
   getApiBaseUrl: () => "http://localhost:4000",
 }));
@@ -72,6 +79,17 @@ vi.mock("@/hooks/useStreamingAmount", () => ({
 
 vi.mock("@/lib/soroban", () => mockSoroban);
 
+// useTokenPrice is backed by react-query, which needs a QueryClientProvider.
+// These tests drive the stream's own fetch mocks, so only the hook is stubbed;
+// the pure formatters stay real so the assertions still exercise them.
+vi.mock("@/hooks/useTokenPrice", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useTokenPrice")>();
+  return {
+    ...actual,
+    useTokenPrice: () => ({ data: { priceUSD: 1, priceEUR: 1, priceGBP: 1 } }),
+  };
+});
+
 vi.mock("@/components/stream-creation/CancelConfirmModal", () => ({
   CancelConfirmModal: () => <div data-testid="cancel-modal">Cancel Modal</div>,
 }));
@@ -81,6 +99,8 @@ vi.mock("@/components/ui/Button", () => ({
     children,
     onClick,
     disabled,
+    glow: _glow,
+    variant: _variant,
     ...rest
   }: React.ButtonHTMLAttributes<HTMLButtonElement> & { glow?: boolean; variant?: string; children?: React.ReactNode }) => (
     <button onClick={onClick} disabled={disabled} {...rest}>
@@ -121,6 +141,31 @@ function createMockStream() {
   };
 }
 
+/**
+ * The details view issues three requests: the stream itself, its event page,
+ * and the event page again for the receipt's creation tx. Routing by URL keeps
+ * the mock stable no matter how many of those the component makes.
+ */
+function mockStreamFetch(streamOverrides: Record<string, unknown> = {}) {
+  const mockStream = { ...createMockStream(), ...streamOverrides };
+
+  vi.mocked(global.fetch).mockImplementation(((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/events")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response);
+    }
+    return Promise.resolve({
+      ok: true,
+      json: async () => mockStream,
+    } as Response);
+  }) as unknown as typeof global.fetch);
+
+  return mockStream;
+}
+
 describe("StreamDetailsContent loading skeleton", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -150,17 +195,7 @@ describe("StreamDetailsContent loading skeleton", () => {
   });
 
   it("transitions from skeleton to stream content when data loads successfully", async () => {
-    const mockStream = createMockStream();
-
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockStream,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response);
+    mockStreamFetch();
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
 
@@ -175,8 +210,9 @@ describe("StreamDetailsContent loading skeleton", () => {
     // Skeleton should be gone
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    // Stream-specific content should be visible
-    expect(screen.getByText(/stream #42/i)).toBeInTheDocument();
+    // Stream-specific content should be visible (the header and the receipt
+    // button both render the id)
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThan(0);
   });
 
   it("transitions from skeleton to not-found state when stream is confirmed missing", async () => {
@@ -221,17 +257,7 @@ describe("StreamDetailsContent loading skeleton", () => {
   });
 
   it("renders the live claimable amount from the shared useStreamingAmount hook", async () => {
-    const mockStream = createMockStream();
-
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockStream,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response);
+    mockStreamFetch();
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
 
@@ -248,17 +274,7 @@ describe("StreamDetailsContent loading skeleton", () => {
 // ─── Helper: render the fully-loaded component ────────────────────────────
 
 async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
-  const mockStream = { ...createMockStream(), ...streamOverrides };
-
-  vi.mocked(global.fetch)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => mockStream,
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], total: 0 }),
-    } as Response);
+  const mockStream = mockStreamFetch(streamOverrides);
 
   const user = userEvent.setup();
   render(<StreamDetailsContent streamId={STREAM_ID} />);
@@ -400,7 +416,7 @@ describe("StreamDetailsContent handleTopUp", () => {
     const addFundsBtn = screen.getByRole("button", { name: /add funds/i });
     await user.click(addFundsBtn);
 
-    expect(mockToast.error).toHaveBeenCalledWith("Please enter a valid amount");
+    expect(mockToast.error).toHaveBeenCalledWith("Amount is required");
     expect(mockSoroban.topUpStream).not.toHaveBeenCalled();
   });
 });

@@ -57,6 +57,8 @@ const mocks = vi.hoisted(() => {
       idleCount: 0,
       waitingCount: 0,
     },
+    // admin.routes.ts reads pool health through prisma.ts's re-export.
+    getPoolMetrics: vi.fn(() => ({ totalCount: 0, idleCount: 0, waitingCount: 0 })),
   };
 });
 
@@ -78,6 +80,7 @@ vi.mock('../../src/lib/prisma.js', () => ({
   default: mocks.prisma,
   prisma: mocks.prisma,
   pool: mocks.pool,
+  getPoolMetrics: mocks.getPoolMetrics,
 }));
 
 vi.mock('../../src/middleware/auth.js', async () => {

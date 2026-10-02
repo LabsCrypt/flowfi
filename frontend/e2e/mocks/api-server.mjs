@@ -22,7 +22,7 @@ const RATE_PER_SECOND = "10000000"; // 1 USDC / second (7 decimals)
 const DEPOSITED_AMOUNT = "100000000000"; // 10,000 USDC
 const WITHDRAW_BATCH = BigInt("100000000"); // 10 USDC per simulated withdrawal
 
-const accountSequence = ["1"];
+const _accountSequence = ["1"];
 
 const nowSec = () => Math.floor(Date.now() / 1000);
 
@@ -109,7 +109,7 @@ function accountEntryXdr(publicKey, seq) {
   return xdr.LedgerEntryData.account(accountEntry);
 }
 
-function ledgerKeyXdr(publicKey) {
+function _ledgerKeyXdr(publicKey) {
   const kp = Keypair.fromPublicKey(publicKey);
   return xdr.LedgerKey.account(new xdr.LedgerKeyAccount({ accountId: kp.xdrPublicKey() }));
 }

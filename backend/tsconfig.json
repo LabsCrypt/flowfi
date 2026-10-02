@@ -39,7 +39,16 @@
     "skipLibCheck": true,
   },
   "include": [
-    "src/**/*",
-    "tests/**/*"
+    "src/**/*"
+  ],
+  // `npm run build` emits the container image, so it only compiles `src/`.
+  // Test files are typechecked separately by `npm run typecheck:tests`
+  // (tsconfig.tests.json) and executed by vitest, which does not typecheck —
+  // keeping them out of the build stops a stale test type from blocking a
+  // deployable image.
+  "exclude": [
+    "tests",
+    "dist",
+    "node_modules"
   ]
 }

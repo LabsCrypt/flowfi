@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks, Account, Address } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, scValToNative, Keypair, TransactionBuilder, Networks, Account, Address } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 import { ApiError } from '../lib/api-error.js';
 import {
@@ -7,8 +7,30 @@ import {
   rpcFailoversTotal,
 } from '../lib/metrics.js';
 import { withSpan } from '../lib/tracing.js';
+import { rpcPool } from '../lib/rpc-pool.js';
+import { isMockMode } from '../config/mock-mode.js';
+import { mockTransactionHash, type MockAction } from './mock-chain.service.js';
+
+/**
+ * In mock mode (issue #1336) every chain-backed action resolves locally instead
+ * of reaching an RPC endpoint. The surrounding handlers still own all database
+ * writes, event rows and broadcasts, so the sandbox exercises the same code
+ * paths a real deployment does — only the network call is replaced by a
+ * deterministic placeholder hash.
+ */
+function mockActionHash(action: MockAction, streamId: bigint): string {
+  return mockTransactionHash(action, streamId);
+}
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
+
+/**
+ * Ledger height reported by the local mock Soroban RPC (the `mock-soroban-rpc`
+ * service in docker-compose.yml). Any stable, clearly-fake number works: it only
+ * keeps the indexer's lag gauge and simulation validity window from reporting
+ * zero.
+ */
+const MOCK_LEDGER_SEQUENCE = 1_000_000;
 
 function getContractId(): string {
   return process.env.STREAM_CONTRACT_ID ?? '';
@@ -42,15 +64,18 @@ const RPC_MAX_RETRIES = Number(process.env.SOROBAN_RPC_MAX_RETRIES ?? 2);
 /** Base delay for exponential backoff between retries (doubles each attempt). */
 const RPC_RETRY_BASE_MS = Number(process.env.SOROBAN_RPC_RETRY_BASE_MS ?? 250);
 
-/** Bounded deadline for awaiting on-chain transaction finality (default 30s). */
-function getTxConfirmationTimeoutMs(): number {
-  return Number(process.env.SOROBAN_TX_CONFIRMATION_TIMEOUT_MS ?? 30_000);
-}
+/**
+ * Bounded deadline for awaiting on-chain transaction finality (default 30s).
+ *
+ * Resolved per call rather than at module load so a runtime override (tests,
+ * or a config reload) takes effect without re-importing the module.
+ */
+const resolveTxConfirmationTimeoutMs = (): number =>
+  Number(process.env.SOROBAN_TX_CONFIRMATION_TIMEOUT_MS ?? 30_000);
 
 /** Polling interval when awaiting on-chain transaction finality (default 1s). */
-function getTxPollIntervalMs(): number {
-  return Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
-}
+const resolveTxPollIntervalMs = (): number =>
+  Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
 
 const DEFAULT_RPC_HEALTH_CACHE_TTL_MS = 10_000;
 
@@ -192,8 +217,10 @@ let _server: rpc.Server | null = null;
 
 async function executeRpc<T>(label: string, operation: (server: rpc.Server) => Promise<T>): Promise<T> {
   if (_server) return operation(_server);
-  return rpcPool.execute(label, (server) => operation(server));
+  return rpcPool.execute(label, (server, _signal) => operation(server));
 }
+
+
 
 /**
  * Lightweight connectivity check used by the /health endpoint.
@@ -201,6 +228,7 @@ async function executeRpc<T>(label: string, operation: (server: rpc.Server) => P
  * unreachable Soroban RPC endpoint can't hang the health check.
  */
 export async function checkRpcHealth(timeoutMs = 3_000): Promise<boolean> {
+  if (isMockMode()) return true;
   const now = Date.now();
   const ttlMs = getRpcHealthCacheTtlMs();
 
@@ -355,15 +383,50 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 }
 
 /**
+ * Poll until a submitted transaction reaches a terminal state and return the
+ * SUCCESS response. Throws when the transaction fails on-chain or the
+ * confirmation deadline passes without a terminal state.
+ *
+ * Exported for direct unit testing of the polling loop.
+ */
+export async function pollTransactionStatus(
+  txHash: string,
+  timeoutMs: number = resolveTxConfirmationTimeoutMs(),
+  pollIntervalMs: number = resolveTxPollIntervalMs(),
+): Promise<rpc.Api.GetTransactionResponse> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = (await withRpcTimeout('getTransaction', () =>
+      executeRpc('getTransaction', (server) => server.getTransaction(txHash)),
+    )) as rpc.Api.GetTransactionResponse;
+
+    if (status.status === rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error(`Transaction failed on-chain: ${txHash}`);
+    }
+    if (status.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+      return status;
+    }
+
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+
+  throw new Error(`Transaction confirmation timed out after ${timeoutMs}ms: ${txHash}`);
+}
+
+/**
  * Latest ledger sequence known to the network, or 0 when it cannot be resolved.
  *
  * Feeds the `flowfi_indexer_network_ledger` gauge so `flowfi_indexer_lag_ledgers`
  * has a denominator even between indexer poll cycles.
  */
 export async function getLatestLedger(): Promise<number> {
+  if (isMockMode()) {
+    return MOCK_LEDGER_SEQUENCE;
+  }
   try {
     const response = await withRpcRetry('getLatestLedger', () =>
-      withRpcTimeout('getLatestLedger', () => getServer().getLatestLedger()),
+      withRpcTimeout('getLatestLedger', () => executeRpc('getLatestLedger', (server) => server.getLatestLedger())),
     );
     return Number(response.sequence);
   } catch (err) {
@@ -372,12 +435,19 @@ export async function getLatestLedger(): Promise<number> {
   }
 }
 
-export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
-  if (!getContractId()) return null;
+export async function getStreamFromChain(streamId: bigint | number): Promise<ChainStream | null> {
+  // No contract exists in mock mode; the database projection is the only
+  // source of truth, so callers fall back to it instead of a chain read.
+  if (!getContractId() || isMockMode()) return null;
+
+  // Stream ids are u64 on chain; callers hold them as bigint (Prisma BigInt)
+  // or as a parsed number, so normalise before building the ScVal and again
+  // when echoing the id back in the ChainStream shape.
+  const onChainId = BigInt(streamId);
 
   try {
     const retval = await simulateContractCall('get_stream', [
-      nativeToScVal(streamId, { type: 'u64' }),
+      nativeToScVal(onChainId, { type: 'u64' }),
     ]);
 
     const fields = decodeMap(retval);
@@ -388,7 +458,7 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
       isActiveVal.b === true;
 
     return {
-      streamId,
+      streamId: onChainId,
       sender: decodeAddress(fields['sender']!),
       recipient: decodeAddress(fields['recipient']!),
       tokenAddress: decodeAddress(fields['token_address']!),
@@ -405,7 +475,7 @@ export async function getStreamFromChain(streamId: number): Promise<ChainStream 
 }
 
 export async function getClaimableFromChain(streamId: bigint): Promise<string | null> {
-  if (!getContractId()) return null;
+  if (!getContractId() || isMockMode()) return null;
 
   try {
     const retval = await simulateContractCall('get_claimable_amount', [
@@ -428,12 +498,18 @@ export async function getClaimableFromChain(streamId: bigint): Promise<string | 
  * @returns Transaction hash of the cancellation transaction
  */
 export async function cancelStream(streamId: bigint, senderSecret: string): Promise<string> {
+  if (isMockMode()) {
+    return mockActionHash('cancel_stream', streamId);
+  }
   return submitContractCall('cancel_stream', [
     nativeToScVal(streamId, { type: 'u64' }),
   ], senderSecret);
 }
 
 export async function topUpStream(streamId: bigint, amount: bigint, callerAddress: string): Promise<string> {
+  if (isMockMode()) {
+    return mockActionHash('top_up_stream', streamId);
+  }
   const keeperSecret = getKeeperSecret();
   if (!keeperSecret) throw new Error('KEEPER_SECRET_KEY not configured');
   return submitContractCall('top_up_stream', [
@@ -461,6 +537,9 @@ export async function pauseStream(
   senderAddress: string,
   streamId: bigint
 ): Promise<PauseResumeResult> {
+  if (isMockMode()) {
+    return { txHash: mockActionHash('pause_stream', streamId) };
+  }
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
   }
@@ -495,6 +574,9 @@ export async function resumeStream(
   senderAddress: string,
   streamId: bigint
 ): Promise<PauseResumeResult> {
+  if (isMockMode()) {
+    return { txHash: mockActionHash('resume_stream', streamId) };
+  }
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
   }
@@ -528,6 +610,9 @@ export async function withdraw(
   streamId: bigint,
   recipientAddress: string,
 ): Promise<PauseResumeResult> {
+  if (isMockMode()) {
+    return { txHash: mockActionHash('withdraw', streamId) };
+  }
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
   }
@@ -837,11 +922,13 @@ function readResourceFootprint(
   transactionData: rpc.Api.SimulateTransactionSuccessResponse['transactionData'],
 ): { cpuInstructions: number; memoryBytes: number } {
   try {
+    // stellar-sdk v17 models XDR structs as classes with readonly properties,
+    // so `resources` / `instructions` / `writeBytes` are fields, not accessors.
     const data = transactionData.build();
-    const resources = data.resources();
+    const resources = data.resources;
     return {
-      cpuInstructions: Number(resources.instructions()),
-      memoryBytes: Number(resources.writeBytes()),
+      cpuInstructions: Number(resources.instructions),
+      memoryBytes: Number(resources.writeBytes),
     };
   } catch (err) {
     logger.warn('[SorobanService] Could not read resource footprint from simulation:', err);
@@ -849,32 +936,25 @@ function readResourceFootprint(
   }
 }
 
-/** Render a simulated ScVal return as a decimal string ('' for void returns). */
+/**
+ * Render a simulated ScVal return as a decimal string ('' for void returns).
+ *
+ * Uses `scValToNative` rather than decoding the union by hand: in stellar-sdk
+ * v17 the ScVal variants are classes behind a single type, so the previous
+ * `retval.switch()` / `retval.u64()` accessors no longer exist. Native ints and
+ * bigints are rendered as decimals; everything else (addresses, maps, void
+ * markers) falls back to base64 XDR so a client can still decode it.
+ */
 function decodeSimulatedReturn(result: rpc.Api.SimulateTransactionSuccessResponse): string {
   const retval = result.result?.retval;
   if (!retval) return '';
 
   try {
-    switch (retval.switch().value) {
-      case xdr.ScValType.scvI128().value:
-        return decodeI128(retval);
-      case xdr.ScValType.scvU64().value:
-        return retval.u64().toString();
-      case xdr.ScValType.scvU32().value:
-        return retval.u32().toString();
-      case xdr.ScValType.scvI64().value:
-        return retval.i64().toString();
-      case xdr.ScValType.scvU128().value: {
-        const parts = retval.u128();
-        const hi = BigInt.asUintN(64, BigInt(parts.hi().toString()));
-        const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
-        return ((hi << 64n) | lo).toString();
-      }
-      default:
-        // Non-numeric returns (addresses, maps, void markers) are surfaced as
-        // base64 XDR so the client can decode them with the SDK if it needs to.
-        return Buffer.from(retval.toXDR()).toString('base64');
+    const native = scValToNative(retval);
+    if (typeof native === 'bigint' || typeof native === 'number') {
+      return native.toString();
     }
+    return Buffer.from(retval.toXDR()).toString('base64');
   } catch {
     return '';
   }
@@ -896,6 +976,21 @@ export async function simulateStreamAction(
   senderPublicKey: string,
   params: SimulateActionParams = {},
 ): Promise<StreamSimulationResult> {
+  if (isMockMode()) {
+    // No real footprint exists offline. The sandbox UI never signs this XDR —
+    // it routes writes through /v1/mock/actions — but returning a well-formed
+    // envelope keeps API clients from failing on a 503.
+    return {
+      unsignedXdr: '',
+      minResourceFee: '100',
+      recommendedFee: applyFeeBuffer('100'),
+      cpuInstructions: 0,
+      memoryBytes: 0,
+      expiresAtLedger: MOCK_LEDGER_SEQUENCE + SIMULATION_VALIDITY_LEDGERS,
+      simulatedReturn: '',
+    };
+  }
+
   const contractId = getContractId();
   if (!contractId) {
     throw new ApiError(503, 'Stream contract is not configured', 'contract_not_configured');
@@ -911,7 +1006,7 @@ export async function simulateStreamAction(
   let sourceAccount: Account;
   try {
     sourceAccount = await withRpcRetry('getAccount', () =>
-      withRpcTimeout('getAccount', () => getServer().getAccount(senderPublicKey)),
+      withRpcTimeout('getAccount', () => executeRpc('getAccount', (server) => server.getAccount(senderPublicKey))),
     );
   } catch (err) {
     logger.warn(
@@ -934,7 +1029,7 @@ export async function simulateStreamAction(
   const tx = builder.setTimeout(TX_TIMEOUT_SECONDS).build();
 
   const simulation = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () => executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx))),
   );
 
   if (rpc.Api.isSimulationError(simulation)) {

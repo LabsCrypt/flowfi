@@ -47,7 +47,9 @@ export function transactionSuccessToast(
   options?: ToastOptions
 ): string {
   playTransactionSuccessSound();
-  return toast.success(message, options);
+  // Forward `options` only when the caller supplied one: passing an explicit
+  // `undefined` shows up in every consumer's mock call assertions.
+  return options ? toast.success(message, options) : toast.success(message);
 }
 
 export { SOUND_STORAGE_KEY };

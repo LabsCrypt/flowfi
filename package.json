@@ -10,12 +10,18 @@
   ],
   "scripts": {
     "prepare": "husky || true",
-    "verify-security": "node scripts/verify-security-setup.js"
+    "verify-security": "node scripts/verify-security-setup.js",
+    "dev:mock": "npm run dev:mock:infra && npm run dev:mock:seed && npm run dev:mock:start",
+    "dev:mock:infra": "docker compose up -d postgres redis mock-soroban-rpc && node -e \"const {execSync}=require('child_process');let ok=false;for(let i=0;i<30;i++){try{execSync('docker compose exec -T postgres pg_isready -U flowfi -d flowfi',{stdio:'ignore'});ok=true;break;}catch(_){}}if(!ok)throw new Error('Postgres did not become healthy in time')\"",
+    "dev:mock:seed": "cd backend && npm run prisma:generate && DATABASE_URL=postgresql://flowfi:flowfi_dev_password@localhost:5433/flowfi npm run prisma:migrate && cd .. && DATABASE_URL=postgresql://flowfi:flowfi_dev_password@localhost:5433/flowfi npx tsx scripts/seed-mock-data.ts",
+    "dev:mock:start": "echo \"\\n✅  Mock sandbox ready — starting services...\\n  Backend:   http://localhost:3001\\n  Frontend:  http://localhost:3000\\n  API docs:  http://localhost:3001/api-docs\\n\" && concurrently --kill-others --names backend,frontend --prefix-colors cyan,magenta \"cd backend && SANDBOX_MODE_ENABLED=true SOROBAN_RPC_URL=http://localhost:8000 DATABASE_URL=postgresql://flowfi:flowfi_dev_password@localhost:5433/flowfi REDIS_URL=redis://localhost:6379 MOCK_MODE=true MOCK_USER_LABELS='Alice,Bob,Carol,Dave,Eve' npm run dev\" \"cd frontend && NEXT_PUBLIC_API_URL=http://localhost:3001 NEXT_PUBLIC_MOCK_MODE=true npm run dev\""
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^3.2.7",
+    "concurrently": "^9.1.2",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
+    "prisma": "7.10.0",
     "vitest": "^3.2.7"
   },
   "lint-staged": {
@@ -41,6 +47,7 @@
     "deepmerge-ts": "^8.0.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "mysql2": ">=3.22.0"
+    "mysql2": ">=3.22.0",
+    "lodash": "^4.18.1"
   }
 }

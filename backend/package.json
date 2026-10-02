@@ -20,7 +20,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "prisma:studio": "prisma studio",
-    "codegen:openapi": "tsx scripts/export-openapi.mts"
+    "codegen:openapi": "tsx scripts/export-openapi.mts",
+    "typecheck:tests": "tsc -p tsconfig.tests.json"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

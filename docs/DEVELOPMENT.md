@@ -4,6 +4,118 @@ This guide is intended to let a new contributor run the full FlowFi stack from a
 
 ---
 
+## ⚡ One-Click Mock Development Sandbox
+
+> **Recommended for new contributors.** No wallet, no testnet funding, no live RPC needed.
+
+Spin up the complete FlowFi stack — Postgres, Redis, mock Soroban RPC, backend (sandbox mode), and frontend — with rich pre-seeded demo data in a single command:
+
+```bash
+# From the repo root
+npm install          # only needed once
+npm run dev:mock
+```
+
+That one command:
+
+1. **Starts infrastructure** — Postgres, Redis, and a mock Soroban RPC stub via Docker Compose.
+2. **Migrates the database** — runs Prisma migrations automatically.
+3. **Seeds 20 demo streams** across 5 mock users, with event histories spanning the last 30 days:
+   - 7 Active streams (USDC, EURC, XLM)
+   - 3 Paused streams (pending milestone review)
+   - 3 Completed streams (fully drained)
+   - 3 Cancelled streams
+   - 4 Vesting-cliff streams
+4. **Starts the backend** in sandbox mode at `http://localhost:3001`.
+5. **Starts the frontend** at `http://localhost:3000`.
+
+### What you get
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:3001/v1 |
+| Interactive API Docs | http://localhost:3001/api-docs |
+| Health check | http://localhost:3001/health |
+| Postgres | localhost:5433 |
+| Redis | localhost:6379 |
+| Mock Soroban RPC | http://localhost:8000 |
+
+### Seeded mock users
+
+All streams are distributed across 5 demo wallets you can use for UI testing:
+
+| Label | Public Key (truncated) |
+|---|---|
+| Alice (DAO Treasury) | `GAAZI4TCR3TY5…` |
+| Bob (Protocol Dev) | `GCEZWKCA5VLDN…` |
+| Carol (Frontend Dev) | `GBDEVU63Y6NTH…` |
+| Dave (Security Auditor) | `GDQERENWDDSQZ…` |
+| Eve (Investor) | `GCVW5GBIANS67…` |
+
+### No wallet required
+
+Because the backend runs in **mock mode** and the Soroban RPC is mocked, you can:
+
+- Sign in from the wallet picker without a browser wallet — it lists the seeded accounts.
+- Browse all stream states and event histories.
+- Exercise the write flows (create, top up, pause, resume, withdraw, cancel) end to end.
+- Trigger the same actions via the Swagger UI at `/api-docs`.
+
+### Mock mode
+
+Mock mode is what makes the write flows work offline. It is enabled by
+`MOCK_MODE=true` on the backend and `NEXT_PUBLIC_MOCK_MODE=true` on the frontend
+(`npm run dev:mock` sets both), and it is **hard-disabled when
+`NODE_ENV=production`** — the `/v1/mock/*` router is not even mounted there.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/mock/users` | Lists the seeded accounts shown in the wallet picker |
+| `POST /v1/mock/auth` | Issues a sandbox JWT for one of them (no signature) |
+| `POST /v1/mock/actions` | Applies a stream action locally |
+
+`/v1/mock/actions` accepts `create_stream`, `top_up_stream`, `cancel_stream`,
+`withdraw`, `batch_withdraw`, `pause_stream` and `resume_stream`. It enforces the
+same ownership and state rules as the contract — only the sender may pause,
+resume, top up or cancel; only the recipient may withdraw; a cancelled stream is
+permanently inactive — while still writing the usual event rows and SSE
+broadcasts, so the UI updates exactly as it would against a live chain. Each
+action returns a deterministic 64-character placeholder transaction hash;
+nothing is broadcast to any network.
+
+In the frontend, mock mode intercepts the wallet layer: the wallet picker shows
+the seeded accounts instead of Freighter, and every action that would normally
+be signed and submitted to Soroban is routed to `/v1/mock/actions` instead.
+
+### Stopping the sandbox
+
+```bash
+# Stop Node processes with Ctrl+C, then tear down Docker services:
+docker compose down
+
+# To also wipe the database volume (full reset):
+docker compose down -v
+```
+
+### Re-seeding
+
+If you want to reset and re-seed from scratch:
+
+```bash
+docker compose down -v
+npm run dev:mock
+```
+
+### Prerequisites for the sandbox
+
+- Docker & Docker Compose (for Postgres, Redis, mock RPC)
+- Node.js 20+ and npm (for backend, frontend, seed script)
+
+No Rust, no Stellar CLI, no testnet account needed.
+
+---
+
 ## Prerequisites
 
 Required:
@@ -166,6 +278,7 @@ Configure in `.env`:
 
 * `STELLAR_NETWORK=testnet`
 * `SANDBOX_MODE_ENABLED=true` (optional)
+* `MOCK_MODE=true` (local sandbox only — see [Mock mode](#mock-mode))
 * `STELLAR_HORIZON_URL` (if needed)
 
 ---

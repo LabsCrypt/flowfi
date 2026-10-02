@@ -78,9 +78,12 @@ describe('pg-pool', () => {
     });
   });
 
-  it('createPgPool applies config overrides when provided', async () => {
+  it('createPgPool applies env-driven config overrides', async () => {
+    vi.stubEnv('PG_POOL_MAX', '5');
+    vi.stubEnv('PG_STATEMENT_TIMEOUT_MS', '5000');
+
     const { createPgPool } = await import('../src/lib/pg-pool.js');
-    createPgPool({ max: 5, statement_timeout: 5000 });
+    createPgPool();
 
     expect(poolCtorSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -92,21 +95,23 @@ describe('pg-pool', () => {
     );
   });
 
-  it('getPoolMetrics returns totalCount, idleCount, and waitingCount from the pool', async () => {
+  it('getPoolMetrics snapshots the pool counters and configured maximum', async () => {
     const { getPoolMetrics } = await import('../src/lib/pg-pool.js');
 
     const mockPool = {
       totalCount: 10,
       idleCount: 5,
       waitingCount: 2,
+      options: { max: 20 },
     } as any;
 
     const metrics = getPoolMetrics(mockPool);
 
     expect(metrics).toEqual({
-      totalCount: 10,
-      idleCount: 5,
-      waitingCount: 2,
+      total: 10,
+      idle: 5,
+      waiting: 2,
+      max: 20,
     });
   });
 });

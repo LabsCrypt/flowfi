@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Contract, rpc, xdr } from '@stellar/stellar-sdk';
+import { Contract, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
 
 const hoisted = vi.hoisted(() => ({
   findUnique: vi.fn(),
@@ -8,8 +8,15 @@ const hoisted = vi.hoisted(() => ({
   count: vi.fn(),
   update: vi.fn(),
   delete: vi.fn(),
+  aggregate: vi.fn(),
   triggerPoll: vi.fn(),
   processEvent: vi.fn(),
+  // resetIndexer/replayFromLedger serialise through the worker's batch mutex.
+  runExclusive: vi.fn((fn: () => Promise<void>) => fn()),
+  requestContext: {
+    getStore: vi.fn(() => undefined),
+    run: vi.fn((_store: unknown, fn: () => unknown) => fn()),
+  },
 }));
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -26,6 +33,10 @@ vi.mock('../src/lib/prisma.js', () => ({
       delete: hoisted.delete,
       upsert: hoisted.upsert,
     },
+    streamEvent: {
+      count: hoisted.count,
+      aggregate: hoisted.aggregate,
+    },
   },
 }));
 
@@ -33,6 +44,7 @@ vi.mock('../src/workers/soroban-event-worker.js', () => ({
   sorobanEventWorker: {
     triggerPoll: hoisted.triggerPoll,
     processEvent: hoisted.processEvent,
+    runExclusive: hoisted.runExclusive,
   },
 }));
 
@@ -42,6 +54,8 @@ vi.mock('../src/logger.js', () => ({
     error: vi.fn(),
     warn: vi.fn(),
   },
+  // replayFromLedger propagates the caller's request id through this store.
+  requestContext: hoisted.requestContext,
 }));
 
 // Metrics and tracing are side-effect-only here; stub them so the assertions
@@ -92,6 +106,8 @@ const mockedPrisma = prisma as unknown as {
 const mockedWorker = sorobanEventWorker as unknown as {
   triggerPoll: ReturnType<typeof vi.fn>;
   processEvent: ReturnType<typeof vi.fn>;
+  // resetIndexer/replayFromLedger serialise through this mutex.
+  runExclusive: ReturnType<typeof vi.fn>;
 };
 
 /** Build a minimal but structurally valid Soroban EventResponse. */
@@ -289,8 +305,10 @@ describe('Dead-letter payload serialisation', () => {
     expect(restored.transactionIndex).toBe(event.transactionIndex);
     expect(restored.operationIndex).toBe(event.operationIndex);
     expect(restored.inSuccessfulContractCall).toBe(true);
-    expect(restored.topic[0]!.sym().toString()).toBe('stream_created');
-    expect(restored.topic[1]!.u64().toString()).toBe('7');
+    // stellar-sdk v17 models ScVal as a class, so the v16 accessors (.sym(), .u64())
+    // are gone; scValToNative is the supported way to read the value out.
+    expect(scValToNative(restored.topic[0]!)).toBe('stream_created');
+    expect(String(scValToNative(restored.topic[1]!))).toBe('7');
     expect(restored.value.toXDR()).toEqual(event.value.toXDR());
   });
 
@@ -472,7 +490,7 @@ describe('replayDeadLetterEvent', () => {
     const replayed = mockedWorker.processEvent.mock.calls[0]![0];
     expect(replayed.id).toBe('event-0001');
     expect(replayed.ledger).toBe(482910);
-    expect(replayed.topic[0].sym().toString()).toBe('stream_created');
+    expect(scValToNative(replayed.topic[0])).toBe('stream_created');
   });
 
   it('increments attempts and refreshes the error when the replay throws', async () => {
