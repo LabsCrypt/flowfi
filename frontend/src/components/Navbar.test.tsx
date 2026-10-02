@@ -6,6 +6,10 @@ vi.mock('@/context/wallet-context', () => ({
   useWallet: () => ({ session: null, status: 'disconnected' }),
 }));
 
+vi.mock('@/context/NetworkContext', () => ({
+  useNetwork: () => ({ networkId: 'testnet', setNetworkId: vi.fn() }),
+}));
+
 vi.mock('./ModeToggle', () => ({
   ModeToggle: () => <div data-testid="mode-toggle" />,
 }));

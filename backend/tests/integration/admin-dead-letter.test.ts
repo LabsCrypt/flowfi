@@ -90,12 +90,23 @@ function app(): express.Express {
   return instance;
 }
 
+function tokenFor(publicKey: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  return signJwt({
+    sub: publicKey,
+    iat: now,
+    exp: now + 3600,
+    iss: 'flowfi-api',
+    aud: 'flowfi-api',
+  });
+}
+
 function adminToken(): string {
-  return signJwt({ sub: ADMIN_KEY, exp: Math.floor(Date.now() / 1000) + 3600 });
+  return tokenFor(ADMIN_KEY);
 }
 
 function userToken(): string {
-  return signJwt({ sub: USER_KEY, exp: Math.floor(Date.now() / 1000) + 3600 });
+  return tokenFor(USER_KEY);
 }
 
 /** A serialisable dead-letter payload, as the worker would have written it. */

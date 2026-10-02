@@ -77,20 +77,21 @@ function simulationError(error: string): rpc.Api.SimulateTransactionErrorRespons
  */
 function invokedOps(tx: Transaction): Array<{ contractHex: string; fn: string; args: xdr.ScVal[] }> {
   return tx.operations.map((op) => {
-    const ico = (op as unknown as { func: { invokeContract(): InvokeContractArgsLike } }).func.invokeContract();
+    const ico = (op as unknown as { func: { invokeContract: InvokeContractArgsLike } }).func
+      .invokeContract;
     return {
-      contractHex: Buffer.from(ico.contractAddress().contractId()).toString('hex'),
-      fn: ico.functionName(),
-      args: ico.args(),
+      contractHex: Buffer.from(ico.contractAddress.contractId.value).toString('hex'),
+      fn: ico.functionName.toString(),
+      args: ico.args,
     };
   });
 }
 
-/** The marshalled `InvokeContractArgs` shape returned by `func.invokeContract()`. */
+/** The marshalled `InvokeContractArgs` shape carried by `func.invokeContract`. */
 interface InvokeContractArgsLike {
-  contractAddress(): { contractId(): Uint8Array };
-  functionName(): string;
-  args(): xdr.ScVal[];
+  contractAddress: { contractId: { value: Uint8Array } };
+  functionName: { toString(): string };
+  args: xdr.ScVal[];
 }
 
 /** Hex form of a contract address, for comparison against a StrKey contract. */
@@ -100,10 +101,13 @@ function contractHex(address: string): string {
 
 /** Decode a returned envelope and assert it carries no signatures. */
 function expectUnsignedEnvelope(unsignedXdr: string): xdr.Transaction {
-  const envelope = xdr.TransactionEnvelope.fromXDR(unsignedXdr, 'base64');
-  expect(envelope.switch().name).toBe('envelopeTypeTx');
-  expect(envelope.v1().signatures()).toHaveLength(0);
-  return envelope.v1().tx();
+  const envelope = xdr.TransactionEnvelope.fromXDR(
+    unsignedXdr,
+    'base64',
+  ) as xdr.TransactionEnvelopeTx;
+  expect(envelope.type).toBe('envelopeTypeTx');
+  expect(envelope.v1.signatures).toHaveLength(0);
+  return envelope.v1.tx;
 }
 
 function lastSimulatedTx(): Transaction {
@@ -175,7 +179,7 @@ describe('simulateStreamAction', () => {
       expect(Address.fromScVal(op!.args[1]!).toString()).toBe(recipientKp.publicKey());
       expect(Address.fromScVal(op!.args[2]!).toString()).toBe(tokenAddress);
       expect(service.decodeI128(op!.args[3]!)).toBe('1000000');
-      expect(op!.args[4]!.u64().toString()).toBe('3600');
+      expect((op!.args[4] as xdr.ScValU64).u64.toString()).toBe('3600');
     });
 
     it('prefers params.tokenAddress over the configured default', async () => {
@@ -233,7 +237,7 @@ describe('simulateStreamAction', () => {
       const [op] = invokedOps(lastSimulatedTx());
       expect(op!.fn).toBe('withdraw');
       expect(Address.fromScVal(op!.args[0]!).toString()).toBe(recipientKp.publicKey());
-      expect(op!.args[1]!.u64().toString()).toBe('42');
+      expect((op!.args[1] as xdr.ScValU64).u64.toString()).toBe('42');
     });
 
     it('simulates cancel_stream(sender, streamId)', async () => {
@@ -241,7 +245,7 @@ describe('simulateStreamAction', () => {
 
       const [op] = invokedOps(lastSimulatedTx());
       expect(op!.fn).toBe('cancel_stream');
-      expect(op!.args[1]!.u64().toString()).toBe('7');
+      expect((op!.args[1] as xdr.ScValU64).u64.toString()).toBe('7');
     });
 
     it('simulates top_up_stream(sender, streamId, amount)', async () => {
@@ -252,7 +256,7 @@ describe('simulateStreamAction', () => {
 
       const [op] = invokedOps(lastSimulatedTx());
       expect(op!.fn).toBe('top_up_stream');
-      expect(op!.args[1]!.u64().toString()).toBe('7');
+      expect((op!.args[1] as xdr.ScValU64).u64.toString()).toBe('7');
       expect(service.decodeI128(op!.args[2]!)).toBe('2500');
     });
 
@@ -278,7 +282,7 @@ describe('simulateStreamAction', () => {
       const ops = invokedOps(lastSimulatedTx());
       expect(ops).toHaveLength(3);
       expect(ops.map((o) => o.fn)).toEqual(['withdraw', 'withdraw', 'withdraw']);
-      expect(ops.map((o) => o.args[1]!.u64().toString())).toEqual(['1', '2', '3']);
+      expect(ops.map((o) => (o.args[1] as xdr.ScValU64).u64.toString())).toEqual(['1', '2', '3']);
     });
 
     it('rejects a batch above the per-transaction cap', async () => {
@@ -302,7 +306,7 @@ describe('simulateStreamAction', () => {
       });
 
       const tx = expectUnsignedEnvelope(result.unsignedXdr);
-      expect(tx.operations()).toHaveLength(1);
+      expect(tx.operations).toHaveLength(1);
     });
 
     it('builds the transaction from the sender real account, not a placeholder', async () => {
@@ -325,7 +329,7 @@ describe('simulateStreamAction', () => {
 
       expect(lastSimulatedTx().source).not.toBe(senderKp.publicKey());
       // Still returns a signable envelope rather than failing the request.
-      expect(expectUnsignedEnvelope(result.unsignedXdr).operations()).toHaveLength(1);
+      expect(expectUnsignedEnvelope(result.unsignedXdr).operations).toHaveLength(1);
     });
 
     it('applies the 15% fee buffer over the reported minResourceFee', async () => {

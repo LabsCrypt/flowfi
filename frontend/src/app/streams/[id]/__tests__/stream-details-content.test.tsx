@@ -22,7 +22,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
-const { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount } = vi.hoisted(() => {
+const { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount, mockTransactionSuccessToast } = vi.hoisted(() => {
   const mockToast = { success: vi.fn(), error: vi.fn() };
   const mockSoroban = {
     withdrawFromStream: vi.fn(),
@@ -44,11 +44,16 @@ const { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount } = vi.hoist
     fail: vi.fn(),
   };
   const mockUseStreamingAmount = vi.fn(() => 123456789);
-  return { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount };
+  const mockTransactionSuccessToast = vi.fn();
+  return { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount, mockTransactionSuccessToast };
 });
 
 vi.mock("react-hot-toast", () => ({
   default: mockToast,
+}));
+
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: (...args: unknown[]) => mockTransactionSuccessToast(...args),
 }));
 
 vi.mock("@/lib/api/_shared", () => ({
@@ -61,6 +66,12 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/hooks/useStreamEvents", () => ({
   useStreamEvents: () => ({ events: [] }),
+}));
+
+vi.mock("@/hooks/useTokenPrice", () => ({
+  useTokenPrice: () => ({ data: null, isLoading: false }),
+  convertToFiat: () => 0,
+  formatFiatAmount: (v: number) => `$${v.toFixed(2)}`,
 }));
 
 // The shared ticking hook is exercised by its own suite
@@ -160,6 +171,10 @@ describe("StreamDetailsContent loading skeleton", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ events: [], total: 0 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
       } as Response);
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
@@ -176,7 +191,7 @@ describe("StreamDetailsContent loading skeleton", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
     // Stream-specific content should be visible
-    expect(screen.getByText(/stream #42/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it("transitions from skeleton to not-found state when stream is confirmed missing", async () => {
@@ -231,6 +246,10 @@ describe("StreamDetailsContent loading skeleton", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ events: [], total: 0 }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
       } as Response);
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
@@ -254,6 +273,10 @@ async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
     .mockResolvedValueOnce({
       ok: true,
       json: async () => mockStream,
+    } as Response)
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ events: [], total: 0 }),
     } as Response)
     .mockResolvedValueOnce({
       ok: true,
@@ -307,7 +330,7 @@ describe("StreamDetailsContent handleWithdraw", () => {
     await waitFor(() => {
       expect(mockSoroban.withdrawFromStream).toHaveBeenCalled();
     });
-    expect(mockToast.success).toHaveBeenCalledWith("Withdrawal successful!");
+    expect(mockTransactionSuccessToast).toHaveBeenCalledWith("Withdrawal successful!");
   });
 
   it("shows error toast when withdrawFromStream throws", async () => {
@@ -369,7 +392,7 @@ describe("StreamDetailsContent handleTopUp", () => {
     await waitFor(() => {
       expect(mockSoroban.topUpStream).toHaveBeenCalled();
     });
-    expect(mockToast.success).toHaveBeenCalledWith("Stream topped up successfully!");
+    expect(mockTransactionSuccessToast).toHaveBeenCalledWith("Stream topped up successfully!");
   });
 
   it("shows error toast when topUpStream throws", async () => {
@@ -400,10 +423,12 @@ describe("StreamDetailsContent handleTopUp", () => {
     const addFundsBtn = screen.getByRole("button", { name: /add funds/i });
     await user.click(addFundsBtn);
 
-    expect(mockToast.error).toHaveBeenCalledWith("Please enter a valid amount");
+    expect(mockToast.error).toHaveBeenCalledWith("Amount is required");
     expect(mockSoroban.topUpStream).not.toHaveBeenCalled();
   });
 });
+
+// ─── handlePause ──────────────────────────────────────────────────────────
 
 // ─── handlePause ──────────────────────────────────────────────────────────
 
@@ -431,7 +456,7 @@ describe("StreamDetailsContent handlePause", () => {
         { streamId: BigInt(STREAM_ID) },
       );
     });
-    expect(mockToast.success).toHaveBeenCalledWith("Stream paused");
+    expect(mockTransactionSuccessToast).toHaveBeenCalledWith("Stream paused");
   });
 
   it("shows error toast when pauseStream throws", async () => {
@@ -473,7 +498,7 @@ describe("StreamDetailsContent handleResume", () => {
         { streamId: BigInt(STREAM_ID) },
       );
     });
-    expect(mockToast.success).toHaveBeenCalledWith("Stream resumed");
+    expect(mockTransactionSuccessToast).toHaveBeenCalledWith("Stream resumed");
   });
 
   it("shows error toast when resumeStream throws", async () => {

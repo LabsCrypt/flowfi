@@ -162,6 +162,74 @@ export const dbPoolMaxConnections = new Gauge({
   registers: [registry],
 });
 
+/**
+ * Point-in-time sample of the pg pool. Supplied by `pg-pool.ts` via
+ * `registerDbPoolStatsProvider` so this module never imports `pg` (importing
+ * metrics from the worker must not open a database connection).
+ */
+export interface DbPoolStats {
+  total: number;
+  idle: number;
+  waiting: number;
+}
+
+let dbPoolStatsProvider: (() => DbPoolStats) | null = null;
+
+/**
+ * Attach the pool whose `totalCount`/`idleCount`/`waitingCount` the gauges
+ * below should read. Called once from `createPgPool`.
+ */
+export function registerDbPoolStatsProvider(provider: () => DbPoolStats): void {
+  dbPoolStatsProvider = provider;
+}
+
+/**
+ * Read the current pool counts, tolerating a missing or throwing provider so a
+ * broken pool can never make the whole `/metrics` scrape fail.
+ */
+function sampleDbPool(): DbPoolStats {
+  try {
+    return dbPoolStatsProvider?.() ?? { total: 0, idle: 0, waiting: 0 };
+  } catch {
+    return { total: 0, idle: 0, waiting: 0 };
+  }
+}
+
+/**
+ * Connection pool gauges. `waiting` is the one to alert on: a non-zero value
+ * means callers are queued for a connection, which shows up as request latency
+ * long before the pool is technically exhausted.
+ *
+ * Each gauge samples the pool via `collect()` on every scrape rather than being
+ * pushed on a timer, so a scrape always reflects the pool at that instant.
+ */
+export const dbPoolTotalConnections = new Gauge({
+  name: 'flowfi_db_pool_total_connections',
+  help: 'Total PostgreSQL connections currently held by the pool',
+  registers: [registry],
+  collect() {
+    this.set(sampleDbPool().total);
+  },
+});
+
+export const dbPoolIdleConnections = new Gauge({
+  name: 'flowfi_db_pool_idle_connections',
+  help: 'Idle PostgreSQL connections available in the pool',
+  registers: [registry],
+  collect() {
+    this.set(sampleDbPool().idle);
+  },
+});
+
+export const dbPoolWaitingRequests = new Gauge({
+  name: 'flowfi_db_pool_waiting_requests',
+  help: 'Requests queued waiting for a PostgreSQL connection',
+  registers: [registry],
+  collect() {
+    this.set(sampleDbPool().waiting);
+  },
+});
+
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 
 /** Every API request, labelled by low-cardinality route template and status. */

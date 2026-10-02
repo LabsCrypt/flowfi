@@ -773,7 +773,9 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           incomingStreams={snapshot!.incomingStreams}
           onWithdraw={handleIncomingWithdraw}
           withdrawingStreamId={withdrawingIncomingStreamId}
-          onBatchClaimSuccess={refetchSnapshot}
+          onBatchClaimSuccess={() => {
+            void refetchSnapshot();
+          }}
         />
       );
     }

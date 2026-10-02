@@ -30,6 +30,8 @@ export interface StreamFormData {
   duration: string;
   durationUnit: DurationUnit;
   descriptionTag?: string;
+  /** Optional Stellar memo (max 28 UTF-8 bytes) attached to the stream. */
+  memo?: string;
 }
 
 export type StreamFormErrors = Partial<Record<keyof StreamFormData, string>>;
