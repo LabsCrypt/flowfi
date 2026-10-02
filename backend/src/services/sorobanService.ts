@@ -7,6 +7,7 @@ import {
   rpcFailoversTotal,
 } from '../lib/metrics.js';
 import { withSpan } from '../lib/tracing.js';
+import { rpcPool } from '../lib/rpc-pool.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 
@@ -241,6 +242,40 @@ export function resetServer(): void {
   _server = null;
 }
 
+/**
+ * Poll until a submitted transaction reaches a terminal on-chain state or the
+ * confirmation budget is exhausted.
+ *
+ * Defaults are bounded (`SOROBAN_TX_CONFIRMATION_TIMEOUT_MS`, 30s, polled
+ * every `SOROBAN_TX_POLL_INTERVAL_MS`, 1s) so a stalled network can never wedge
+ * the caller indefinitely. The explicit parameters exist for tests.
+ */
+export async function pollTransactionStatus(
+  hash: string,
+  timeoutMs: number = getTxConfirmationTimeoutMs(),
+  pollIntervalMs: number = getTxPollIntervalMs(),
+): Promise<rpc.Api.GetTransactionResponse> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const response = await executeRpc('getTransaction', (server) => server.getTransaction(hash));
+
+    // SUCCESS is the only confirming outcome. FAILED is terminal and must
+    // surface immediately; every other status (NOT_FOUND, still in the
+    // mempool, ...) falls through to another poll until the budget runs out.
+    if (response.status === 'SUCCESS') return response;
+    if (response.status === 'FAILED') {
+      throw new Error(`Transaction failed on-chain: ${hash}`);
+    }
+
+    if (Date.now() >= deadline) {
+      throw new Error(`Transaction confirmation timed out after ${timeoutMs}ms: ${hash}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+}
+
 export interface ChainStream {
   streamId: bigint;
   sender: string;
@@ -254,9 +289,11 @@ export interface ChainStream {
 }
 
 export function decodeI128(val: xdr.ScVal): string {
+  // v17: `i128` is a property on the concrete ScValI128 and its halves are
+  // already bigints.
   const parts = (val as xdr.ScValI128).i128;
-  const hi = BigInt.asIntN(64, BigInt(parts.hi.toString()));
-  const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
+  const hi = BigInt.asIntN(64, BigInt(parts.hi));
+  const lo = BigInt.asUintN(64, BigInt(parts.lo));
   return ((hi << 64n) | lo).toString();
 }
 
@@ -363,7 +400,9 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 export async function getLatestLedger(): Promise<number> {
   try {
     const response = await withRpcRetry('getLatestLedger', () =>
-      withRpcTimeout('getLatestLedger', () => getServer().getLatestLedger()),
+      withRpcTimeout('getLatestLedger', () =>
+        executeRpc('getLatestLedger', (server) => server.getLatestLedger()),
+      ),
     );
     return Number(response.sequence);
   } catch (err) {
@@ -372,7 +411,7 @@ export async function getLatestLedger(): Promise<number> {
   }
 }
 
-export async function getStreamFromChain(streamId: number): Promise<ChainStream | null> {
+export async function getStreamFromChain(streamId: bigint): Promise<ChainStream | null> {
   if (!getContractId()) return null;
 
   try {
@@ -838,10 +877,11 @@ function readResourceFootprint(
 ): { cpuInstructions: number; memoryBytes: number } {
   try {
     const data = transactionData.build();
-    const resources = data.resources();
+    // v17: `SorobanResources` exposes plain numeric properties.
+    const resources = data.resources;
     return {
-      cpuInstructions: Number(resources.instructions()),
-      memoryBytes: Number(resources.writeBytes()),
+      cpuInstructions: Number(resources.instructions),
+      memoryBytes: Number(resources.writeBytes),
     };
   } catch (err) {
     logger.warn('[SorobanService] Could not read resource footprint from simulation:', err);
@@ -855,19 +895,22 @@ function decodeSimulatedReturn(result: rpc.Api.SimulateTransactionSuccessRespons
   if (!retval) return '';
 
   try {
-    switch (retval.switch().value) {
-      case xdr.ScValType.scvI128().value:
+    // stellar-sdk v17 models ScVal as a discriminated union: the `type`
+    // discriminator and each payload field (`u64`, `u128`, ...) are plain
+    // properties on the concrete subclass rather than accessor methods.
+    switch (retval.type) {
+      case 'scvI128':
         return decodeI128(retval);
-      case xdr.ScValType.scvU64().value:
-        return retval.u64().toString();
-      case xdr.ScValType.scvU32().value:
-        return retval.u32().toString();
-      case xdr.ScValType.scvI64().value:
-        return retval.i64().toString();
-      case xdr.ScValType.scvU128().value: {
-        const parts = retval.u128();
-        const hi = BigInt.asUintN(64, BigInt(parts.hi().toString()));
-        const lo = BigInt.asUintN(64, BigInt(parts.lo().toString()));
+      case 'scvU64':
+        return String(retval.u64);
+      case 'scvU32':
+        return String(retval.u32);
+      case 'scvI64':
+        return String(retval.i64);
+      case 'scvU128': {
+        const parts = retval.u128;
+        const hi = BigInt.asUintN(64, parts.hi);
+        const lo = BigInt.asUintN(64, parts.lo);
         return ((hi << 64n) | lo).toString();
       }
       default:
@@ -911,7 +954,9 @@ export async function simulateStreamAction(
   let sourceAccount: Account;
   try {
     sourceAccount = await withRpcRetry('getAccount', () =>
-      withRpcTimeout('getAccount', () => getServer().getAccount(senderPublicKey)),
+      withRpcTimeout('getAccount', () =>
+        executeRpc('getAccount', (server) => server.getAccount(senderPublicKey)),
+      ),
     );
   } catch (err) {
     logger.warn(
@@ -934,7 +979,9 @@ export async function simulateStreamAction(
   const tx = builder.setTimeout(TX_TIMEOUT_SECONDS).build();
 
   const simulation = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () =>
+      executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx)),
+    ),
   );
 
   if (rpc.Api.isSimulationError(simulation)) {

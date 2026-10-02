@@ -86,6 +86,113 @@ The frontend application follows security best practices:
 - **Secure Dependencies**: Regular dependency updates and vulnerability scanning
 - **Wallet Integration**: Secure handling of wallet connections and transactions
 
+### Supply Chain Security
+
+Dependency and secret scanning run automatically in CI — see
+[Automated Security Scanning](#automated-security-scanning) for what each check
+covers and what blocks a merge. [Dependabot](../.github/dependabot.yml) is
+configured for both npm and Cargo and should be preferred over manual upgrades,
+so that security bumps follow the same review path as any other change.
+
+## Automated Security Scanning
+
+Every pull request and every push to `main`/`develop` runs the
+[Security Checks workflow](.github/workflows/security.yml). A weekly cron job
+(Mondays 03:17 UTC) re-runs the same pipeline so that CVEs **published after**
+the last dependency bump are caught even when no code has changed.
+
+All scan results are published as SARIF to the repository's
+[Security tab](https://github.com/LabsCrypt/flowfi/security/code-scanning).
+
+| Check | Tool | Scope | Blocks a merge? |
+| --- | --- | --- | --- |
+| Dependency CVEs (Node.js) | `npm audit` | Root + `frontend` + `backend` workspaces | Yes, on high/critical |
+| Dependency CVEs (Rust) | `cargo audit` | `contracts/` (Soroban SDK + deps) | Yes, on any advisory |
+| Secret scanning | TruffleHog | Full git history, all branches | Yes, on **verified** secrets |
+| Static analysis (SAST) | Semgrep + CodeQL | `backend`, `frontend`, `contracts` | Yes, for FlowFi-curated rules |
+| Security setup config | `npm run verify-security` | Repository security policy files | Yes, if the policy is missing |
+
+### How blocking works
+
+A single **`Security Gate`** job aggregates the results, and it is the status
+check to require in branch protection. Requiring the aggregate rather than the
+individual jobs means a contributor sees one failure, and it cannot be bypassed
+by re-running a single job.
+
+Each individual check also writes a table to the pull request's
+[job summary](https://docs.github.com/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands#adding-a-job-summary),
+so you can triage without digging through raw logs.
+
+### What blocks, and what does not
+
+Blocking is deliberately limited to high-confidence signals, because a security
+gate that cries wolf gets ignored:
+
+- **npm audit** blocks on high and critical advisories in **production**
+  dependencies. Dev-dependency advisories are reported but do not block — a
+  tooling CVE in a pinned dev tree should not stop a payments hotfix.
+- **cargo audit** has no severity model, so any RustSec advisory blocks.
+- **TruffleHog** blocks only on secrets it could **verify are live** by
+  contacting the issuing provider. Unverified candidates (test fixtures,
+  documentation examples) are not reported and do not block a merge.
+- **Semgrep** blocks only on `error`-level findings from the curated
+  [`.semgrep/flowfi.yml`](.semgrep/flowfi.yml) ruleset. Findings from the
+  upstream `p/default` ruleset are uploaded to the Security tab for triage but
+  do not block merges, since an unaudited broad ruleset would otherwise fail
+  every pull request on day one.
+
+### The curated Semgrep ruleset
+
+`.semgrep/flowfi.yml` holds rules written for this codebase rather than
+generically:
+
+- **Credential exposure** — Stellar secret seeds (`S` + 56 base32 characters,
+  the key that can sign transactions), private key material, and recognisable
+  provider tokens (GitHub, AWS, Slack, npm, Stripe).
+- **Injection** — Prisma `$queryRawUnsafe`/`$executeRawUnsafe` called with an
+  interpolated string, `child_process` shell execution with a non-literal
+  command, `eval`, and JWT verification with the `none` algorithm.
+- **XSS** — React `dangerouslySetInnerHTML`.
+- **Soroban contracts** — `unsafe` blocks, and `unwrap()`/`expect()` in
+  contract code (warning severity; tracked in the Security tab).
+
+The rules distinguish reviewed patterns from unsafe ones. For example, the raw
+SQL calls in `stream.controller.ts` and `withdraw.ts` use a static query with
+`$1`/`$2`/`$3` placeholders and are **not** flagged; only a `${...}`
+interpolation into an unsafe Prisma call is.
+
+To run the same checks locally before pushing:
+
+```bash
+# Static analysis (the curated ruleset only)
+semgrep scan --config .semgrep/flowfi.yml --metrics=off backend frontend contracts
+
+# Dependency audits
+npm audit --omit=dev --audit-level=high
+cargo audit --manifest-path contracts/Cargo.toml
+
+# Secret scanning over the full history
+trufflehog git file://. --results=verified --fail
+```
+
+If you add or change a rule, re-run it against the existing tree before opening
+a pull request. A rule that fires on already-reviewed code is a bug in the rule
+and will block everyone until it is fixed.
+
+### If the secret scanner finds something
+
+TruffleHog only fails on credentials it confirmed are live, so a finding is
+real. Handle it in this order:
+
+1. **Revoke the credential first.** Purging history does not invalidate a key
+   that was already pushed.
+2. Rotate any related secrets, and check the provider's audit log for use you
+   did not initiate.
+3. Purge the secret from history with `git filter-repo`, then force-push and ask
+   all collaborators to re-clone.
+4. Open a security advisory if the credential was ever reachable from a public
+   branch.
+
 ## Security Best Practices for Users
 
 When using FlowFi, please follow these security guidelines:

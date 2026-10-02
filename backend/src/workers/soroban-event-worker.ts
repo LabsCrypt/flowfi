@@ -10,10 +10,9 @@ import {
   recordRpcRequest,
 } from "../lib/metrics.js";
 import { withSpan } from "../lib/tracing.js";
-import logger from "../logger.js";
+import logger, { requestContext } from "../logger.js";
 import { Prisma } from "../generated/prisma/index.js";
 import "../lib/stream-id.js";
-import { rpcPool } from "../lib/rpc-pool.js";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +105,11 @@ export class SorobanEventWorker {
   private readonly startLedger: number;
   /** Max failed processing attempts before an event is abandoned (dead-lettered). */
   private readonly deadLetterMaxRetries: number;
+
+  /** Exposed for tests/diagnostics that assert the configured retry budget. */
+  get deadLetterRetryCap(): number {
+    return this.deadLetterMaxRetries;
+  }
 
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | undefined;
@@ -453,47 +457,6 @@ export class SorobanEventWorker {
     );
   }
 
-  /**
-   * Record a failed event in the dead-letter table (with its raw payload for
-   * manual triage), incrementing its attempt counter.
-   *
-   * @returns `true` when the event has reached the retry cap and should be
-   *   abandoned (cursor advanced past it); `false` to leave it for a retry
-   *   on a future poll. Never throws — a dead-letter write failure must not
-   *   abort the batch; in that case the event is simply left for the next
-   *   poll.
-   */
-  private async deadLetterEvent(
-    event: rpc.Api.EventResponse,
-    err: unknown,
-  ): Promise<boolean> {
-    try {
-      const row = await prisma.indexerDeadLetterEvent.upsert({
-        where: { eventId: event.id },
-        create: {
-          eventId: event.id,
-          ledger: event.ledger,
-          transactionHash: event.txHash,
-          rawPayload: JSON.stringify(event),
-          errorMessage: err instanceof Error ? err.message : String(err),
-          attempts: 1,
-          lastAttemptAt: new Date(),
-        },
-        update: {
-          errorMessage: err instanceof Error ? err.message : String(err),
-          attempts: { increment: 1 },
-          lastAttemptAt: new Date(),
-        },
-      });
-      return row.attempts >= this.deadLetterMaxRetries;
-    } catch (dlErr) {
-      logger.error(
-        `[SorobanWorker] Failed to write dead-letter entry for event ${event.id}:`,
-        dlErr,
-      );
-      return false;
-    }
-  }
 
   /**
    * Dispatch a single contract event to the appropriate handler based on the

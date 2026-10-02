@@ -109,8 +109,27 @@ const POOL_METRICS_INTERVAL_MS = Number(
   process.env.PG_POOL_METRICS_INTERVAL_MS ?? 5_000,
 );
 
-export const createPgPool = (): pg.Pool => {
-  const pool = new pg.Pool(createPgPoolConfig());
+/**
+ * Snapshot of pool utilisation for the admin metrics endpoint.
+ *
+ * Reads the same three counters that {@link publishPoolMetrics} samples. The
+ * `?? 0` fallbacks keep the response shape stable if pg has not populated the
+ * counters yet.
+ */
+export function getPoolMetrics(pool: pg.Pool): {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+} {
+  return {
+    totalCount: pool.totalCount ?? 0,
+    idleCount: pool.idleCount ?? 0,
+    waitingCount: pool.waitingCount ?? 0,
+  };
+}
+
+export const createPgPool = (overrides?: Partial<pg.PoolConfig>): pg.Pool => {
+  const pool = new pg.Pool(createPgPoolConfig(overrides));
 
   instrumentPoolQueryTiming(pool);
 

@@ -278,10 +278,14 @@ This repository uses GitHub Actions for continuous integration. Workflows are lo
 ### Available Workflows
 
 - **Security Checks** (`.github/workflows/security.yml`)
-  - Runs on: push to `main`/`develop`, pull requests, and weekly schedule
+  - Runs on: push to `main`/`develop`, pull requests, and a weekly schedule
   - Performs:
-    - Dependency vulnerability scanning (`npm audit`)
-    - CodeQL analysis for JavaScript/TypeScript
+    - Dependency vulnerability scanning (`npm audit` across workspaces, `cargo audit` for `contracts/`)
+    - Secret scanning over the full git history (TruffleHog, blocks on verified leaks)
+    - Static analysis (Semgrep + CodeQL), with results published to the Security tab
+    - An aggregate `Security Gate` check — require this one in branch protection
+  - Blocking findings and local reproduction steps are documented in
+    [SECURITY.md](SECURITY.md#automated-security-scanning)
   - View workflow: [Security Checks](.github/workflows/security.yml)
 
 - **CI** (`.github/workflows/ci.yml`)

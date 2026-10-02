@@ -1,102 +1,376 @@
+# Automated security pipeline for FlowFi.
+#
+# Covers the four classes of finding that matter for payment infrastructure:
+#   1. Known CVEs in pinned dependencies (npm audit + cargo audit)
+#   2. Leaked credentials anywhere in the git history (TruffleHog)
+#   3. Static code vulnerabilities (Semgrep SAST + CodeQL)
+#
+# A pull request is blocked when a job in the `security-gate` aggregate fails.
+# SARIF from Semgrep and CodeQL is uploaded to the repository Security tab.
 name: Security Checks
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Weekly sweep for CVEs published *after* the last dependency bump. Without
+  # this, a newly disclosed CVE stays invisible until someone edits a manifest.
+  # Scheduled minute is off the hour on purpose: GitHub's scheduler queues
+  # every workflow at :00 and delays them heavily.
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+# Least privilege by default. Jobs that upload SARIF opt in explicitly.
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
-  schedule:
-    - cron: '0 2 * * 0'
-
 jobs:
-  dependency-check:
+  # ---------------------------------------------------------------------
+  # 1. Dependency vulnerabilities
+  # ---------------------------------------------------------------------
+  dependency-audit:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20.19.0'
-        cache: 'npm'
-        
-    - name: Install dependencies
-      env:
-        HUSKY: 0
-      run: npm ci
-      
-    - name: Run npm audit (production dependencies)
-      run: npm audit --omit=dev --audit-level=high
-      
-    - name: Check for known vulnerabilities in frontend (production dependencies)
-      run: npm audit --workspace=frontend --omit=dev --audit-level=high
-        
-    - name: Check for known vulnerabilities in backend (production dependencies)
-      run: npm audit --workspace=backend --omit=dev --audit-level=high
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Rust toolchain for contract audit
-      uses: dtolnay/rust-toolchain@stable
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
-    - name: Cache cargo-audit
-      id: cargo-audit-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-audit
-        key: cargo-audit-${{ runner.os }}
+      # `npm audit` resolves advisories straight from package-lock.json, so
+      # there is no reason to materialise node_modules here. That also keeps
+      # the `prepare`/husky hook from running in CI.
+      #
+      # The root audit already covers the full workspace tree; the per-workspace
+      # invocations are kept so a failure names the package that regressed
+      # instead of an opaque aggregate.
+      - name: Audit Node.js dependencies
+        run: |
+          set -uo pipefail
 
-    - name: Install cargo-audit
-      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-      run: cargo install cargo-audit --locked
+          failed=0
+          for scope in "" "--workspace=frontend" "--workspace=backend"; do
+            label=${scope:-"root"}
+            echo "::group::npm audit (${label})"
+            if npm audit $scope --omit=dev --audit-level=high; then
+              echo "✅ ${label}: no high/critical advisories"
+            else
+              echo "❌ ${label}: high or critical advisories reported above"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
 
-    - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
-      working-directory: contracts
+          exit "$failed"
 
-    - name: Setup Rust toolchain for contract audit
-      uses: dtolnay/rust-toolchain@stable
+      # Dev dependencies are reported but never block. Tooling CVEs in a
+      # pinned dev tree are real signal, but they are not exploitable in a
+      # deployed artifact, so they should not stop a payments hotfix.
+      - name: Report dev-dependency advisories (non-blocking)
+        run: |
+          set -uo pipefail
+          echo "::group::npm audit (dev dependencies, informational)"
+          npm audit --audit-level=high || echo "ℹ️ Dev-dependency advisories reported above; informational only."
+          echo "::endgroup::"
 
-    - name: Cache cargo-audit
-      id: cargo-audit-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-audit
-        key: cargo-audit-${{ runner.os }}-0.22.0
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
 
-    - name: Install cargo-audit
-      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-      run: cargo install cargo-audit --version 0.22.0 --locked
+      - name: Cache cargo-audit
+        id: cargo-audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          # Deliberately not keyed on Cargo.lock: a lockfile-derived key would
+          # invalidate the cache on every dependency bump, which is exactly
+          # when you least want to pay the compile cost again.
+          key: cargo-audit-${{ runner.os }}-0.22.2
 
-    - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
-      working-directory: contracts
+      - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version 0.22.2 --locked
 
-    - name: Verify security setup
-      run: npm run verify-security
+      # cargo-audit has no severity model — RustSec advisories are all treated
+      # as blocking. It needs contracts/Cargo.lock, which is committed.
+      - name: Audit Rust (Soroban contract) dependencies
+        run: cargo audit
+        working-directory: contracts
 
-  cargo-audit:
-    name: Cargo Dependency Vulnerability Scan
+      - name: Verify security setup
+        run: npm run verify-security
+
+  # ---------------------------------------------------------------------
+  # 2. Secret scanning
+  # ---------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          # A leaked key is almost never in the tip commit, and the whole point
+          # of the scanner is to catch it *before* it reaches a shared branch.
+          fetch-depth: 0
+          # Do not leave the job token on disk where the scanner could read it.
+          persist-credentials: false
 
-    - name: Install Rust stable
-      uses: dtolnay/rust-toolchain@stable
+      # TruffleHog's own install.sh resolves the release tag through an
+      # *unauthenticated* GitHub API call, which rate-limits on shared runners
+      # — the same failure mode already documented in ci.yml when installing
+      # the Stellar CLI. Pull the release asset directly instead: it is served
+      # from the release CDN, needs no API token, and the published checksum is
+      # verified before the binary is trusted.
+      - name: Install TruffleHog
+        run: |
+          set -euo pipefail
 
-    - name: Install cargo-audit
-      run: cargo install cargo-audit
+          version=3.97.9
+          base="https://github.com/trufflesecurity/trufflehog/releases/download/v${version}"
+          asset="trufflehog_${version}_linux_amd64.tar.gz"
+          dest="${RUNNER_TEMP}/trufflehog"
 
-    - name: Run cargo audit on contracts
-      run: cargo audit
-      working-directory: contracts
+          mkdir -p "$dest"
+          curl -sSfL --retry 3 --retry-delay 2 \
+            "$base/trufflehog_${version}_checksums.txt" -o "$dest/checksums.txt"
+          curl -sSfL --retry 3 --retry-delay 2 \
+            "$base/$asset" -o "$dest/$asset"
 
+          ( cd "$dest" && grep "  $asset\$" checksums.txt | sha256sum -c - )
+
+          tar -xzf "$dest/$asset" -C "$dest" trufflehog
+          install -m 0755 "$dest/trufflehog" /usr/local/bin/trufflehog
+          trufflehog --version
+
+      - name: Scan git history for verified secrets
+        run: |
+          set -uo pipefail
+
+          # --results=verified restricts output to credentials the detector
+          # could confirm are live by calling the issuing provider, and --fail
+          # exits 183 when any are found. Unverified candidates (test fixtures,
+          # documentation examples) are therefore neither reported nor blocking.
+          #
+          # There is no --fail-verified / --only-verified flag in TruffleHog
+          # v3.x. Passing one makes the binary abort before it scans anything,
+          # which failed this job in a few seconds.
+          status=0
+          trufflehog git file://. \
+            --results=verified \
+            --fail \
+            --no-update \
+            --json \
+            > trufflehog-results.json || status=$?
+
+          case "$status" in
+            0)
+              echo "✅ No verified secrets found in git history."
+              ;;
+            183)
+              echo "::error::TruffleHog confirmed live credentials in the git history."
+              echo "Revoke the credential first, then purge it from history — see SECURITY.md."
+              exit 1
+              ;;
+            *)
+              echo "::error::TruffleHog scan failed (exit $status)."
+              exit "$status"
+              ;;
+          esac
+
+      - name: Publish secret scan summary
+        if: always()
+        env:
+          RESULTS: trufflehog-results.json
+        run: |
+          set -uo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+
+          path = os.environ["RESULTS"]
+          print("## 🔑 Secret scan (TruffleHog)\n")
+
+          try:
+              with open(path, encoding="utf-8") as fh:
+                  # TruffleHog emits one JSON object per line.
+                  findings = [json.loads(line) for line in fh if line.strip()]
+          except FileNotFoundError:
+              findings = []
+
+          if not findings:
+              print("No verified secrets found in the git history. ✅")
+              raise SystemExit(0)
+
+          print(f"Found **{len(findings)}** verified secret(s). Each one must be revoked first.\n")
+          print("| Detector | File |")
+          print("| --- | --- |")
+          for finding in findings:
+              data = finding.get("SourceMetadata", {}).get("Data", {})
+              where = data.get("Git", {})
+              location = where.get("file") or data.get("Filesystem", {}).get("file", "?")
+              line_no = where.get("line", "")
+              location = f"{location}:{line_no}" if line_no not in (None, "") else location
+              print(f"| {finding.get('DetectorName', '?')} | `{location}` |")
+
+          print("\nRevoke the credential, then purge it from history — see SECURITY.md.")
+          PY
+
+  # ---------------------------------------------------------------------
+  # 3. Static analysis (SAST)
+  # ---------------------------------------------------------------------
+  sast-semgrep:
+    name: Static Analysis (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep
+        run: pip install --disable-pip-version-check semgrep==1.179.0
+
+      # Two rulesets in one pass:
+      #   p/default          - upstream broad coverage, informational
+      #   .semgrep/flowfi.yml - curated for this codebase, gates the PR
+      - name: Run Semgrep
+        run: |
+          set -uo pipefail
+          status=0
+          semgrep scan \
+            --config p/default \
+            --config .semgrep/flowfi.yml \
+            --metrics=off \
+            --sarif --output semgrep.sarif \
+            --timeout 300 \
+            --max-target-bytes 2000000 \
+            --exclude '**/node_modules' \
+            --exclude 'contracts/target' \
+            --exclude '**/*.min.js' \
+            --exclude '**/*.generated.ts' \
+            . || status=$?
+
+          # Semgrep exits 1 for "findings found" and >=2 for a real failure
+          # (bad ruleset, network, crash). Only the latter is worth stopping
+          # the pipeline for here; findings are handled by the gate step below.
+          if [ "$status" -ge 2 ]; then
+            echo "::error::Semgrep failed to complete (exit $status)."
+            exit "$status"
+          fi
+          echo "Semgrep completed (exit $status)."
+
+      # Only the curated `flowfi.*` rules block a merge. Upstream `p/default`
+      # findings are still uploaded to the Security tab for triage, but an
+      # unaudited broad ruleset would otherwise fail every PR on day one.
+      - name: Evaluate FlowFi SAST gate
+        if: always()
+        env:
+          SARIF: semgrep.sarif
+        run: |
+          set -uo pipefail
+          if [ ! -f "$SARIF" ]; then
+            echo "::error::No SARIF report produced by Semgrep."
+            exit 1
+          fi
+
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+
+          SARIF = os.environ["SARIF"]
+          with open(SARIF, encoding="utf-8") as fh:
+              report = json.load(fh)
+
+          def is_curated(rule_id):
+              # Semgrep namespaces rule ids when several rulesets are used, so
+              # `flowfi.stellar-secret-key` arrives as `semgrep.flowfi.stellar-secret-key`.
+              return rule_id.startswith("flowfi.") or ".flowfi." in rule_id
+
+          blocking, advisory = [], []
+          for run in report.get("runs", []):
+              driver = run.get("tool", {}).get("driver", {})
+
+              # Semgrep's SARIF puts severity on the rule definition, not on the
+              # individual result, so it has to be looked up. Trusting
+              # result["level"] alone would silently classify everything as a
+              # warning and disable the gate.
+              levels = {
+                  rule.get("id", ""): rule.get("defaultConfiguration", {}).get("level", "warning")
+                  for rule in driver.get("rules", [])
+              }
+
+              for result in run.get("results", []):
+                  rule_id = result.get("ruleId", "?")
+                  level = result.get("level") or levels.get(rule_id, "warning")
+                  region = result.get("locations", [{}])[0].get("physicalLocation", {})
+                  uri = region.get("artifactLocation", {}).get("uri", "?")
+                  line = region.get("region", {}).get("startLine", 0)
+                  entry = (rule_id, uri, line, level)
+
+                  # Only curated `flowfi.*` rules may block a merge. Everything
+                  # from the upstream ruleset is surfaced for triage instead.
+                  if level == "error" and is_curated(rule_id):
+                      blocking.append(entry)
+                  else:
+                      advisory.append(entry)
+
+          print("## 🔍 Static analysis (Semgrep)\n")
+          if blocking:
+              print(f"### ⛔ {len(blocking)} blocking finding(s) from FlowFi rules\n")
+              print("| Rule | Location |")
+              print("| --- | --- |")
+              for rule_id, uri, line, _ in sorted(blocking):
+                  print(f"| `{rule_id}` | `{uri}:{line}` |")
+          else:
+              print("No blocking findings from the `flowfi.*` ruleset. ✅")
+
+          if advisory:
+              shown = sorted(advisory)[:50]
+              print(
+                  f"\n<details><summary>{len(advisory)} advisory finding(s) — in the Security tab, "
+                  "not merge-blocking</summary>\n"
+              )
+              print("| Rule | Level | Location |")
+              print("| --- | --- | --- |")
+              for rule_id, uri, line, level in shown:
+                  print(f"| `{rule_id}` | {level} | `{uri}:{line}` |")
+              if len(advisory) > len(shown):
+                  print(f"\n_…and {len(advisory) - len(shown)} more. See the Security tab._")
+              print("\n</details>")
+
+          if blocking:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ---------------------------------------------------------------------
+  # 4. CodeQL
+  # ---------------------------------------------------------------------
   codeql-analysis:
     name: CodeQL Analysis
     runs-on: ubuntu-latest
@@ -108,40 +382,118 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'typescript', 'rust' ]
+        language: ['javascript', 'typescript', 'rust']
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup Rust toolchain
-      if: matrix.language == 'rust'
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        targets: wasm32-unknown-unknown
-        components: clippy
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Rust Cache
-      if: matrix.language == 'rust'
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspace: "contracts -> target"
+      - name: Setup Node.js
+        if: matrix.language != 'rust'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
 
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-        
-    - name: Build Rust contracts for CodeQL
-      if: matrix.language == 'rust'
-      run: cargo check --workspace --all-targets
-      working-directory: contracts
+      # CodeQL's JS/TS extractor needs a resolved dependency tree to resolve
+      # imports; without node_modules it analyses the files but loses most
+      # cross-module data flow.
+      - name: Install dependencies for CodeQL
+        if: matrix.language != 'rust'
+        run: npm ci --include=optional
+        env:
+          HUSKY: '0'
 
-    - name: Autobuild
-      if: matrix.language != 'rust'
-      uses: github/codeql-action/autobuild@v3
-      
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      - name: Setup Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy
 
+      - name: Rust Cache
+        if: matrix.language == 'rust'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'contracts -> target'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Build Rust contracts for CodeQL
+        if: matrix.language == 'rust'
+        run: cargo check --workspace --all-targets
+        working-directory: contracts
+
+      - name: Autobuild
+        if: matrix.language != 'rust'
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ---------------------------------------------------------------------
+  # 5. Aggregate gate
+  # ---------------------------------------------------------------------
+  # A single required status check for branch protection, so a contributor sees
+  # one red X instead of four, and `needs` cannot be bypassed by re-running a
+  # single job.
+  security-gate:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: [dependency-audit, secret-scan, sast-semgrep, codeql-analysis]
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Evaluate security results
+        env:
+          DEPENDENCY_AUDIT: ${{ needs.dependency-audit.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          SAST_SEMGREP: ${{ needs.sast-semgrep.result }}
+          CODEQL: ${{ needs.codeql-analysis.result }}
+        run: |
+          set -uo pipefail
+
+          failed=0
+          {
+            echo "## 🚦 Security gate"
+            echo
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for check in DEPENDENCY_AUDIT SECRET_SCAN SAST_SEMGREP CODEQL; do
+            result="${!check}"
+            case "$result" in
+              success)
+                printf '| %s | ✅ pass |\n' "$check" >> "$GITHUB_STEP_SUMMARY"
+                printf '✅ %-18s %s\n' "$check" "$result"
+                ;;
+              skipped)
+                # A skipped optional job must not block a merge.
+                printf '| %s | ➖ skipped |\n' "$check" >> "$GITHUB_STEP_SUMMARY"
+                printf '➖ %-18s %s\n' "$check" "$result"
+                ;;
+              *)
+                printf '| %s | ❌ %s |\n' "$check" "$result" >> "$GITHUB_STEP_SUMMARY"
+                printf '❌ %-18s %s\n' "$check" "$result"
+                failed=1
+                ;;
+            esac
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "See the failing job logs above for remediation steps."
+            echo "::error::Security gate failed."
+            exit 1
+          fi
+
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "All security checks passed. ✅"
+          echo "✅ Security gate passed."
