@@ -15,7 +15,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 vi.mock("@/lib/soroban", () => ({
-  fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("1000"),
+  fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("10000"),
 }));
 
 vi.mock("@/lib/stellar", () => ({
@@ -113,25 +113,21 @@ vi.mock("../AmountStep", () => ({
 
 vi.mock("../ScheduleStep", () => ({
   ScheduleStep: ({
-    duration,
-    onDurationChange,
-    error,
+    formData,
+    errors,
+    onUpdate,
   }: {
-    duration: string;
-    onDurationChange: (v: string) => void;
-    error?: string;
-    durationUnit?: string;
-    amount?: string;
-    token?: string;
-    onUnitChange?: (v: string) => void;
+    formData: { duration: string };
+    errors: Record<string, string | undefined>;
+    onUpdate: (d: { duration?: string }) => void;
   }) => (
     <div data-testid="schedule-step">
       <input
         aria-label="Duration"
-        value={duration}
-        onChange={(e) => onDurationChange(e.target.value)}
+        value={formData.duration}
+        onChange={(e) => onUpdate({ duration: e.target.value })}
       />
-      {error && <span role="alert">{error}</span>}
+      {errors.duration && <span role="alert">{errors.duration}</span>}
     </div>
   ),
 }));
@@ -172,6 +168,7 @@ vi.mock("../../ui/Button", () => ({
 import { StreamCreationWizard } from "../StreamCreationWizard";
 import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/api/_shared";
+import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 
 // Valid Stellar Ed25519 public key: G + 55 base32 chars (A-Z, 2-7)
 const VALID_KEY = "GABCDEFGHJKLMNPQRSTUVWXYZ234567ABCDEFGHJKLMNPQRSTUVWXYZ2";
@@ -222,6 +219,7 @@ describe("StreamCreationWizard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getApiBaseUrl).mockReturnValue("http://localhost:3001");
+    vi.mocked(fetchTokenBalanceDisplay).mockResolvedValue("10000");
   });
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -682,5 +680,53 @@ describe("StreamCreationWizard", () => {
   it("shows description tag badge when a tag is set", () => {
     renderWizard();
     expect(screen.getByText("Tag: salary")).toBeInTheDocument();
+  });
+
+  // ── Wallet balance gating (Issue #1507) ────────────────────────────────────
+
+  it("blocks advancing from the amount step when the amount exceeds the wallet balance", async () => {
+    vi.mocked(fetchTokenBalanceDisplay).mockResolvedValue("100");
+    renderWizard();
+    clickNext(); // 1 -> 2
+    fireEvent.change(screen.getByLabelText("Recipient Address"), {
+      target: { value: VALID_KEY },
+    });
+    clickNext(); // 2 -> 3
+    clickNext(); // 3 -> 4
+
+    // Let the balance fetch resolve so step 4 can check it.
+    await act(async () => {});
+
+    clickNext(); // 4 -> 5 should be blocked by the balance check
+
+    expect(screen.getByText("Step 4 of 5")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Amount exceeds wallet balance",
+    );
+  });
+
+  it("disables Create Stream when the balance loads after the amount step and is insufficient", async () => {
+    let resolveBalance!: (value: string) => void;
+    vi.mocked(fetchTokenBalanceDisplay).mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveBalance = resolve;
+      }),
+    );
+
+    renderWizard();
+    // Balance is still loading, so step 4 cannot check it yet.
+    advanceToStep5();
+    expect(screen.getByText("Step 5 of 5")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveBalance("100");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Create Stream")).toBeDisabled();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Amount exceeds wallet balance",
+    );
   });
 });

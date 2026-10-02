@@ -23,6 +23,13 @@ export type DurationUnit =
   | "weeks"
   | "months";
 
+/**
+ * Minimum XLM that must stay in the wallet to cover Stellar base reserves.
+ * The native token balance reported by the XLM SAC includes funds that are
+ * locked as reserves, so they must be subtracted before offering a "Max".
+ */
+export const XLM_BASE_RESERVE = 1;
+
 export interface StreamFormData {
   recipient: string;
   token: string;
@@ -30,6 +37,30 @@ export interface StreamFormData {
   duration: string;
   durationUnit: DurationUnit;
   descriptionTag?: string;
+  /** Optional 28-byte Stellar memo attached to the stream transaction. */
+  memo?: string;
+}
+
+/**
+ * Return the amount of a token the wallet can actually spend.
+ *
+ * For XLM the Stellar base reserve is subtracted so a "Max" deposit never
+ * leaves the account below the minimum balance. Other tokens are returned
+ * as-is. Returns `null` when no usable balance is known.
+ */
+export function getSpendableBalance(
+  walletBalance: string | null | undefined,
+  token?: string | null,
+): number | null {
+  if (walletBalance === null || walletBalance === undefined || walletBalance === "") {
+    return null;
+  }
+  const parsed = parseFloat(walletBalance);
+  if (isNaN(parsed)) return null;
+  if ((token ?? "").toUpperCase() === "XLM") {
+    return Math.max(parsed - XLM_BASE_RESERVE, 0);
+  }
+  return parsed;
 }
 
 export type StreamFormErrors = Partial<Record<keyof StreamFormData, string>>;
@@ -75,6 +106,7 @@ export function validateToken(token: string): string | null {
 export function validateAmount(
   amount: string,
   walletBalance?: string | null,
+  token?: string | null,
 ): string | null {
   const trimmed = amount.trim();
   if (!trimmed) {
@@ -96,12 +128,12 @@ export function validateAmount(
     return deepCheck;
   }
 
-  // Wallet balance check — applied uniformly across all entry points
-  if (walletBalance) {
-    const available = parseFloat(walletBalance);
-    if (!isNaN(available) && parsed > available) {
-      return "Amount exceeds wallet balance";
-    }
+  // Wallet balance check — applied uniformly across all entry points.
+  // XLM reserves are subtracted so users cannot deposit funds that are
+  // locked as the account's minimum balance.
+  const available = getSpendableBalance(walletBalance, token);
+  if (available !== null && parsed > available) {
+    return "Amount exceeds wallet balance";
   }
 
   return null;
@@ -155,7 +187,7 @@ export function validateStreamForm(
 
   // Step 4 = Amount
   if (shouldValidate(4)) {
-    const amountError = validateAmount(data.amount, walletBalance);
+    const amountError = validateAmount(data.amount, walletBalance, data.token);
     if (amountError) errors.amount = amountError;
   }
 

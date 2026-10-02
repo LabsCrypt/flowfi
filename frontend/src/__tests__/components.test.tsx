@@ -161,4 +161,25 @@ describe('AmountStep', () => {
     render(<AmountStep value="25" onChange={vi.fn()} token="XLM" />);
     expect(screen.getByText(/25 XLM/i)).toBeInTheDocument();
   });
+
+  it('shows the available spendable balance', () => {
+    render(<AmountStep value="" onChange={vi.fn()} token="USDC" availableBalance="100" />);
+    expect(screen.getByText(/Available: 100 USDC/)).toBeInTheDocument();
+  });
+
+  it('shows the reduced available balance and reserve note for XLM', () => {
+    render(<AmountStep value="" onChange={vi.fn()} token="XLM" availableBalance="100" />);
+    expect(screen.getByText(/Available: 99 XLM/)).toBeInTheDocument();
+    expect(screen.getByText(/kept in reserve/i)).toBeInTheDocument();
+  });
+
+  it('shows an inline error when the amount exceeds the wallet balance', () => {
+    render(<AmountStep value="150" onChange={vi.fn()} token="USDC" availableBalance="100" />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Amount exceeds wallet balance');
+  });
+
+  it('disables Max when the spendable balance is zero (XLM reserve)', () => {
+    render(<AmountStep value="" onChange={vi.fn()} token="XLM" availableBalance="1" />);
+    expect(screen.getByText('Max')).toBeDisabled();
+  });
 });

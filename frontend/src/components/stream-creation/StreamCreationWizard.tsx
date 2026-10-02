@@ -16,6 +16,7 @@ import {
   useStreamForm,
   type StreamFormData,
 } from "@/hooks/useStreamForm";
+import { validateAmount } from "@/lib/stream-validation";
 
 // Re-export StreamFormData so existing imports keep working
 export type { StreamFormData };
@@ -75,9 +76,28 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     isCloseDisabled: isSubmitting || isPolling,
   });
 
+  // Re-derive amount validity on every render — rather than only when "Next"
+  // is clicked — so the final submit stays disabled until the deposit amount is
+  // valid against the connected wallet's balance (issue #1507).
+  const amountError = validateAmount(
+    formData.amount,
+    walletBalance,
+    formData.token,
+  );
+  const amountValid = amountError === null;
+  const canSubmit = !isSubmitting && amountValid;
+
   const handleApplyTemplate = (templateId: string) => {
     const msg = applyTemplateHook(templateId);
     if (msg) setTemplateSaveMessage(msg);
+  };
+
+  const scrollToFirstError = () => {
+    // Scroll to first error if validation fails
+    const firstError = document.querySelector('[role="alert"]');
+    if (firstError) {
+      firstError.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   };
 
   const handleSaveCustomTemplate = () => {
@@ -101,11 +121,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         }
       }
     } else {
-      // Scroll to first error if validation fails
-      const firstError = document.querySelector('[role="alert"]');
-      if (firstError) {
-        firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      scrollToFirstError();
     }
   };
 
@@ -150,6 +166,15 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   };
 
   const handleSubmit = async () => {
+    // Authoritative pre-submission wallet balance check (issue #1507): the
+    // balance may have finished loading after the user advanced past the
+    // amount step, so re-validate it here and send the user back if needed.
+    if (!validateStep(4)) {
+      setCurrentStep(4);
+      scrollToFirstError();
+      return;
+    }
+
     if (validateStep(currentStep)) {
       setIsSubmitting(true);
       try {
@@ -166,11 +191,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         setIsSubmitting(false);
       }
     } else {
-      // Scroll to first error if validation fails
-      const firstError = document.querySelector('[role="alert"]');
-      if (firstError) {
-        firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      scrollToFirstError();
     }
   };
 
@@ -221,13 +242,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       case 5:
         return (
           <ScheduleStep
-            duration={formData.duration}
-            durationUnit={formData.durationUnit}
-            onDurationChange={(value) => updateFormData({ duration: value })}
-            onUnitChange={(value) => updateFormData({ durationUnit: value })}
-            error={errors.duration}
-            amount={formData.amount}
-            token={formData.token}
+            formData={formData}
+            errors={errors}
+            onUpdate={updateFormData}
           />
         );
       default:
@@ -384,35 +401,46 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         </div>
 
         {!isPolling && (
-          <div className="flex justify-between gap-4 pt-6 border-t border-glass-border">
-            <div>
-              {currentStep > 1 && (
-                <Button variant="outline" onClick={handleBack}>
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  Back
+          <>
+            {currentStep === STEPS.length && !amountValid && (
+              <p className="pt-6 text-sm text-red-400" role="alert">
+                {amountError}
+              </p>
+            )}
+            <div className="flex justify-between gap-4 pt-6 border-t border-glass-border">
+              <div>
+                {currentStep > 1 && (
+                  <Button variant="outline" onClick={handleBack}>
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Back
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-4">
+                <Button variant="outline" onClick={onClose} disabled={isSubmitting || isPolling}>
+                  Cancel
                 </Button>
-              )}
+                {currentStep < STEPS.length ? (
+                  <Button onClick={handleNext}>
+                    Next
+                    <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Button>
+                ) : (
+                  <Button
+                    loading={isSubmitting}
+                    onClick={handleSubmit}
+                    disabled={!canSubmit}
+                  >
+                    Create Stream
+                  </Button>
+                )}
+              </div>
             </div>
-            <div className="flex gap-4">
-              <Button variant="outline" onClick={onClose} disabled={isSubmitting || isPolling}>
-                Cancel
-              </Button>
-              {currentStep < STEPS.length ? (
-                <Button onClick={handleNext}>
-                  Next
-                  <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </Button>
-              ) : (
-                <Button loading={isSubmitting} onClick={handleSubmit}>
-                  Create Stream
-                </Button>
-              )}
-            </div>
-          </div>
+          </>
         )}
       </div>
     </div>

@@ -20,6 +20,8 @@ import {
   validateToken,
   validateAmount,
   validateDuration,
+  getSpendableBalance,
+  XLM_BASE_RESERVE,
   type StreamFormData,
 } from "@/lib/stream-validation";
 
@@ -162,6 +164,52 @@ describe("validateAmount", () => {
 
   it("skips balance check when walletBalance is undefined", () => {
     expect(validateAmount("999999", undefined)).toBeNull();
+  });
+});
+
+// ─── XLM base reserve / spendable balance ─────────────────────────────────────
+
+describe("getSpendableBalance", () => {
+  it("subtracts the base reserve from XLM balances", () => {
+    expect(getSpendableBalance("100", "XLM")).toBe(100 - XLM_BASE_RESERVE);
+  });
+
+  it("does not subtract a reserve from non-XLM tokens", () => {
+    expect(getSpendableBalance("100", "USDC")).toBe(100);
+    expect(getSpendableBalance("100")).toBe(100);
+  });
+
+  it("never returns a negative spendable balance", () => {
+    expect(getSpendableBalance("0.5", "XLM")).toBe(0);
+  });
+
+  it("returns null when no usable balance is known", () => {
+    expect(getSpendableBalance(null, "XLM")).toBeNull();
+    expect(getSpendableBalance(undefined, "USDC")).toBeNull();
+    expect(getSpendableBalance("", "XLM")).toBeNull();
+    expect(getSpendableBalance("not-a-number", "XLM")).toBeNull();
+  });
+});
+
+describe("validateAmount with XLM reserve", () => {
+  it("rejects an XLM amount that would dip into the base reserve", () => {
+    // 100 XLM balance, 1 XLM kept in reserve -> 99 spendable
+    expect(validateAmount("99", "100", "XLM")).toBeNull();
+    expect(validateAmount("99.5", "100", "XLM")).toBe(
+      "Amount exceeds wallet balance",
+    );
+  });
+
+  it("still allows the full balance for non-XLM tokens", () => {
+    expect(validateAmount("100", "100", "USDC")).toBeNull();
+  });
+
+  it("applies the reserve check through validateStreamForm step 4", () => {
+    const errors = validateStreamForm(
+      { ...VALID_FORM, token: "XLM", amount: "99.5" },
+      { step: 4, walletBalance: "100" },
+    );
+    expect(errors.amount).toBe("Amount exceeds wallet balance");
   });
 });
 
