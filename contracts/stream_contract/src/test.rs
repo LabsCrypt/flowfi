@@ -10,6 +10,7 @@ use soroban_sdk::{
 };
 
 use errors::StreamError;
+use errors::test_diagnostics::assert_stream_error;
 use events::{
     AdminTransferredEvent, ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
     FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
@@ -212,7 +213,7 @@ fn test_initialize_rejects_second_call() {
 
     client.initialize(&admin, &treasury, &100);
     let result = client.try_initialize(&admin, &treasury, &100);
-    assert_eq!(result, Err(Ok(StreamError::AlreadyInitialized)));
+    assert_stream_error!(result, StreamError::AlreadyInitialized);
 }
 
 #[test]
@@ -226,7 +227,7 @@ fn test_initialize_rejects_invalid_fee_rate() {
 
     // 1 001 bps > MAX_FEE_RATE_BPS (1 000)
     let result = client.try_initialize(&admin, &treasury, &1001);
-    assert_eq!(result, Err(Ok(StreamError::InvalidFeeRate)));
+    assert_stream_error!(result, StreamError::InvalidFeeRate);
 }
 
 #[test]
@@ -259,7 +260,7 @@ fn test_update_fee_config_rejects_non_admin() {
 
     client.initialize(&admin, &treasury, &500);
     let result = client.try_update_fee_config(&attacker, &treasury, &100);
-    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+    assert_stream_error!(result, StreamError::NotAdmin);
 }
 
 #[test]
@@ -273,7 +274,7 @@ fn test_update_fee_config_rejects_invalid_fee_rate() {
 
     client.initialize(&admin, &treasury, &500);
     let result = client.try_update_fee_config(&admin, &treasury, &1001);
-    assert_eq!(result, Err(Ok(StreamError::InvalidFeeRate)));
+    assert_stream_error!(result, StreamError::InvalidFeeRate);
 }
 
 #[test]
@@ -287,7 +288,7 @@ fn test_update_fee_config_rejects_not_initialized() {
 
     // Call update_fee_config before initialize
     let result = client.try_update_fee_config(&admin, &treasury, &100);
-    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+    assert_stream_error!(result, StreamError::NotInitialized);
 }
 
 #[test]
@@ -400,7 +401,7 @@ fn test_create_stream_rejects_zero_amount() {
         &0,
         &100,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidAmount)));
+    assert_stream_error!(result, StreamError::InvalidAmount);
 }
 
 #[test]
@@ -417,7 +418,7 @@ fn test_create_stream_rejects_negative_amount() {
         &-1,
         &100,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidAmount)));
+    assert_stream_error!(result, StreamError::InvalidAmount);
 }
 
 #[test]
@@ -430,7 +431,7 @@ fn test_create_stream_rejects_zero_duration() {
     let client = create_contract(&env);
 
     let result = client.try_create_stream(&sender, &Address::generate(&env), &token, &500, &0);
-    assert_eq!(result, Err(Ok(StreamError::InvalidDuration)));
+    assert_stream_error!(result, StreamError::InvalidDuration);
 }
 
 #[test]
@@ -448,7 +449,7 @@ fn test_create_stream_rejects_invalid_token_address() {
         &500,
         &100,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidTokenAddress)));
+    assert_stream_error!(result, StreamError::InvalidTokenAddress);
 }
 
 #[test]
@@ -577,10 +578,7 @@ fn test_top_up_rejects_zero_amount() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &0),
-        Err(Ok(StreamError::InvalidAmount))
-    );
+    assert_stream_error!(client.try_top_up_stream(&sender, &id, &0), StreamError::InvalidAmount);
 }
 
 #[test]
@@ -594,10 +592,7 @@ fn test_top_up_rejects_negative_amount() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &-50),
-        Err(Ok(StreamError::InvalidAmount))
-    );
+    assert_stream_error!(client.try_top_up_stream(&sender, &id, &-50), StreamError::InvalidAmount);
 }
 
 #[test]
@@ -606,10 +601,7 @@ fn test_top_up_rejects_nonexistent_stream() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
-        client.try_top_up_stream(&Address::generate(&env), &999, &1_000),
-        Err(Ok(StreamError::StreamNotFound))
-    );
+    assert_stream_error!(client.try_top_up_stream(&Address::generate(&env), &999, &1_000), StreamError::StreamNotFound);
 }
 
 #[test]
@@ -624,10 +616,7 @@ fn test_top_up_rejects_unauthorized_sender() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    assert_eq!(
-        client.try_top_up_stream(&attacker, &id, &1_000),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_top_up_stream(&attacker, &id, &1_000), StreamError::Unauthorized);
 }
 
 #[test]
@@ -642,10 +631,7 @@ fn test_top_up_rejects_inactive_stream() {
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
     client.cancel_stream(&sender, &id);
 
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &1_000),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_top_up_stream(&sender, &id, &1_000), StreamError::StreamInactive);
 }
 
 #[test]
@@ -767,10 +753,7 @@ fn test_withdraw_rejects_non_recipient() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &500, &100);
 
-    assert_eq!(
-        client.try_withdraw(&attacker, &id),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_withdraw(&attacker, &id), StreamError::Unauthorized);
 }
 
 #[test]
@@ -779,10 +762,7 @@ fn test_withdraw_rejects_missing_stream() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
-        client.try_withdraw(&Address::generate(&env), &999),
-        Err(Ok(StreamError::StreamNotFound))
-    );
+    assert_stream_error!(client.try_withdraw(&Address::generate(&env), &999), StreamError::StreamNotFound);
 }
 
 #[test]
@@ -798,10 +778,7 @@ fn test_withdraw_rejects_inactive_stream() {
     let id = client.create_stream(&sender, &recipient, &token, &500, &100);
     client.cancel_stream(&sender, &id);
 
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::StreamInactive);
 }
 
 #[test]
@@ -875,10 +852,7 @@ fn test_cancel_stream_rejects_non_sender() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &500, &100);
 
-    assert_eq!(
-        client.try_cancel_stream(&attacker, &id),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_cancel_stream(&attacker, &id), StreamError::Unauthorized);
 }
 
 #[test]
@@ -887,10 +861,7 @@ fn test_cancel_stream_rejects_missing_stream() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
-        client.try_cancel_stream(&Address::generate(&env), &999),
-        Err(Ok(StreamError::StreamNotFound))
-    );
+    assert_stream_error!(client.try_cancel_stream(&Address::generate(&env), &999), StreamError::StreamNotFound);
 }
 
 #[test]
@@ -905,10 +876,7 @@ fn test_cancel_stream_rejects_already_inactive() {
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &500, &100);
     client.cancel_stream(&sender, &id);
 
-    assert_eq!(
-        client.try_cancel_stream(&sender, &id),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_cancel_stream(&sender, &id), StreamError::StreamInactive);
 }
 
 #[test]
@@ -1401,7 +1369,7 @@ fn test_create_stream_invalid_token() {
         &100,
         &10,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidTokenAddress)));
+    assert_stream_error!(result, StreamError::InvalidTokenAddress);
 }
 
 #[test]
@@ -1432,7 +1400,7 @@ fn test_create_stream_zero_rate() {
 
     let client = create_contract(&env);
     let result = client.try_create_stream(&sender, &Address::generate(&env), &token, &1, &1_000);
-    assert_eq!(result, Err(Ok(StreamError::InvalidRate)));
+    assert_stream_error!(result, StreamError::InvalidRate);
 }
 
 #[test]
@@ -1505,10 +1473,7 @@ fn test_withdraw_zero_balance() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
 
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::InvalidAmount))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::InvalidAmount);
 }
 
 #[test]
@@ -1558,10 +1523,7 @@ fn test_withdraw_rejects_double_withdraw_after_completion() {
     assert_eq!(s.status, StreamStatus::Completed);
 
     // Try to withdraw again — should return StreamInactive error.
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::StreamInactive);
 }
 
 #[test]
@@ -1602,10 +1564,7 @@ fn test_top_up_on_completed_stream() {
 
     // Top-up on a completed (inactive) stream must fail.
     mint(&env, &token, &sender, 500);
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &500),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_top_up_stream(&sender, &id, &500), StreamError::StreamInactive);
 }
 
 #[test]
@@ -1639,10 +1598,7 @@ fn test_cancel_by_non_sender() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
 
-    assert_eq!(
-        client.try_cancel_stream(&Address::generate(&env), &id),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_cancel_stream(&Address::generate(&env), &id), StreamError::Unauthorized);
 }
 
 #[test]
@@ -1660,10 +1616,7 @@ fn test_cancel_after_completion() {
     env.ledger().with_mut(|l| l.timestamp += 200);
     client.withdraw(&recipient, &id);
 
-    assert_eq!(
-        client.try_cancel_stream(&sender, &id),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_cancel_stream(&sender, &id), StreamError::StreamInactive);
 }
 
 // ─── #234 pause / resume ─────────────────────────────────────────────────────
@@ -1787,10 +1740,7 @@ fn test_pause_by_non_sender_fails() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
 
-    assert_eq!(
-        client.try_pause_stream(&Address::generate(&env), &id),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_pause_stream(&Address::generate(&env), &id), StreamError::Unauthorized);
 }
 
 #[test]
@@ -1804,10 +1754,7 @@ fn test_resume_non_paused_stream_fails() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
 
-    assert_eq!(
-        client.try_resume_stream(&sender, &id),
-        Err(Ok(StreamError::StreamNotPaused))
-    );
+    assert_stream_error!(client.try_resume_stream(&sender, &id), StreamError::StreamNotPaused);
 }
 
 #[test]
@@ -1823,10 +1770,7 @@ fn test_pause_already_paused_stream_fails() {
 
     client.pause_stream(&sender, &id);
 
-    assert_eq!(
-        client.try_pause_stream(&sender, &id),
-        Err(Ok(StreamError::StreamAlreadyPaused))
-    );
+    assert_stream_error!(client.try_pause_stream(&sender, &id), StreamError::StreamAlreadyPaused);
 }
 
 #[test]
@@ -1845,10 +1789,7 @@ fn test_withdraw_on_paused_stream_fails() {
     client.pause_stream(&sender, &id);
     env.ledger().with_mut(|l| l.timestamp += 100);
 
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamPaused))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::StreamPaused);
 }
 
 // ─── #235 stream completion ───────────────────────────────────────────────────
@@ -2216,11 +2157,7 @@ fn test_resume_on_cancelled_stream_fails() {
 
     // Resume on a cancelled stream must fail.
     let result = client.try_resume_stream(&sender, &id);
-    assert_eq!(
-        result,
-        Err(Ok(StreamError::StreamNotActive)),
-        "resume_stream must return StreamNotActive on an inactive stream"
-    );
+    assert_stream_error!(result, StreamError::StreamNotActive, "resume_stream must return StreamNotActive on an inactive stream");
 
     // Stream state must be unchanged: still cancelled, not resumed.
     let s = client.get_stream(&id).unwrap();
@@ -2431,7 +2368,7 @@ fn test_transfer_admin_rejects_non_admin() {
 
     client.initialize(&admin, &treasury, &100);
     let result = client.try_transfer_admin(&attacker, &Address::generate(&env));
-    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+    assert_stream_error!(result, StreamError::NotAdmin);
 }
 
 #[test]
@@ -2441,7 +2378,7 @@ fn test_transfer_admin_rejects_not_initialized() {
     let client = create_contract(&env);
 
     let result = client.try_transfer_admin(&Address::generate(&env), &Address::generate(&env));
-    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+    assert_stream_error!(result, StreamError::NotInitialized);
 }
 
 #[test]
@@ -2467,7 +2404,7 @@ fn test_transfer_admin_new_admin_can_update_fee_config() {
 
     // Old admin must no longer be able to update fee config.
     let result = client.try_update_fee_config(&admin, &treasury, &50);
-    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+    assert_stream_error!(result, StreamError::NotAdmin);
 }
 
 #[test]
@@ -2550,7 +2487,7 @@ fn test_withdraw_on_paused_stream_returns_stream_inactive() {
 
     // Withdraw must be rejected while paused.
     let result = client.try_withdraw(&recipient, &id);
-    assert_eq!(result, Err(Ok(StreamError::StreamPaused)));
+    assert_stream_error!(result, StreamError::StreamPaused);
 }
 
 #[test]
@@ -2781,11 +2718,7 @@ fn test_withdraw_state_committed_before_transfer_prevents_double_payout() {
     // during the token transfer). State was already committed, so no additional
     // tokens have accrued and the call must fail with InvalidAmount.
     let result = client.try_withdraw(&recipient, &id);
-    assert_eq!(
-        result,
-        Err(Ok(StreamError::InvalidAmount)),
-        "re-entrant withdrawal at same timestamp must fail: state must be committed before transfer"
-    );
+    assert_stream_error!(result, StreamError::InvalidAmount, "re-entrant withdrawal at same timestamp must fail: state must be committed before transfer");
 
     // Token balance must reflect exactly one payout.
     let token_client = token::Client::new(&env, &token);
@@ -2811,11 +2744,7 @@ fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
 
     // Stream is now inactive; a second cancel (simulating re-entry) must fail.
     let result = client.try_cancel_stream(&sender, &id);
-    assert_eq!(
-        result,
-        Err(Ok(StreamError::StreamInactive)),
-        "re-entrant cancel must fail: stream marked inactive before transfers"
-    );
+    assert_stream_error!(result, StreamError::StreamInactive, "re-entrant cancel must fail: stream marked inactive before transfers");
 
     // Total outflow must equal deposited amount (no double-payout).
     let token_client = token::Client::new(&env, &token);
@@ -3070,10 +2999,7 @@ fn test_guardian_cannot_unpause_protocol() {
 
     client.set_protocol_pause(&admin, &true);
     // Asymmetric authority: a guardian may trip the breaker but never clear it.
-    assert_eq!(
-        client.try_set_protocol_pause(&guardian, &false),
-        Err(Ok(StreamError::NotAdmin))
-    );
+    assert_stream_error!(client.try_set_protocol_pause(&guardian, &false), StreamError::NotAdmin);
     assert!(client.is_protocol_paused());
 }
 
@@ -3082,10 +3008,7 @@ fn test_pause_rejects_outsider() {
     let (env, _token, contract, _admin, _guardian, outsider) = setup_paused_env();
     let client = StreamContractClient::new(&env, &contract);
 
-    assert_eq!(
-        client.try_set_protocol_pause(&outsider, &true),
-        Err(Ok(StreamError::NotGuardian))
-    );
+    assert_stream_error!(client.try_set_protocol_pause(&outsider, &true), StreamError::NotGuardian);
     assert!(!client.is_protocol_paused());
 }
 
@@ -3098,10 +3021,7 @@ fn test_pause_without_guardian_rejects_outsider() {
     let outsider = Address::generate(&env);
     client.initialize(&admin, &Address::generate(&env), &0);
 
-    assert_eq!(
-        client.try_set_protocol_pause(&outsider, &true),
-        Err(Ok(StreamError::NotGuardian))
-    );
+    assert_stream_error!(client.try_set_protocol_pause(&outsider, &true), StreamError::NotGuardian);
 }
 
 #[test]
@@ -3167,10 +3087,7 @@ fn test_set_emergency_guardian_rejects_non_admin() {
     let outsider = Address::generate(&env);
     client.initialize(&admin, &Address::generate(&env), &0);
 
-    assert_eq!(
-        client.try_set_emergency_guardian(&outsider, &Some(Address::generate(&env))),
-        Err(Ok(StreamError::NotAdmin))
-    );
+    assert_stream_error!(client.try_set_emergency_guardian(&outsider, &Some(Address::generate(&env))), StreamError::NotAdmin);
 }
 
 #[test]
@@ -3205,10 +3122,7 @@ fn test_set_protocol_pause_rejects_before_initialize() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
-        client.try_set_protocol_pause(&Address::generate(&env), &true),
-        Err(Ok(StreamError::NotInitialized))
-    );
+    assert_stream_error!(client.try_set_protocol_pause(&Address::generate(&env), &true), StreamError::NotInitialized);
 }
 
 #[test]
@@ -3220,10 +3134,7 @@ fn test_paused_protocol_blocks_create_stream() {
 
     client.set_protocol_pause(&admin, &true);
 
-    assert_eq!(
-        client.try_create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000),
-        Err(Ok(StreamError::ProtocolPaused))
-    );
+    assert_stream_error!(client.try_create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000), StreamError::ProtocolPaused);
     // The guard fires before any token movement, so nothing was escrowed.
     assert_eq!(token::Client::new(&env, &token).balance(&sender), 1_000);
 }
@@ -3238,16 +3149,7 @@ fn test_paused_protocol_blocks_step_vesting_stream() {
     client.set_protocol_pause(&admin, &true);
 
     let steps = step_schedule(&env, &[(100, 500), (200, 500)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::ProtocolPaused))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::ProtocolPaused);
 }
 
 #[test]
@@ -3259,18 +3161,7 @@ fn test_paused_protocol_blocks_hybrid_cliff_stream() {
 
     client.set_protocol_pause(&admin, &true);
 
-    assert_eq!(
-        client.try_create_hybrid_cliff_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &500,
-            &400,
-            &600
-        ),
-        Err(Ok(StreamError::ProtocolPaused))
-    );
+    assert_stream_error!(client.try_create_hybrid_cliff_stream( &sender, &Address::generate(&env), &token, &1_000, &500, &400, &600), StreamError::ProtocolPaused);
 }
 
 #[test]
@@ -3283,10 +3174,7 @@ fn test_paused_protocol_blocks_top_up_stream() {
 
     client.set_protocol_pause(&admin, &true);
 
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &500),
-        Err(Ok(StreamError::ProtocolPaused))
-    );
+    assert_stream_error!(client.try_top_up_stream(&sender, &id, &500), StreamError::ProtocolPaused);
 }
 
 #[test]
@@ -3419,10 +3307,7 @@ fn test_only_new_admin_can_clear_pause_after_transfer() {
     client.transfer_admin(&admin, &new_admin);
 
     // The outgoing admin has lost every privilege, including unpausing.
-    assert_eq!(
-        client.try_set_protocol_pause(&admin, &false),
-        Err(Ok(StreamError::NotAdmin))
-    );
+    assert_stream_error!(client.try_set_protocol_pause(&admin, &false), StreamError::NotAdmin);
     client.set_protocol_pause(&new_admin, &false);
     assert!(!client.is_protocol_paused());
 }
@@ -3512,10 +3397,7 @@ fn test_step_vesting_claimable_is_zero_before_first_step() {
     advance(&env, 99);
 
     assert_eq!(client.get_claimable_amount(&id), Some(0));
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::InvalidAmount))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::InvalidAmount);
 }
 
 #[test]
@@ -3607,10 +3489,7 @@ fn test_step_vesting_marks_completed_when_fully_claimed() {
     assert!(!stream.is_active);
     assert_eq!(stream.status, StreamStatus::Completed);
     assert!(client.is_stream_completed(&id));
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamInactive))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::StreamInactive);
 }
 
 #[test]
@@ -3648,16 +3527,7 @@ fn test_step_vesting_rejects_empty_schedule() {
     mint(&env, &token, &sender, 1_000);
 
     let steps = SorobanVec::new(&env);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::EmptyVestingSchedule))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::EmptyVestingSchedule);
 }
 
 #[test]
@@ -3695,16 +3565,7 @@ fn test_step_vesting_rejects_more_than_twelve_steps() {
         .collect();
     let steps = step_schedule(&env, &pairs);
 
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_300,
-            &steps
-        ),
-        Err(Ok(StreamError::TooManyVestingSteps))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_300, &steps), StreamError::TooManyVestingSteps);
 }
 
 #[test]
@@ -3719,16 +3580,7 @@ fn test_step_vesting_rejects_non_monotonic_steps() {
     // 200 then 100: out of order, so "sum of steps with unlock_time <= T" is
     // ambiguous at the boundary.
     let steps = step_schedule(&env, &[(200, 500), (100, 500)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::NonMonotonicVestingSteps))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::NonMonotonicVestingSteps);
 }
 
 #[test]
@@ -3741,16 +3593,7 @@ fn test_step_vesting_rejects_duplicate_unlock_times() {
     mint(&env, &token, &sender, 1_000);
 
     let steps = step_schedule(&env, &[(100, 500), (100, 500)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::NonMonotonicVestingSteps))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::NonMonotonicVestingSteps);
 }
 
 #[test]
@@ -3763,16 +3606,7 @@ fn test_step_vesting_rejects_non_positive_step_amount() {
     mint(&env, &token, &sender, 1_000);
 
     let steps = step_schedule(&env, &[(100, 1_000), (200, 0)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::InvalidVestingStepAmount))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::InvalidVestingStepAmount);
 }
 
 #[test]
@@ -3786,16 +3620,7 @@ fn test_step_vesting_rejects_total_mismatch() {
 
     // Steps sum to 900, deposit is 1_000: 100 would be unclaimable forever.
     let steps = step_schedule(&env, &[(100, 400), (200, 500)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::VestingStepTotalMismatch))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::VestingStepTotalMismatch);
 }
 
 #[test]
@@ -3809,16 +3634,7 @@ fn test_step_vesting_rejects_step_at_or_before_start() {
 
     // A step at t=0 is already claimable at creation, which defeats the point.
     let steps = step_schedule(&env, &[(0, 1_000)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::VestingStepBeforeStart))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &1_000, &steps), StreamError::VestingStepBeforeStart);
 }
 
 #[test]
@@ -3829,16 +3645,7 @@ fn test_step_vesting_rejects_invalid_token() {
     let sender = Address::generate(&env);
 
     let steps = step_schedule(&env, &[(100, 1_000)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &Address::generate(&env),
-            &1_000,
-            &steps
-        ),
-        Err(Ok(StreamError::InvalidTokenAddress))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &Address::generate(&env), &1_000, &steps), StreamError::InvalidTokenAddress);
 }
 
 #[test]
@@ -3850,26 +3657,8 @@ fn test_step_vesting_rejects_non_positive_deposit() {
     let sender = Address::generate(&env);
 
     let steps = step_schedule(&env, &[(100, 1_000)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &0,
-            &steps
-        ),
-        Err(Ok(StreamError::InvalidAmount))
-    );
-    assert_eq!(
-        client.try_create_step_vesting_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &-1,
-            &steps
-        ),
-        Err(Ok(StreamError::InvalidAmount))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &0, &steps), StreamError::InvalidAmount);
+    assert_stream_error!(client.try_create_step_vesting_stream( &sender, &Address::generate(&env), &token, &-1, &steps), StreamError::InvalidAmount);
 }
 
 #[test]
@@ -3888,10 +3677,7 @@ fn test_step_vesting_with_fee_must_sum_to_net_amount() {
 
     // Steps summing to the gross 1_000 must fail — they overshoot the net 990.
     let gross_steps = step_schedule(&env, &[(100, 1_000)]);
-    assert_eq!(
-        client.try_create_step_vesting_stream(&sender, &recipient, &token, &1_000, &gross_steps),
-        Err(Ok(StreamError::VestingStepTotalMismatch))
-    );
+    assert_stream_error!(client.try_create_step_vesting_stream(&sender, &recipient, &token, &1_000, &gross_steps), StreamError::VestingStepTotalMismatch);
 
     let net_steps = step_schedule(&env, &[(100, 500), (200, 490)]);
     let id = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &net_steps);
@@ -4079,10 +3865,7 @@ fn test_step_vesting_pause_freezes_claimable_at_paused_at() {
     // Step 2 unlocks while paused; accrual must stay frozen at t=100.
     advance(&env, 400);
     assert_eq!(client.get_claimable_amount(&id), Some(500));
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamPaused))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::StreamPaused);
 }
 
 #[test]
@@ -4190,10 +3973,7 @@ fn test_step_vesting_top_up_is_rejected() {
     // A step schedule must sum to the deposit, so extra tokens have nowhere
     // legitimate to go: accepting them would strand them or defer them to the
     // final milestone without saying so.
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &500),
-        Err(Ok(StreamError::TopUpUnsupported))
-    );
+    assert_stream_error!(client.try_top_up_stream(&sender, &id, &500), StreamError::TopUpUnsupported);
     assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_000);
 }
 
@@ -4329,18 +4109,7 @@ fn test_hybrid_cliff_rejects_cliff_not_after_start() {
     let sender = Address::generate(&env);
     mint(&env, &token, &sender, 1_000);
 
-    assert_eq!(
-        client.try_create_hybrid_cliff_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &0,
-            &400,
-            &600
-        ),
-        Err(Ok(StreamError::InvalidCliffParameters))
-    );
+    assert_stream_error!(client.try_create_hybrid_cliff_stream( &sender, &Address::generate(&env), &token, &1_000, &0, &400, &600), StreamError::InvalidCliffParameters);
 }
 
 #[test]
@@ -4353,18 +4122,7 @@ fn test_hybrid_cliff_rejects_cliff_consuming_whole_deposit() {
     mint(&env, &token, &sender, 1_000);
 
     // A cliff equal to the deposit leaves no linear component at all.
-    assert_eq!(
-        client.try_create_hybrid_cliff_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &500,
-            &1_000,
-            &600
-        ),
-        Err(Ok(StreamError::InvalidCliffParameters))
-    );
+    assert_stream_error!(client.try_create_hybrid_cliff_stream( &sender, &Address::generate(&env), &token, &1_000, &500, &1_000, &600), StreamError::InvalidCliffParameters);
 }
 
 #[test]
@@ -4376,32 +4134,10 @@ fn test_hybrid_cliff_rejects_zero_duration_and_tiny_rate() {
     let sender = Address::generate(&env);
     mint(&env, &token, &sender, 1_000);
 
-    assert_eq!(
-        client.try_create_hybrid_cliff_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &500,
-            &400,
-            &0
-        ),
-        Err(Ok(StreamError::InvalidCliffParameters))
-    );
+    assert_stream_error!(client.try_create_hybrid_cliff_stream( &sender, &Address::generate(&env), &token, &1_000, &500, &400, &0), StreamError::InvalidCliffParameters);
 
     // 600 remaining spread over 10_000s rounds to 0/s and would never unlock.
-    assert_eq!(
-        client.try_create_hybrid_cliff_stream(
-            &sender,
-            &Address::generate(&env),
-            &token,
-            &1_000,
-            &500,
-            &400,
-            &10_000
-        ),
-        Err(Ok(StreamError::InvalidCliffParameters))
-    );
+    assert_stream_error!(client.try_create_hybrid_cliff_stream( &sender, &Address::generate(&env), &token, &1_000, &500, &400, &10_000), StreamError::InvalidCliffParameters);
 }
 
 #[test]
@@ -4621,10 +4357,7 @@ fn test_initialize_rejects_double_initialize() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &Address::generate(&env), &0);
 
-    assert_eq!(
-        client.try_initialize(&admin, &Address::generate(&env), &0),
-        Err(Ok(StreamError::AlreadyInitialized))
-    );
+    assert_stream_error!(client.try_initialize(&admin, &Address::generate(&env), &0), StreamError::AlreadyInitialized);
     // A rejected re-initialize must not move the schema version backwards.
     assert_eq!(client.get_contract_version(), 2);
 }
@@ -4778,10 +4511,7 @@ fn test_upgrade_before_initialize_rejected() {
     let client = create_contract(&env);
     let hash = upload_upgrade_target(&env);
 
-    assert_eq!(
-        client.try_upgrade(&hash),
-        Err(Ok(StreamError::NotInitialized))
-    );
+    assert_stream_error!(client.try_upgrade(&hash), StreamError::NotInitialized);
 }
 
 #[test]
@@ -4866,7 +4596,7 @@ fn test_migrate_before_initialize_rejected() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(client.try_migrate(&2), Err(Ok(StreamError::NotInitialized)));
+    assert_stream_error!(client.try_migrate(&2), StreamError::NotInitialized);
 }
 
 #[test]
@@ -4894,10 +4624,7 @@ fn test_migrate_rejects_downgrade() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &Address::generate(&env), &0);
 
-    assert_eq!(
-        client.try_migrate(&1),
-        Err(Ok(StreamError::UnsupportedMigration))
-    );
+    assert_stream_error!(client.try_migrate(&1), StreamError::UnsupportedMigration);
     assert_eq!(client.get_contract_version(), 2);
 }
 
@@ -4910,10 +4637,7 @@ fn test_migrate_rejects_target_newer_than_contract() {
     client.initialize(&admin, &Address::generate(&env), &0);
 
     // This binary cannot write v3, so it must refuse rather than half-apply.
-    assert_eq!(
-        client.try_migrate(&3),
-        Err(Ok(StreamError::UnsupportedMigration))
-    );
+    assert_stream_error!(client.try_migrate(&3), StreamError::UnsupportedMigration);
     assert_eq!(client.get_contract_version(), 2);
 }
 
@@ -4934,10 +4658,7 @@ fn test_migrate_rejects_state_newer_than_contract() {
             .set(&DataKey::ContractVersion, &99u32);
     });
 
-    assert_eq!(
-        client.try_migrate(&2),
-        Err(Ok(StreamError::StateVersionTooNew))
-    );
+    assert_stream_error!(client.try_migrate(&2), StreamError::StateVersionTooNew);
     assert_eq!(client.get_contract_version(), 99);
 }
 
@@ -5184,10 +4905,7 @@ fn test_legacy_paused_stream_stays_paused() {
     // sender deliberately stopped.
     advance(&env, 50);
     assert_eq!(client.get_claimable_amount(&id), Some(50));
-    assert_eq!(
-        client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamPaused))
-    );
+    assert_stream_error!(client.try_withdraw(&recipient, &id), StreamError::StreamPaused);
 }
 
 #[test]
@@ -5199,10 +4917,7 @@ fn test_missing_stream_still_reports_not_found() {
 
     // The legacy fallback must not turn "absent" into a phantom stream.
     assert_eq!(client.get_stream(&1_234), None);
-    assert_eq!(
-        client.try_withdraw(&Address::generate(&env), &1_234),
-        Err(Ok(StreamError::StreamNotFound))
-    );
+    assert_stream_error!(client.try_withdraw(&Address::generate(&env), &1_234), StreamError::StreamNotFound);
 }
 
 #[test]
@@ -5454,10 +5169,7 @@ fn test_batch_withdraw_rejects_foreign_stream() {
     advance(&env, 100);
     // Ownership is checked per stream, so one foreign ID cannot be laundered
     // through a batch of legitimate ones.
-    assert_eq!(
-        client.try_batch_withdraw(&recipient, &vec![&env, mine, theirs]),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_batch_withdraw(&recipient, &vec![&env, mine, theirs]), StreamError::Unauthorized);
     // The whole call is rejected: no partial payout escapes.
     assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
     assert_eq!(client.get_stream(&mine).unwrap().withdrawn_amount, 0);
@@ -5476,10 +5188,7 @@ fn test_batch_withdraw_rejects_foreign_recipient() {
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
 
     advance(&env, 100);
-    assert_eq!(
-        client.try_batch_withdraw(&attacker, &vec![&env, id]),
-        Err(Ok(StreamError::Unauthorized))
-    );
+    assert_stream_error!(client.try_batch_withdraw(&attacker, &vec![&env, id]), StreamError::Unauthorized);
     assert_eq!(token::Client::new(&env, &token).balance(&attacker), 0);
 }
 
@@ -5495,10 +5204,7 @@ fn test_batch_withdraw_rejects_missing_stream() {
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
 
     advance(&env, 100);
-    assert_eq!(
-        client.try_batch_withdraw(&recipient, &vec![&env, id, 9_999]),
-        Err(Ok(StreamError::StreamNotFound))
-    );
+    assert_stream_error!(client.try_batch_withdraw(&recipient, &vec![&env, id, 9_999]), StreamError::StreamNotFound);
     // A typo in one ID must not cost the caller the rest of the batch.
     assert_eq!(client.get_stream(&id).unwrap().withdrawn_amount, 0);
 }
@@ -5576,10 +5282,7 @@ fn test_batch_withdraw_rejects_more_than_thirty_streams() {
 
     // The cap exists to bound one invocation's work; enforcing it only at the
     // edge would let an oversized batch through unchecked.
-    assert_eq!(
-        client.try_batch_withdraw(&recipient, &ids),
-        Err(Ok(StreamError::BatchTooLarge))
-    );
+    assert_stream_error!(client.try_batch_withdraw(&recipient, &ids), StreamError::BatchTooLarge);
     assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
 }
 
@@ -5796,10 +5499,7 @@ fn test_batch_withdraw_before_initialize_rejected() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
-        client.try_batch_withdraw(&Address::generate(&env), &vec![&env, 1u64]),
-        Err(Ok(StreamError::StreamNotFound))
-    );
+    assert_stream_error!(client.try_batch_withdraw(&Address::generate(&env), &vec![&env, 1u64]), StreamError::StreamNotFound);
 }
 
 #[test]

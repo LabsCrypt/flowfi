@@ -82,3 +82,226 @@ pub enum StreamError {
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
 }
+
+// ─── Test diagnostics (compiled only under `cfg(test)`) ───────────────────
+//
+// Soroban surfaces contract errors to test assertions as raw numeric codes
+// (e.g. `Error(Contract, #4)`), so a failing assertion forces developers to
+// cross-reference this file by hand to map the integer back to a variant name.
+// The `Display` impl and `describe_actual` helper below print the variant name
+// alongside the numeric code, making test failures self-describing.
+//
+// Everything in this module is gated behind `#[cfg(test)]`: it never compiles
+// into the release/WASM binary, so contract size is unaffected.
+#[cfg(test)]
+pub(crate) mod test_diagnostics {
+    extern crate std;
+
+    use super::StreamError;
+    use core::fmt;
+
+    impl StreamError {
+        /// Human-readable variant name, for test diagnostics only.
+        pub const fn name(self) -> &'static str {
+            match self {
+                StreamError::InvalidAmount => "InvalidAmount",
+                StreamError::StreamNotFound => "StreamNotFound",
+                StreamError::Unauthorized => "Unauthorized",
+                StreamError::StreamInactive => "StreamInactive",
+                StreamError::AlreadyInitialized => "AlreadyInitialized",
+                StreamError::NotAdmin => "NotAdmin",
+                StreamError::InvalidFeeRate => "InvalidFeeRate",
+                StreamError::NotInitialized => "NotInitialized",
+                StreamError::InvalidDuration => "InvalidDuration",
+                StreamError::InvalidTokenAddress => "InvalidTokenAddress",
+                StreamError::InvalidRate => "InvalidRate",
+                StreamError::StreamPaused => "StreamPaused",
+                StreamError::StreamNotPaused => "StreamNotPaused",
+                StreamError::StreamAlreadyPaused => "StreamAlreadyPaused",
+                StreamError::ProtocolPaused => "ProtocolPaused",
+                StreamError::EmptyVestingSchedule => "EmptyVestingSchedule",
+                StreamError::TooManyVestingSteps => "TooManyVestingSteps",
+                StreamError::NonMonotonicVestingSteps => "NonMonotonicVestingSteps",
+                StreamError::InvalidVestingStepAmount => "InvalidVestingStepAmount",
+                StreamError::VestingStepTotalMismatch => "VestingStepTotalMismatch",
+                StreamError::VestingStepBeforeStart => "VestingStepBeforeStart",
+                StreamError::InvalidCliffParameters => "InvalidCliffParameters",
+                StreamError::BatchTooLarge => "BatchTooLarge",
+                StreamError::NotGuardian => "NotGuardian",
+                StreamError::UnsupportedMigration => "UnsupportedMigration",
+                StreamError::StateVersionTooNew => "StateVersionTooNew",
+                StreamError::TopUpUnsupported => "TopUpUnsupported",
+            }
+        }
+    }
+
+    impl fmt::Display for StreamError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{} (code {})", self.name(), *self as u32)
+        }
+    }
+
+    /// Describes the actual outcome of a `try_*` invocation for assertion
+    /// failure messages, naming the variant when it is a `StreamError`.
+    pub fn describe_actual<T>(
+        result: &Result<Result<T, StreamError>, Result<StreamError, u32>>,
+    ) -> std::string::String
+    where
+        T: fmt::Debug,
+    {
+        match result {
+            Ok(value) => std::format!("the call unexpectedly succeeded with {:?}", value),
+            Err(Ok(actual)) => std::format!("{}", actual),
+            Err(Err(other)) => std::format!("a non-contract error {:?}", other),
+        }
+    }
+
+    /// Asserts that a `try_*` invocation failed with the expected
+    /// [`StreamError`] variant.
+    ///
+    /// On failure the message prints the expected variant name, a
+    /// human-readable description of the actual outcome (variant name plus
+    /// numeric code for contract errors), and the caller's context — so
+    /// Soroban's raw `Error(Contract, #4)` output no longer has to be decoded
+    /// by hand against this file.
+    ///
+    /// ```ignore
+    /// let result = client.try_withdraw(&attacker, &id);
+    /// assert_stream_error!(result, StreamError::Unauthorized, "only recipient may withdraw");
+    /// ```
+    macro_rules! assert_stream_error {
+        ($result:expr, $expected:expr) => {
+            assert_stream_error!($result, $expected, "contract error mismatch")
+        };
+        ($result:expr, $expected:expr, $msg:expr) => {{
+            let result = $result;
+            let expected: StreamError = $expected;
+            let matches = match &result {
+                Err(Ok(actual)) => *actual == expected,
+                _ => false,
+            };
+            let actual_description = match &result {
+                Err(Ok(actual)) => std::format!("{}", actual),
+                Err(Err(other)) => std::format!("a non-contract error {:?}", other),
+                Ok(value) => std::format!("the call unexpectedly succeeded with {:?}", value),
+            };
+            assert!(
+                matches,
+                "{}: expected {} but got {}",
+                $msg, expected, actual_description
+            );
+        }};
+    }
+    pub(crate) use assert_stream_error;
+
+    #[cfg(test)]
+    mod tests {
+        extern crate std;
+
+        use super::*;
+        use std::string::ToString;
+
+        /// (variant, identifier, documented numeric code) for every variant.
+        const ALL_VARIANTS: [(StreamError, &str, u32); 27] = [
+            (StreamError::InvalidAmount, "InvalidAmount", 1),
+            (StreamError::StreamNotFound, "StreamNotFound", 2),
+            (StreamError::Unauthorized, "Unauthorized", 3),
+            (StreamError::StreamInactive, "StreamInactive", 4),
+            (StreamError::AlreadyInitialized, "AlreadyInitialized", 5),
+            (StreamError::NotAdmin, "NotAdmin", 6),
+            (StreamError::InvalidFeeRate, "InvalidFeeRate", 7),
+            (StreamError::NotInitialized, "NotInitialized", 8),
+            (StreamError::InvalidDuration, "InvalidDuration", 9),
+            (StreamError::InvalidTokenAddress, "InvalidTokenAddress", 10),
+            (StreamError::InvalidRate, "InvalidRate", 11),
+            (StreamError::StreamPaused, "StreamPaused", 12),
+            (StreamError::StreamNotPaused, "StreamNotPaused", 13),
+            (StreamError::StreamAlreadyPaused, "StreamAlreadyPaused", 14),
+            (StreamError::ProtocolPaused, "ProtocolPaused", 15),
+            (
+                StreamError::EmptyVestingSchedule,
+                "EmptyVestingSchedule",
+                16,
+            ),
+            (StreamError::TooManyVestingSteps, "TooManyVestingSteps", 17),
+            (
+                StreamError::NonMonotonicVestingSteps,
+                "NonMonotonicVestingSteps",
+                18,
+            ),
+            (
+                StreamError::InvalidVestingStepAmount,
+                "InvalidVestingStepAmount",
+                19,
+            ),
+            (
+                StreamError::VestingStepTotalMismatch,
+                "VestingStepTotalMismatch",
+                20,
+            ),
+            (
+                StreamError::VestingStepBeforeStart,
+                "VestingStepBeforeStart",
+                21,
+            ),
+            (
+                StreamError::InvalidCliffParameters,
+                "InvalidCliffParameters",
+                22,
+            ),
+            (StreamError::BatchTooLarge, "BatchTooLarge", 23),
+            (StreamError::NotGuardian, "NotGuardian", 24),
+            (
+                StreamError::UnsupportedMigration,
+                "UnsupportedMigration",
+                25,
+            ),
+            (StreamError::StateVersionTooNew, "StateVersionTooNew", 26),
+            (StreamError::TopUpUnsupported, "TopUpUnsupported", 27),
+        ];
+
+        #[test]
+        fn name_returns_the_variant_identifier_for_every_variant() {
+            for (variant, name, _) in ALL_VARIANTS {
+                assert_eq!(variant.name(), name);
+            }
+        }
+
+        #[test]
+        fn numeric_codes_match_the_documented_discriminants() {
+            for (variant, _, code) in ALL_VARIANTS {
+                assert_eq!(variant as u32, code);
+            }
+        }
+
+        #[test]
+        fn display_prints_the_variant_name_alongside_the_numeric_code() {
+            assert_eq!(
+                StreamError::StreamInactive.to_string(),
+                "StreamInactive (code 4)"
+            );
+            assert_eq!(
+                StreamError::Unauthorized.to_string(),
+                "Unauthorized (code 3)"
+            );
+        }
+
+        #[test]
+        fn describe_actual_names_contract_errors() {
+            // Mirrors the concrete shape of the generated `try_*` client
+            // methods: `Result<Result<T, StreamError>, Result<StreamError, _>>`.
+            let result: Result<Result<(), StreamError>, Result<StreamError, u32>> =
+                Err(Ok(StreamError::StreamPaused));
+            assert_eq!(describe_actual(&result), "StreamPaused (code 12)");
+        }
+
+        #[test]
+        fn describe_actual_reports_unexpected_success() {
+            let result: Result<Result<(), StreamError>, Result<StreamError, u32>> = Ok(Ok(()));
+            assert_eq!(
+                describe_actual(&result),
+                "the call unexpectedly succeeded with Ok(())"
+            );
+        }
+    }
+}
