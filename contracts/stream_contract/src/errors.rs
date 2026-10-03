@@ -81,4 +81,14 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// An arithmetic operation overflowed the representable range.
+    ///
+    /// Used by `top_up_stream`, `resume_stream` and `modify_rate` when the
+    /// projected end time or a deposit total would exceed `u64`/`i128`.
+    ArithmeticOverflow = 34,
+    /// `close_stream` was called on a stream that is still active, has a
+    /// non-terminal status, or still holds unwithdrawn / claimable funds.
+    StreamStillActive = 35,
+    /// `resume_stream` was called on an inactive (cancelled/completed) stream.
+    StreamNotActive = 36,
 }
