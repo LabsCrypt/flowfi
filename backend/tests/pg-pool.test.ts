@@ -12,6 +12,10 @@ vi.mock('pg', () => ({
   },
 }));
 
+vi.mock('../src/logger.js', () => ({
+  default: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 describe('pg-pool', () => {
   beforeEach(() => {
     vi.resetModules();
@@ -107,6 +111,109 @@ describe('pg-pool', () => {
       totalCount: 10,
       idleCount: 5,
       waitingCount: 2,
+    });
+  });
+
+  describe('drainPgPool', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const makeMockPool = (endImpl: () => Promise<void>) => ({ end: endImpl }) as unknown as import('pg').Pool;
+
+    it('logs that the pool is being drained and resolves when end() succeeds', async () => {
+      const { drainPgPool } = await import('../src/lib/pg-pool.js');
+      const logger = (await import('../src/logger.js')).default as { info: ReturnType<typeof vi.fn> };
+      const endSpy = vi.fn().mockResolvedValue(undefined);
+      const pool = makeMockPool(endSpy);
+
+      const drained = drainPgPool(pool);
+
+      expect(logger.info).toHaveBeenCalledWith('Draining database pool...');
+      await drained;
+      expect(endSpy).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith('Database pool drained.');
+    });
+
+    it('waits for in-flight queries to flush before resolving', async () => {
+      const { drainPgPool } = await import('../src/lib/pg-pool.js');
+      const logger = (await import('../src/logger.js')).default as { info: ReturnType<typeof vi.fn> };
+      let releaseQuery!: () => void;
+      const inFlightQuery = new Promise<void>((resolve) => {
+        releaseQuery = resolve;
+      });
+      let ended = false;
+      const endSpy = vi.fn(async () => {
+        await inFlightQuery;
+        ended = true;
+      });
+      const pool = makeMockPool(endSpy);
+
+      const drained = drainPgPool(pool);
+      const settled = vi.fn();
+      void drained.then(settled, settled);
+
+      // Let microtasks run without releasing the in-flight query.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).not.toHaveBeenCalled();
+      expect(ended).toBe(false);
+
+      releaseQuery();
+      await vi.advanceTimersByTimeAsync(0);
+      await drained;
+      expect(ended).toBe(true);
+      expect(logger.info).toHaveBeenCalledWith('Database pool drained.');
+    });
+
+    it('rejects when end() does not settle within the timeout budget', async () => {
+      const { drainPgPool } = await import('../src/lib/pg-pool.js');
+      const endSpy = vi.fn(() => new Promise<void>(() => {})); // never settles
+      const pool = makeMockPool(endSpy);
+
+      const drained = drainPgPool(pool, { timeoutMs: 1_000 });
+
+      // Fire the timeout, then observe the rejection on the drain promise.
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(drained).rejects.toThrow('pg pool drain timed out after 1000ms');
+    });
+
+    it('defaults the timeout to PG_POOL_DRAIN_TIMEOUT_MS or 30s', async () => {
+      const { drainPgPool } = await import('../src/lib/pg-pool.js');
+      const endSpy = vi.fn(() => new Promise<void>(() => {})); // never settles
+      const pool = makeMockPool(endSpy);
+
+      const drained = drainPgPool(pool);
+
+      // Still pending just before the 30s default deadline.
+      await vi.advanceTimersByTimeAsync(29_999);
+      await expect(Promise.race([drained, Promise.resolve('pending')])).resolves.toBe('pending');
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(drained).rejects.toThrow('pg pool drain timed out after 30000ms');
+    });
+
+    it('rejects when pool.end() itself fails', async () => {
+      const { drainPgPool } = await import('../src/lib/pg-pool.js');
+      const endSpy = vi.fn().mockRejectedValue(new Error('end failed'));
+      const pool = makeMockPool(endSpy);
+
+      await expect(drainPgPool(pool)).rejects.toThrow('end failed');
+    });
+
+    it('respects a custom PG_POOL_DRAIN_TIMEOUT_MS environment override', async () => {
+      vi.stubEnv('PG_POOL_DRAIN_TIMEOUT_MS', '250');
+      const { drainPgPool } = await import('../src/lib/pg-pool.js');
+      const endSpy = vi.fn(() => new Promise<void>(() => {})); // never settles
+      const pool = makeMockPool(endSpy);
+
+      const drained = drainPgPool(pool);
+
+      await vi.advanceTimersByTimeAsync(250);
+      await expect(drained).rejects.toThrow('pg pool drain timed out after 250ms');
     });
   });
 });

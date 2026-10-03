@@ -1,4 +1,5 @@
 import pg from 'pg';
+import logger from '../logger.js';
 import {
   dbPoolConnections,
   dbPoolMaxConnections,
@@ -124,3 +125,40 @@ export const createPgPool = (): pg.Pool => {
 
   return pool;
 };
+
+export interface DrainPgPoolOptions {
+  /**
+   * Maximum time to wait for in-flight queries to flush before giving up.
+   * Defaults to `PG_POOL_DRAIN_TIMEOUT_MS`, falling back to 30s so a wedged
+   * query can never hold container teardown open indefinitely.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * Gracefully drain a pg pool during process shutdown (SIGTERM/SIGINT).
+ *
+ * `pool.end()` closes every idle client immediately and waits for clients with
+ * in-flight queries to finish before closing them, which prevents abruptly
+ * killed containers from leaving dangling connections for Postgres to reap via
+ * server-side keepalives. The wait is bounded: on timeout the promise rejects
+ * and callers should still force-exit so the process cannot hang.
+ *
+ * Rejects (rather than swallowing) when `pool.end()` itself fails or the
+ * timeout elapses, so shutdown exit codes can reflect the failure.
+ */
+export async function drainPgPool(pool: pg.Pool, options: DrainPgPoolOptions = {}): Promise<void> {
+  const timeoutMs =
+    options.timeoutMs ?? parsePositiveIntegerEnv('PG_POOL_DRAIN_TIMEOUT_MS', 30_000);
+
+  logger.info('Draining database pool...');
+
+  await Promise.race([
+    pool.end(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`pg pool drain timed out after ${timeoutMs}ms`)), timeoutMs),
+    ),
+  ]);
+
+  logger.info('Database pool drained.');
+}

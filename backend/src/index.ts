@@ -80,6 +80,18 @@ const startServer = async () => {
       await db.$disconnect();
       logger.info("Database connection closed.");
 
+      // 7. Drain the pg pool so idle clients are closed cleanly and no dangling
+      // connections are left for Postgres to reap via server-side keepalives.
+      // `drainPgPool` bounds the wait so a wedged query cannot hang teardown.
+      try {
+        const { pool } = await import("./lib/prisma.js");
+        const { drainPgPool } = await import("./lib/pg-pool.js");
+        await drainPgPool(pool, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+      } catch (err) {
+        logger.warn("pg pool drain timed out or failed:", err);
+        exitCode = 1;
+      }
+
       process.exit(exitCode);
     };
 
