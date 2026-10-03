@@ -11,6 +11,7 @@
     "test:unit": "vitest run --exclude='tests/integration/**'",
     "test:integration": "vitest run tests/integration",
     "test:integration:docker": "docker compose up -d postgres && vitest run tests/integration/stream-lifecycle.test.ts; docker compose stop postgres",
+    "test:e2e:testnet": "vitest run --config e2e/testnet/vitest.config.ts",
     "dev": "nodemon",
     "build": "tsc",
     "start": "node dist/index.js",
@@ -18,7 +19,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "codegen:openapi": "tsx scripts/export-openapi.mts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -27,15 +29,23 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.80.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-node": "^0.222.0",
+    "@opentelemetry/sdk-trace-node": "^2.11.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
-    "@stellar/stellar-sdk": "^15.1.0",
+    "@stellar/stellar-sdk": "^17.0.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "ioredis": "^5.11.1",
     "pg": "^8.21.0",
+    "prom-client": "^15.1.3",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
     "winston": "^3.11.0",

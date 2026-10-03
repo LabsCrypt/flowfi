@@ -1,6 +1,6 @@
 # Security Policy Implementation Summary
 
-This document summarizes the security policy implementation for FlowFi and provides next steps for repository administrators.
+This document is a **maintenance and onboarding guide** for repository administrators and contributors. It tracks which security measures have been implemented and what steps remain. It is not a replacement for the security policy itself. For the canonical security policy (reporting guidelines, supported versions, response timelines), see [SECURITY.md](SECURITY.md). For the GitHub security setup checklist, see [.github/SECURITY_SETUP_CHECKLIST.md](.github/SECURITY_SETUP_CHECKLIST.md).
 
 ## ✅ Completed Tasks
 

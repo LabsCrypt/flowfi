@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount } from "@/utils/amount";
+import { downloadCSV } from "@/utils/csvExport";
 import TransactionTracker from "@/components/TransactionTracker";
+import { eventTypeToAction } from "@/utils/eventTypeToAction";
 import { Download, ExternalLink, Clock } from "lucide-react";
 import { Button } from "../ui/Button";
 
@@ -35,34 +37,15 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
 
   const exportToCSV = useCallback(() => {
     setExportStatus("exporting");
-    const headers = [
-      "Stream ID",
-      "Event Type",
-      "Amount",
-      "Timestamp",
-      "Tx Hash",
-    ];
-    const rows = events.map((event) => [
-      event.streamId,
-      event.eventType,
-      event.amount ? formatAmount(BigInt(event.amount), 7) : "0",
-      new Date(event.timestamp * 1000).toISOString(),
-      event.transactionHash || "",
-    ]);
+    const rows = events.map((event) => ({
+      "Stream ID": event.streamId,
+      "Event Type": event.eventType,
+      "Amount": event.amount ? formatAmount(BigInt(event.amount), 7) : "0",
+      "Timestamp": new Date(event.timestamp * 1000).toISOString(),
+      "Tx Hash": event.transactionHash || "",
+    }));
 
-    const csvContent = [headers, ...rows].map((e) => e.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `flowfi_activity_${new Date().getTime()}.csv`,
-    );
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV(rows, `flowfi_activity_${new Date().getTime()}.csv`);
     setExportStatus("complete");
     // Reset after screen readers have had time to announce
     setTimeout(() => setExportStatus("idle"), 3000);
@@ -217,12 +200,14 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
 
                     {event.transactionHash && (
                       <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
-                        <TransactionTracker
-                          status="confirmed"
-                          action="withdraw"
-                          txHash={event.transactionHash}
-                          streamId={event.streamId.toString()}
-                        />
+                        {eventTypeToAction(event.eventType) && (
+                          <TransactionTracker
+                            status="confirmed"
+                            action={eventTypeToAction(event.eventType)!}
+                            txHash={event.transactionHash}
+                            streamId={event.streamId.toString()}
+                          />
+                        )}
                         <a
                           href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                           target="_blank"
@@ -270,12 +255,14 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
 
                 {event.transactionHash && (
                   <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
-                    <TransactionTracker
-                      status="confirmed"
-                      action="withdraw"
-                      txHash={event.transactionHash}
-                      streamId={event.streamId.toString()}
-                    />
+                    {eventTypeToAction(event.eventType) && (
+                      <TransactionTracker
+                        status="confirmed"
+                        action={eventTypeToAction(event.eventType)!}
+                        txHash={event.transactionHash}
+                        streamId={event.streamId.toString()}
+                      />
+                    )}
                     <a
                       href={`https://stellar.expert/explorer/testnet/tx/${event.transactionHash}`}
                       target="_blank"

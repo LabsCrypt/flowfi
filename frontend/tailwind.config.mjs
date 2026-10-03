@@ -1,4 +1,4 @@
-import { type Config } from "tailwindcss";
+/** @type {import("tailwindcss").Config} */
 import plugin from "tailwindcss/plugin";
 
 export default {
@@ -12,4 +12,4 @@ export default {
       addVariant("motion-safe", [ "& where (prefers-reduced-motion: safe)" ]);
     }),
   ],
-} satisfies Config;
+};

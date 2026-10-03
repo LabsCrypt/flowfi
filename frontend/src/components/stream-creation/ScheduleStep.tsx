@@ -1,218 +1,139 @@
 "use client";
-import React, { useMemo, useRef, useEffect } from "react";
-import { hasValidPrecision } from "@/utils/amount";
-import { SECONDS_PER_UNIT, DurationUnit } from "@/lib/soroban";
+
+import { useState, useEffect } from "react";
+import { AlertTriangle } from "lucide-react";
 
 interface ScheduleStepProps {
-  duration: string;
-  durationUnit: DurationUnit;
-  onDurationChange: (value: string) => void;
-  onUnitChange: (value: DurationUnit) => void;
-  error?: string;
-  amount?: string;
-  token?: string;
+  formData: {
+    duration: string;
+    durationUnit: string;
+    descriptionTag: string;
+    memo?: string;
+  };
+  errors: Record<string, string>;
+  onUpdate: (data: Partial<ScheduleStepProps["formData"]>) => void;
 }
 
-const DURATION_UNITS = [
-  { value: "seconds" as const, label: "Seconds" },
-  { value: "minutes" as const, label: "Minutes" },
-  { value: "hours" as const, label: "Hours" },
-  { value: "days" as const, label: "Days" },
-  { value: "weeks" as const, label: "Weeks" },
-  { value: "months" as const, label: "Months" },
-] as const;
+const MAX_MEMO_BYTES = 28;
 
-export const ScheduleStep: React.FC<ScheduleStepProps> = ({
-  duration,
-  durationUnit,
-  onDurationChange,
-  onUnitChange,
-  error,
-  amount,
-  token,
-}) => {
-  const durationInputRef = useRef<HTMLInputElement>(null);
+export function ScheduleStep({ formData, errors, onUpdate }: ScheduleStepProps) {
+  const [memoByteCount, setMemoByteCount] = useState(0);
+  const memo = formData.memo || "";
 
-  // Auto-focus on mount
   useEffect(() => {
-    durationInputRef.current?.focus();
-  }, []);
+    // Calculate UTF-8 byte length
+    const bytes = new TextEncoder().encode(memo).length;
+    setMemoByteCount(bytes);
+  }, [memo]);
 
-  const totalSeconds = useMemo(() => {
-    if (!duration || parseFloat(duration) <= 0) {
-      return null;
-    }
-
-    const seconds = parseFloat(duration);
-    const multiplier = Number(SECONDS_PER_UNIT[durationUnit]);
-
-    return seconds * multiplier;
-  }, [duration, durationUnit]);
-
-  const ratePerSecond = useMemo(() => {
-    if (!amount || !duration || parseFloat(amount) <= 0 || parseFloat(duration) <= 0) {
-      // Optional: Add precision validation if needed
-      if (amount && !hasValidPrecision(amount, 7)) {
-        return null;
-      }
-      return null;
-    }
-
-    const totalAmount = parseFloat(amount);
-    if (!totalSeconds || totalSeconds <= 0) {
-      return null;
-    }
-
-    return totalAmount / totalSeconds;
-  }, [amount, duration, totalSeconds]);
-
-  const formattedRate = useMemo(() => {
-    if (!ratePerSecond) return null;
-
-    if (ratePerSecond >= 1) {
-      return `${ratePerSecond.toFixed(4)} ${token || ""}/sec`;
-    } else if (ratePerSecond >= 0.0001) {
-      return `${(ratePerSecond * 60).toFixed(4)} ${token || ""}/min`;
-    } else {
-      return `${(ratePerSecond * 3600).toFixed(4)} ${token || ""}/hr`;
-    }
-  }, [ratePerSecond, token]);
-
-  const ratePerDayPreview = useMemo(() => {
-    if (!ratePerSecond) return null;
-    const dailyRate = ratePerSecond * 86400;
-    if (token === "USDC") {
-      return `$${dailyRate.toFixed(2)} / day`;
-    }
-    if (token === "EURC") {
-      return `€${dailyRate.toFixed(2)} / day`;
-    }
-    return `${dailyRate.toFixed(4)} ${token || ""} / day`;
-  }, [ratePerSecond, token]);
+  const isNearLimit = memoByteCount >= MAX_MEMO_BYTES * 0.8;
+  const isOverLimit = memoByteCount > MAX_MEMO_BYTES;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <h3 className="text-xl font-semibold mb-2">Stream Schedule</h3>
-        <p className="text-sm text-slate-400 mb-4">
-          Set how long the stream should last. The amount will be distributed
-          evenly over this duration.
-        </p>
+        <h2 className="text-2xl font-bold mb-2">Schedule & Details</h2>
+        <p className="text-slate-400">Configure the stream duration and add optional details</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-4">
         <div>
-          <label
-            htmlFor="duration"
-            className="block text-sm font-medium mb-2 text-foreground"
-          >
+          <label htmlFor="duration" className="block text-sm font-medium mb-2">
             Duration
           </label>
-          <input
-            ref={durationInputRef}
-            id="duration"
-            type="number"
-            step="any"
-            min="0"
-            value={duration}
-            onChange={(e) => onDurationChange(e.target.value)}
-            placeholder="0"
-            className={`w-full px-4 py-3 rounded-lg bg-glass border ${
-              error
-                ? "border-red-500 focus:border-red-500 focus:ring-red-500"
-                : "border-glass-border focus:border-accent focus:ring-accent"
-            } focus:outline-none focus:ring-2 focus:ring-opacity-50 transition-colors text-foreground placeholder-slate-500`}
-            aria-invalid={!!error}
-            aria-describedby={error ? "duration-error" : undefined}
-          />
+          <div className="flex gap-3">
+            <input
+              id="duration"
+              type="number"
+              min="1"
+              value={formData.duration}
+              onChange={(e) => onUpdate({ duration: e.target.value })}
+              className="flex-1 px-4 py-3 rounded-lg bg-black/40 border border-white/10 focus:border-accent outline-none"
+              placeholder="Enter duration"
+            />
+            <select
+              value={formData.durationUnit}
+              onChange={(e) => onUpdate({ durationUnit: e.target.value })}
+              className="px-4 py-3 rounded-lg bg-black/40 border border-white/10 focus:border-accent outline-none"
+            >
+              <option value="days">Days</option>
+              <option value="weeks">Weeks</option>
+              <option value="months">Months</option>
+            </select>
+          </div>
+          {errors.duration && (
+            <p className="text-red-400 text-sm mt-1" role="alert">{errors.duration}</p>
+          )}
         </div>
 
         <div>
-          <label
-            htmlFor="duration-unit"
-            className="block text-sm font-medium mb-2 text-foreground"
-          >
-            Unit
+          <label htmlFor="descriptionTag" className="block text-sm font-medium mb-2">
+            Description Tag
           </label>
-          <select
-            id="duration-unit"
-            value={durationUnit}
-            onChange={(e) =>
-              onUnitChange(
-                e.target.value as DurationUnit
-              )
-            }
-            className="w-full px-4 py-3 rounded-lg bg-glass border border-glass-border focus:border-accent focus:ring-accent focus:outline-none focus:ring-2 focus:ring-opacity-50 transition-colors text-foreground"
-          >
-            {DURATION_UNITS.map((unit) => (
-              <option key={unit.value} value={unit.value}>
-                {unit.label}
-              </option>
-            ))}
-          </select>
+          <input
+            id="descriptionTag"
+            type="text"
+            value={formData.descriptionTag}
+            onChange={(e) => onUpdate({ descriptionTag: e.target.value })}
+            className="w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 focus:border-accent outline-none"
+            placeholder="e.g., salary, contractor-payment, subscription"
+          />
+          {errors.descriptionTag && (
+            <p className="text-red-400 text-sm mt-1" role="alert">{errors.descriptionTag}</p>
+          )}
         </div>
-      </div>
 
-      {error && (
-        <p
-          id="duration-error"
-          className="mt-2 text-sm text-red-400 flex items-center gap-1"
-          role="alert"
-        >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-            />
-          </svg>
-          {error}
-        </p>
-      )}
-
-      {amount && duration && ratePerSecond && !error && (
-        <div className="mt-6 space-y-3">
-          {ratePerDayPreview && (
-            <div className="p-4 rounded-lg bg-gradient-to-r from-accent/20 to-accent-tertiary/10 border border-accent/30">
-              <p className="text-xs uppercase tracking-wider text-accent/80 font-semibold">
-                Live Stream Rate Preview
-              </p>
-              <p className="mt-1 text-xl font-bold text-foreground">{ratePerDayPreview}</p>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label htmlFor="memo" className="block text-sm font-medium">
+              Memo (Optional)
+            </label>
+            <span
+              className={`text-xs font-mono ${
+                isOverLimit
+                  ? "text-red-400"
+                  : isNearLimit
+                  ? "text-yellow-400"
+                  : "text-slate-400"
+              }`}
+            >
+              {memoByteCount} / {MAX_MEMO_BYTES} bytes
+            </span>
+          </div>
+          <textarea
+            id="memo"
+            value={memo}
+            onChange={(e) => onUpdate({ memo: e.target.value })}
+            className={`w-full px-4 py-3 rounded-lg bg-black/40 border outline-none resize-none ${
+              isOverLimit
+                ? "border-red-500/50 focus:border-red-500"
+                : "border-white/10 focus:border-accent"
+            }`}
+            placeholder="Add a note (max 28 bytes)"
+            rows={3}
+            maxLength={MAX_MEMO_BYTES * 4} // Allow more chars for validation, UTF-8 can use up to 4 bytes per char
+          />
+          {isOverLimit && (
+            <div className="mt-2 flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+              <AlertTriangle className="h-4 w-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-red-400 text-sm font-semibold">Memo exceeds byte limit</p>
+                <p className="text-red-400/80 text-xs mt-1">
+                  Stellar memos are limited to 28 bytes. Note that some characters use multiple bytes.
+                </p>
+              </div>
             </div>
           )}
-          <div className="p-4 rounded-lg bg-accent/5 border border-accent/20">
-            <h4 className="font-semibold text-sm mb-2 text-accent">
-              Stream Summary
-            </h4>
-            <div className="space-y-1 text-sm text-slate-300">
-              <p>
-                <span className="text-slate-400">Total Amount:</span>{" "}
-                <strong className="text-foreground">{amount} {token || ""}</strong>
-              </p>
-              <p>
-                <span className="text-slate-400">Duration:</span>{" "}
-                <strong className="text-foreground">
-                  {duration} {DURATION_UNITS.find((u) => u.value === durationUnit)?.label}
-                </strong>
-              </p>
-              <p>
-                <span className="text-slate-400">Stream Rate:</span>{" "}
-                <strong className="text-foreground">{formattedRate}</strong>
-              </p>
-              <p>
-                <span className="text-slate-400">Rate / Day:</span>{" "}
-                <strong className="text-foreground">{ratePerDayPreview}</strong>
-              </p>
-            </div>
-          </div>
+          {isNearLimit && !isOverLimit && (
+            <p className="text-yellow-400 text-xs mt-1">
+              ⚠ Approaching byte limit - some characters use multiple bytes
+            </p>
+          )}
+          <p className="text-slate-400 text-xs mt-1">
+            Add a custom note to your stream transaction (UTF-8 encoded)
+          </p>
         </div>
-      )}
+      </div>
     </div>
   );
-};
+}

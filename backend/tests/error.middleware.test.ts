@@ -23,14 +23,18 @@ describe('Error Middleware', () => {
     const error = new ZodError([{ path: ['field'], message: 'invalid', code: 'custom' }]);
     errorHandler(error, req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Validation Error' }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'VALIDATION_ERROR' }),
+    }));
   });
 
   it('should handle Prisma P2002 error', () => {
     const error = new Prisma.PrismaClientKnownRequestError('Conflict', { code: 'P2002', clientVersion: '1.0', meta: { target: ['email'] } });
     errorHandler(error, req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(409);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Conflict Error' }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'CONFLICT' }),
+    }));
   });
 
   it('should handle Prisma P2025 error', () => {

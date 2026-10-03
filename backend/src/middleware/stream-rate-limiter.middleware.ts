@@ -1,4 +1,4 @@
-import { rateLimit } from 'express-rate-limit';
+import { createRateLimiter } from './rate-limiter.middleware.js';
 import { type Request, type Response, type NextFunction } from 'express';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import logger from '../logger.js';
@@ -22,11 +22,9 @@ export function createStreamRateLimiter(
   // Read from environment variable, default to 10 if not set
   const max = options?.max ?? (process.env.STREAM_CREATE_RATE_LIMIT ? parseInt(process.env.STREAM_CREATE_RATE_LIMIT, 10) : 10);
 
-  return rateLimit({
+  return createRateLimiter({
     windowMs,
     max,
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     message: {
       error: 'Too many stream creation requests - rate limit exceeded',
       message: 'You have exceeded the rate limit for stream creation. Please try again later.',

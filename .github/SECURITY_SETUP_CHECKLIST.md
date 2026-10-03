@@ -1,6 +1,6 @@
 # GitHub Security Setup Checklist
 
-This checklist helps ensure that GitHub's security features are properly configured for the FlowFi repository.
+This checklist helps repository administrators ensure that GitHub's security features are properly configured for the FlowFi repository. For the canonical security policy (reporting guidelines, supported versions, response timelines), see [SECURITY.md](../SECURITY.md). For the implementation status and next steps, see [SECURITY_IMPLEMENTATION_SUMMARY.md](../SECURITY_IMPLEMENTATION_SUMMARY.md).
 
 ## Repository Security Settings
 

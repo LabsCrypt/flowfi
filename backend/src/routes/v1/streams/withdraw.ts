@@ -5,6 +5,7 @@ import { claimableAmountService } from '../../../services/claimable.service.js';
 import { withdraw as sorobanWithdraw } from '../../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../../types/auth.types.js';
 import { parseStreamId } from '../../../lib/stream-id.js';
+import { sendApiError } from '../../../types/api-error.js';
 
 /**
  * @openapi
@@ -29,18 +30,7 @@ import { parseStreamId } from '../../../lib/stream-id.js';
  *         content:
  *           application/json:
  *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 streamId:
- *                   type: integer
- *                 txHash:
- *                   type: string
- *                 amount:
- *                   type: string
- *                 stream:
- *                   $ref: '#/components/schemas/Stream'
+ *               $ref: '#/components/schemas/WithdrawResponse'
  *       400:
  *         description: Invalid streamId or contract revert
  *       401:
@@ -51,6 +41,8 @@ import { parseStreamId } from '../../../lib/stream-id.js';
  *         description: Stream not found
  *       409:
  *         description: Conflict - no claimable balance available
+ *       500:
+ *         description: Internal server error
  */
 export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -60,7 +52,7 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
     const parsedStreamId = parseStreamId(streamIdParam);
 
     if (parsedStreamId === null) {
-      return res.status(400).json({ error: 'Invalid streamId parameter' });
+      return sendApiError(res, 400, 'INVALID_STREAM_ID', 'Invalid streamId parameter');
     }
 
     const stream = await prisma.stream.findUnique({
@@ -83,24 +75,18 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
     });
 
     if (!stream) {
-      return res.status(404).json({ error: 'Stream not found' });
+      return sendApiError(res, 404, 'NOT_FOUND', 'Stream not found');
     }
 
     // Verify the caller is the stream recipient
     if (stream.recipient !== req.user.publicKey) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Only the stream recipient can withdraw from the stream',
-      });
+      return sendApiError(res, 403, 'FORBIDDEN', 'Only the stream recipient can withdraw from the stream');
     }
 
     const claimable = claimableAmountService.getClaimableAmount(stream);
 
     if (!claimable.actionable) {
-      return res.status(409).json({
-        error: 'Conflict',
-        message: 'No claimable balance is currently available',
-      });
+      return sendApiError(res, 409, 'CONFLICT', 'No claimable balance is currently available');
     }
 
     try {
@@ -193,13 +179,10 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
       });
     } catch (sorobanError) {
       logger.error(`Soroban withdraw failed for stream ${parsedStreamId}:`, sorobanError);
-      return res.status(400).json({
-        error: 'Failed to withdraw from stream on chain',
-        message: sorobanError instanceof Error ? sorobanError.message : 'Unknown error',
-      });
+      return sendApiError(res, 400, 'WITHDRAWAL_FAILED', 'Failed to withdraw from stream on chain');
     }
   } catch (error) {
     logger.error('Error withdrawing from stream:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'A technical error occurred. Please try again later.');
   }
 };

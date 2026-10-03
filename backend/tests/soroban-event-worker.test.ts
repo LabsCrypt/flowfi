@@ -19,6 +19,9 @@ const mockPrismaObj = vi.hoisted(() => ({
     upsert: vi.fn(),
     create: vi.fn(),
   },
+  indexerDeadLetterEvent: {
+    upsert: vi.fn(),
+  },
   $transaction: vi.fn((cb) => cb({ streamEvent: { findUnique: vi.fn(), upsert: vi.fn() }, user: { upsert: vi.fn() }, stream: { upsert: vi.fn(), update: vi.fn() } })),
   $disconnect: vi.fn(),
 }));
@@ -55,6 +58,27 @@ import { SorobanEventWorker } from '../src/workers/soroban-event-worker.js';
 import { prisma } from '../src/lib/prisma.js';
 import logger from '../src/logger.js';
 
+// ─── ScVal v17 mock helpers (property-based, not method-based) ──────────────
+const mockSym = (name: string) => ({ sym: { toString: () => name } } as any);
+const mockU64 = (value: number | bigint | string) => ({ u64: { toString: () => String(value) } } as any);
+const mockI128 = (hi: number | bigint | string, lo: number | bigint | string) => ({ i128: { hi: { toString: () => String(hi) }, lo: { toString: () => String(lo) } } } as any);
+const mockAccountAddr = () => ({ address: { type: 'scAddressTypeAccount', accountId: { ed25519: { value: Buffer.alloc(32) } } } } as any);
+const mockContractAddr = () => ({ address: { type: 'scAddressTypeContract', contractId: { value: Buffer.alloc(32) } } } as any);
+const mockMapEntry = (keyName: string, val: any) => ({ key: mockSym(keyName), val } as any);
+const mockMapValue = (entries: any[]) => ({ map: entries } as any);
+
+// Standard stream fields map used across most tests
+const streamFields = (overrides?: { withdrawn_amount?: string; isActive?: boolean; is_active_value?: boolean }) => [
+  mockMapEntry('sender', mockAccountAddr()),
+  mockMapEntry('recipient', mockAccountAddr()),
+  mockMapEntry('token_address', mockContractAddr()),
+  mockMapEntry('rate_per_second', mockI128(0, 100)),
+  mockMapEntry('deposited_amount', mockI128(0, 86400)),
+  mockMapEntry('withdrawn_amount', mockI128(0, Number(overrides?.withdrawn_amount ?? 0))),
+  mockMapEntry('start_time', mockU64(1700000000)),
+  mockMapEntry('is_active', { b: overrides?.is_active_value ?? true } as any),
+];
+
 describe('SorobanEventWorker', () => {
   let worker: SorobanEventWorker;
 
@@ -88,19 +112,12 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_created'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
-            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '100' }) }) }) },
-            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '86400' }) }) }) },
-            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
-          ] as any,
+          type: 'scvMap',
+          ...mockMapValue(streamFields()),
         } as any,
       };
 
@@ -163,19 +180,19 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_created'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('sender', mockAccountAddr()),
+            mockMapEntry('recipient', mockAccountAddr()),
+            mockMapEntry('token_address', mockContractAddr()),
             // rate_per_second = 0 (hi=0, lo=0)
-            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '0' }) }) }) },
-            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '500' }) }) }) },
-            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
+            mockMapEntry('rate_per_second', mockI128('0', '0')),
+            mockMapEntry('deposited_amount', mockI128('0', '500')),
+            mockMapEntry('start_time', mockU64('1700000000')),
           ] as any,
         } as any,
       };
@@ -227,15 +244,15 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'fee_collected' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('fee_collected'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'fee_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '1000' }) }) }) },
-            { key: () => ({ sym: () => 'token' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('treasury', mockAccountAddr()),
+            mockMapEntry('fee_amount', mockI128('0', '1000')),
+            mockMapEntry('token', mockContractAddr()),
           ] as any,
         } as any,
       };
@@ -282,16 +299,16 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'fee_config_updated' } as any,
+          mockSym('fee_config_updated'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'old_treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_treasury' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'old_fee_rate_bps' }), val: () => ({ u32: () => 100 }) },
-            { key: () => ({ sym: () => 'new_fee_rate_bps' }), val: () => ({ u32: () => 200 }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('admin', mockAccountAddr()),
+            mockMapEntry('old_treasury', mockAccountAddr()),
+            mockMapEntry('new_treasury', mockAccountAddr()),
+            mockMapEntry('old_fee_rate_bps', { u32: 100 } as any),
+            mockMapEntry('new_fee_rate_bps', { u32: 200 } as any),
           ] as any,
         } as any,
       };
@@ -339,14 +356,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_paused' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_paused'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'paused_at' }), val: () => ({ u64: () => ({ toString: () => '1700001000' }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('sender', mockAccountAddr()),
+            mockMapEntry('paused_at', mockU64('1700001000')),
           ] as any,
         } as any,
       };
@@ -391,14 +408,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_resumed' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_resumed'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_end_time' }), val: () => ({ u64: () => ({ toString: () => '1700090000' }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('sender', mockAccountAddr()),
+            mockMapEntry('new_end_time', mockU64('1700090000')),
           ] as any,
         } as any,
       };
@@ -447,15 +464,15 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'tokens_withdrawn' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('tokens_withdrawn'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '500' }) }) }) },
-            { key: () => ({ sym: () => 'timestamp' }), val: () => ({ u64: () => ({ toString: () => '1700002000' }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('recipient', mockAccountAddr()),
+            mockMapEntry('amount', mockI128('0', '500')),
+            mockMapEntry('timestamp', mockU64('1700002000')),
           ] as any,
         } as any,
       };
@@ -512,14 +529,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_topped_up' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_topped_up'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '200' }) }) }) },
-            { key: () => ({ sym: () => 'new_deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '1200' }) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('amount', mockI128('0', '200')),
+            mockMapEntry('new_deposited_amount', mockI128('0', '1200')),
           ] as any,
         } as any,
       };
@@ -581,13 +598,13 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'admin_transferred' } as any,
+          mockSym('admin_transferred'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'previous_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('previous_admin', mockAccountAddr()),
+            mockMapEntry('new_admin', mockAccountAddr()),
           ] as any,
         } as any,
       };
@@ -637,19 +654,12 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'stream_created' } as any,
-          { switch: () => ({ value: 1 }), u64: () => ({ toString: () => streamId.toString() }) } as any,
+          mockSym('stream_created'),
+          mockU64(streamId),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'sender' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'recipient' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'token_address' }), val: () => ({ address: () => ({ switch: () => ({ value: 1 }), contractId: () => Buffer.alloc(32) }) }) },
-            { key: () => ({ sym: () => 'rate_per_second' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '100' }) }) }) },
-            { key: () => ({ sym: () => 'deposited_amount' }), val: () => ({ i128: () => ({ hi: () => ({ toString: () => '0' }), lo: () => ({ toString: () => '86400' }) }) }) },
-            { key: () => ({ sym: () => 'start_time' }), val: () => ({ u64: () => ({ toString: () => '1700000000' }) }) },
-          ] as any,
+          type: 'scvMap',
+          ...mockMapValue(streamFields()),
         } as any,
       };
 
@@ -687,7 +697,7 @@ describe('SorobanEventWorker', () => {
       expect(typeof capturedEventUpsert?.create?.streamId).toBe('bigint');
     });
 
-    it('cursor_does_not_advance_past_failed_event_in_mixed_batch', async () => {
+    it('cursor_advances_past_valid_events_after_an_earlier_failed_event_in_same_batch', async () => {
       // Setup initial state: lastCursor is 'cursor-initial'
       (prisma.indexerState.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
         id: 'singleton',
@@ -702,6 +712,13 @@ describe('SorobanEventWorker', () => {
         updatedAt: new Date(),
       });
 
+      // Dead-letter upsert: first (and only) failure stays below the retry cap.
+      (prisma.indexerDeadLetterEvent.upsert as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'dl-1',
+        eventId: 'cursor-event-1',
+        attempts: 1,
+      });
+
       // Event 1: Missing required body fields for fee_config_updated -> handleFeeConfigUpdated throws
       const event1: rpc.Api.EventResponse = {
         id: 'cursor-event-1',
@@ -713,15 +730,14 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'fee_config_updated' } as any,
+          mockSym('fee_config_updated'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [] as any,
+          type: 'scvMap',
+          map: [] as any,
         } as any,
       };
 
-      // Event 2: Valid admin_transferred event
       const event2: rpc.Api.EventResponse = {
         id: 'cursor-event-2',
         type: 'contract',
@@ -732,18 +748,17 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'admin_transferred' } as any,
+          mockSym('admin_transferred'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'previous_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('previous_admin', mockAccountAddr()),
+            mockMapEntry('new_admin', mockAccountAddr()),
           ] as any,
         } as any,
       };
 
-      // Event 3: Valid admin_transferred event
       const event3: rpc.Api.EventResponse = {
         id: 'cursor-event-3',
         type: 'contract',
@@ -754,23 +769,21 @@ describe('SorobanEventWorker', () => {
         operationIndex: 0,
         inSuccessfulContractCall: true,
         topic: [
-          { switch: () => ({ value: 0 }), sym: () => 'admin_transferred' } as any,
+          mockSym('admin_transferred'),
         ],
         value: {
-          switch: () => ({ value: 4 }),
-          map: () => [
-            { key: () => ({ sym: () => 'previous_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
-            { key: () => ({ sym: () => 'new_admin' }), val: () => ({ address: () => ({ switch: () => ({ value: 0 }), accountId: () => ({ ed25519: () => Buffer.alloc(32) }) }) }) },
+          type: 'scvMap',
+          map: [
+            mockMapEntry('previous_admin', mockAccountAddr()),
+            mockMapEntry('new_admin', mockAccountAddr()),
           ] as any,
         } as any,
       };
 
-      // Mock getEvents on worker.server
       vi.spyOn((worker as any).server, 'getEvents').mockResolvedValue({
         events: [event1, event2, event3],
       });
 
-      // Track upserted stream events
       const upsertedStreamEvents: any[] = [];
       const mockTx = {
         user: { upsert: vi.fn().mockResolvedValue({}) },
@@ -786,31 +799,26 @@ describe('SorobanEventWorker', () => {
 
       (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
 
-      // Run fetchAndProcessEvents
       await (worker as any).fetchAndProcessEvents();
 
-      // Assert successful later events (event2 and event3) were written exactly once each
       const event1Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-failed-1'
+        (e) => e.create?.transactionHash === 'tx-failed-1',
       );
       const event2Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-success-2'
+        (e) => e.create?.transactionHash === 'tx-success-2',
       );
       const event3Writes = upsertedStreamEvents.filter(
-        (e) => e.create?.transactionHash === 'tx-success-3'
+        (e) => e.create?.transactionHash === 'tx-success-3',
       );
 
       expect(event1Writes.length).toBe(0);
       expect(event2Writes.length).toBe(1);
       expect(event3Writes.length).toBe(1);
 
-      // Assert: persisted IndexerState.lastCursor is NOT advanced past the failed event's position
-      // (i.e. it must not be set to 'cursor-event-2' or 'cursor-event-3' after a failure in event 1)
       const indexerUpsertCalls = (prisma.indexerState.upsert as ReturnType<typeof vi.fn>).mock.calls;
       const lastSaveCall = indexerUpsertCalls[indexerUpsertCalls.length - 1]![0];
 
-      expect(lastSaveCall.update.lastCursor).not.toBe('cursor-event-2');
-      expect(lastSaveCall.update.lastCursor).not.toBe('cursor-event-3');
+      expect(lastSaveCall.update.lastCursor).toBe('cursor-event-3');
     });
   });
 

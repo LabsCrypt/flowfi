@@ -194,7 +194,7 @@ export function verifyChallenge(req: Request, res: Response): void {
 
     // Verify the manage_data op contains our nonce
     const op = tx.operations[0] as StellarSdk.Operation.ManageData | undefined;
-    if (!op || op.type !== 'manageData' || op.value?.toString('hex') !== challenge.nonce) {
+    if (!op || op.type !== 'manageData' || Buffer.from(op.value ?? new Uint8Array()).toString('hex') !== challenge.nonce) {
       res.status(401).json({ error: 'Invalid challenge nonce in transaction' });
       return;
     }
@@ -202,7 +202,7 @@ export function verifyChallenge(req: Request, res: Response): void {
     const keypair = StellarSdk.Keypair.fromPublicKey(publicKey);
     const txHash = tx.hash();
     const valid = tx.signatures.some((s) => {
-      try { return keypair.verify(txHash, s.signature()); } catch { return false; }
+      try { return keypair.verify(txHash, s.signature); } catch { return false; }
     });
 
     if (!valid) {

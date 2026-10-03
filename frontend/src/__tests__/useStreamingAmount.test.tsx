@@ -39,7 +39,10 @@ describe("useStreamingAmount", () => {
       isActive: true,
     };
 
-    const { result, rerender } = renderHook(
+    const { result, rerender } = renderHook<
+      number,
+      { deposited: number; withdrawn: number; ratePerSecond: number; startTime?: number; lastUpdateTime?: number; isActive: boolean }
+    >(
       (props) => useStreamingAmount(props),
       { initialProps: params }
     );
@@ -62,6 +65,7 @@ describe("useStreamingAmount", () => {
       deposited: 1000,
       withdrawn: 110,
       ratePerSecond: 1,
+      startTime: undefined as number | undefined,
       lastUpdateTime: 1000 * 1000 + 10,
       isActive: true,
     };
