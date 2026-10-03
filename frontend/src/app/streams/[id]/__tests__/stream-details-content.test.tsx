@@ -44,7 +44,7 @@ vi.mock("@/lib/soroban", () => ({
   pauseStream: vi.fn(),
   resumeStream: vi.fn(),
   toBaseUnits: vi.fn((v: string) => BigInt(v)),
-  toSorobanErrorMessage: vi.fn((e) => String(e)),
+  toSorobanErrorMessage: vi.fn((e) => String(e)), resolveTokenSymbol: vi.fn((t) => "MOCK"),
 }));
 
 vi.mock("@/components/stream-creation/CancelConfirmModal", () => ({

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
-import { TOKEN_ADDRESSES, resolveTokenSymbol } from "./soroban";
+import { resolveTokenSymbol } from "./soroban";
 import { logger } from "./logger";
 
 export interface ActivityItem {

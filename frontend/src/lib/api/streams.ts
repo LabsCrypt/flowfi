@@ -1,5 +1,5 @@
 import type { BackendStream } from "@/lib/api-types";
-import { TOKEN_ADDRESSES, resolveTokenSymbol } from "@/lib/soroban";
+import { resolveTokenSymbol } from "@/lib/soroban";
 import { shortenPublicKey } from "@/lib/wallet";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
