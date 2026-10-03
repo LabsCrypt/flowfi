@@ -21,6 +21,81 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  # Used for SSE horizontal scaling (pub/sub fan-out across backend instances)
+  # and rate-limit state sharing. Required for the dev:mock sandbox.
+  # Pinned to Redis 7 (alpine) — same upgrade policy as postgres above.
+  redis:
+    image: redis:7-alpine@sha256:ee13953704498a9fc830f386a54f26f77b87cb2b2f45c4ad09c1d7f5ea4c2c0f
+    container_name: flowfi-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Mock Soroban RPC ───────────────────────────────────────────────────────
+  # A lightweight JSON-RPC stub that returns well-formed Soroban responses so
+  # the backend indexer and simulation endpoints work without a live testnet.
+  # Implemented with json-server (alpine Node image) — no custom image build.
+  # The stub responds to any POST on / with an empty result envelope so the
+  # backend worker starts up without errors and simply finds no new events.
+  mock-soroban-rpc:
+    image: node:20-alpine
+    container_name: flowfi-mock-soroban-rpc
+    working_dir: /app
+    # Write the stub server inline so we need no extra build context or image.
+    command: >
+      sh -c "
+        node -e \"
+          const http = require('http');
+          const PORT = 8000;
+          const server = http.createServer((req, res) => {
+            let body = '';
+            req.on('data', chunk => { body += chunk; });
+            req.on('end', () => {
+              let id = null;
+              let method = '';
+              try { const j = JSON.parse(body); id = j.id; method = j.method || ''; } catch (_) {}
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+              if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+              let result = {};
+              if (method === 'getLatestLedger') {
+                result = { id: 0, paging_token: '0-0', sequence: 1000000 };
+              } else if (method === 'getEvents') {
+                result = { events: [], latestLedger: 1000000 };
+              } else if (method === 'getTransaction') {
+                result = { status: 'NOT_FOUND' };
+              } else if (method === 'simulateTransaction') {
+                result = { error: 'Mock RPC: simulation not available in sandbox mode' };
+              }
+
+              res.writeHead(200);
+              res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+            });
+          });
+          server.listen(PORT, '0.0.0.0', () => {
+            console.log('Mock Soroban RPC listening on port ' + PORT);
+          });
+        \"
+      "
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: >
+        ["CMD-SHELL",
+         "wget -qO- --post-data='{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getLatestLedger\",\"params\":{}}' --header='Content-Type: application/json' http://localhost:8000/ | grep -q sequence"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -31,13 +106,20 @@ services:
       PORT: 3001
       DATABASE_URL: postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi
       CORS_ALLOWED_ORIGINS: http://localhost:3000
-      # Uncomment and set values for Soroban integration
-      # SOROBAN_RPC_URL: https://rpc.testnet.stellar.org
-      # STREAM_CONTRACT_ID: CB...YOUR_CONTRACT_ID...
+      REDIS_URL: redis://redis:6379
+      # Mock Soroban RPC — points at the local stub, no testnet funding needed.
+      SOROBAN_RPC_URL: http://mock-soroban-rpc:8000
+      SANDBOX_MODE_ENABLED: "true"
+      # STREAM_CONTRACT_ID intentionally left empty; indexer is a no-op without it.
+      STREAM_CONTRACT_ID: ""
     ports:
       - "3001:3001"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-soroban-rpc:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]

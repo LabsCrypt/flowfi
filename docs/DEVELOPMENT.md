@@ -4,6 +4,91 @@ This guide is intended to let a new contributor run the full FlowFi stack from a
 
 ---
 
+## ⚡ One-Click Mock Development Sandbox
+
+> **Recommended for new contributors.** No wallet, no testnet funding, no live RPC needed.
+
+Spin up the complete FlowFi stack — Postgres, Redis, mock Soroban RPC, backend (sandbox mode), and frontend — with rich pre-seeded demo data in a single command:
+
+```bash
+# From the repo root
+npm install          # only needed once
+npm run dev:mock
+```
+
+That one command:
+
+1. **Starts infrastructure** — Postgres, Redis, and a mock Soroban RPC stub via Docker Compose.
+2. **Migrates the database** — runs Prisma migrations automatically.
+3. **Seeds 20 demo streams** across 5 mock users, with event histories spanning the last 30 days:
+   - 7 Active streams (USDC, EURC, XLM)
+   - 3 Paused streams (pending milestone review)
+   - 3 Completed streams (fully drained)
+   - 3 Cancelled streams
+   - 4 Vesting-cliff streams
+4. **Starts the backend** in sandbox mode at `http://localhost:3001`.
+5. **Starts the frontend** at `http://localhost:3000`.
+
+### What you get
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:3001/v1 |
+| Interactive API Docs | http://localhost:3001/api-docs |
+| Health check | http://localhost:3001/health |
+| Postgres | localhost:5433 |
+| Redis | localhost:6379 |
+| Mock Soroban RPC | http://localhost:8000 |
+
+### Seeded mock users
+
+All streams are distributed across 5 demo wallets you can use for UI testing:
+
+| Label | Public Key (truncated) |
+|---|---|
+| Alice (DAO Treasury) | `GAAZI4TCR3TY5…` |
+| Bob (Protocol Dev) | `GCEZWKCA5VLDN…` |
+| Carol (Frontend Dev) | `GBDEVU63Y6NTH…` |
+| Dave (Security Auditor) | `GDQERENWDDSQZ…` |
+| Eve (Investor) | `GCVW5GBIANS67…` |
+
+### No wallet required
+
+Because the backend runs in **sandbox mode** and the Soroban RPC is mocked, you can:
+
+- Browse all stream states and event histories without connecting a real Stellar wallet.
+- Test UI features (create, pause, cancel, withdraw flows) using the seeded data.
+- Trigger sandbox API calls via the Swagger UI at `/api-docs`.
+
+### Stopping the sandbox
+
+```bash
+# Stop Node processes with Ctrl+C, then tear down Docker services:
+docker compose down
+
+# To also wipe the database volume (full reset):
+docker compose down -v
+```
+
+### Re-seeding
+
+If you want to reset and re-seed from scratch:
+
+```bash
+docker compose down -v
+npm run dev:mock
+```
+
+### Prerequisites for the sandbox
+
+- Docker & Docker Compose (for Postgres, Redis, mock RPC)
+- Node.js 20+ and npm (for backend, frontend, seed script)
+
+No Rust, no Stellar CLI, no testnet account needed.
+
+---
+
 ## Prerequisites
 
 Required:

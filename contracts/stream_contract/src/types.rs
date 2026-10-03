@@ -182,6 +182,28 @@ pub struct LegacyProtocolConfig {
     pub fee_rate_bps: u32,
 }
 
+/// Input descriptor for a single stream in a `batch_create_streams` call.
+///
+/// Each entry specifies the recipient, token, total deposit amount, duration in
+/// seconds, and an optional cliff duration.  The sender is a single shared
+/// argument on the outer `batch_create_streams` entrypoint.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchStreamInput {
+    /// Address entitled to withdraw from this stream.
+    pub recipient: Address,
+    /// Token to be streamed.
+    pub token_address: Address,
+    /// Total amount to deposit (before fee deduction), in stroops.
+    pub amount: i128,
+    /// Duration of the stream in seconds.  Must be > 0.
+    pub duration: u64,
+    /// Optional cliff duration in seconds from stream start.  When `Some(d)`,
+    /// half the net deposit is locked until `start + d`; the remainder drips
+    /// linearly from that point.  Must satisfy `d < duration` when set.
+    pub cliff_duration: Option<u64>,
+}
+
 /// Pre-v3 shape of [`Stream`], which lacked the dispute/allowance fields.
 ///
 /// Decoded by `load_stream` for records written before these features existed.

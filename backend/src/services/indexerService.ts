@@ -145,7 +145,7 @@ function eventTypeOf(event: rpc.Api.EventResponse): string {
   const topic0 = event.topic?.[0];
   if (!topic0) return 'unknown';
   try {
-    return topic0.sym().toString();
+    return (topic0 as xdr.ScValSymbol).sym.toString();
   } catch {
     return 'unknown';
   }

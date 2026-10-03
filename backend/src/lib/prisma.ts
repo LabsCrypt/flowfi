@@ -1,7 +1,7 @@
 import pg from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../generated/prisma/index.js';
-import { createPgPool } from './pg-pool.js';
+import { createPgPool, getPoolMetrics } from './pg-pool.js';
 
 const globalForPrisma = global as unknown as {
   prisma?: PrismaClient;
@@ -12,7 +12,7 @@ if (!globalForPrisma.pool) {
   globalForPrisma.pool = createPgPool();
 }
 
-const adapter = new PrismaPg(globalForPrisma.pool);
+const adapter = new PrismaPg(globalForPrisma.pool as Parameters<typeof PrismaPg>[0]);
 
 export const prisma =
   globalForPrisma.prisma ||
@@ -23,7 +23,7 @@ export const prisma =
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-export { getPoolMetrics } from './pg-pool.js';
+export { getPoolMetrics };
 export const pool = globalForPrisma.pool!;
 
 export default prisma;

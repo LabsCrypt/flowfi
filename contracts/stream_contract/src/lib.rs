@@ -60,8 +60,8 @@ use storage::{
     save_stream, try_load_config, try_load_stream,
 };
 use types::{
-    DisputeStatus, ProtocolConfig, Stream, StreamStatus, VestingSchedule, VestingStep,
-    MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+    BatchStreamInput, DisputeStatus, ProtocolConfig, Stream, StreamStatus, VestingSchedule,
+    VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
 };
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
@@ -1871,6 +1871,171 @@ impl StreamContract {
         } else {
             save_stream(&env, stream_id, &stream);
         }
+
+        Ok(())
+    }
+
+    // ─── Convenience Entrypoints ──────────────────────────────────────────────
+
+    /// Create a cliff + linear stream using a *duration-relative* cliff offset.
+    ///
+    /// This is a thin convenience wrapper around [`create_hybrid_cliff_stream`]
+    /// that accepts `cliff_duration` (seconds from stream start) instead of an
+    /// absolute `cliff_time` timestamp, making it easier to call from tests and
+    /// off-chain tooling.
+    ///
+    /// The cliff unlocks exactly half the net deposit; the remainder drips
+    /// linearly over `duration - cliff_duration` seconds.
+    ///
+    /// # Errors
+    /// - `InvalidDuration`       — `cliff_duration >= duration` or `duration == 0`.
+    /// - `InvalidCliffParameters` — net amount too small for a non-zero linear rate.
+    /// - All errors from `create_hybrid_cliff_stream`.
+    pub fn create_stream_with_cliff(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_address: Address,
+        amount: i128,
+        duration: u64,
+        cliff_duration: u64,
+    ) -> Result<u64, StreamError> {
+        if duration == 0 || cliff_duration >= duration {
+            return Err(StreamError::InvalidDuration);
+        }
+        let start_time = env.ledger().timestamp();
+        let cliff_time = start_time + cliff_duration;
+        // Cliff unlocks half the deposit; the rest drips over the remaining duration.
+        let cliff_unlock_amount = amount / 2;
+        let linear_duration = duration - cliff_duration;
+        Self::create_hybrid_cliff_stream(
+            env,
+            sender,
+            recipient,
+            token_address,
+            amount,
+            cliff_time,
+            cliff_unlock_amount,
+            linear_duration,
+        )
+    }
+
+    /// Create multiple streams in a single transaction.
+    ///
+    /// Iterates `inputs` and calls `create_stream` (or `create_stream_with_cliff`
+    /// when `cliff_duration` is `Some`) for each entry.  All token transfers are
+    /// batched inside the single transaction so either all streams are created or
+    /// none are (Soroban's atomic transaction guarantee).
+    ///
+    /// Returns the list of newly assigned stream IDs in the same order as `inputs`.
+    ///
+    /// # Errors
+    /// - `InvalidAmount` — `inputs` is empty.
+    /// - All per-stream errors from `create_stream` / `create_stream_with_cliff`.
+    pub fn batch_create_streams(
+        env: Env,
+        sender: Address,
+        inputs: Vec<BatchStreamInput>,
+    ) -> Result<Vec<u64>, StreamError> {
+        sender.require_auth();
+        if inputs.is_empty() {
+            return Err(StreamError::InvalidAmount);
+        }
+
+        let mut ids: Vec<u64> = Vec::new(&env);
+        for input in inputs.iter() {
+            let id = match input.cliff_duration {
+                Some(cliff_dur) => Self::create_stream_with_cliff(
+                    env.clone(),
+                    sender.clone(),
+                    input.recipient.clone(),
+                    input.token_address.clone(),
+                    input.amount,
+                    input.duration,
+                    cliff_dur,
+                )?,
+                None => Self::create_stream(
+                    env.clone(),
+                    sender.clone(),
+                    input.recipient.clone(),
+                    input.token_address.clone(),
+                    input.amount,
+                    input.duration,
+                )?,
+            };
+            ids.push_back(id);
+        }
+        Ok(ids)
+    }
+
+    /// Transfer recipient rights to a new address, settling accrued tokens to
+    /// the current recipient in the process.
+    ///
+    /// Any tokens accrued up to the moment of transfer are immediately sent to
+    /// `current_recipient`; from the next ledger-second onward, accrual goes to
+    /// `new_recipient`.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`  — no stream with `stream_id` exists.
+    /// - `Unauthorized`    — `current_recipient` is not the stream's recipient.
+    /// - `StreamInactive`  — stream is cancelled or completed.
+    pub fn transfer_recipient(
+        env: Env,
+        current_recipient: Address,
+        stream_id: u64,
+        new_recipient: Address,
+    ) -> Result<(), StreamError> {
+        current_recipient.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+
+        if stream.recipient != current_recipient {
+            return Err(StreamError::Unauthorized);
+        }
+        if !stream.is_active {
+            return Err(StreamError::StreamInactive);
+        }
+
+        let now = env.ledger().timestamp();
+        let accrued = Self::calculate_claimable(&stream, now);
+
+        // Settle accrued tokens to the outgoing recipient before changing ownership.
+        if accrued > 0 {
+            stream.withdrawn_amount += accrued;
+            stream.last_update_time = now;
+            let token_client = token::Client::new(&env, &stream.token_address);
+            token_client.transfer(
+                &env.current_contract_address(),
+                &current_recipient,
+                &accrued,
+            );
+        }
+
+        stream.recipient = new_recipient.clone();
+        save_stream(&env, stream_id, &stream);
+
+        Ok(())
+    }
+
+    /// Bump the TTL of a stream's persistent storage entry so it is not
+    /// evicted by the Soroban storage garbage-collector.
+    ///
+    /// Anyone may call this; it costs only ledger fees. Callers typically
+    /// invoke it when a stream's remaining balance is large relative to the
+    /// cost of a bump, or to guarantee liveness during a withdrawal.
+    ///
+    /// # Errors
+    /// - `StreamNotFound` — no stream with `stream_id` exists.
+    pub fn extend_stream_ttl(env: Env, stream_id: u64) -> Result<(), StreamError> {
+        // Verify the stream exists before paying for a bump.
+        load_stream(&env, stream_id)?;
+
+        let key = types::DataKey::Stream(stream_id);
+        // Bump to at least 1 year of ledgers (assuming ~5 s per ledger).
+        const ONE_YEAR_LEDGERS: u32 = 365 * 24 * 60 * 60 / 5;
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, ONE_YEAR_LEDGERS, ONE_YEAR_LEDGERS);
 
         Ok(())
     }

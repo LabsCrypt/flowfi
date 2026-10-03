@@ -7,6 +7,7 @@ import {
   rpcFailoversTotal,
 } from '../lib/metrics.js';
 import { withSpan } from '../lib/tracing.js';
+import { rpcPool } from '../lib/rpc-pool.js';
 
 const RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
 
@@ -43,14 +44,10 @@ const RPC_MAX_RETRIES = Number(process.env.SOROBAN_RPC_MAX_RETRIES ?? 2);
 const RPC_RETRY_BASE_MS = Number(process.env.SOROBAN_RPC_RETRY_BASE_MS ?? 250);
 
 /** Bounded deadline for awaiting on-chain transaction finality (default 30s). */
-function getTxConfirmationTimeoutMs(): number {
-  return Number(process.env.SOROBAN_TX_CONFIRMATION_TIMEOUT_MS ?? 30_000);
-}
+const TX_CONFIRMATION_TIMEOUT_MS = Number(process.env.SOROBAN_TX_CONFIRMATION_TIMEOUT_MS ?? 30_000);
 
 /** Polling interval when awaiting on-chain transaction finality (default 1s). */
-function getTxPollIntervalMs(): number {
-  return Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
-}
+const TX_POLL_INTERVAL_MS = Number(process.env.SOROBAN_TX_POLL_INTERVAL_MS ?? 1_000);
 
 const DEFAULT_RPC_HEALTH_CACHE_TTL_MS = 10_000;
 
@@ -192,7 +189,20 @@ let _server: rpc.Server | null = null;
 
 async function executeRpc<T>(label: string, operation: (server: rpc.Server) => Promise<T>): Promise<T> {
   if (_server) return operation(_server);
-  return rpcPool.execute(label, (server) => operation(server));
+  return rpcPool.execute(label, (server, _signal) => operation(server));
+}
+
+/** Returns the active test server or falls back to the pool (alias for executeRpc convenience). */
+function getServer(): rpc.Server {
+  if (_server) return _server;
+  // Return a proxy-like object that routes each call through the pool.
+  // This allows existing `getServer().method()` call sites to work without refactoring.
+  return new Proxy({} as rpc.Server, {
+    get(_target, prop: string) {
+      return (...args: unknown[]) =>
+        rpcPool.execute(prop, (server) => (server as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[prop]?.(...args) as Promise<unknown>);
+    },
+  });
 }
 
 /**
@@ -355,6 +365,25 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 }
 
 /**
+ * Poll until a submitted transaction reaches a terminal state (SUCCESS or FAILED).
+ * Throws if the transaction fails or the confirmation timeout is exceeded.
+ */
+async function pollTransactionStatus(txHash: string): Promise<void> {
+  const deadline = Date.now() + TX_CONFIRMATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const status = await withRpcTimeout('getTransaction', () =>
+      executeRpc('getTransaction', (server) => server.getTransaction(txHash)),
+    );
+    if ((status as { status: string }).status === 'SUCCESS') return;
+    if ((status as { status: string }).status === 'FAILED') {
+      throw new Error(`Transaction ${txHash} failed on-chain`);
+    }
+    await new Promise((r) => setTimeout(r, TX_POLL_INTERVAL_MS));
+  }
+  throw new Error(`Transaction ${txHash} not confirmed within ${TX_CONFIRMATION_TIMEOUT_MS}ms`);
+}
+
+/**
  * Latest ledger sequence known to the network, or 0 when it cannot be resolved.
  *
  * Feeds the `flowfi_indexer_network_ledger` gauge so `flowfi_indexer_lag_ledgers`
@@ -363,7 +392,7 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 export async function getLatestLedger(): Promise<number> {
   try {
     const response = await withRpcRetry('getLatestLedger', () =>
-      withRpcTimeout('getLatestLedger', () => getServer().getLatestLedger()),
+      withRpcTimeout('getLatestLedger', () => executeRpc('getLatestLedger', (server) => server.getLatestLedger())),
     );
     return Number(response.sequence);
   } catch (err) {
@@ -911,7 +940,7 @@ export async function simulateStreamAction(
   let sourceAccount: Account;
   try {
     sourceAccount = await withRpcRetry('getAccount', () =>
-      withRpcTimeout('getAccount', () => getServer().getAccount(senderPublicKey)),
+      withRpcTimeout('getAccount', () => executeRpc('getAccount', (server) => server.getAccount(senderPublicKey))),
     );
   } catch (err) {
     logger.warn(
@@ -934,7 +963,7 @@ export async function simulateStreamAction(
   const tx = builder.setTimeout(TX_TIMEOUT_SECONDS).build();
 
   const simulation = await withRpcRetry('simulateTransaction', () =>
-    withRpcTimeout('simulateTransaction', () => getServer().simulateTransaction(tx)),
+    withRpcTimeout('simulateTransaction', () => executeRpc('simulateTransaction', (server) => server.simulateTransaction(tx))),
   );
 
   if (rpc.Api.isSimulationError(simulation)) {
