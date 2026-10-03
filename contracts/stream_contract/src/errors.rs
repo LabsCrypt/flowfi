@@ -81,4 +81,24 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// A conditional milestone id is duplicated within one stream, is
+    /// referenced that does not exist, or the milestone list is empty.
+    InvalidMilestone = 34,
+    /// The oracle returned no price for the asset.
+    OraclePriceUnavailable = 35,
+    /// The oracle price is older than `ORACLE_PRICE_MAX_AGE_SECS`.
+    OraclePriceStale = 36,
+    /// The milestone's condition has not been met, so nothing unlocked.
+    ConditionNotMet = 37,
+    /// The milestone was already unlocked and cannot unlock again.
+    MilestoneAlreadyUnlocked = 38,
+    /// The attestation id was already used to unlock a milestone on this
+    /// stream, or the attestation signer is not the milestone's oracle.
+    InvalidAttestation = 39,
+    /// The caller is not authorized to unlock this milestone (only the
+    /// stream's sender or recipient may trigger verification).
+    MilestoneCallerUnauthorized = 40,
+    /// The conditional milestone list would exceed
+    /// `MAX_CONDITIONAL_MILESTONES`.
+    TooManyMilestones = 41,
 }

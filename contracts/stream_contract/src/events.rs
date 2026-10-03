@@ -320,3 +320,19 @@ pub struct StreamClosedEvent {
     pub closer: Address,
     pub timestamp: u64,
 }
+
+/// Emitted when a conditional milestone's condition verifies true (#1482).
+///
+/// Topic: `("milestone_condition_unlocked", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneConditionUnlockedEvent {
+    pub stream_id: u64,
+    pub milestone_id: u32,
+    /// Amount that became claimable.
+    pub amount: i128,
+    /// Caller that triggered the verification.
+    pub caller: Address,
+    /// Ledger timestamp of the verification.
+    pub timestamp: u64,
+}

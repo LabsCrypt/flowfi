@@ -1,0 +1,23 @@
+/* FlowFi developer portal custom styles (#1481). */
+
+:root {
+  --ifm-color-primary: #10b981;
+  --ifm-color-primary-dark: #0ea271;
+  --ifm-color-primary-darker: #0d986b;
+  --ifm-color-primary-darkest: #0b7d59;
+  --ifm-color-primary-light: #2ecc91;
+  --ifm-color-primary-lighter: #3dd39b;
+  --ifm-color-primary-lightest: #63e0b2;
+  --ifm-font-family-monospace: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* Code blocks get a bit more breathing room. */
+.theme-code-block {
+  border-radius: 10px;
+}
+
+/* The playground/console embeds should span the content width. */
+#openapi-console iframe,
+[data-playground] {
+  width: 100%;
+}

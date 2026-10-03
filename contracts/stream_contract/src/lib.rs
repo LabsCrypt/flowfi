@@ -47,12 +47,12 @@ use soroban_sdk::{
 use errors::StreamError;
 use events::{
     AdminTransferredEvent, AllowanceStreamCreatedEvent, ContractUpgradedEvent,
-    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
-    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
-    ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
-    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent,
+    FeeCollectedEvent, FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
+    MilestoneConditionUnlockedEvent, ProtocolPauseStatusEvent, StateMigratedEvent,
+    StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamClosedEvent,
+    StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent, StreamRateModifiedEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent
 };
 use storage::{
     config_exists, get_contract_version, get_recorded_wasm_hash, load_config, load_stream,
@@ -60,8 +60,10 @@ use storage::{
     save_stream, try_load_config, try_load_stream,
 };
 use types::{
-    DisputeStatus, ProtocolConfig, Stream, StreamStatus, VestingSchedule, VestingStep,
-    MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+    ConditionalMilestone, DataKey, DisputeStatus, MAX_BATCH_WITHDRAW,
+    MAX_CONDITIONAL_MILESTONES, MAX_VESTING_STEPS, ORACLE_PRICE_MAX_AGE_SECS, OracleAsset,
+    OracleClient, ProtocolConfig, Stream, StreamStatus, UnlockCondition, VestingSchedule,
+    VestingStep
 };
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
@@ -685,6 +687,306 @@ impl StreamContract {
         }
 
         Ok(())
+    }
+
+    /// Validate a conditional milestone list at creation time (#1482).
+    ///
+    /// - 1..=`MAX_CONDITIONAL_MILESTONES` milestones,
+    /// - unique `milestone_id` within the list,
+    /// - strictly positive `amount`,
+    /// - milestone amounts summing to exactly the post-fee deposited amount,
+    ///   so a conditional stream can never promise more than was escrowed.
+    fn validate_conditional_milestones(
+        milestones: &soroban_sdk::Vec<ConditionalMilestone>,
+        net_amount: i128,
+    ) -> Result<(), StreamError> {
+        if milestones.is_empty() {
+            return Err(StreamError::EmptyVestingSchedule);
+        }
+        if milestones.len() > MAX_CONDITIONAL_MILESTONES {
+            return Err(StreamError::TooManyMilestones);
+        }
+
+        let mut total: i128 = 0;
+        for i in 0..milestones.len() {
+            let m = milestones.get(i).expect("index in range");
+            if m.amount <= 0 {
+                return Err(StreamError::InvalidVestingStepAmount);
+            }
+            for j in (i + 1)..milestones.len() {
+                let n = milestones.get(j).expect("index in range");
+                if n.milestone_id == m.milestone_id {
+                    return Err(StreamError::InvalidMilestone);
+                }
+            }
+            total = total.saturating_add(m.amount);
+        }
+        if total != net_amount {
+            return Err(StreamError::VestingStepTotalMismatch);
+        }
+        Ok(())
+    }
+
+    /// Create a conditional (KPI-gated) streaming stream (#1482).
+    ///
+    /// Funds are escrowed exactly like [`Self::create_stream`] (gross transfer,
+    /// protocol fee deducted), but release is governed by a list of
+    /// [`ConditionalMilestone`] tranches instead of a time curve. Each
+    /// milestone unlocks when its [`UnlockCondition`] verifies true — a time
+    /// gate, an oracle price target, or a signed oracle attestation — via
+    /// [`Self::verify_and_unlock_milestone`].
+    ///
+    /// Under the hood the milestones are stored as the stream's
+    /// [`VestingSchedule::StepTranches`] with every `unlock_time` at
+    /// `u64::MAX`: unverified tranches are unreachable by time, and
+    /// verification rewrites a satisfied milestone's time to the current
+    /// timestamp, which makes it flow through the *existing*
+    /// `calculate_claimable` / `withdraw` math unchanged.
+    ///
+    /// # Errors
+    /// - `ProtocolPaused`            — the circuit breaker is engaged.
+    /// - `InvalidAmount`             — `amount` ≤ 0.
+    /// - `InvalidTokenAddress`       — `token_address` is not a token contract.
+    /// - `EmptyVestingSchedule`      — `milestones` is empty.
+    /// - `TooManyMilestones`         — more than `MAX_CONDITIONAL_MILESTONES`.
+    /// - `InvalidMilestone`          — a duplicated `milestone_id`.
+    /// - `InvalidVestingStepAmount`  — a milestone amount is ≤ 0.
+    /// - `VestingStepTotalMismatch`  — milestone amounts ≠ post-fee deposited amount.
+    pub fn create_conditional_stream(
+        env: Env,
+        sender: Address,
+        recipient: Address,
+        token_address: Address,
+        amount: i128,
+        milestones: soroban_sdk::Vec<ConditionalMilestone>,
+    ) -> Result<u64, StreamError> {
+        sender.require_auth();
+        Self::require_not_protocol_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+        Self::validate_token_contract(&env, &token_address)?;
+
+        let stream_id = next_stream_id(&env);
+        let start_time = env.ledger().timestamp();
+
+        // Transfer gross amount from sender to this contract.
+        let token_client = token::Client::new(&env, &token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&sender, &contract_address, &amount);
+
+        // Deduct protocol fee; returns net amount (== amount when no fee config).
+        // The fee transfer itself is deferred until the stream is persisted,
+        // mirroring the creation flow used by the other stream types.
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+
+        Self::validate_conditional_milestones(&milestones, net_amount)?;
+
+        // Store as step tranches whose unlock times are all "never" until the
+        // condition is verified. Recipient view of the schedule then shows
+        // exactly which tranches remain condition-gated.
+        let mut steps: Vec<VestingStep> = Vec::new(&env);
+        for m in milestones.iter() {
+            steps.push_back(VestingStep {
+                unlock_time: u64::MAX,
+                unlock_amount: m.amount,
+            });
+        }
+
+        save_stream(
+            &env,
+            stream_id,
+            &Stream {
+                sender: sender.clone(),
+                recipient: recipient.clone(),
+                token_address: token_address.clone(),
+                rate_per_second: 0,
+                deposited_amount: net_amount,
+                withdrawn_amount: 0,
+                start_time,
+                last_update_time: start_time,
+                cliff_time: None,
+                is_active: true,
+                paused: false,
+                paused_at: None,
+                status: StreamStatus::Active,
+                schedule: VestingSchedule::StepTranches(steps),
+                arbiter: None,
+                dispute_status: DisputeStatus::None,
+                is_allowance_based: false,
+            },
+        );
+        env.storage().instance().set(
+            &DataKey::ConditionalMilestones(stream_id),
+            &milestones,
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::AttestedIds(stream_id), &Vec::<BytesN<32>>::new(&env));
+
+        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_created"), stream_id),
+            StreamCreatedEvent {
+                stream_id,
+                sender,
+                recipient,
+                rate_per_second: 0,
+                token_address,
+                deposited_amount: net_amount,
+                start_time,
+            },
+        );
+
+        Ok(stream_id)
+    }
+
+    /// Evaluate one conditional milestone and, when its condition holds,
+    /// release it (#1482).
+    ///
+    /// - `TimeOnly` unlocks once `env.ledger().timestamp()` passes the gate.
+    /// - `PriceTarget` cross-contract calls the oracle's `lastprice`, reverts
+    ///   with `OraclePriceUnavailable` when it returns none and with
+    ///   `OraclePriceStale` when the reading is older than
+    ///   `ORACLE_PRICE_MAX_AGE_SECS`, then compares against `target_price`
+    ///   (`is_above`: price >= target, otherwise price <= target).
+    /// - `OracleAttestation` requires the attestation's oracle signer to
+    ///   authorize this invocation (`require_auth` on the signer address) and
+    ///   rejects an attestation id that already unlocked a milestone on this
+    ///   stream, so one attestation can never pay out twice.
+    ///
+    /// On success the milestone's `unlock_time` is rewritten from `u64::MAX`
+    /// to the current timestamp, which promotes the tranche into the normal
+    /// step-unlock flow: it becomes claimable immediately and withdrawable
+    /// with the existing entry points. Emits `milestone_condition_unlocked`.
+    ///
+    /// # Errors
+    /// - `StreamNotFound`               — no stream exists with `stream_id`.
+    /// - `MilestoneCallerUnauthorized`  — caller is neither sender nor recipient.
+    /// - `StreamInactive`               — stream cancelled or fully withdrawn.
+    /// - `InvalidMilestone`             — no milestone with that id.
+    /// - `MilestoneAlreadyUnlocked`     — milestone already unlocked.
+    /// - `OraclePriceUnavailable`       — oracle returned no price.
+    /// - `OraclePriceStale`             — price older than the freshness window.
+    /// - `ConditionNotMet`              — condition evaluated false.
+    /// - `InvalidAttestation`           — attestation id reused or unauthorized.
+    pub fn verify_and_unlock_milestone(
+        env: Env,
+        caller: Address,
+        stream_id: u64,
+        milestone_id: u32,
+    ) -> Result<i128, StreamError> {
+        caller.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+        if stream.sender != caller && stream.recipient != caller {
+            return Err(StreamError::MilestoneCallerUnauthorized);
+        }
+        if !stream.is_active {
+            return Err(StreamError::StreamInactive);
+        }
+
+        let mut milestones: soroban_sdk::Vec<ConditionalMilestone> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ConditionalMilestones(stream_id))
+            .ok_or(StreamError::StreamNotFound)?;
+
+        let index = (0..milestones.len())
+            .find(|&i| {
+                milestones
+                    .get(i)
+                    .expect("index in range")
+                    .milestone_id
+                    == milestone_id
+            })
+            .ok_or(StreamError::InvalidMilestone)?;
+        let mut milestone = milestones.get(index).expect("index in range");
+        if milestone.is_unlocked {
+            return Err(StreamError::MilestoneAlreadyUnlocked);
+        }
+
+        let now = env.ledger().timestamp();
+        match &milestone.condition {
+            UnlockCondition::TimeOnly(unlock_time) => {
+                if now < *unlock_time {
+                    return Err(StreamError::ConditionNotMet);
+                }
+            }
+            UnlockCondition::PriceTarget(oracle_address, target_price, is_above) => {
+                let oracle_client = OracleClient::new(&env, oracle_address);
+                let price_data = oracle_client
+                    .lastprice(&OracleAsset::Other(stream.token_address.clone()))
+                    .ok_or(StreamError::OraclePriceUnavailable)?;
+                if now.saturating_sub(price_data.timestamp) > ORACLE_PRICE_MAX_AGE_SECS {
+                    return Err(StreamError::OraclePriceStale);
+                }
+                let met = if *is_above {
+                    price_data.price >= *target_price
+                } else {
+                    price_data.price <= *target_price
+                };
+                if !met {
+                    return Err(StreamError::ConditionNotMet);
+                }
+            }
+            UnlockCondition::OracleAttestation(oracle_signer, attestation_id) => {
+                let mut attested: Vec<BytesN<32>> = env
+                    .storage()
+                    .instance()
+                    .get(&DataKey::AttestedIds(stream_id))
+                    .unwrap_or_else(|| Vec::new(&env));
+                if attested.contains(attestation_id) {
+                    return Err(StreamError::InvalidAttestation);
+                }
+                // The oracle signer proves control of the attestation by
+                // authorizing this call as a sub-invocation; anything weaker
+                // would let anyone unlock milestones by naming a signer.
+                oracle_signer.require_auth();
+                attested.push_back(attestation_id.clone());
+                env.storage()
+                    .instance()
+                    .set(&DataKey::AttestedIds(stream_id), &attested);
+            }
+        }
+
+        milestone.is_unlocked = true;
+        let unlocked_amount = milestone.amount;
+        milestones.set(index, milestone);
+        env.storage().instance().set(
+            &DataKey::ConditionalMilestones(stream_id),
+            &milestones,
+        );
+
+        // Promote the tranche into the normal step-unlock flow: rewrite its
+        // gate time from "never" to "now" so `calculate_claimable` counts it.
+        if let VestingSchedule::StepTranches(steps) = &mut stream.schedule {
+            for i in 0..steps.len() {
+                let mut step = steps.get(i).expect("index in range");
+                if step.unlock_amount == unlocked_amount && step.unlock_time == u64::MAX {
+                    step.unlock_time = now;
+                    steps.set(i, step);
+                    break;
+                }
+            }
+        }
+        stream.last_update_time = now;
+        save_stream(&env, stream_id, &stream);
+
+        env.events().publish(
+            (Symbol::new(&env, "milestone_condition_unlocked"), stream_id),
+            MilestoneConditionUnlockedEvent {
+                stream_id,
+                milestone_id,
+                amount: unlocked_amount,
+                caller,
+                timestamp: now,
+            },
+        );
+
+        Ok(unlocked_amount)
     }
 
     /// Top up an active stream with additional tokens.
