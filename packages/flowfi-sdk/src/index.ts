@@ -6,6 +6,13 @@ export type {
   StreamResult,
   WithdrawResult,
   SubmitResult,
+  StreamStatus,
+  VestingSchedule,
+  VestingStep,
+} from './types.js';
+export {
+  isStreamStatus,
+  isVestingSchedule,
 } from './types.js';
 export {
   buildContractCallXdr,
