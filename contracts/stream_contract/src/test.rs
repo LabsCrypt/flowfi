@@ -11,11 +11,11 @@ use soroban_sdk::{
 
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
-    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
-    ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
-    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
-    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    emit_stream_cancelled, emit_stream_created, emit_tokens_withdrawn, AdminTransferredEvent,
+    ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
+    HybridCliffStreamCreatedEvent, InitializedEvent, ProtocolPauseStatusEvent, StateMigratedEvent,
+    StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
+    StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{
     DataKey, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream, StreamStatus,
@@ -5829,4 +5829,141 @@ fn test_batch_withdraw_never_exceeds_escrow_across_many_streams() {
     client.batch_withdraw(&recipient, &ids);
     assert_eq!(balances.balance(&recipient), 10_000);
     assert_eq!(balances.balance(&contract), 0, "escrow not fully drained");
+}
+
+// ─── Emission helper wire format ─────────────────────────────────────────────
+//
+// `events.rs` owns the (topic, payload) wire format via its `emit_*` helpers.
+// These tests pin the topic symbol, topic arity and payload round-trip for a
+// representative helper per topic shape, so a change that breaks the format
+// backend indexers depend on fails here rather than in production decoding.
+mod emit_helpers {
+    use super::*;
+
+    fn capture_single_topic_event(env: &Env, topic: &str) -> (SorobanVec<Val>, Val) {
+        let events = env.events().all();
+        let ev = events
+            .iter()
+            .find(|e| {
+                Symbol::try_from_val(env, &e.1.get(0).unwrap()).unwrap() == Symbol::new(env, topic)
+            })
+            .expect("expected event not found");
+        (ev.1, ev.2)
+    }
+
+    /// Publishes `f`'s event inside a contract context so it carries a contract
+    /// ID, matching how `emit_*` helpers fire in production entrypoints.
+    fn with_contract_context<F: FnOnce()>(env: &Env, f: F) {
+        let contract = create_contract(env);
+        let id = contract.address.clone();
+        env.as_contract(&id, f);
+    }
+
+    #[test]
+    fn emit_stream_created_publishes_topic_and_roundtrips_payload() {
+        let env = Env::default();
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        with_contract_context(&env, || {
+            emit_stream_created(
+                &env,
+                StreamCreatedEvent {
+                    stream_id: 7,
+                    sender: sender.clone(),
+                    recipient: recipient.clone(),
+                    rate_per_second: 1_000,
+                    token_address: token.clone(),
+                    deposited_amount: 123_456,
+                    start_time: 42,
+                },
+            );
+        });
+
+        let (topics, data) = capture_single_topic_event(&env, "stream_created");
+        // Topic 0 is the event name; topic 1 is the indexed stream ID.
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "stream_created")
+        );
+        let indexed_id = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(indexed_id, 7);
+
+        let payload = StreamCreatedEvent::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.stream_id, 7);
+        assert_eq!(payload.sender, sender);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.rate_per_second, 1_000);
+        assert_eq!(payload.token_address, token);
+        assert_eq!(payload.deposited_amount, 123_456);
+        assert_eq!(payload.start_time, 42);
+    }
+
+    #[test]
+    fn emit_tokens_withdrawn_publishes_topic_and_roundtrips_payload() {
+        let env = Env::default();
+        let recipient = Address::generate(&env);
+
+        with_contract_context(&env, || {
+            emit_tokens_withdrawn(
+                &env,
+                TokensWithdrawnEvent {
+                    stream_id: 3,
+                    recipient: recipient.clone(),
+                    amount: 999,
+                    timestamp: 1_000,
+                },
+            );
+        });
+
+        let (topics, data) = capture_single_topic_event(&env, "tokens_withdrawn");
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "tokens_withdrawn")
+        );
+        let indexed_id = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(indexed_id, 3);
+
+        let payload = TokensWithdrawnEvent::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.stream_id, 3);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.amount, 999);
+        assert_eq!(payload.timestamp, 1_000);
+    }
+
+    #[test]
+    fn emit_stream_cancelled_publishes_topic_and_roundtrips_payload() {
+        let env = Env::default();
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        with_contract_context(&env, || {
+            emit_stream_cancelled(
+                &env,
+                StreamCancelledEvent {
+                    stream_id: 11,
+                    sender: sender.clone(),
+                    recipient: recipient.clone(),
+                    amount_withdrawn: 500,
+                    refunded_amount: 2_500,
+                },
+            );
+        });
+
+        let (topics, data) = capture_single_topic_event(&env, "stream_cancelled");
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "stream_cancelled")
+        );
+        let indexed_id = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(indexed_id, 11);
+
+        let payload = StreamCancelledEvent::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.stream_id, 11);
+        assert_eq!(payload.sender, sender);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.amount_withdrawn, 500);
+        assert_eq!(payload.refunded_amount, 2_500);
+    }
 }
