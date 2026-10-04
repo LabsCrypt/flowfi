@@ -63,6 +63,13 @@ describe('JWT helpers', () => {
     expect(verifyJwt(token)).toBeNull();
   });
 
+  it('accepts a legacy token without issuer and audience claims', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600 });
+
+    expect(verifyJwt(token)).toEqual({ publicKey: 'GTESTPUBLICKEY123' });
+  });
+
   it('returns null for a token with wrong issuer', async () => {
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: 'GTESTPUBLICKEY123', iat: now, exp: now + 3600, iss: 'wrong-issuer', aud: 'flowfi-api' });

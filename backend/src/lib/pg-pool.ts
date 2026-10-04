@@ -24,17 +24,35 @@ export const createPgPoolConfig = (overrides?: Partial<pg.PoolConfig>): pg.PoolC
   ...overrides,
 });
 
+/** Snapshot of a pool's connection counts, as surfaced by the admin metrics API. */
+export interface PoolMetrics {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+}
+
 /**
- * Publish pool utilisation gauges.
+ * Snapshot the pool's connection counts.
  *
  * `waitingCount` is the number to alert on: a non-zero value means callers are
  * queued for a connection, which surfaces as request latency long before the
  * pool would be considered "full".
  */
+export function getPoolMetrics(pool: pg.Pool): PoolMetrics {
+  return {
+    totalCount: pool.totalCount ?? 0,
+    idleCount: pool.idleCount ?? 0,
+    waitingCount: pool.waitingCount ?? 0,
+  };
+}
+
+/** Publish pool utilisation gauges. */
 export function publishPoolMetrics(pool: pg.Pool): void {
-  dbPoolConnections.set({ state: 'total' }, pool.totalCount ?? 0);
-  dbPoolConnections.set({ state: 'idle' }, pool.idleCount ?? 0);
-  dbPoolConnections.set({ state: 'waiting' }, pool.waitingCount ?? 0);
+  const { totalCount, idleCount, waitingCount } = getPoolMetrics(pool);
+
+  dbPoolConnections.set({ state: 'total' }, totalCount);
+  dbPoolConnections.set({ state: 'idle' }, idleCount);
+  dbPoolConnections.set({ state: 'waiting' }, waitingCount);
   dbPoolMaxConnections.set(pool.options?.max ?? 0);
 }
 
@@ -109,8 +127,8 @@ const POOL_METRICS_INTERVAL_MS = Number(
   process.env.PG_POOL_METRICS_INTERVAL_MS ?? 5_000,
 );
 
-export const createPgPool = (): pg.Pool => {
-  const pool = new pg.Pool(createPgPoolConfig());
+export const createPgPool = (overrides?: Partial<pg.PoolConfig>): pg.Pool => {
+  const pool = new pg.Pool(createPgPoolConfig(overrides));
 
   instrumentPoolQueryTiming(pool);
 

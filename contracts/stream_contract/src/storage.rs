@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Map, Symbol, TryFromVal, Val};
+use soroban_sdk::{Env, Map, Symbol, TryFromVal, Val, Vec};
 
 /// Minimum ledgers remaining before a persistent entry is renewed.
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 120_960;
@@ -11,8 +11,8 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 use crate::errors::StreamError;
 use crate::types::{
-    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
-    VestingSchedule,
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, PositionRef, PositionRole,
+    ProtocolConfig, ProtocolFeeConfig, Stream, StreamPositionMetadata, VestingSchedule,
 };
 
 // ─── Version-Tolerant Decoding ────────────────────────────────────────────────
@@ -24,7 +24,11 @@ use crate::types::{
 /// here only so the two can be told apart before a decode is attempted.
 const CONFIG_FIELD_COUNT: u32 = 5;
 const LEGACY_CONFIG_FIELD_COUNT: u32 = 3;
-const STREAM_FIELD_COUNT: u32 = 16;
+// 17 fields: sender, recipient, token_address, rate_per_second,
+// deposited_amount, withdrawn_amount, start_time, last_update_time,
+// cliff_time, is_active, paused, paused_at, status, schedule,
+// arbiter, dispute_status, is_allowance_based.
+const STREAM_FIELD_COUNT: u32 = 17;
 const LEGACY_STREAM_FIELD_COUNT: u32 = 12;
 
 /// Returns the number of fields in a stored record, or `None` if it is not a map.
@@ -122,6 +126,8 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         withdrawn_amount: legacy.withdrawn_amount,
         start_time: legacy.start_time,
         last_update_time: legacy.last_update_time,
+        // Pre-v2 records predate the cliff field; they have none.
+        cliff_time: None,
         is_active: legacy.is_active,
         paused: legacy.paused,
         paused_at: legacy.paused_at,
@@ -247,4 +253,113 @@ pub fn save_recorded_wasm_hash(env: &Env, hash: &soroban_sdk::BytesN<32>) {
 pub fn remove_stream(env: &Env, stream_id: u64) {
     let key = DataKey::Stream(stream_id);
     env.storage().persistent().remove(&key);
+}
+
+// ─── Position Receipts ────────────────────────────────────────────────────────
+
+/// Persists a position receipt, refreshing its TTL.
+pub fn save_position(
+    env: &Env,
+    stream_id: u64,
+    role: &PositionRole,
+    metadata: &StreamPositionMetadata,
+) {
+    let key = DataKey::Position(stream_id, role.clone());
+    env.storage().persistent().set(&key, metadata);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
+/// Loads a position receipt, or `None` if it was never minted.
+pub fn load_position(
+    env: &Env,
+    stream_id: u64,
+    role: &PositionRole,
+) -> Option<StreamPositionMetadata> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Position(stream_id, role.clone()))
+}
+
+/// Removes a position receipt entirely.
+pub fn remove_position(env: &Env, stream_id: u64, role: &PositionRole) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::Position(stream_id, role.clone()));
+}
+
+/// Reads the position index for an owner, defaulting to an empty vector.
+pub fn load_owner_index(env: &Env, owner: &soroban_sdk::Address) -> Vec<PositionRef> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PositionOwnerIndex(owner.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+/// Persists an owner's position index, refreshing its TTL.
+fn save_owner_index(env: &Env, owner: &soroban_sdk::Address, refs: &Vec<PositionRef>) {
+    let key = DataKey::PositionOwnerIndex(owner.clone());
+    env.storage().persistent().set(&key, refs);
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+}
+
+/// Adds a receipt to an owner's index if not already present (idempotent).
+pub fn add_owner_position(
+    env: &Env,
+    owner: &soroban_sdk::Address,
+    stream_id: u64,
+    role: &PositionRole,
+) {
+    let mut refs = load_owner_index(env, owner);
+    for existing in refs.iter() {
+        if existing.stream_id == stream_id && &existing.role == role {
+            return;
+        }
+    }
+    refs.push_back(PositionRef {
+        stream_id,
+        role: role.clone(),
+    });
+    save_owner_index(env, owner, &refs);
+}
+
+/// Removes a receipt from an owner's index (no-op if absent).
+pub fn remove_owner_position(
+    env: &Env,
+    owner: &soroban_sdk::Address,
+    stream_id: u64,
+    role: &PositionRole,
+) {
+    let refs = load_owner_index(env, owner);
+    let mut kept = Vec::new(env);
+    for existing in refs.iter() {
+        if existing.stream_id != stream_id || &existing.role != role {
+            kept.push_back(existing);
+        }
+    }
+    save_owner_index(env, owner, &kept);
+}
+
+// ─── Dynamic Protocol Fees ────────────────────────────────────────────────────
+
+/// Loads the dynamic fee configuration, or `None` if never configured.
+pub fn try_load_fee_config(env: &Env) -> Option<ProtocolFeeConfig> {
+    env.storage().instance().get(&DataKey::ProtocolFeeConfig)
+}
+
+/// Persists the dynamic fee configuration.
+pub fn save_fee_config(env: &Env, config: &ProtocolFeeConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProtocolFeeConfig, config);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 }

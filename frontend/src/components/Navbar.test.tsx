@@ -25,6 +25,7 @@ vi.mock('next/link', () => ({
 }));
 
 import { Navbar } from './Navbar';
+import { NetworkProvider } from '@/context/NetworkContext';
 
 describe('Navbar mobile menu toggle', () => {
   beforeEach(() => {
@@ -32,7 +33,11 @@ describe('Navbar mobile menu toggle', () => {
   });
 
   it('opens the mobile menu when the hamburger button is clicked', () => {
-    render(<Navbar />);
+    render(
+      <NetworkProvider>
+        <Navbar />
+      </NetworkProvider>,
+    );
 
     expect(screen.queryByTestId('mobile-menu')).not.toBeInTheDocument();
 
@@ -42,7 +47,11 @@ describe('Navbar mobile menu toggle', () => {
   });
 
   it('closes the mobile menu when the hamburger button is clicked again', () => {
-    render(<Navbar />);
+    render(
+      <NetworkProvider>
+        <Navbar />
+      </NetworkProvider>,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: /open menu/i }));
     expect(screen.getByTestId('mobile-menu')).toBeInTheDocument();

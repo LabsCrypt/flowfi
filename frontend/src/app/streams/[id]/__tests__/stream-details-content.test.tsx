@@ -11,12 +11,7 @@ const mockSession = {
   walletName: "Freighter",
 };
 
-vi.mock("@/context/wallet-context", () => ({
-  useWallet: () => ({
-    session: mockSession,
-    isHydrated: true,
-  }),
-}));
+// (wallet-context is mocked below via origUseWallet hoisted mock)
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -61,6 +56,18 @@ vi.mock("@/lib/logger", () => ({
 
 vi.mock("@/hooks/useStreamEvents", () => ({
   useStreamEvents: () => ({ events: [] }),
+}));
+
+vi.mock("@/hooks/useTokenPrice", () => ({
+  useTokenPrice: () => ({ data: null, isLoading: false, error: null }),
+  convertToFiat: () => 0,
+  formatFiatAmount: (v: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(v),
 }));
 
 // The shared ticking hook is exercised by its own suite
@@ -121,9 +128,25 @@ function createMockStream() {
   };
 }
 
+function mockFetchForStream(mockStream: ReturnType<typeof createMockStream>) {
+  vi.mocked(global.fetch).mockImplementation((url: unknown) =>
+    String(url).includes("/events")
+      ? Promise.resolve({
+          ok: true,
+          json: async () => ({ events: [], total: 0 }),
+        } as Response)
+      : Promise.resolve({
+          ok: true,
+          json: async () => mockStream,
+        } as Response),
+  );
+}
+
 describe("StreamDetailsContent loading skeleton", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
+    mockTracker.status = "idle";
     global.fetch = vi.fn();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -152,15 +175,7 @@ describe("StreamDetailsContent loading skeleton", () => {
   it("transitions from skeleton to stream content when data loads successfully", async () => {
     const mockStream = createMockStream();
 
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockStream,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response);
+    mockFetchForStream(mockStream);
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
 
@@ -175,8 +190,8 @@ describe("StreamDetailsContent loading skeleton", () => {
     // Skeleton should be gone
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    // Stream-specific content should be visible
-    expect(screen.getByText(/stream #42/i)).toBeInTheDocument();
+    // Stream-specific content should be visible (header + printable receipt)
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it("transitions from skeleton to not-found state when stream is confirmed missing", async () => {
@@ -223,15 +238,7 @@ describe("StreamDetailsContent loading skeleton", () => {
   it("renders the live claimable amount from the shared useStreamingAmount hook", async () => {
     const mockStream = createMockStream();
 
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockStream,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response);
+    mockFetchForStream(mockStream);
 
     render(<StreamDetailsContent streamId={STREAM_ID} />);
 
@@ -250,15 +257,7 @@ describe("StreamDetailsContent loading skeleton", () => {
 async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
   const mockStream = { ...createMockStream(), ...streamOverrides };
 
-  vi.mocked(global.fetch)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => mockStream,
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], total: 0 }),
-    } as Response);
+  mockFetchForStream(mockStream);
 
   const user = userEvent.setup();
   render(<StreamDetailsContent streamId={STREAM_ID} />);
@@ -292,6 +291,7 @@ const mockWalletForRecipient = (session = {
 describe("StreamDetailsContent handleWithdraw", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
     mockTracker.status = "idle";
     global.fetch = vi.fn();
     mockWalletForRecipient();
@@ -341,6 +341,7 @@ describe("StreamDetailsContent handleWithdraw", () => {
 describe("StreamDetailsContent handleTopUp", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
     mockTracker.status = "idle";
     global.fetch = vi.fn();
     // TopUp is only visible for the sender
@@ -400,7 +401,7 @@ describe("StreamDetailsContent handleTopUp", () => {
     const addFundsBtn = screen.getByRole("button", { name: /add funds/i });
     await user.click(addFundsBtn);
 
-    expect(mockToast.error).toHaveBeenCalledWith("Please enter a valid amount");
+    expect(mockToast.error).toHaveBeenCalledWith("Amount is required");
     expect(mockSoroban.topUpStream).not.toHaveBeenCalled();
   });
 });
@@ -410,6 +411,7 @@ describe("StreamDetailsContent handleTopUp", () => {
 describe("StreamDetailsContent handlePause", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
     mockTracker.status = "idle";
     global.fetch = vi.fn();
     origUseWallet.mockReturnValue({
@@ -452,6 +454,7 @@ describe("StreamDetailsContent handlePause", () => {
 describe("StreamDetailsContent handleResume", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
     mockTracker.status = "idle";
     global.fetch = vi.fn();
     origUseWallet.mockReturnValue({
@@ -494,6 +497,7 @@ describe("StreamDetailsContent handleResume", () => {
 describe("StreamDetailsContent handleCancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
     mockTracker.status = "idle";
     global.fetch = vi.fn();
     origUseWallet.mockReturnValue({
@@ -541,8 +545,13 @@ describe("StreamDetailsContent handleCancel", () => {
 describe("StreamDetailsContent live-claimable interval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseStreamingAmount.mockReturnValue(123456789);
     mockTracker.status = "idle";
     global.fetch = vi.fn();
+    origUseWallet.mockReturnValue({
+      session: mockSession,
+      isHydrated: true,
+    } as ReturnType<typeof origUseWallet>);
   });
 
   it("shows live claimable indicator with a pulsing dot", async () => {

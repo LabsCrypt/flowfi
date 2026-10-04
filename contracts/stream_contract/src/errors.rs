@@ -81,4 +81,25 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// An amount or timestamp calculation exceeded the range of its type.
+    ///
+    /// Returned instead of letting `overflow-checks` panic and abort the whole
+    /// transaction, so callers get a typed failure they can handle.
+    ArithmeticOverflow = 34,
+    /// `resume_stream` was called on a stream that is inactive (cancelled or completed).
+    StreamNotActive = 35,
+    /// `close_stream` was called on a stream that still holds funds or is not terminal.
+    StreamStillActive = 36,
+    /// No position receipt exists for the supplied stream ID and role.
+    PositionNotFound = 37,
+    /// The position is soulbound and cannot be transferred.
+    PositionNotTransferable = 38,
+    /// `configure_protocol_fees` was called with `fee_bps` above the protocol maximum.
+    FeeExceedsMaximum = 39,
+    /// A fee split set does not sum to 10 000 bps (100 %) or is otherwise malformed.
+    InvalidFeeSplit = 40,
+    /// `withdraw_and_swap` was called with a deadline that has already elapsed.
+    DeadlineExpired = 41,
+    /// A DEX swap failed to deliver at least the caller's minimum output amount.
+    SwapFailed = 42,
 }
