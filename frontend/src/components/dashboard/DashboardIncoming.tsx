@@ -1,7 +1,6 @@
 import { useState } from "react";
 import IncomingStreams from "../IncomingStreams";
 import type { Stream } from "@/lib/dashboard";
-import { InboxIcon } from "./dashboard-view";
 import { BatchClaimDrawer } from "./BatchClaimDrawer";
 import { ShareAddressModal } from "./ShareAddressModal";
 import { Share2, Waves } from "lucide-react";
@@ -97,7 +96,7 @@ export function DashboardIncoming({
           {/* Title and Description */}
           <h3 className="text-2xl font-bold mb-3">No Incoming Streams Yet</h3>
           <p className="text-slate-400 max-w-md mx-auto mb-6">
-            You haven't received any streaming payments yet. Share your payment address with a sender to start receiving continuous payments.
+            You haven&apos;t received any streaming payments yet. Share your payment address with a sender to start receiving continuous payments.
           </p>
 
           {/* Action Button */}

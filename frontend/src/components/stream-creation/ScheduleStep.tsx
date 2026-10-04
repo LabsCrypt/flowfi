@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
+import type { DurationUnit } from "@/lib/stream-validation";
 
 interface ScheduleStepProps {
   formData: {
     duration: string;
-    durationUnit: string;
+    durationUnit: DurationUnit;
     descriptionTag: string;
     memo?: string;
   };
@@ -17,14 +17,10 @@ interface ScheduleStepProps {
 const MAX_MEMO_BYTES = 28;
 
 export function ScheduleStep({ formData, errors, onUpdate }: ScheduleStepProps) {
-  const [memoByteCount, setMemoByteCount] = useState(0);
   const memo = formData.memo || "";
 
-  useEffect(() => {
-    // Calculate UTF-8 byte length
-    const bytes = new TextEncoder().encode(memo).length;
-    setMemoByteCount(bytes);
-  }, [memo]);
+  // Calculate UTF-8 byte length directly during render (derived value)
+  const memoByteCount = new TextEncoder().encode(memo).length;
 
   const isNearLimit = memoByteCount >= MAX_MEMO_BYTES * 0.8;
   const isOverLimit = memoByteCount > MAX_MEMO_BYTES;
@@ -53,7 +49,9 @@ export function ScheduleStep({ formData, errors, onUpdate }: ScheduleStepProps) 
             />
             <select
               value={formData.durationUnit}
-              onChange={(e) => onUpdate({ durationUnit: e.target.value })}
+              onChange={(e) =>
+                onUpdate({ durationUnit: e.target.value as DurationUnit })
+              }
               className="px-4 py-3 rounded-lg bg-black/40 border border-white/10 focus:border-accent outline-none"
             >
               <option value="days">Days</option>

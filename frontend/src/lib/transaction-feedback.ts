@@ -47,6 +47,7 @@ export function transactionSuccessToast(
   options?: ToastOptions
 ): string {
   playTransactionSuccessSound();
+  if (options === undefined) return toast.success(message);
   return toast.success(message, options);
 }
 

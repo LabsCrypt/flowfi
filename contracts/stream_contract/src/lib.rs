@@ -48,21 +48,26 @@ use soroban_sdk::{
 use errors::StreamError;
 use events::{
     AdminTransferredEvent, AllowanceStreamCreatedEvent, ContractUpgradedEvent,
-    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
-    FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
-    ProtocolPauseStatusEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
-    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    CrossAssetWithdrawalExecutedEvent, DisputeRequestedEvent, DisputeResolvedEvent,
+    EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
+    FeeSplitConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
+    PositionMintedEvent, PositionSettledEvent, PositionTransferabilityUpdatedEvent,
+    PositionTransferredEvent, ProtocolFeeCollectedEvent, ProtocolPauseStatusEvent,
+    StateMigratedEvent, StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamClosedEvent,
+    StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent, StreamRateModifiedEvent,
+    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
-    config_exists, get_contract_version, get_recorded_wasm_hash, load_config, load_stream,
-    next_stream_id, remove_stream, save_config, save_contract_version, save_recorded_wasm_hash,
-    save_stream, try_load_config, try_load_stream,
+    add_owner_position, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
+    load_owner_index, load_position, load_stream, next_stream_id, remove_owner_position,
+    remove_position, remove_stream, save_config, save_contract_version, save_fee_config,
+    save_position, save_recorded_wasm_hash, save_stream, try_load_config, try_load_fee_config,
+    try_load_stream,
 };
 use types::{
-    DisputeStatus, ProtocolConfig, Stream, StreamStatus, VestingSchedule, VestingStep,
-    MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+    DisputeStatus, FeeRecipient, PositionRole, PositionStatus, ProtocolConfig, ProtocolFeeConfig,
+    Stream, StreamPositionMetadata, StreamStatus, VestingSchedule, VestingStep, BPS_DENOMINATOR,
+    MAX_ALLOWED_FEE_BPS, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
 };
 
 /// Adapter for a Soroban DEX / AMM router used by `withdraw_and_swap`.
@@ -85,6 +90,13 @@ pub trait DexRouter {
 
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
 const MAX_FEE_RATE_BPS: u32 = 1_000;
+
+/// Calculated fee plan: net amount plus optional dynamic / legacy fee details.
+type FeePlan = (
+    i128,
+    Option<(i128, Vec<FeeRecipient>, Vec<i128>)>,
+    Option<(i128, Address)>,
+);
 
 /// Current on-chain state schema version.
 ///
@@ -404,8 +416,10 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        // Deduct protocol fee; returns net amount (== amount when no fee config).
-        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+        // Calculate protocol fee (no transfer yet so reentrant fee token
+        // observes committed state).
+        let (net_amount, dynamic_fee, legacy_fee) =
+            Self::collect_fee(&env, &token_address, amount, stream_id)?;
         let rate_per_second = net_amount / (duration as i128);
 
         // Reject streams where integer division rounds the rate to zero.
@@ -442,7 +456,12 @@ impl StreamContract {
             },
         );
 
-        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
+        // Disburse fee after state is committed (CEI), then mint receipts.
+        Self::disburse_fee(&env, &token_address, stream_id, dynamic_fee, legacy_fee);
+        {
+            let stream = load_stream(&env, stream_id)?;
+            Self::mint_stream_positions(&env, &stream, stream_id);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "stream_created"), stream_id),
@@ -520,7 +539,8 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, dynamic_fee, legacy_fee) =
+            Self::collect_fee(&env, &token_address, amount, stream_id)?;
 
         // Structural validation. Runs *after* the transfer so that the real
         // net amount is known, but a returned Err rolls the whole transaction
@@ -542,6 +562,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -553,7 +574,11 @@ impl StreamContract {
             },
         );
 
-        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
+        Self::disburse_fee(&env, &token_address, stream_id, dynamic_fee, legacy_fee);
+        {
+            let stream = load_stream(&env, stream_id)?;
+            Self::mint_stream_positions(&env, &stream, stream_id);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "step_vesting_stream_created"), stream_id),
@@ -612,7 +637,8 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, dynamic_fee, legacy_fee) =
+            Self::collect_fee(&env, &token_address, amount, stream_id)?;
 
         // The cliff must land strictly after creation, and must leave a
         // non-empty remainder so the linear component is well defined.
@@ -639,6 +665,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: Some(cliff_time),
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -650,7 +677,11 @@ impl StreamContract {
             },
         );
 
-        Self::transfer_fee(&env, &token_address, stream_id, fee_amount, treasury);
+        Self::disburse_fee(&env, &token_address, stream_id, dynamic_fee, legacy_fee);
+        {
+            let stream = load_stream(&env, stream_id)?;
+            Self::mint_stream_positions(&env, &stream, stream_id);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "hybrid_cliff_stream_created"), stream_id),
@@ -752,11 +783,12 @@ impl StreamContract {
         // Transfer tokens from sender to contract
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
+        let token_addr = stream.token_address.clone();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        // Collect protocol fee and get net amount
-        let (net_amount, fee_amount, treasury) =
-            Self::collect_fee(&env, &stream.token_address, amount)?;
+        // Calculate fee first; disburse after state is committed (CEI).
+        let (net_amount, dynamic_fee, legacy_fee) =
+            Self::collect_fee(&env, &token_addr, amount, stream_id)?;
 
         // Update stream state. `last_update_time` is intentionally left untouched:
         // it is the accrual anchor for `calculate_claimable`, and advancing it to
@@ -776,7 +808,7 @@ impl StreamContract {
 
         save_stream(&env, stream_id, &stream);
 
-        Self::transfer_fee(&env, &stream.token_address, stream_id, fee_amount, treasury);
+        Self::disburse_fee(&env, &token_addr, stream_id, dynamic_fee, legacy_fee);
 
         // Emit top-up event
         env.events().publish(
@@ -2204,13 +2236,9 @@ impl StreamContract {
         // Check allowance: just verify it's callable, don't lock it yet
         let token_client = token::Client::new(&env, &token_address);
         // Try to get allowance to validate approval was made
-        match env.try_invoke_contract::<i128, soroban_sdk::InvokeError>(
-            &token_address,
-            &Symbol::new(&env, "allowance"),
-            vec![&env, &sender, &env.current_contract_address()],
-        ) {
-            Ok(Ok(allowance)) if allowance > 0 => {}
-            _ => return Err(StreamError::AllowanceLocked),
+        let allowance = token_client.allowance(&sender, &env.current_contract_address());
+        if allowance <= 0 {
+            return Err(StreamError::AllowanceLocked);
         }
 
         // Calculate rate: use a nominal rate of 1 per second
@@ -2229,6 +2257,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                cliff_time: None,
                 is_active: true,
                 paused: false,
                 paused_at: None,
@@ -2239,6 +2268,11 @@ impl StreamContract {
                 is_allowance_based: true,
             },
         );
+
+        {
+            let stream = load_stream(&env, stream_id)?;
+            Self::mint_stream_positions(&env, &stream, stream_id);
+        }
 
         env.events().publish(
             (Symbol::new(&env, "allowance_stream_created"), stream_id),
@@ -2396,43 +2430,108 @@ impl StreamContract {
 
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
-    /// Calculates the protocol fee without making an external call. Callers
-    /// persist their updated stream before invoking [`Self::transfer_fee`].
+    /// Calculates the protocol fee without transferring it.
     ///
-    /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
-    /// If fee calculation truncates to 0, no transfer/event occurs and `amount` is unchanged.
-    /// Time complexity: O(1).
+    /// Dynamic multi-recipient configuration (Issue #1465) takes precedence when
+    /// enabled; otherwise falls back to the legacy single-treasury path.
+    /// Returns `(net_amount, dynamic_fee, legacy_fee)` where only one fee is
+    /// `Some`. Callers must persist stream state first, then call
+    /// [`Self::disburse_fee`] so the fee transfer observes committed state (CEI).
+    /// If no config or zero fee, returns `(amount, None, None)`.
     fn collect_fee(
         env: &Env,
-        token_address: &Address,
+        _token_address: &Address,
         amount: i128,
-    ) -> Result<(i128, i128, Option<Address>), StreamError> {
+        _stream_id: u64,
+    ) -> Result<FeePlan, StreamError> {
+        // Dynamic multi-recipient configuration takes precedence when enabled.
+        if let Some(cfg) = try_load_fee_config(env) {
+            if cfg.is_enabled && cfg.fee_bps > 0 {
+                let total_fee = amount
+                    .checked_mul(cfg.fee_bps as i128)
+                    .ok_or(StreamError::ArithmeticOverflow)?
+                    / BPS_DENOMINATOR as i128;
+
+                if total_fee > 0 {
+                    let split_count = cfg.splits.len();
+                    let mut distributed: i128 = 0;
+                    let mut amounts: Vec<i128> = Vec::new(env);
+
+                    for i in 0..split_count {
+                        let split = cfg.splits.get(i).unwrap();
+                        // The final recipient absorbs the integer-division
+                        // remainder so no dust is ever stranded.
+                        let split_amount = if i + 1 == split_count {
+                            total_fee.saturating_sub(distributed)
+                        } else {
+                            total_fee
+                                .checked_mul(split.share_bps as i128)
+                                .ok_or(StreamError::ArithmeticOverflow)?
+                                / BPS_DENOMINATOR as i128
+                        };
+                        distributed = distributed.saturating_add(split_amount);
+                        amounts.push_back(split_amount);
+                    }
+
+                    return Ok((
+                        amount - total_fee,
+                        Some((total_fee, cfg.splits, amounts)),
+                        None,
+                    ));
+                }
+
+                return Ok((amount - total_fee, None, None));
+            }
+        }
+
         match try_load_config(env) {
             Some(cfg) if cfg.fee_rate_bps > 0 => {
-                // `amount` is caller-supplied and can reach i128::MAX, so the
-                // bps multiplication is the first thing that would overflow.
                 let fee = amount
                     .checked_mul(cfg.fee_rate_bps as i128)
                     .ok_or(StreamError::ArithmeticOverflow)?
                     / 10_000;
-                // `fee_rate_bps` is capped at MAX_FEE_RATE_BPS (10%), so `fee`
-                // is always well below `amount` and this cannot underflow.
-                Ok((amount - fee, fee, (fee > 0).then_some(cfg.treasury)))
+                if fee > 0 {
+                    Ok((amount - fee, None, Some((fee, cfg.treasury))))
+                } else {
+                    Ok((amount, None, None))
+                }
             }
-            _ => Ok((amount, 0, None)),
+            _ => Ok((amount, None, None)),
         }
     }
 
-    /// Transfers the previously calculated fee after the caller has persisted
-    /// all stream state changes for this operation.
-    fn transfer_fee(
+    /// Transfers a previously calculated fee after stream state is persisted (CEI).
+    ///
+    /// Emits `protocol_fee_collected` for dynamic splits or `fee_collected`
+    /// for the legacy path. No-op when both fees are `None`.
+    fn disburse_fee(
         env: &Env,
         token_address: &Address,
         stream_id: u64,
-        fee: i128,
-        treasury: Option<Address>,
+        dynamic_fee: Option<(i128, Vec<FeeRecipient>, Vec<i128>)>,
+        legacy_fee: Option<(i128, Address)>,
     ) {
-        if let Some(treasury) = treasury {
+        if let Some((total_fee, splits, amounts)) = dynamic_fee {
+            let token_client = token::Client::new(env, token_address);
+            let contract_address = env.current_contract_address();
+            for i in 0..splits.len() {
+                let split = splits.get(i).unwrap();
+                let amt = amounts.get(i).unwrap_or(0);
+                if amt > 0 {
+                    token_client.transfer(&contract_address, &split.recipient, &amt);
+                }
+            }
+            env.events().publish(
+                (Symbol::new(env, "protocol_fee_collected"), stream_id),
+                ProtocolFeeCollectedEvent {
+                    stream_id,
+                    token: token_address.clone(),
+                    total_fee,
+                    recipients: splits,
+                    amounts,
+                },
+            );
+        } else if let Some((fee, treasury)) = legacy_fee {
             let token_client = token::Client::new(env, token_address);
             token_client.transfer(&env.current_contract_address(), &treasury, &fee);
             env.events().publish(
