@@ -178,6 +178,13 @@ describe('Withdraw Handler', () => {
 
     await withdrawHandler(req as AuthenticatedRequest, res as Response);
     expect(res.status).toHaveBeenCalledWith(409);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'Conflict' }));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: {
+          code: 'CONFLICT',
+          message: 'No claimable balance is currently available',
+        },
+      })
+    );
   });
 });

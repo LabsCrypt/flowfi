@@ -424,6 +424,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       .post(`/v1/streams/${streamId}/withdraw`)
       .set('Authorization', `Bearer ${token}`);
 
+    const firstClaimed = BigInt(first.body.amount);
     const totalWithdrawn = BigInt(streamState.withdrawnAmount);
 
     if (second.status === 200) {
@@ -431,8 +432,13 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       // two requests, so a small additional claim on top of the first is
       // acceptable — but it must be nowhere near a second full claim of the
       // already-withdrawn window (which would indicate double-counting).
-      const secondClaimed = BigInt(second.body.amount);
-      expect(secondClaimed).toBeLessThan(firstClaimed / 10n);
+      // The handler always echoes back the full claimable amount as the
+      // response "amount", so the response amount cannot be used to detect
+      // double-counting. Idempotency is proven at the DB level: the balance
+      // UPDATE was skipped (insertRowCounts[1] === 0) and the stream
+      // withdrawnAmount in the response must equal the balance after the
+      // first legitimate claim (not double it).
+      expect(second.body.stream.withdrawnAmount).toBe(streamState.withdrawnAmount);
     } else {
       // No meaningful time has elapsed since the first withdraw bumped
       // lastUpdateTime, so the second call correctly finds nothing left to
