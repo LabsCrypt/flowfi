@@ -4,11 +4,15 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";
-import { ArrowLeft, Pause, Play, X, Plus, Download, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Pause, Play, X, Plus, Download, AlertTriangle, FileText } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { LiveValue } from "@/components/ui/LiveValue";
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
+import { useTokenPrice, convertToFiat, formatFiatAmount } from "@/hooks/useTokenPrice";
 import { useWallet } from "@/context/wallet-context";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { useStreamingAmount } from "@/hooks/useStreamingAmount";
 import TransactionTracker, {
   useTransactionTracker,
 } from "@/components/TransactionTracker";
@@ -24,7 +28,7 @@ import {
 } from "@/lib/soroban";
 import { CancelConfirmModal } from "@/components/stream-creation/CancelConfirmModal";
 import type { BackendStreamEvent } from "@/lib/api-types";
-import { formatAmount, streamProgressPercent } from "@/utils/amount";
+import { formatAmount, streamProgressPercent, validateAmountInput } from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
 import { LiquidStreamVisualizer } from "@/components/LiquidStreamVisualizer";
 
@@ -79,8 +83,27 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
   const [topUpAmount, setTopUpAmount] = useState("");
   const [showTopUp, setShowTopUp] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [receiptTxHash, setReceiptTxHash] = useState<string | null>(null);
 
-  const [liveClaimable, setLiveClaimable] = useState<bigint>(0n);
+  // Shared, visibility-aware claimable ticking (rAF-based, pauses when the
+  // tab is hidden) — same hook the dashboard uses, so both pages compute the
+  // "live claimable amount" through one implementation. See issue #1267.
+  const liveClaimableNumber = useStreamingAmount({
+    deposited: stream ? Number(stream.depositedAmount) : 0,
+    withdrawn: stream ? Number(stream.withdrawnAmount) : 0,
+    ratePerSecond: stream ? Number(stream.ratePerSecond) : 0,
+    lastUpdateTime: stream?.lastUpdateTime,
+    isActive: stream?.isActive ?? false,
+    isPaused: stream?.isPaused ?? false,
+    pausedAt: stream?.pausedAt != null ? Number(stream.pausedAt) : null,
+  });
+
+  // The hook operates on numbers (same as the dashboard), but this page
+  // formats raw stroop amounts, so round back to an exact bigint for display.
+  const liveClaimable =
+    Number.isFinite(liveClaimableNumber)
+      ? BigInt(Math.round(liveClaimableNumber))
+      : 0n;
 
   const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],
@@ -153,38 +176,8 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       }
     };
 
-    refreshStreamData();
-
-    return () => controller.abort();
+    refreshStreamData();    return () => controller.abort();
   }, [streamEvents, fetchStream, fetchEvents, eventsPage]);
-
-  useEffect(() => {
-    if (!stream) return;
-
-    const ratePerSecond = BigInt(stream.ratePerSecond);
-    const withdrawn = BigInt(stream.withdrawnAmount);
-    const deposited = BigInt(stream.depositedAmount);
-    const lastUpdate = stream.lastUpdateTime;
-
-    const updateClaimable = () => {
-      if (!stream.isActive || stream.isPaused) {
-        setLiveClaimable(deposited - withdrawn);
-        return;
-      }
-
-      const now = Math.floor(Date.now() / 1000);
-      const elapsed = BigInt(now - lastUpdate);
-      const accrued = elapsed * ratePerSecond;
-      const totalClaimable = deposited - withdrawn + accrued;
-
-      setLiveClaimable(totalClaimable > deposited ? deposited : totalClaimable);
-    };
-
-    updateClaimable();
-    const interval = setInterval(updateClaimable, 1000);
-
-    return () => clearInterval(interval);
-  }, [stream]);
 
   const isSender = useMemo(() => {
     if (!session || !stream) return false;
@@ -201,6 +194,29 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
     return resolveTokenSymbol(stream.tokenAddress);
   }, [stream]);
 
+  const { data: tokenPrice } = useTokenPrice({ tokenSymbol, enabled: Boolean(stream) });
+
+  useEffect(() => {
+    if (!stream) return;
+    const controller = new AbortController();
+    fetch(`${API_BASE_URL}/streams/${streamId}/events?limit=200&order=asc`, {
+      signal: controller.signal,
+    })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        const createdEvent = data?.events?.find(
+          (event: BackendStreamEvent) => event.eventType === "CREATED"
+        );
+        if (createdEvent?.transactionHash) setReceiptTxHash(createdEvent.transactionHash);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name !== "AbortError") {
+          logger.warn("Could not load stream creation transaction for receipt", err);
+        }
+      });
+    return () => controller.abort();
+  }, [stream, streamId]);
+
   const handleWithdraw = async () => {
     if (!session) {
       toast.error("Please connect your wallet");
@@ -211,7 +227,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       const result = await withdrawFromStream(session, { streamId: BigInt(streamId) });
       tracker.submit(result.txHash);
       tracker.confirm();
-      toast.success("Withdrawal successful!");
+      transactionSuccessToast("Withdrawal successful!");
       await fetchStream();
       tracker.succeed();
     } catch (err) {
@@ -226,8 +242,11 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       toast.error("Please connect your wallet");
       return;
     }
-    if (!topUpAmount || parseFloat(topUpAmount) <= 0) {
-      toast.error("Please enter a valid amount");
+    // Same validation as TopUpModal: rejects over-precise input instead of
+    // letting toBaseUnits silently round it.
+    const amountError = validateAmountInput(topUpAmount, 7);
+    if (amountError) {
+      toast.error(amountError);
       return;
     }
     tracker.start();
@@ -236,7 +255,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       const result = await topUpStream(session, { streamId: BigInt(streamId), amount });
       tracker.submit(result.txHash);
       tracker.confirm();
-      toast.success("Stream topped up successfully!");
+      transactionSuccessToast("Stream topped up successfully!");
       setShowTopUp(false);
       setTopUpAmount("");
       await fetchStream();
@@ -258,7 +277,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       const result = await pauseStream(session, { streamId: BigInt(streamId) });
       tracker.submit(result.txHash);
       tracker.confirm();
-      toast.success("Stream paused");
+      transactionSuccessToast("Stream paused");
       await fetchStream();
       tracker.succeed();
     } catch (err) {
@@ -278,7 +297,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       const result = await resumeStream(session, { streamId: BigInt(streamId) });
       tracker.submit(result.txHash);
       tracker.confirm();
-      toast.success("Stream resumed");
+      transactionSuccessToast("Stream resumed");
       await fetchStream();
       tracker.succeed();
     } catch (err) {
@@ -298,7 +317,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       const result = await cancelStream(session, { streamId: BigInt(streamId) });
       tracker.submit(result.txHash);
       tracker.confirm();
-      toast.success("Stream cancelled");
+      transactionSuccessToast("Stream cancelled");
       setShowCancelModal(false);
       await fetchStream();
       tracker.succeed();
@@ -416,7 +435,17 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             <h1 className="text-2xl font-bold">Stream Details</h1>
           </div>
           <div className="ml-auto">
-            <StatusBadge status={stream.status} isPaused={stream.isPaused} />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm hover:bg-white/5"
+              >
+                <FileText className="h-4 w-4" />
+                Download Tax Receipt (PDF)
+              </button>
+              <StatusBadge status={stream.status} isPaused={stream.isPaused} />
+            </div>
           </div>
         </div>
 
@@ -455,6 +484,37 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             </div>
           </div>
         </div>
+
+        <section className="receipt-print" aria-label="FlowFi payment receipt">
+          <header>
+            <h1>FlowFi Payment Receipt</h1>
+            <p>Issued {new Date().toLocaleDateString()}</p>
+          </header>
+          <h2>Stream #{stream.streamId}</h2>
+          <dl>
+            <ReceiptRow label="Transaction hash" value={receiptTxHash ?? "Unavailable from indexer"} />
+            <ReceiptRow label="Sender" value={stream.sender} />
+            <ReceiptRow label="Recipient" value={stream.recipient} />
+            <ReceiptRow label="Start" value={new Date(stream.startTime * 1000).toLocaleString()} />
+            <ReceiptRow label="Cliff" value="Not applicable (linear stream)" />
+            <ReceiptRow
+              label="Completion"
+              value={new Date((stream.endTime ?? (stream.ratePerSecond !== "0"
+                ? stream.startTime + Math.ceil(Number(stream.depositedAmount) / Number(stream.ratePerSecond))
+                : stream.startTime)) * 1000).toLocaleString()}
+            />
+            <ReceiptRow
+              label="Total streamed"
+              value={`${formatAmount(deposited, 7)} ${tokenSymbol} (${formatFiatAmount(convertToFiat(deposited, tokenPrice?.priceUSD ?? 0))})`}
+            />
+            <ReceiptRow
+              label="Withdrawn"
+              value={`${formatAmount(withdrawn, 7)} ${tokenSymbol} (${formatFiatAmount(convertToFiat(withdrawn, tokenPrice?.priceUSD ?? 0))})`}
+            />
+            <ReceiptRow label="Token contract" value={stream.tokenAddress} />
+          </dl>
+          <p className="receipt-disclaimer">USD amounts are estimates using the current token price and are not a historical valuation.</p>
+        </section>
 
         {/* Financial Overview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -706,6 +766,15 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function ReceiptRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -726,6 +795,7 @@ function StatCard({
         {value}
         {live && <span className="ml-2 text-xs animate-pulse">●</span>}
       </p>
+      {live && <LiveValue value={value} prefix={label} />}
     </div>
   );
 }

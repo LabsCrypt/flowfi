@@ -31,6 +31,15 @@ interface ClaimableServiceOptions {
   nowMs?: () => number;
 }
 
+/**
+ * Coarseness (in seconds) of the timestamp component in the claimable-amount
+ * cache key (Issue #1249). Without bucketing, the key embeds the current
+ * second, so sustained polling generates a fresh key every second per stream
+ * state and the cache Map grows continuously. Rounding to a 5s bucket cuts
+ * that key churn by ~5x while staying well within the 5s cache TTL.
+ */
+const CLAIMABLE_CACHE_BUCKET_SECONDS = 5;
+
 function clampI128(value: bigint): bigint {
   if (value > I128_MAX) return I128_MAX;
   if (value < I128_MIN) return I128_MIN;
@@ -102,7 +111,12 @@ export class ClaimableAmountService {
         ? Math.floor(requestedAt)
         : Math.floor(this.nowMs() / 1000);
 
-    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${calculatedAt}`;
+    // Bucket the timestamp so requests landing within the same window share a
+    // cache entry instead of creating a new key every second.
+    const cacheKeyBucket =
+      Math.floor(calculatedAt / CLAIMABLE_CACHE_BUCKET_SECONDS) *
+      CLAIMABLE_CACHE_BUCKET_SECONDS;
+    const cacheKey = `claimable:${stream.streamId}:${getStateFingerprint(stream)}:${cacheKeyBucket}`;
     const cachedEntry = cache.get<Omit<ClaimableAmountResult, 'cached'>>(cacheKey);
 
     if (cachedEntry) {

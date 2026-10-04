@@ -19,6 +19,7 @@ import {
   shortenPublicKey,
   isExpectedNetwork,
 } from "@/lib/wallet";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { WalletModal } from "./WalletModal";
 
@@ -68,12 +69,12 @@ export function WalletButton() {
 
   const handleCopy = async () => {
     if (!session?.publicKey) return;
-    try {
-      await navigator.clipboard.writeText(session.publicKey);
+    const success = await copyToClipboard(session.publicKey, {
+      successMessage: "Address copied to clipboard",
+    });
+    if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API may be blocked in some environments
     }
   };
 

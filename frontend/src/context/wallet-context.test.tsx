@@ -77,6 +77,39 @@ describe('WalletProvider', () => {
       expect(result.current.session).toBeNull();
     });
 
+    it('should recover from syntactically invalid stored JSON without crashing', async () => {
+      localStorage.setItem(STORAGE_KEY, '{not valid json,,,');
+
+      const { result } = renderHook(() => useWallet(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isHydrated).toBe(true);
+      });
+
+      expect(result.current.status).toBe('idle');
+      expect(result.current.session).toBeNull();
+      expect(result.current.errorMessage).toBeNull();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('should discard a stored session that parses to a non-object value', async () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify('just-a-string'));
+
+      const { result } = renderHook(() => useWallet(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isHydrated).toBe(true);
+      });
+
+      expect(result.current.status).toBe('idle');
+      expect(result.current.session).toBeNull();
+      expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
     it('should discard a session with mocked !== false', async () => {
       const mockedSession = { ...mockSession, mocked: true };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(mockedSession));

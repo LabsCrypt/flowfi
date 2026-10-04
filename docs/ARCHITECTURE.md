@@ -205,21 +205,19 @@ Dashboard / NotificationDropdown  re-render with live data
 
 ### Indexer Ownership & Naming
 
-Three files with overlapping names live next to each other, but only one of them is the indexer that writes stream state. This section documents which is the source of truth and which is legacy so contributors know where to start when debugging indexing.
+Two files share the `indexer` name, but only one of them is the indexer that writes stream state. This section documents which is the source of truth so contributors know where to start when debugging indexing.
 
 | File | Role | Status |
 |------|------|--------|
 | `backend/src/workers/soroban-event-worker.ts` (`SorobanEventWorker`) | **Source-of-truth indexer.** Polls Soroban RPC, decodes XDR, persists `Stream` / `StreamEvent`, advances the `IndexerState` cursor, and broadcasts SSE. | Active / source of truth. Started by `backend/src/workers/index.ts` |
-| `backend/src/services/soroban-indexer.service.ts` (`SorobanIndexerService`) | **Legacy indexer being phased out.** A simpler duplicate poller that writes to the same rows and races with the worker. | **Legacy — do not extend.** Removal tracked with the functional consolidation (issue #801). Started directly from `backend/src/index.ts` |
-| `backend/src/services/indexerService.ts` | **Not an indexer at all.** Admin control-plane helpers (`getIndexerStatus`, `resetIndexer`, `replayFromLedger`) that read/reset `IndexerState` and trigger the worker's poll loop. | Active. The name is misleading; it was kept alongside the legacy indexer above |
+| `backend/src/services/indexerService.ts` | **Not an indexer at all.** Admin control-plane helpers (`getIndexerStatus`, `resetIndexer`, `replayFromLedger`) that read/reset `IndexerState` and trigger the worker's poll loop. | Active. The name is misleading. |
 
 Key points:
 
 1. **When debugging indexing, read `backend/src/workers/soroban-event-worker.ts` first.** It is the only file that persists canonical stream state.
-2. **Do not add new behavior to `soroban-indexer.service.ts`.** It exists only for backwards compatibility while the double-indexer race (issue #801) is consolidated.
-3. **`indexerService.ts` is control-plane only** — it never reads the chain; it manages the shared cursor and triggers replays.
+2. **`indexerService.ts` is control-plane only** — it never reads the chain; it manages the shared cursor and triggers replays.
 
-**Naming convention plan:** the team convention is kebab-case with a `.service.ts` suffix (e.g. `soroban-indexer.service.ts`, `claimable.service.ts`, `sse.service.ts`). The helper file `indexerService.ts` breaks that convention and is also a misleading name. Once the functional consolidation (issue #801) lands, `indexerService.ts` is expected to be renamed to `indexer.service.ts`.
+**Naming convention plan:** the team convention is kebab-case with a `.service.ts` suffix (e.g. `claimable.service.ts`, `sse.service.ts`). The helper file `indexerService.ts` breaks that convention and is also a misleading name. It is expected to be renamed to `indexer.service.ts`.
 
 ### Deduplication
 

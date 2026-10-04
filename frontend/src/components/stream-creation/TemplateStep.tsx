@@ -101,7 +101,14 @@ export const TemplateStep: React.FC<TemplateStepProps> = ({
           Save your current amount, duration, token, and tag to reuse later.
         </p>
         <div className="flex flex-col md:flex-row gap-3">
+          <label
+            htmlFor="custom-template-name"
+            className="block text-sm font-medium mb-2 text-foreground"
+          >
+            Template name
+          </label>
           <input
+            id="custom-template-name"
             type="text"
             value={customTemplateName}
             onChange={(e) => onCustomTemplateNameChange(e.target.value)}

@@ -1,16 +1,11 @@
 import type { WalletSession } from "@/lib/wallet";
-import { logger } from "@/lib/logger";
+import { getNetworkConfig, type NetworkId } from "@/lib/stellar-config";
 
-const CONTRACT_ID =
-  process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID ?? "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-
-const SOROBAN_RPC_URL =
-  process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
-
-const NETWORK_PASSPHRASE =
-  process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ?? "Test SDF Network ; September 2015";
-
-const MOCK_DELAY_MS = 1400;
+function activeNetworkConfig() {
+  const stored = typeof window === "undefined" ? null : window.localStorage.getItem("flowfi.network");
+  const id: NetworkId = stored === "mainnet" || stored === "futurenet" || stored === "sandbox" ? stored : "testnet";
+  return getNetworkConfig(id);
+}
 
 export interface CreateStreamParams {
   recipient: string;
@@ -30,6 +25,10 @@ export interface CancelParams {
 
 export interface WithdrawParams {
   streamId: bigint;
+}
+
+export interface BatchWithdrawParams {
+  streamIds: bigint[];
 }
 
 export interface PauseParams {
@@ -166,13 +165,14 @@ export async function fetchTokenBalance(
   const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
 
   const tokenAddress = getTokenAddress(tokenSymbol);
-  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  const config = activeNetworkConfig();
+  const server = new rpc.Server(config.rpcUrl, { allowHttp: config.id === "sandbox" });
   const account = await server.getAccount(publicKey);
   const tokenContract = new Contract(tokenAddress);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase: config.passphrase,
   })
     .addOperation(tokenContract.call("balance", new Address(publicKey).toScVal()))
     .setTimeout(30)
@@ -218,17 +218,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function mockTxHash(): string {
-  return Array.from({ length: 64 }, () =>
-    Math.floor(Math.random() * 16).toString(16),
-  ).join("");
-}
 
-async function mockCall(label: string): Promise<SorobanResult> {
-  logger.info(`[soroban:mock] ${label}`);
-  await wait(MOCK_DELAY_MS);
-  return { success: true, txHash: mockTxHash() };
-}
 
 async function freighterCall(
   publicKey: string,
@@ -244,13 +234,14 @@ async function freighterCall(
 
   const { signTransaction } = await import("@stellar/freighter-api");
 
-  const server = new rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+  const config = activeNetworkConfig();
+  const server = new rpc.Server(config.rpcUrl, { allowHttp: config.id === "sandbox" });
   const account = await server.getAccount(publicKey);
-  const contract = new Contract(CONTRACT_ID);
+  const contract = new Contract(config.contractId);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase: config.passphrase,
   })
     .addOperation(contract.call(method, ...args))
     .setTimeout(30)
@@ -259,7 +250,7 @@ async function freighterCall(
   const simResult = await server.simulateTransaction(tx);
   if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
     if (isContractNotFoundError(simResult)) {
-      throw contractNotFoundError(CONTRACT_ID);
+      throw contractNotFoundError(config.contractId);
     }
     throw new SorobanCallError(`Simulation failed: ${simResult.error}`, "NetworkError");
   }
@@ -268,7 +259,7 @@ async function freighterCall(
 
   const { signedTxXdr, error: signError } = await signTransaction(
     preparedTx.toXDR(),
-    { networkPassphrase: NETWORK_PASSPHRASE },
+    { networkPassphrase: config.passphrase },
   );
 
   if (signError) {
@@ -279,7 +270,7 @@ async function freighterCall(
     throw new SorobanCallError(msg, "Unknown");
   }
 
-  const signedTx = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
+  const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.passphrase);
   const sendResult = await server.sendTransaction(signedTx);
 
   if (sendResult.status === "ERROR") {
@@ -322,9 +313,6 @@ export async function createStream(
   session: WalletSession,
   params: CreateStreamParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`create_stream recipient=${params.recipient} amount=${params.amount} duration=${params.durationSeconds}s`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "create_stream", [
     new Address(session.publicKey).toScVal(),
@@ -339,9 +327,6 @@ export async function topUpStream(
   session: WalletSession,
   params: TopUpParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`top_up_stream stream_id=${params.streamId} amount=${params.amount}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "top_up_stream", [
     new Address(session.publicKey).toScVal(),
@@ -354,9 +339,6 @@ export async function cancelStream(
   session: WalletSession,
   params: CancelParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`cancel_stream stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "cancel_stream", [
     new Address(session.publicKey).toScVal(),
@@ -368,9 +350,6 @@ export async function withdrawFromStream(
   session: WalletSession,
   params: WithdrawParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`withdraw stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "withdraw", [
     new Address(session.publicKey).toScVal(),
@@ -378,13 +357,20 @@ export async function withdrawFromStream(
   ]);
 }
 
+export async function batchWithdrawFromStreams(
+  session: WalletSession,
+  params: BatchWithdrawParams,
+): Promise<SorobanResult> {
+  const { nativeToScVal } = await import("@stellar/stellar-sdk");
+  return freighterCall(session.publicKey, "batch_withdraw", [
+    nativeToScVal(params.streamIds, { type: "vec" }),
+  ]);
+}
+
 export async function pauseStream(
   session: WalletSession,
   params: PauseParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`pause_stream stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "pause_stream", [
     new Address(session.publicKey).toScVal(),
@@ -396,9 +382,6 @@ export async function resumeStream(
   session: WalletSession,
   params: ResumeParams,
 ): Promise<SorobanResult> {
-  if (session.mocked) {
-    return mockCall(`resume_stream stream_id=${params.streamId}`);
-  }
   const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
   return freighterCall(session.publicKey, "resume_stream", [
     new Address(session.publicKey).toScVal(),

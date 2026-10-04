@@ -1,0 +1,208 @@
+# Scheduled end-to-end integration suite against the live Stellar Testnet.
+#
+# Mocked RPC tests in CI cannot detect testnet drift: protocol upgrades,
+# ledger close timing, RPC behaviour changes, fee surges, Friendbot outages,
+# or indexer ingestion regressions. This workflow:
+#   1. Builds the current stream_contract and deploys a fresh instance to
+#      testnet (or reuses a contract ID passed via workflow_dispatch).
+#   2. Runs backend/e2e/testnet against the live network and a real Postgres,
+#      exercising create_stream → withdraw → cancel_stream and verifying the
+#      SorobanEventWorker ingests those transactions.
+#   3. On scheduled failures, opens (or comments on) a tracking issue.
+name: Testnet E2E
+
+on:
+  schedule:
+    # Every 6 hours, offset from the hour to avoid peak Friendbot load.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      contract_id:
+        description: "Existing testnet stream contract ID (C...). Leave empty to deploy a fresh one."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: testnet-e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+  STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+
+jobs:
+  deploy-contract:
+    name: Deploy stream_contract to testnet
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      contract_id: ${{ steps.resolve.outputs.contract_id }}
+    steps:
+      - name: Checkout code
+        if: inputs.contract_id == ''
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        if: inputs.contract_id == ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Rust Cache
+        if: inputs.contract_id == ''
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "contracts -> target"
+
+      - name: Install Stellar CLI
+        if: inputs.contract_id == ''
+        run: |
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
+          echo "$HOME/.stellar-cli/bin" >> "$GITHUB_PATH"
+
+      - name: Build & optimize WASM
+        if: inputs.contract_id == ''
+        working-directory: contracts
+        run: |
+          set -euo pipefail
+          cargo build --package stream_contract --target wasm32-unknown-unknown --release
+          stellar contract optimize \
+            --wasm target/wasm32-unknown-unknown/release/stream_contract.wasm \
+            --wasm-out target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm
+
+      - name: Fund ephemeral deployer & deploy
+        id: deploy
+        if: inputs.contract_id == ''
+        run: |
+          set -euo pipefail
+          # Ephemeral identity funded by Friendbot — no long-lived secrets needed.
+          for i in 1 2 3 4 5; do
+            stellar keys generate e2e-deployer --network testnet --fund --overwrite && break
+            echo "Friendbot funding failed (attempt $i), retrying…"; sleep $((i * 5))
+          done
+          CONTRACT_ID=""
+          for i in 1 2 3; do
+            CONTRACT_ID=$(stellar contract deploy \
+              --wasm contracts/target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm \
+              --source-account e2e-deployer \
+              --network testnet) && break
+            echo "Deploy failed (attempt $i), retrying…"; sleep $((i * 10))
+          done
+          if [[ ! "$CONTRACT_ID" =~ ^C[A-Z2-7]{55}$ ]]; then
+            echo "::error::Contract deployment did not return a valid contract ID: '$CONTRACT_ID'"
+            exit 1
+          fi
+          echo "contract_id=$CONTRACT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve contract ID
+        id: resolve
+        run: |
+          set -euo pipefail
+          ID="${{ inputs.contract_id || steps.deploy.outputs.contract_id }}"
+          echo "contract_id=$ID" >> "$GITHUB_OUTPUT"
+          echo "### Testnet contract under test: \`$ID\`" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: Testnet E2E suite
+    runs-on: ubuntu-latest
+    needs: deploy-contract
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: flowfi_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_e2e
+      E2E_STREAM_CONTRACT_ID: ${{ needs.deploy-contract.outputs.contract_id }}
+      E2E_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+      E2E_HORIZON_URL: https://horizon-testnet.stellar.org
+      E2E_FRIENDBOT_URL: https://friendbot.stellar.org
+      NODE_ENV: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Setup Database
+        working-directory: backend
+        run: |
+          npx prisma generate --schema=prisma/schema.prisma
+          npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
+
+      - name: Run Testnet E2E suite
+        working-directory: backend
+        run: npm run test:e2e:testnet
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testnet-e2e-results
+          path: backend/e2e-results/
+          if-no-files-found: ignore
+
+  report-failure:
+    name: Report scheduled failure
+    runs-on: ubuntu-latest
+    needs: [deploy-contract, e2e]
+    if: failure() && github.event_name == 'schedule'
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'testnet-e2e-failure';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `Scheduled Stellar Testnet E2E run failed: ${runUrl}`,
+              '',
+              'Possible causes: testnet protocol upgrade, RPC regression, ledger timing drift,',
+              'fee surge, Friendbot outage, or indexer ingestion drift. See the job logs and',
+              'the `testnet-e2e-results` artifact for details.',
+            ].join('\n');
+
+            try {
+              await github.rest.issues.getLabel({ ...context.repo, name: label });
+            } catch {
+              await github.rest.issues.createLabel({ ...context.repo, name: label, color: 'd73a4a' });
+            }
+
+            const { data: open } = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: label, per_page: 1,
+            });
+            if (open.length > 0) {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: open[0].number, body });
+            } else {
+              await github.rest.issues.create({
+                ...context.repo,
+                title: 'Stellar Testnet E2E suite failing',
+                labels: [label],
+                body,
+              });
+            }

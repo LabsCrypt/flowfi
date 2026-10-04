@@ -23,8 +23,22 @@ const router = Router();
  *     responses:
  *       200:
  *         description: Challenge nonce issued
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthChallengeResponse'
  *       400:
  *         description: Invalid publicKey
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       429:
+ *         description: Too many requests
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/challenge', issueChallenge);
 
@@ -50,8 +64,28 @@ router.post('/challenge', issueChallenge);
  *     responses:
  *       200:
  *         description: JWT token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/AuthVerifyResponse'
+ *       400:
+ *         description: Missing publicKey or signedTransaction
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       401:
  *         description: Invalid signature or expired challenge
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       429:
+ *         description: Too many requests
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  */
 router.post('/verify', verifyChallenge);
 

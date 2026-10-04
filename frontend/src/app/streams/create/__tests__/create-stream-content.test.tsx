@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
-import React from "react";
 
 // ─── Session storage mock ───────────────────────────────────────────────────
 const sessionStorageMock = (() => {
@@ -108,7 +107,7 @@ describe("CreateStreamContent sessionStorage draft persistence", () => {
     const lastCallArgs =
       sessionStorageMock.setItem.mock.calls[
         sessionStorageMock.setItem.mock.calls.length - 1
-      ];
+      ]!;
     expect(lastCallArgs[0]).toBe("flowfi.create-stream.draft.v1");
 
     const savedData = JSON.parse(lastCallArgs[1]);

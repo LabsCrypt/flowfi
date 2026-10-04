@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import type { Stream } from '@/lib/dashboard';
 import { useStreamingAmount } from '@/hooks/useStreamingAmount';
 import toast from 'react-hot-toast';
+import { transactionSuccessToast } from '@/lib/transaction-feedback';
 
 
 interface IncomingStreamsProps {
@@ -103,7 +104,7 @@ const IncomingStreams: React.FC<IncomingStreamsProps> = ({
     const handleWithdraw = async (stream: Stream) => {
         try {
             await onWithdraw(stream);
-            toast.success(`Successfully withdrew from stream #${stream.id}`);
+            transactionSuccessToast(`Successfully withdrew from stream #${stream.id}`);
         } catch {
             toast.error(`Failed to withdraw from stream #${stream.id}`);
         }

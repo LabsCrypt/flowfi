@@ -1,0 +1,146 @@
+# Contract Deployment Workflow for FlowFi
+#
+# Compiles the Soroban stream contract to optimized WASM, runs contract tests,
+# and deploys + initializes the contract on Stellar Testnet on demand (or on
+# Mainnet for release tags). The resulting contract ID is surfaced in the job
+# summary and published as a release artifact.
+name: Deploy Soroban Contracts
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Target network (testnet|mainnet)"
+        required: true
+        default: "testnet"
+        type: choice
+        options:
+          - testnet
+          - mainnet
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.network || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: Build & Deploy stream_contract
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'release' && 'production' || 'staging' }}
+
+    env:
+      NETWORK: ${{ inputs.network || (github.event_name == 'release' && 'mainnet' || 'testnet') }}
+      DEPLOYER_SECRET: ${{ secrets.DEPLOYER_SECRET }}
+      ADMIN_ADDRESS: ${{ secrets.ADMIN_ADDRESS }}
+      TREASURY_ADDRESS: ${{ secrets.TREASURY_ADDRESS }}
+      FEE_RATE_BPS: ${{ secrets.FEE_RATE_BPS }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspace: "contracts -> target"
+
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
+          echo "$HOME/.stellar-cli/bin" >> $GITHUB_PATH
+
+      - name: Run Contract Tests
+        run: cargo test --package stream_contract
+        working-directory: contracts
+
+      - name: Build & Optimize WASM
+        run: |
+          set -euo pipefail
+          cd contracts
+          cargo build --target wasm32-unknown-unknown --release
+          RELEASE_DIR="target/wasm32-unknown-unknown/release"
+          for w in "$RELEASE_DIR"/stream_contract.wasm; do
+            stellar contract optimize --wasm "$w" --wasm-out "$RELEASE_DIR/stream_contract.optimized.wasm"
+          done
+          ls -la "$RELEASE_DIR"/*.wasm
+
+      - name: Inspect Contract Interface & WASM Size
+        run: |
+          set -euo pipefail
+          WASM=contracts/target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm
+          stellar contract inspect --wasm "$WASM"
+          SIZE=$(stat -c%s "$WASM")
+          echo "Optimized WASM size: $SIZE bytes"
+          if [ "$SIZE" -ge 65536 ]; then
+            echo "ERROR: optimized WASM exceeds 64KB budget ($SIZE bytes)"
+            exit 1
+          fi
+          echo "WASM_WASM_PATH=$WASM" >> $GITHUB_ENV
+
+      - name: Deploy & Initialize Contract
+        run: ./scripts/deploy.sh --network "$NETWORK"
+
+      - name: Read Deployed Contract ID
+        id: contract
+        run: |
+          set -euo pipefail
+          CONTRACT_ID=$(jq -r --arg net "$NETWORK" '.[$net].contractId' deployment-info.json)
+          echo "contract_id=$CONTRACT_ID" >> $GITHUB_OUTPUT
+          echo "deployment-json=$(jq -c . deployment-info.json)" >> $GITHUB_OUTPUT
+
+      - name: Emit Deployment Summary
+        if: always()
+        run: |
+          {
+            echo "## Deployment Summary"
+            echo ""
+            echo "- **Network**: \`$NETWORK\`"
+            echo "- **Contract ID**: \`${{ steps.contract.outputs.contract_id }}\`"
+            echo "- **WASM**: \`${{ env.WASM_WASM_PATH }}\`"
+            echo "- **Deployment info**: "
+            echo '```json'
+            echo "${{ steps.contract.outputs.deployment-json }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Optimized WASM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stream-contract-${{ env.NETWORK }}
+          path: contracts/target/wasm32-unknown-unknown/optimized/*.wasm
+          if-no-files-found: error
+
+      - name: Upload Deployment Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-info-${{ env.NETWORK }}
+          path: deployment-info.json
+          if-no-files-found: error
+
+      - name: Commit Deployment Info
+        if: github.event_name == 'release'
+        env:
+          NETWORK: ${{ env.NETWORK }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployment-info.json
+          if git diff --cached --quiet; then
+            echo "No deployment-info.json changes to commit"
+            exit 0
+          fi
+          git commit -m "chore(contracts): record $NETWORK contract deployment"
+          git push

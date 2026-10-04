@@ -25,6 +25,8 @@ const {
       count: vi.fn().mockResolvedValue(0),
     },
     $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1n }]),
+    $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
+    $transaction: vi.fn(async (fn: any) => fn(mockPrisma)),
     $disconnect: vi.fn(),
   },
 }));
