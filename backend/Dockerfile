@@ -1,3 +1,6 @@
+# ============================================================
+# Stage 1: builder — full Node toolchain to compile TypeScript
+# ============================================================
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 
 WORKDIR /app
@@ -11,7 +14,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 
-RUN npm install
+# Install all deps (incl. devDependencies needed for tsc / prisma generate)
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
 COPY tsconfig.json ./
 COPY prisma.config.ts ./
@@ -19,7 +23,14 @@ COPY src ./src
 
 RUN npm run build
 
+# ============================================================
+# Stage 2: production runner — minimal Alpine image, non-root
+# ============================================================
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
+
+# Security: drop to non-root user for the running process
+RUN addgroup --system --gid 1001 nodejs \
+ && adduser  --system --uid 1001 --ingroup nodejs nodeapp
 
 WORKDIR /app
 
@@ -34,7 +45,7 @@ ENV NODE_ENV=production
 # `npx prisma db push` step the workflow runs against this container,
 # while keeping the install layer cached whenever prisma/ is unchanged.
 COPY package*.json ./
-RUN npm install --omit=dev --ignore-scripts
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; else npm install --omit=dev --ignore-scripts; fi
 
 # Copy the prisma schema into the runner. The boot-and-check-health step
 # in .github/workflows/ci.yml runs `npx prisma db push` against this
@@ -47,6 +58,16 @@ COPY --from=builder /app/src/generated ./dist/generated
 COPY --from=builder /app/prisma ./prisma
 COPY prisma.config.ts ./
 
+# Ownership hand-off — ensure the non-root user owns all app files
+RUN chown -R nodeapp:nodejs /app
+
+USER nodeapp
+
 EXPOSE 3001
+
+# Health check so orchestrators (Docker Compose / Kubernetes) can detect
+# when the API is ready to serve traffic.
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health || exit 1
 
 CMD ["npm", "start"]
