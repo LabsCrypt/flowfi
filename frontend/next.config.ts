@@ -2,12 +2,14 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // The workspace root lives one level above this directory. Pinning it here
-  // prevents Turbopack from inferring a wrong root when stray package-lock
-  // files exist outside the repo (e.g. ~/package-lock.json).
+  output: "standalone",
+
+  // The workspace root lives one level above this directory.
+  // Pin it to prevent Turbopack from inferring the wrong root.
   turbopack: {
     root: path.join(path.dirname(new URL(import.meta.url).pathname), ".."),
   },
+
   // Enable tree-shaking for icon/utility libraries to reduce per-route
   // bundle sizes (Issue #1254).
   experimental: {
@@ -17,6 +19,7 @@ const nextConfig: NextConfig = {
       "@tanstack/react-virtual",
     ],
   },
+
   async redirects() {
     return [
       {
