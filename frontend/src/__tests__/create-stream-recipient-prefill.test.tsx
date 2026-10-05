@@ -25,7 +25,7 @@ vi.mock("@/lib/soroban", () => ({
   toDurationSeconds: vi.fn(),
   getTokenAddress: vi.fn(),
   toSorobanErrorMessage: vi.fn(),
-  TOKEN_ADDRESSES: { XLM: "xlm-address" },
+  TOKEN_ADDRESSES: { XLM: "xlm-address" }, resolveTokenSymbol: vi.fn((t) => "MOCK"),
 }));
 
 import CreateStreamContent from "../app/streams/create/create-stream-content";
