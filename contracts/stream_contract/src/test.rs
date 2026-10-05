@@ -166,6 +166,9 @@ fn test_datakey_stream_serializes_deterministically() {
         paused_at: None,
         status: StreamStatus::Active,
         schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -2218,7 +2221,7 @@ fn test_resume_on_cancelled_stream_fails() {
     let result = client.try_resume_stream(&sender, &id);
     assert_eq!(
         result,
-        Err(Ok(StreamError::StreamNotActive)),
+        Err(Ok(StreamError::StreamInactive)),
         "resume_stream must return StreamNotActive on an inactive stream"
     );
 
@@ -2365,6 +2368,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);
@@ -5830,3 +5836,4 @@ fn test_batch_withdraw_never_exceeds_escrow_across_many_streams() {
     assert_eq!(balances.balance(&recipient), 10_000);
     assert_eq!(balances.balance(&contract), 0, "escrow not fully drained");
 }
+
