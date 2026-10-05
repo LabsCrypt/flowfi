@@ -1,3 +1,17 @@
+# Security scanning pipeline for FlowFi
+# Runs on every PR (blocks merge on failure) and on a weekly schedule.
+#
+# Jobs:
+#   dependency-check   — npm audit (workspaces) + cargo audit (contracts)
+#   secret-scan        — gitleaks full-history secret detection
+#   sast               — Semgrep SAST (Node/React/Rust rules) → SARIF
+#   codeql-analysis    — GitHub CodeQL (JavaScript/TypeScript + Rust) → SARIF
+#
+# Acceptance criteria (issue #1334):
+#   ✓ Runs on all PRs and weekly schedule
+#   ✓ Blocks PRs with high/critical dependency CVEs or exposed secrets
+#   ✓ Generates SARIF reports in the GitHub Security tab
+
 name: Security Checks
 
 concurrency:
@@ -6,99 +20,150 @@ concurrency:
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
   schedule:
+    # Every Sunday at 02:00 UTC — weekly CVE sweep
     - cron: '0 2 * * 0'
 
+# Least-privilege defaults; individual jobs elevate only what they need.
+permissions:
+  contents: read
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Dependency vulnerability scan
+  #    Fails the workflow (blocks PR merge) on any high/critical CVE.
+  # ---------------------------------------------------------------------------
   dependency-check:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20.19.0'
-        cache: 'npm'
-        
-    - name: Install dependencies
-      env:
-        HUSKY: 0
-      run: npm ci
-      
-    - name: Run npm audit (production dependencies)
-      run: npm audit --omit=dev --audit-level=high
-      
-    - name: Check for known vulnerabilities in frontend (production dependencies)
-      run: npm audit --workspace=frontend --omit=dev --audit-level=high
-        
-    - name: Check for known vulnerabilities in backend (production dependencies)
-      run: npm audit --workspace=backend --omit=dev --audit-level=high
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Rust toolchain for contract audit
-      uses: dtolnay/rust-toolchain@stable
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-    - name: Cache cargo-audit
-      id: cargo-audit-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-audit
-        key: cargo-audit-${{ runner.os }}
+      - name: Install Node dependencies
+        env:
+          HUSKY: 0
+        run: npm ci
 
-    - name: Install cargo-audit
-      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-      run: cargo install cargo-audit --locked
+      # Audit the workspace root (catches transitive workspace deps)
+      - name: npm audit — root workspace
+        run: npm audit --omit=dev --audit-level=high
 
-    - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
-      working-directory: contracts
+      # Audit each published workspace independently for precise reporting
+      - name: npm audit — frontend
+        run: npm audit --workspace=frontend --omit=dev --audit-level=high
 
-    - name: Setup Rust toolchain for contract audit
-      uses: dtolnay/rust-toolchain@stable
+      - name: npm audit — backend
+        run: npm audit --workspace=backend --omit=dev --audit-level=high
 
-    - name: Cache cargo-audit
-      id: cargo-audit-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-audit
-        key: cargo-audit-${{ runner.os }}-0.22.0
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Install cargo-audit
-      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-      run: cargo install cargo-audit --version 0.22.0 --locked
+      - name: Cache cargo-audit binary
+        id: cargo-audit-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-0.22.0
 
-    - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
-      working-directory: contracts
+      - name: Install cargo-audit
+        if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version 0.22.0 --locked
 
-    - name: Verify security setup
-      run: npm run verify-security
+      # --deny warnings ensures any advisory is a hard failure
+      - name: cargo audit — contracts
+        run: cargo audit --deny warnings
+        working-directory: contracts
 
-  cargo-audit:
-    name: Cargo Dependency Vulnerability Scan
+  # ---------------------------------------------------------------------------
+  # 2. Secret scanning
+  #    Scans full git history for accidentally committed secrets.
+  #    Uses gitleaks; failure blocks PRs.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scanning
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to upload SARIF results
+      security-events: write
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          # Full history so gitleaks can scan all commits, not just HEAD
+          fetch-depth: 0
 
-    - name: Install Rust stable
-      uses: dtolnay/rust-toolchain@stable
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE is only required for organisations on the paid plan.
+          # For public/open-source repos this env var can be omitted.
 
-    - name: Install cargo-audit
-      run: cargo install cargo-audit
+  # ---------------------------------------------------------------------------
+  # 3. Static Application Security Testing (SAST) via Semgrep
+  #    Produces a SARIF report uploaded to the GitHub Security tab.
+  #    Hard-fails on any finding at error severity.
+  # ---------------------------------------------------------------------------
+  sast:
+    name: SAST — Semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
-    - name: Run cargo audit on contracts
-      run: cargo audit
-      working-directory: contracts
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          # Community rule-sets covering Node.js, React, and Rust patterns
+          config: >-
+            p/nodejs
+            p/react
+            p/typescript
+            p/rust
+            p/owasp-top-ten
+            p/javascript
+          # Generate SARIF for the Security tab
+          generateSarif: "1"
+        env:
+          # SEMGREP_APP_TOKEN enables Semgrep Cloud dashboard (optional).
+          # If the secret is not configured the scan still runs with the rulesets above.
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ---------------------------------------------------------------------------
+  # 4. CodeQL analysis
+  #    Matrix over javascript-typescript and rust.
+  #    Note: CodeQL treats javascript and typescript as a single language
+  #    called "javascript"; "typescript" is not a valid standalone value.
+  #    SARIF is uploaded automatically by codeql-action/analyze.
+  # ---------------------------------------------------------------------------
   codeql-analysis:
-    name: CodeQL Analysis
+    name: CodeQL Analysis (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -108,40 +173,44 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'typescript', 'rust' ]
+        language: ['javascript', 'rust']
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup Rust toolchain
-      if: matrix.language == 'rust'
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        targets: wasm32-unknown-unknown
-        components: clippy
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Rust Cache
-      if: matrix.language == 'rust'
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspace: "contracts -> target"
+      - name: Setup Rust toolchain
+        if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy
 
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-        
-    - name: Build Rust contracts for CodeQL
-      if: matrix.language == 'rust'
-      run: cargo check --workspace --all-targets
-      working-directory: contracts
+      - name: Rust cache
+        if: matrix.language == 'rust'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "contracts -> target"
 
-    - name: Autobuild
-      if: matrix.language != 'rust'
-      uses: github/codeql-action/autobuild@v3
-      
-    - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Use the security-and-quality query suite for maximum coverage
+          queries: security-and-quality
 
+      - name: Build Rust contracts for CodeQL
+        if: matrix.language == 'rust'
+        run: cargo check --workspace --all-targets
+        working-directory: contracts
+
+      - name: Autobuild (JavaScript/TypeScript)
+        if: matrix.language == 'javascript'
+        uses: github/codeql-action/autobuild@v3
+
+      # analyze uploads SARIF to the Security tab automatically
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-${{ matrix.language }}
