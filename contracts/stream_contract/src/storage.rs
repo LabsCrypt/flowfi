@@ -24,6 +24,8 @@ use crate::types::{
 /// here only so the two can be told apart before a decode is attempted.
 const CONFIG_FIELD_COUNT: u32 = 5;
 const LEGACY_CONFIG_FIELD_COUNT: u32 = 3;
+// `Stream` gained the `cliff_time` field, so the current record shape has 17
+// fields; `LegacyStream` has 12. These must match the structs in `types.rs`.
 const STREAM_FIELD_COUNT: u32 = 17;
 const LEGACY_STREAM_FIELD_COUNT: u32 = 12;
 

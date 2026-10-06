@@ -91,11 +91,6 @@ fn test_fee_transfer_observes_persisted_stream_on_create_and_top_up() {
     });
     assert_eq!(observed_top_up_deposit, 1_425);
 }
-// NOTE: fee-transfer CEI (persist before transfer) is verified via
-// post-call state/events, not via re-entrant callback: Soroban hosts
-// forbid contract re-entry ("Contract re-entry is not allowed"), so a
-// fee token cannot call back into get_stream during transfer.
-
 // ─── Test Helpers ─────────────────────────────────────────────────────────────
 
 /// Registers a Stellar asset contract and returns (token_address, token_admin).
