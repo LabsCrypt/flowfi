@@ -16,11 +16,15 @@
     "@vitest/coverage-v8": "^3.2.7",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.7",
+    "next": "16.3.3",
     "vitest": "^3.2.7"
   },
   "lint-staged": {
     "frontend/**/*.{ts,tsx,js,jsx}": [
       "npm run lint --workspace=frontend --"
+    ],
+    "contracts/**/*.rs": [
+      "bash scripts/lint-rust.sh"
     ]
   },
   "dependencies": {

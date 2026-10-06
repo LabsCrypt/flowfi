@@ -17,6 +17,13 @@ export interface FlowFiClientConfig {
    * `1.2` means "charge 20% more than simulation". Defaults to `1.25`.
    */
   feeBufferMultiplier?: number;
+  /**
+   * Opt out of the official network-passphrase check. Set to `true` only for
+   * intentional custom/private Stellar networks. Defaults to `false`, in which
+   * case an unrecognised passphrase throws from the `FlowFiClient` constructor
+   * with a hint listing the official passphrases.
+   */
+  allowCustomNetworkPassphrase?: boolean;
 }
 
 export interface CreateStreamParams {

@@ -28,6 +28,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "overrides": {
+    "@types/pg": "8.20.0"
+  },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/auto-instrumentations-node": "^0.80.0",
@@ -56,6 +59,7 @@
     "@types/eventsource": "^1.1.15",
     "@types/express": "^5.0.6",
     "@types/node": "^25.2.3",
+    "@types/pg": "8.20.0",
     "@types/supertest": "^6.0.3",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.6",

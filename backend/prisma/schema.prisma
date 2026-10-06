@@ -64,6 +64,22 @@ model IndexerState {
   updatedAt   DateTime @updatedAt
 }
 
+// LedgerCheckpoint model - durable proof of the exact ledger sequence, hash
+// signature, and event count the indexer ingested. Written on every ingestion
+// cycle so the worker can (a) prove the canonical chain still contains what it
+// indexed and (b) roll back deterministically when a fork replaces it.
+model LedgerCheckpoint {
+  ledgerSequence Int      @id
+  ledgerHash     String
+  parentHash     String
+  processedAt    DateTime @default(now())
+  eventsCount    Int
+  stateRootHash  String?
+  isReverted     Boolean  @default(false)
+
+  @@index([processedAt])
+}
+
 // StreamEvent model - indexer events for tracking all on-chain stream activities
 model StreamEvent {
   id              String   @id @default(uuid())

@@ -3,6 +3,7 @@ import {
   dbPoolConnections,
   dbPoolMaxConnections,
   dbQueryDuration,
+  registerDbPoolStatsProvider,
 } from './metrics.js';
 
 const parsePositiveIntegerEnv = (name: string, defaultValue: number): number => {
@@ -25,16 +26,39 @@ export const createPgPoolConfig = (overrides?: Partial<pg.PoolConfig>): pg.PoolC
 });
 
 /**
- * Publish pool utilisation gauges.
+ * Snapshot of the pool counts, in the shape the admin API and the Prometheus
+ * gauges consume.
  *
  * `waitingCount` is the number to alert on: a non-zero value means callers are
  * queued for a connection, which surfaces as request latency long before the
  * pool would be considered "full".
  */
+export interface PoolMetrics {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+}
+
+export function getPoolMetrics(pool: pg.Pool): PoolMetrics {
+  return {
+    totalCount: pool.totalCount ?? 0,
+    idleCount: pool.idleCount ?? 0,
+    waitingCount: pool.waitingCount ?? 0,
+  };
+}
+
+/**
+ * Publish the legacy labelled `flowfi_db_pool_connections{state=…}` gauge.
+ *
+ * The three per-state gauges (`flowfi_db_pool_*_connections`) are sampled at
+ * scrape time instead; this helper keeps the older aggregate series populated
+ * for dashboards/alerts that were built against it before the split.
+ */
 export function publishPoolMetrics(pool: pg.Pool): void {
-  dbPoolConnections.set({ state: 'total' }, pool.totalCount ?? 0);
-  dbPoolConnections.set({ state: 'idle' }, pool.idleCount ?? 0);
-  dbPoolConnections.set({ state: 'waiting' }, pool.waitingCount ?? 0);
+  const { totalCount, idleCount, waitingCount } = getPoolMetrics(pool);
+  dbPoolConnections.set({ state: 'total' }, totalCount);
+  dbPoolConnections.set({ state: 'idle' }, idleCount);
+  dbPoolConnections.set({ state: 'waiting' }, waitingCount);
   dbPoolMaxConnections.set(pool.options?.max ?? 0);
 }
 
@@ -109,14 +133,22 @@ const POOL_METRICS_INTERVAL_MS = Number(
   process.env.PG_POOL_METRICS_INTERVAL_MS ?? 5_000,
 );
 
-export const createPgPool = (): pg.Pool => {
-  const pool = new pg.Pool(createPgPoolConfig());
+export const createPgPool = (overrides?: Partial<pg.PoolConfig>): pg.Pool => {
+  const pool = new pg.Pool(createPgPoolConfig(overrides));
 
   instrumentPoolQueryTiming(pool);
 
+  // Scrape-time sampling: the dedicated pool gauges read the live counts via
+  // the registered provider on every `/metrics` request, so the scrape always
+  // reflects the pool at that instant (no stale interval-sampled values).
+  registerDbPoolStatsProvider(() => {
+    const { totalCount, idleCount, waitingCount } = getPoolMetrics(pool);
+    return { total: totalCount, idle: idleCount, waiting: waitingCount };
+  });
+
   // `totalCount`/`idleCount`/`waitingCount` are mutated only by pg itself, so a
-  // low-frequency sampler keeps the gauges fresh without adding per-query
-  // overhead. `unref` keeps the timer from holding the process open.
+  // low-frequency sampler keeps the legacy labelled gauge fresh without adding
+  // per-query overhead. `unref` keeps the timer from holding the process open.
   const sampler = setInterval(() => publishPoolMetrics(pool), POOL_METRICS_INTERVAL_MS);
   sampler.unref?.();
 

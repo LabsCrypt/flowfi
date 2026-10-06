@@ -19,6 +19,20 @@ export const errorHandler = (
         return next(err);
     }
 
+    // body-parser signals an over-limit body with `type: 'entity.too.large'`
+    // (and status 413). Translate it to the API's standard JSON error envelope
+    // instead of leaking the raw parser message.
+    const maybeStatus = (err as { status?: number; statusCode?: number })?.status
+        ?? (err as { statusCode?: number })?.statusCode;
+    if ((err as { type?: string })?.type === 'entity.too.large' || maybeStatus === 413) {
+        return sendApiError(
+            res,
+            413,
+            'PAYLOAD_TOO_LARGE',
+            'Request payload exceeds the allowed size limit.',
+        );
+    }
+
     if (err instanceof ZodError) {
         return sendApiError(res, 400, 'VALIDATION_ERROR', 'Request validation failed', err.issues.map((e: ZodIssue) => ({
             path: e.path.join('.'),

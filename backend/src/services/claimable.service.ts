@@ -5,6 +5,7 @@ const I128_MIN = -(1n << 127n);
 
 export interface ClaimableStreamState {
   streamId: bigint;
+  tokenAddress: string;
   ratePerSecond: string;
   depositedAmount: string;
   withdrawnAmount: string;
@@ -68,6 +69,7 @@ function getStateFingerprint(stream: ClaimableStreamState): string {
   // Always include lastUpdateTime to prevent cache collisions between streams
   // with different lastUpdateTime but same updatedAt (or no updatedAt)
   const baseFingerprint = [
+    stream.tokenAddress,
     stream.ratePerSecond,
     stream.depositedAmount,
     stream.withdrawnAmount,

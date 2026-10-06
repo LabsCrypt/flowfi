@@ -4,7 +4,6 @@ use std::string::ToString;
 
 use super::*;
 use soroban_sdk::{
-    contract, contractimpl,
     testutils::{Address as _, Events, Ledger},
     token, vec, xdr, Address, Bytes, BytesN, Env, Symbol, TryFromVal, Val, Vec as SorobanVec,
 };
@@ -18,8 +17,8 @@ use events::{
     StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{
-    DataKey, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream, StreamStatus,
-    VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
+    StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
 };
 
 /// Minimal fee-token double that reads the stream from inside the treasury
@@ -41,12 +40,16 @@ impl ReentrantFeeToken {
                 .instance()
                 .get(&Symbol::new(&env, "stream_contract"))
                 .unwrap();
-            let stream = StreamContractClient::new(&env, &stream_contract)
-                .get_stream(&1)
-                .unwrap();
+            // The host forbids re-entering `StreamContract` while it is still on
+            // the call stack, so read the persisted record directly instead of
+            // calling `get_stream`. The ordering assertion is about what had
+            // been written *before* the fee transfer, not about the getter.
+            let observed = env.as_contract(&stream_contract, || {
+                crate::storage::try_load_stream(&env, 1)
+            });
             env.storage().instance().set(
                 &Symbol::new(&env, "observed_deposit"),
-                &stream.deposited_amount,
+                &observed.unwrap().deposited_amount,
             );
         }
     }
@@ -87,6 +90,10 @@ fn test_fee_transfer_observes_persisted_stream_on_create_and_top_up() {
     });
     assert_eq!(observed_top_up_deposit, 1_425);
 }
+// NOTE: fee-transfer CEI (persist before transfer) is verified via
+// post-call state/events, not via re-entrant callback: Soroban hosts
+// forbid contract re-entry ("Contract re-entry is not allowed"), so a
+// fee token cannot call back into get_stream during transfer.
 
 // ─── Test Helpers ─────────────────────────────────────────────────────────────
 
@@ -166,6 +173,9 @@ fn test_datakey_stream_serializes_deterministically() {
         paused_at: None,
         status: StreamStatus::Active,
         schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -2360,6 +2370,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
                 None
             },
             schedule: VestingSchedule::Linear,
+            arbiter: None,
+            dispute_status: DisputeStatus::None,
+            is_allowance_based: false,
             status: if paused {
                 StreamStatus::Paused
             } else {
@@ -4575,8 +4588,10 @@ fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 
 
 /// True when the raw record at `stream_id` decodes as the current [`Stream`].
 fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
-    // `Stream` carries the `schedule` field; `LegacyStream` does not.
-    raw_stream_field_count(env, contract, stream_id) == 13
+    // The current `Stream` shape is 17 fields: `LegacyStream` carries neither
+    // `schedule`/`cliff_time` nor the dispute/allowance fields.
+    // `Stream` now carries cliff_time + arbiter/dispute/allowance fields (17 total); `LegacyStream` has 12.
+    raw_stream_field_count(env, contract, stream_id) == 17
 }
 
 /// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].

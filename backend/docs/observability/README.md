@@ -61,7 +61,10 @@ scrape_configs:
 | `flowfi_rpc_failovers_total` | Counter | `method` | Retries issued after a failed attempt |
 | `flowfi_rpc_circuit_breaker_trips_total` | Counter | `endpoint`, `method` | Calls that hit the deadline or exhausted retries |
 | `flowfi_db_query_duration_seconds` | Histogram | `operation` | Prisma/pg query latency, labelled `VERB:Table` |
-| `flowfi_db_pool_connections` | Gauge | `state` | `total` / `idle` / `waiting` |
+| `flowfi_db_pool_connections` | Gauge | `state` | `total` / `idle` / `waiting` (legacy aggregate) |
+| `flowfi_db_pool_total_connections` | Gauge | — | Live total connections held by the pg pool (sampled per scrape) |
+| `flowfi_db_pool_idle_connections` | Gauge | — | Live idle connections in the pg pool (sampled per scrape) |
+| `flowfi_db_pool_waiting_requests` | Gauge | — | Requests queued for a connection (sampled per scrape) |
 | `flowfi_db_pool_max_connections` | Gauge | — | Configured pool ceiling |
 | `flowfi_http_requests_total` | Counter | `method`, `route`, `status` | API requests |
 | `flowfi_http_request_duration_seconds` | Histogram | `method`, `route` | API request latency |
@@ -77,7 +80,7 @@ concrete IDs does not explode series cardinality.
 | Indexer falling behind | `flowfi_indexer_lag_ledgers > 60 for 5m` |
 | RPC endpoint down | `rate(flowfi_rpc_circuit_breaker_trips_total[5m]) > 0` |
 | SSE saturation | `flowfi_sse_active_connections{topic="total"} / flowfi_sse_max_connections > 0.8` |
-| DB pool contention | `flowfi_db_pool_connections{state="waiting"} > 0 for 2m` |
+| DB pool contention | `flowfi_db_pool_waiting_requests > 0 for 2m` |
 | Quarantined events | `increase(flowfi_indexer_events_processed_total{result="quarantined"}[1h]) > 0` |
 
 ## Grafana

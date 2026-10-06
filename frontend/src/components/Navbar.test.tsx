@@ -6,6 +6,10 @@ vi.mock('@/context/wallet-context', () => ({
   useWallet: () => ({ session: null, status: 'disconnected' }),
 }));
 
+vi.mock('@/context/NetworkContext', () => ({
+  useNetwork: () => ({ networkId: 'testnet', setNetworkId: vi.fn() }),
+}));
+
 vi.mock('./ModeToggle', () => ({
   ModeToggle: () => <div data-testid="mode-toggle" />,
 }));
@@ -16,6 +20,12 @@ vi.mock('./wallet/WalletButton', () => ({
 
 vi.mock('./NotificationDropdown', () => ({
   NotificationDropdown: () => <div data-testid="notification-dropdown" />,
+}));
+
+// NetworkSelector reads the active network from NetworkContext, so stub it out
+// alongside the other chrome instead of wrapping every render in a provider.
+vi.mock('./NetworkSelector', () => ({
+  NetworkSelector: () => <div data-testid="network-selector" />,
 }));
 
 vi.mock('next/link', () => ({
