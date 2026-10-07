@@ -92,6 +92,15 @@ pub enum StreamError {
     NotArbiter = 32,
     /// Allowance-based stream operation failed.
     AllowanceLocked = 33,
+    /// A checked arithmetic operation on an amount or timestamp would have
+    /// exceeded its representable range.
+    ///
+    /// The five call sites that raise this guard a `checked_*` operation
+    /// *before* any state mutation or token transfer, so returning here always
+    /// leaves the stream untouched. The variant is appended rather than slotted
+    /// into the sequence so that existing discriminants 1..=33 — and therefore
+    /// every error already observable by clients — keep their meaning.
+    ArithmeticOverflow = 34,
     /// A conditional milestone id is duplicated within one stream, is
     /// referenced that does not exist, or the milestone list is empty.
     InvalidMilestone = 37,

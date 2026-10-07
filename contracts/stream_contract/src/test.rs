@@ -2229,6 +2229,8 @@ fn test_resume_on_cancelled_stream_fails() {
     let result = client.try_resume_stream(&sender, &id);
     assert_stream_error!(
         result,
+        Err(Ok(StreamError::StreamInactive)),
+        "resume_stream must return StreamInactive on an inactive stream"
         StreamError::StreamNotActive,
         "resume_stream must return StreamNotActive on an inactive stream"
     );
@@ -2379,6 +2381,9 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 StreamStatus::Active
             },
+            arbiter: None,
+            dispute_status: DisputeStatus::None,
+            is_allowance_based: false,
         };
 
         let claimable = StreamContract::calculate_claimable(&stream, elapsed);

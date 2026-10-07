@@ -112,6 +112,11 @@ export class SorobanEventWorker {
   /** Ledger rollbacks larger than this are escalated to dead-letter triage. */
   private readonly reorgAlertThreshold: number;
 
+  /** Exposed for tests/diagnostics that assert the configured retry budget. */
+  get deadLetterRetryCap(): number {
+    return this.deadLetterMaxRetries;
+  }
+
   private isRunning = false;
   private pollTimer: NodeJS.Timeout | undefined;
   /**
@@ -593,6 +598,7 @@ export class SorobanEventWorker {
       `[SorobanWorker] Processed ${response.events.length} event(s) — latest ledger: ${lastLedger}`,
     );
   }
+
 
   /**
    * Dispatch a single contract event to the appropriate handler based on the

@@ -81,6 +81,23 @@ router.get('/', async (_req: Request, res: Response) => {
     }
   }
 
+  // Two independent indexer failure signals:
+  //   - lag:     the durable state row has not been touched recently
+  //   - failure: the worker saw a spike in per-event processing failures
+  // Either one means the indexer is not keeping up, so both feed readiness.
+  const eventCounters = indexerEnabled ? sorobanEventWorker.getEventCounters() : null;
+  const indexerLagDegraded = indexerEnabled && indexerLag > 60;
+  const indexerFailureDegraded = indexerEnabled && (eventCounters?.degraded ?? false);
+  // The top-level `indexerDegraded` reports the failure-rate signal only;
+  // lag is reported separately so a lag-only incident (#1294) is
+  // distinguishable from a genuinely failing indexer (#844).
+  const indexerDegraded = indexerFailureDegraded;
+
+  const isHealthy =
+    dbStatus === 'connected' && !(indexerLagDegraded || indexerFailureDegraded);
+  // 503 only when: DB is down, OR the indexer is enabled and its state row is
+  // stale (lag > 60). A missing state row (lag === -1) is a cold-start
+  // condition, not a failure, even when the indexer is enabled.
   const eventCounters = sorobanEventWorker.getEventCounters();
 
   // 503 when: DB is down, OR the indexer is enabled and its state row is stale
@@ -110,6 +127,10 @@ router.get('/', async (_req: Request, res: Response) => {
     db: dbStatus,
     indexerEnabled,
     indexerLag: indexerLag === -1 ? null : indexerLag,
+    eventsProcessed: eventCounters?.eventsProcessed ?? 0,
+    eventsFailed: eventCounters?.eventsFailed ?? 0,
+    lastErrorAt: eventCounters?.lastErrorAt ?? null,
+    indexerDegraded,
     eventsProcessed: eventCounters.eventsProcessed,
     eventsFailed: eventCounters.eventsFailed,
     lastErrorAt: eventCounters.lastErrorAt,
@@ -122,11 +143,22 @@ router.get('/', async (_req: Request, res: Response) => {
       indexer: {
         status: !indexerEnabled
           ? 'disabled'
+          : indexerLagDegraded || indexerFailureDegraded
           : indexerFailureDegraded || indexerLagDegraded
             ? 'degraded'
             : 'ok',
         enabled: indexerEnabled,
         lagSeconds: indexerLag === -1 ? null : indexerLag,
+        lagDegraded: indexerLagDegraded,
+        failureDegraded: indexerFailureDegraded,
+      },
+      // Redis and the Soroban RPC are optional for serving reads, so they are
+      // reported for observability but deliberately excluded from readiness.
+      redis: {
+        status: 'unknown',
+      },
+      sorobanRpc: {
+        status: 'unknown',
       },
       redis: { status: redisStatus },
       sorobanRpc: { status: sorobanRpcOk ? 'ok' : 'down' },

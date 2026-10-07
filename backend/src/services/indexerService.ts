@@ -5,6 +5,73 @@ import { INDEXER_STATE_ID } from '../lib/indexer-state.js';
 import { sorobanEventWorker } from '../workers/soroban-event-worker.js';
 import { setIndexerLedgers } from '../lib/metrics.js';
 import { withSpan } from '../lib/tracing.js';
+import logger, { requestContext } from '../logger.js';
+import { randomUUID } from 'crypto';
+
+export interface ResetPreview {
+  currentLastLedger: number;
+  currentLastCursor: string | null;
+  targetLastLedger: number;
+}
+
+/**
+ * Preview a destructive indexer reset without mutating state, so an operator
+ * can confirm the target ledger before committing.
+ */
+export async function previewReset(targetLedger: number): Promise<ResetPreview> {
+  const state = await prisma.indexerState.findUnique({
+    where: { id: INDEXER_STATE_ID },
+  });
+  return {
+    currentLastLedger: state?.lastLedger ?? 0,
+    currentLastCursor: state?.lastCursor ?? null,
+    targetLastLedger: targetLedger,
+  };
+}
+
+/**
+ * Preview what a replay from a given ledger would do without mutating state.
+ * Returns the event count, ledger range, and current cursor so operators can
+ * sanity-check before committing a destructive replay.
+ */
+export interface ReplayPreview {
+  fromLedger: number;
+  currentLastLedger: number;
+  currentLastCursor: string | null;
+  eventCount: number;
+  minLedgerInReplayRange: number | null;
+  maxLedgerInReplayRange: number | null;
+}
+
+export async function previewReplay(fromLedger: number): Promise<ReplayPreview> {
+  const state = await prisma.indexerState.findUnique({
+    where: { id: INDEXER_STATE_ID },
+  });
+  const currentLastLedger = state?.lastLedger ?? 0;
+
+  const rangeFilter: import('../generated/prisma/index.js').Prisma.StreamEventWhereInput =
+    currentLastLedger > 0
+      ? { ledgerSequence: { gte: fromLedger, lte: currentLastLedger } }
+      : { ledgerSequence: { gte: fromLedger } };
+
+  const [eventCount, aggregate] = await Promise.all([
+    prisma.streamEvent.count({ where: rangeFilter }),
+    prisma.streamEvent.aggregate({
+      where: rangeFilter,
+      _min: { ledgerSequence: true },
+      _max: { ledgerSequence: true },
+    }),
+  ]);
+
+  return {
+    fromLedger,
+    currentLastLedger,
+    currentLastCursor: state?.lastCursor ?? null,
+    eventCount,
+    minLedgerInReplayRange: aggregate._min.ledgerSequence,
+    maxLedgerInReplayRange: aggregate._max.ledgerSequence,
+  };
+}
 import {
   getLatestCheckpoint,
   listRecentCheckpoints,
@@ -38,6 +105,13 @@ export async function getIndexerStatus(): Promise<IndexerStatus> {
   };
 }
 
+/**
+ * Reset the durable indexer cursor to `toLedger`.
+ *
+ * The write happens inside the worker's mutex (`runExclusive`, #1221). Without
+ * it, an already-running poll can commit its own cursor after this write and
+ * silently undo the reset.
+ */
 export async function resetIndexer(toLedger: number): Promise<void> {
   // Acquire the same mutex that serialises poll/replay batches so that an
   // in-flight poll cannot overwrite the reset cursor after we write it (#1221).
@@ -128,16 +202,31 @@ export async function previewReplay(fromLedger: number): Promise<ReplayPreview> 
  * is incremented unconditionally on every replay, so replay is NOT fully
  * idempotent. See issue #808 for the withdrawnAmount idempotency fix.
  */
+/**
+ * Reset the indexer cursor to `fromLedger` and immediately poll forward.
+ *
+ * The returned request id is the correlation handle for the whole operation:
+ * it is bound to the ambient `requestContext` so anything logged by the reset
+ * or the poll cycle carries it, and it is returned so the caller can report
+ * it. An explicit `customRequestId` wins; otherwise an id already in scope is
+ * reused, and only failing that is a fresh one minted.
+ */
 export async function replayFromLedger(
   fromLedger: number,
   customRequestId?: string,
 ): Promise<string> {
+  const requestId =
+    customRequestId || requestContext.getStore()?.requestId || randomUUID();
+
+  return requestContext.run({ requestId }, async () => {
   const requestId = customRequestId || requestContext.getStore()?.requestId || randomUUID();
   await requestContext.run({ requestId }, async () => {
     await resetIndexer(fromLedger);
     // Kick off an immediate poll cycle without waiting for the next interval.
     await sorobanEventWorker.triggerPoll(requestId);
     logger.info(`[IndexerService] Replay triggered from ledger ${fromLedger}`);
+    return requestId;
+  });
   });
   return requestId;
 }
@@ -285,10 +374,14 @@ export function deserializeDeadLetterPayload(payload: string): rpc.Api.EventResp
 }
 
 /** Best-effort event-type label used for dedup and operator filtering. */
-function eventTypeOf(event: rpc.Api.EventResponse): string {
+export function eventTypeOf(event: rpc.Api.EventResponse): string {
   const topic0 = event.topic?.[0];
   if (!topic0) return 'unknown';
   try {
+    // stellar-sdk v17 models ScVal as a discriminated union: `sym` is a plain
+    // property on the concrete ScValSymbol, not an accessor method.
+    const symbol = (topic0 as Partial<xdr.ScValSymbol>).sym;
+    return typeof symbol === 'string' ? symbol : String(symbol);
     // `ScVal` is a union; only the symbol arm carries `sym`, and in recent
     // stellar-sdk versions it is a value (not a method). Read the property and
     // stringify it so this survives across SDK generations.

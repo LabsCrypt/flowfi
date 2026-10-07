@@ -391,7 +391,7 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Deduct protocol fee; returns net amount (== amount when no fee config).
-        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, amount)?;
         let rate_per_second = net_amount / (duration as i128);
 
         // Reject streams where integer division rounds the rate to zero.
@@ -817,7 +817,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, amount)?;
 
         // Structural validation. Runs *after* the transfer so that the real
         // net amount is known, but a returned Err rolls the whole transaction
@@ -839,6 +839,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                // Step tranches unlock by absolute timestamp; no cliff applies.
                 // Step tranches carry their own absolute unlock times, so there
                 // is no separate stream-level cliff to gate on.
                 cliff_time: None,
@@ -912,7 +913,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, amount)?;
 
         // The cliff must land strictly after creation, and must leave a
         // non-empty remainder so the linear component is well defined.
@@ -939,6 +940,8 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                // This schedule exists to enforce a cliff, so the field must
+                // carry the same timestamp the schedule was built from.
                 cliff_time: Some(cliff_time),
                 is_active: true,
                 paused: false,
@@ -1349,8 +1352,7 @@ impl StreamContract {
         token_client.transfer(&sender, &contract_address, &amount);
 
         // Collect protocol fee and get net amount
-        let (net_amount, fee_amount, treasury) =
-            Self::collect_fee(&env, &stream.token_address, amount)?;
+        let (net_amount, fee_amount, treasury) = Self::collect_fee(&env, amount)?;
 
         // Update stream state. `last_update_time` is intentionally left untouched:
         // it is the accrual anchor for `calculate_claimable`, and advancing it to
@@ -1802,10 +1804,10 @@ impl StreamContract {
 
         // Must be terminal and inactive.
         if stream.is_active {
-            return Err(StreamError::StreamStillActive);
+            return Err(StreamError::StreamInactive);
         }
         if stream.status != StreamStatus::Completed && stream.status != StreamStatus::Cancelled {
-            return Err(StreamError::StreamStillActive);
+            return Err(StreamError::StreamInactive);
         }
 
         // Zero-balance check. Completed streams must be fully withdrawn
@@ -1814,11 +1816,11 @@ impl StreamContract {
         // immediately prunable.
         if stream.status == StreamStatus::Completed {
             if stream.deposited_amount != stream.withdrawn_amount {
-                return Err(StreamError::StreamStillActive);
+                return Err(StreamError::StreamInactive);
             }
             let now = env.ledger().timestamp();
             if Self::calculate_claimable(&stream, now) != 0 {
-                return Err(StreamError::StreamStillActive);
+                return Err(StreamError::StreamInactive);
             }
         }
 
@@ -1897,7 +1899,7 @@ impl StreamContract {
         Self::validate_stream_ownership(&stream, &sender)?;
 
         if !stream.is_active {
-            return Err(StreamError::StreamNotActive);
+            return Err(StreamError::StreamInactive);
         }
 
         if !stream.paused {
@@ -2023,6 +2025,8 @@ impl StreamContract {
 
             // Each stream is committed to storage before its own token transfer
             // (CEI), so a malicious token cannot re-enter against stale state.
+            // The error must be propagated: discarding it would persist the
+            // stream and emit `tokens_withdrawn` even though no tokens moved.
             // The error is propagated rather than dropped: reporting a stream as
             // withdrawn when its transfer never happened would be worse than
             // reverting the batch.
@@ -2308,6 +2312,21 @@ impl StreamContract {
         let stream_id = next_stream_id(&env);
         let start_time = env.ledger().timestamp();
 
+        // Check allowance without locking it yet. This invokes the token directly
+        // rather than through `token::Client` so that any failure surfaces as
+        // `AllowanceLocked` instead of panicking inside the SDK.
+        match env.try_invoke_contract::<i128, soroban_sdk::InvokeError>(
+            &token_address,
+            &Symbol::new(&env, "allowance"),
+            // Arguments are passed as Val; Address has an inherent to_val().
+            vec![
+                &env,
+                sender.to_val(),
+                env.current_contract_address().to_val(),
+            ],
+        ) {
+            Ok(Ok(allowance)) if allowance > 0 => {}
+            _ => return Err(StreamError::AllowanceLocked),
         // Check allowance: just verify it's callable, don't lock it yet
         let token_client = token::Client::new(&env, &token_address);
         // Use the generated client: avoids manual Val conversion for try_invoke.
@@ -2332,6 +2351,7 @@ impl StreamContract {
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
+                // Allowance streams drip at a nominal rate; no cliff applies.
                 cliff_time: None,
                 is_active: true,
                 paused: false,
@@ -2506,6 +2526,11 @@ impl StreamContract {
     /// If no protocol config exists or the fee rate is 0, returns `amount` unchanged.
     /// If fee calculation truncates to 0, no transfer/event occurs and `amount` is unchanged.
     /// Time complexity: O(1).
+    /// Computes the fee split for `amount` from the on-chain fee config.
+    ///
+    /// No token is touched here: the fee transfer is deliberately deferred to
+    /// [`Self::transfer_fee`] so that state is persisted before value moves.
+    fn collect_fee(env: &Env, amount: i128) -> Result<(i128, i128, Option<Address>), StreamError> {
     fn collect_fee(
         env: &Env,
         _token_address: &Address,
