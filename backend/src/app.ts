@@ -16,6 +16,7 @@ import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import { buildCorsOptions, CorsError } from "./config/cors.js";
 import logger from "./logger.js";
+import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
@@ -98,6 +99,10 @@ const BULK_JSON_PATHS = [
 ];
 app.use(BULK_JSON_PATHS, express.json({ limit: "1mb" }));
 app.use(express.json({ limit: "100kb" }));
+
+// BigInt-safe JSON responses (Issue #1493): Prisma bigint columns must be
+// emitted as decimal strings, never throw in res.json().
+app.use(bigIntSafeJsonMiddleware);
 
 // Sandbox mode detection (before versioning)
 app.use(sandboxMiddleware);
