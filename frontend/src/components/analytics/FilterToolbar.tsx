@@ -83,9 +83,13 @@ function MultiSelect({
     };
   }, [open]);
 
-  useEffect(() => {
+  // Reset the search box whenever the dropdown closes (adjusting state during
+  // render avoids a cascading effect-driven re-render).
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (!open) setQuery('');
-  }, [open]);
+  }
 
   const visibleOptions = useMemo(() => {
     if (!searchable || !query.trim()) return options;
@@ -240,11 +244,13 @@ export function FilterToolbar({
     onChange({ search: debouncedSearch });
   }, [debouncedSearch, onChange]);
 
-  useEffect(() => {
-    if (filters.search === lastSyncedRef.current) return;
-    lastSyncedRef.current = filters.search;
-    setSearchInput(filters.search);
-  }, [filters.search]);
+  // Mirror external changes to `filters.search` (e.g. a reset) into the input,
+  // ignoring echoes of the value we just emitted.
+  const [prevSearch, setPrevSearch] = useState(filters.search);
+  if (filters.search !== prevSearch) {
+    setPrevSearch(filters.search);
+    if (filters.search !== debouncedSearch) setSearchInput(filters.search);
+  }
 
   const tokenOptions: MultiSelectOption[] = useMemo(
     () =>
