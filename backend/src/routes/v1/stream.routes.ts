@@ -5,6 +5,7 @@ import {
   getStream,
   getStreamEvents,
   getStreamClaimableAmount,
+  getStreamSnapshot,
   getUserStreamSummary,
   topUpStreamHandler,
   pauseStream,
@@ -15,6 +16,7 @@ import { simulateStreamHandler } from '../../controllers/stream/simulate.js';
 import { withdrawHandler } from './streams/withdraw.js';
 import { requireAuth } from '../../middleware/auth.js';
 import { streamCreationRateLimiter } from '../../middleware/stream-rate-limiter.middleware.js';
+import { complianceScreening } from '../../middleware/compliance.middleware.js';
 
 const router = Router();
 
@@ -102,7 +104,13 @@ const router = Router();
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/', requireAuth, streamCreationRateLimiter, createStream);
+router.post(
+  '/',
+  requireAuth,
+  streamCreationRateLimiter,
+  complianceScreening({ action: 'stream.create' }),
+  createStream,
+);
 
 /**
  * @openapi
@@ -507,6 +515,7 @@ router.get('/:streamId/events', getStreamEvents);
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/:streamId/claimable', getStreamClaimableAmount);
+router.get('/:streamId/snapshot', getStreamSnapshot);
 
 /**
  * @openapi
@@ -695,7 +704,12 @@ router.post('/:streamId/resume', requireAuth, resumeStream);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/:streamId/withdraw', requireAuth, withdrawHandler as any);
+router.post(
+  '/:streamId/withdraw',
+  requireAuth,
+  complianceScreening({ action: 'stream.withdraw' }),
+  withdrawHandler as any,
+);
 
 /**
  * @openapi
@@ -771,7 +785,12 @@ router.post('/:streamId/withdraw', requireAuth, withdrawHandler as any);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post('/:streamId/top-up', requireAuth, topUpStreamHandler);
+router.post(
+  '/:streamId/top-up',
+  requireAuth,
+  complianceScreening({ action: 'stream.deposit' }),
+  topUpStreamHandler,
+);
 
 /**
  * @openapi

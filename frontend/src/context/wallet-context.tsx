@@ -16,8 +16,21 @@ import {
   type WalletId,
   type WalletSession,
 } from "@/lib/wallet";
+import { fetchMultisigAccount, type MultisigAccount } from "@/lib/stellar-multisig";
 
 type WalletStatus = "idle" | "connecting" | "connected" | "error";
+
+/**
+ * Signer/threshold information for the connected account (issue #1471).
+ * Kept separate from the session so a failed Horizon lookup never breaks the
+ * wallet connection itself.
+ */
+export interface MultisigState {
+  status: "idle" | "loading" | "ready" | "error";
+  account: MultisigAccount | null;
+  error: string | null;
+  isMultisig: boolean;
+}
 
 interface WalletContextValue {
   wallets: readonly WalletDescriptor[];
@@ -29,6 +42,10 @@ interface WalletContextValue {
   connect: (walletId: WalletId) => Promise<void>;
   disconnect: () => void;
   clearError: () => void;
+  /** Multisig signer/threshold state for the connected account. */
+  multisig: MultisigState;
+  /** Re-reads signer information from Horizon, bypassing the cache. */
+  refreshMultisigAccount: () => Promise<void>;
 }
 
 // STORAGE_KEY version should be bumped whenever WalletSession shape changes,
@@ -43,6 +60,7 @@ interface WalletState {
   selectedWalletId: WalletId | null;
   errorMessage: string | null;
   isHydrated: boolean;
+  multisig: MultisigState;
 }
 
 type WalletAction =
@@ -51,7 +69,18 @@ type WalletAction =
   | { type: "connect:success"; session: WalletSession }
   | { type: "connect:error"; message: string }
   | { type: "disconnect" }
-  | { type: "error:clear" };
+  | { type: "error:clear" }
+  | { type: "multisig:start" }
+  | { type: "multisig:success"; account: MultisigAccount }
+  | { type: "multisig:error"; message: string }
+  | { type: "multisig:reset" };
+
+const INITIAL_MULTISIG_STATE: MultisigState = {
+  status: "idle",
+  account: null,
+  error: null,
+  isMultisig: false,
+};
 
 const INITIAL_STATE: WalletState = {
   status: "idle",
@@ -59,6 +88,7 @@ const INITIAL_STATE: WalletState = {
   selectedWalletId: null,
   errorMessage: null,
   isHydrated: false,
+  multisig: INITIAL_MULTISIG_STATE,
 };
 
 function walletReducer(state: WalletState, action: WalletAction): WalletState {
@@ -77,6 +107,7 @@ function walletReducer(state: WalletState, action: WalletAction): WalletState {
         selectedWalletId: action.session.walletId,
         errorMessage: null,
         isHydrated: true,
+        multisig: INITIAL_MULTISIG_STATE,
       };
     case "connect:start":
       return {
@@ -99,6 +130,7 @@ function walletReducer(state: WalletState, action: WalletAction): WalletState {
         status: "error",
         session: null,
         errorMessage: action.message,
+        multisig: INITIAL_MULTISIG_STATE,
       };
     case "disconnect":
       return {
@@ -107,6 +139,7 @@ function walletReducer(state: WalletState, action: WalletAction): WalletState {
         session: null,
         selectedWalletId: null,
         errorMessage: null,
+        multisig: INITIAL_MULTISIG_STATE,
       };
     case "error:clear":
       return {
@@ -114,6 +147,28 @@ function walletReducer(state: WalletState, action: WalletAction): WalletState {
         errorMessage: null,
         status: state.status === "error" ? "idle" : state.status,
       };
+    case "multisig:start":
+      return {
+        ...state,
+        multisig: { ...state.multisig, status: "loading", error: null },
+      };
+    case "multisig:success":
+      return {
+        ...state,
+        multisig: {
+          status: "ready",
+          account: action.account,
+          error: null,
+          isMultisig: action.account.isMultisig,
+        },
+      };
+    case "multisig:error":
+      return {
+        ...state,
+        multisig: { ...state.multisig, status: "error", error: action.message },
+      };
+    case "multisig:reset":
+      return { ...state, multisig: INITIAL_MULTISIG_STATE };
     default:
       return state;
   }
@@ -184,6 +239,60 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "hydrate", session: existingSession });
   }, []);
 
+  const connectedPublicKey = state.session?.publicKey ?? null;
+
+  // Detect multisig configuration whenever a wallet is connected (issue #1471).
+  // This is best-effort: a Horizon failure only surfaces `multisig.error` and
+  // leaves the wallet session untouched.
+  useEffect(() => {
+    if (!connectedPublicKey) {
+      dispatch({ type: "multisig:reset" });
+      return;
+    }
+
+    let cancelled = false;
+    dispatch({ type: "multisig:start" });
+
+    void fetchMultisigAccount(connectedPublicKey)
+      .then((account) => {
+        if (!cancelled) dispatch({ type: "multisig:success", account });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          dispatch({
+            type: "multisig:error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Could not load signer information from Horizon.",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedPublicKey]);
+
+  const refreshMultisigAccount = useCallback(async () => {
+    if (!connectedPublicKey) return;
+    dispatch({ type: "multisig:start" });
+    try {
+      const account = await fetchMultisigAccount(connectedPublicKey, {
+        bypassCache: true,
+      });
+      dispatch({ type: "multisig:success", account });
+    } catch (error) {
+      dispatch({
+        type: "multisig:error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not load signer information from Horizon.",
+      });
+    }
+  }, [connectedPublicKey]);
+
   const clearError = useCallback(() => {
     dispatch({ type: "error:clear" });
   }, []);
@@ -220,13 +329,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       connect,
       disconnect,
       clearError,
+      multisig: state.multisig,
+      refreshMultisigAccount,
     }),
     [
       clearError,
       connect,
       disconnect,
+      refreshMultisigAccount,
       state.errorMessage,
       state.isHydrated,
+      state.multisig,
       state.selectedWalletId,
       state.session,
       state.status,

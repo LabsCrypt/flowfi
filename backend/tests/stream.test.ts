@@ -38,9 +38,11 @@ vi.mock('../src/services/sorobanService.js', async (importOriginal) => ({
 }));
 
 import app from '../src/app.js';
+import { prisma } from '../src/lib/prisma.js';
 
 // Mock Prisma so tests don't require a real DB connection
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   default: {
     stream: {
       upsert: vi.fn(),
@@ -63,7 +65,6 @@ vi.mock('../src/lib/prisma.js', () => ({
   },
 }));
 
-import { prisma } from '../src/lib/prisma.js';
 
 describe('POST /v1/streams', () => {
   beforeEach(() => {

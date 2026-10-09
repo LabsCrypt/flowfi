@@ -11,22 +11,37 @@ interface DashboardIncomingProps {
   incomingStreams: Stream[];
   onWithdraw: (stream: Stream) => Promise<void>;
   withdrawingStreamId: string | null;
+  /** Opens the batch-claim drawer owned by the dashboard shell. When provided, the "Claim all" button delegates to the shell (enables the `c` keyboard shortcut). */
+  onOpenBatchClaim?: () => void;
+  /** Called after a successful batch claim when the drawer is managed internally. */
   onBatchClaimSuccess?: () => Promise<void> | void;
+  /** Stream highlighted by keyboard navigation (j/k). */
+  selectedStreamId?: string | null;
 }
 
 export function DashboardIncoming({
   incomingStreams,
   onWithdraw,
   withdrawingStreamId,
+  onOpenBatchClaim,
   onBatchClaimSuccess,
+  selectedStreamId = null,
 }: DashboardIncomingProps) {
   const { session } = useWallet();
   const [showBatchClaim, setShowBatchClaim] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  
+
   const claimableCount = incomingStreams.filter(
     (stream) => stream.isActive && stream.status === "Active" && stream.deposited > stream.withdrawn
   ).length;
+
+  const handleClaimAll = () => {
+    if (onOpenBatchClaim) {
+      onOpenBatchClaim();
+    } else {
+      setShowBatchClaim(true);
+    }
+  };
 
   if (incomingStreams.length === 0) {
     return (
@@ -46,7 +61,7 @@ export function DashboardIncoming({
                   <stop offset="100%" stopColor="#3b82f6" />
                 </linearGradient>
               </defs>
-              
+
               {/* Outer circle */}
               <circle
                 cx="100"
@@ -57,7 +72,7 @@ export function DashboardIncoming({
                 strokeWidth="2"
                 opacity="0.5"
               />
-              
+
               {/* Animated waves */}
               <g className="animate-pulse">
                 <path
@@ -85,7 +100,7 @@ export function DashboardIncoming({
                   opacity="0.3"
                 />
               </g>
-              
+
               {/* Center inbox icon */}
               <circle cx="100" cy="100" r="30" fill="#0f172a" />
               <rect x="80" y="90" width="40" height="25" rx="3" fill="none" stroke="#06b6d4" strokeWidth="2" />
@@ -96,7 +111,7 @@ export function DashboardIncoming({
           {/* Title and Description */}
           <h3 className="text-2xl font-bold mb-3">No Incoming Streams Yet</h3>
           <p className="text-slate-400 max-w-md mx-auto mb-6">
-            You haven't received any streaming payments yet. Share your payment address with a sender to start receiving continuous payments.
+            You haven&apos;t received any streaming payments yet. Share your payment address with a sender to start receiving continuous payments.
           </p>
 
           {/* Action Button */}
@@ -126,7 +141,7 @@ export function DashboardIncoming({
                   Give your Stellar address to anyone who wants to pay you
                 </p>
               </div>
-              
+
               <div className="p-4 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center">
@@ -138,7 +153,7 @@ export function DashboardIncoming({
                   Funds flow continuously per second, not as lump sums
                 </p>
               </div>
-              
+
               <div className="p-4 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center">
@@ -169,7 +184,7 @@ export function DashboardIncoming({
       {claimableCount >= 2 && (
         <button
           type="button"
-          onClick={() => setShowBatchClaim(true)}
+          onClick={handleClaimAll}
           className="mb-4 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white"
         >
           Claim all available
@@ -179,6 +194,7 @@ export function DashboardIncoming({
         streams={incomingStreams}
         onWithdraw={onWithdraw}
         withdrawingStreamId={withdrawingStreamId}
+        selectedStreamId={selectedStreamId}
       />
       {showBatchClaim && (
         <BatchClaimDrawer

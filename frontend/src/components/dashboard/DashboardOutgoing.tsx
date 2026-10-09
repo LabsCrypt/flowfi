@@ -9,6 +9,8 @@ interface DashboardOutgoingProps {
   onCancel: (stream: Stream) => void;
   onShowDetails: (stream: Stream) => void;
   setShowWizard: () => void;
+  /** Stream highlighted by keyboard navigation (j/k). */
+  selectedStreamId?: string | null;
 }
 
 export function DashboardOutgoing({
@@ -17,6 +19,7 @@ export function DashboardOutgoing({
   onCancel,
   onShowDetails,
   setShowWizard,
+  selectedStreamId = null,
 }: DashboardOutgoingProps) {
   const activeOutgoing = outgoingStreams.filter((s) => s.status === "Active");
 
@@ -57,7 +60,13 @@ export function DashboardOutgoing({
               {activeOutgoing.map((stream) => (
                 <tr
                   key={stream.id}
-                  className="cursor-pointer hover:bg-white/5"
+                  data-stream-id={stream.id}
+                  aria-selected={selectedStreamId === stream.id}
+                  className={`cursor-pointer hover:bg-white/5 ${
+                    selectedStreamId === stream.id
+                      ? "bg-accent/10 ring-1 ring-inset ring-accent/40"
+                      : ""
+                  }`}
                   onClick={(e) => {
                     if ((e.target as HTMLElement).closest("button")) return;
                     onShowDetails(stream);

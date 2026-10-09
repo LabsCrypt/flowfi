@@ -24,7 +24,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '22'.19.0'
+        node-version: '20.19.0'
         cache: 'npm'
         
     - name: Install dependencies
@@ -54,24 +54,6 @@ jobs:
     - name: Install cargo-audit
       if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
       run: cargo install cargo-audit --locked
-
-    - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
-      working-directory: contracts
-
-    - name: Setup Rust toolchain for contract audit
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache cargo-audit
-      id: cargo-audit-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-audit
-        key: cargo-audit-${{ runner.os }}-0.22.0
-
-    - name: Install cargo-audit
-      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-      run: cargo install cargo-audit --version 0.22.0 --locked
 
     - name: Check for known vulnerabilities in smart contracts (cargo audit)
       run: cargo audit

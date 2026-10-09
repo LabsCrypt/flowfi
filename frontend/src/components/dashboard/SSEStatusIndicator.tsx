@@ -7,12 +7,15 @@ interface SSEStatusIndicatorProps {
   connected: boolean;
   reconnecting: boolean;
   error: Error | null;
+  /** Optional handler for the "Retry Now" button (issue #1508). */
+  onRetry?: () => void;
 }
 
 export function SSEStatusIndicator({
   connected,
   reconnecting,
   error,
+  onRetry,
 }: SSEStatusIndicatorProps) {
   // Show disconnect banner when error occurs
   const showDisconnectBanner = useMemo(() => {
@@ -73,6 +76,15 @@ export function SSEStatusIndicator({
                 : "Real-time updates paused. Data may be stale."}
             </p>
           </div>
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded-md bg-white/20 px-3 py-1.5 text-sm font-semibold hover:bg-white/30 transition-colors"
+            >
+              Retry Now
+            </button>
+          )}
         </div>
       )}
     </>
