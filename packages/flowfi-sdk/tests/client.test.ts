@@ -262,4 +262,40 @@ describe('FlowFiClient', () => {
   it('requires constructor config', () => {
     expect(() => new FlowFiClient({ rpcUrl: '', networkPassphrase: '', contractId: '' })).toThrow();
   });
+
+  it('throws a helpful error for an unrecognised network passphrase', () => {
+    expect(
+      () =>
+        new FlowFiClient(
+          { ...CONFIG, networkPassphrase: 'Test SDF Network;September 2015' },
+          { rpcClient },
+        ),
+    ).toThrow(/Unrecognised network passphrase[\s\S]*Did you mean/);
+  });
+
+  it('accepts official passphrases without warnings', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const passphrase of [
+      'Public Global Stellar Network ; September 2015',
+      'Test SDF Network ; September 2015',
+      'Test SDF Future Network ; October 2022',
+      'Standalone Network ; February 2017',
+    ]) {
+      expect(
+        () => new FlowFiClient({ ...CONFIG, networkPassphrase: passphrase }, { rpcClient }),
+      ).not.toThrow();
+    }
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('allows opting out of the check for custom networks', () => {
+    expect(
+      () =>
+        new FlowFiClient(
+          { ...CONFIG, networkPassphrase: 'My Private Network ; 2026', allowCustomNetworkPassphrase: true },
+          { rpcClient },
+        ),
+    ).not.toThrow();
+  });
 });

@@ -25,6 +25,13 @@ describe('API Version Middleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('accepts the documented /api/v1 prefix and preserves its query string', () => {
+    req = { path: '/api/v1/streams/42/snapshot', url: '/api/v1/streams/42/snapshot?timestamp=1735689599' };
+    apiVersionMiddleware(req as VersionedRequest, res as Response, next);
+    expect(req.apiVersion).toBe('v1');
+    expect(req.url).toBe('/streams/42/snapshot?timestamp=1735689599');
+    expect(next).toHaveBeenCalled();
+  });
   it('should return 400 for unsupported version', () => {
     req = { path: '/v2/streams', url: '/v2/streams' };
     apiVersionMiddleware(req as VersionedRequest, res as Response, next);

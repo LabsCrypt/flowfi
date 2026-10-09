@@ -94,6 +94,9 @@ describe('CancelConfirmModal', () => {
 // ─── RecipientStep ────────────────────────────────────────────────────────────
 
 describe('RecipientStep', () => {
+  const VALID_KEY = 'GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7';
+  const INVALID_CHECKSUM = 'GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR8';
+
   it('renders the input field', () => {
     render(<RecipientStep value="" onChange={vi.fn()} />);
     expect(screen.getByPlaceholderText(/GABCDEF/i)).toBeInTheDocument();
@@ -114,6 +117,34 @@ describe('RecipientStep', () => {
   it('does not show an error when error prop is absent', () => {
     render(<RecipientStep value="" onChange={vi.fn()} />);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows an inline error in real time for an invalid checksum', () => {
+    render(<RecipientStep value={INVALID_CHECKSUM} onChange={vi.fn()} />);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Invalid Stellar public key (must start with 'G' and be 56 characters)",
+    );
+  });
+
+  it('shows no error for a valid recipient key', () => {
+    render(<RecipientStep value={VALID_KEY} onChange={vi.fn()} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('trims whitespace from pasted values', () => {
+    const onChange = vi.fn();
+    render(<RecipientStep value="" onChange={onChange} />);
+    fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: { getData: () => `  ${VALID_KEY}  ` },
+    });
+    expect(onChange).toHaveBeenCalledWith(VALID_KEY);
+  });
+
+  it('trims whitespace on blur', () => {
+    const onChange = vi.fn();
+    render(<RecipientStep value={`  ${VALID_KEY}  `} onChange={onChange} />);
+    fireEvent.blur(screen.getByRole('textbox'));
+    expect(onChange).toHaveBeenCalledWith(VALID_KEY);
   });
 });
 
@@ -160,5 +191,26 @@ describe('AmountStep', () => {
   it('shows a preview when a positive amount is entered without errors', () => {
     render(<AmountStep value="25" onChange={vi.fn()} token="XLM" />);
     expect(screen.getByText(/25 XLM/i)).toBeInTheDocument();
+  });
+
+  it('shows the available spendable balance', () => {
+    render(<AmountStep value="" onChange={vi.fn()} token="USDC" availableBalance="100" />);
+    expect(screen.getByText(/Available: 100 USDC/)).toBeInTheDocument();
+  });
+
+  it('shows the reduced available balance and reserve note for XLM', () => {
+    render(<AmountStep value="" onChange={vi.fn()} token="XLM" availableBalance="100" />);
+    expect(screen.getByText(/Available: 99 XLM/)).toBeInTheDocument();
+    expect(screen.getByText(/kept in reserve/i)).toBeInTheDocument();
+  });
+
+  it('shows an inline error when the amount exceeds the wallet balance', () => {
+    render(<AmountStep value="150" onChange={vi.fn()} token="USDC" availableBalance="100" />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Amount exceeds wallet balance');
+  });
+
+  it('disables Max when the spendable balance is zero (XLM reserve)', () => {
+    render(<AmountStep value="" onChange={vi.fn()} token="XLM" availableBalance="1" />);
+    expect(screen.getByText('Max')).toBeDisabled();
   });
 });
