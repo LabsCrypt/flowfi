@@ -30,6 +30,27 @@ vi.mock('@/lib/wallet', () => ({
   ),
 }));
 
+// The provider now reads signer/threshold information from Horizon once a
+// session exists (issue #1471). Stub it so these unit tests never hit the
+// network; the multisig behaviour itself is covered by dedicated tests below.
+vi.mock('@/lib/stellar-multisig', () => ({
+  fetchMultisigAccount: vi.fn().mockResolvedValue({
+    publicKey: 'GABC1234567890DEF',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    horizonUrl: 'https://horizon-testnet.stellar.org',
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    sequence: '1',
+    signers: [
+      { key: 'GABC1234567890DEF', weight: 1, type: 'ed25519_public_key' },
+    ],
+    thresholds: { low: 1, medium: 1, high: 1 },
+    masterWeight: 1,
+    isMultisig: false,
+    connectedSignerWeight: 1,
+    fetchedAt: new Date().toISOString(),
+  }),
+}));
+
 function createWrapper() {
   return function Wrapper({ children }: { children: ReactNode }) {
     return <WalletProvider>{children}</WalletProvider>;
@@ -184,6 +205,82 @@ describe('WalletProvider', () => {
       expect(result.current.status).toBe('idle');
       expect(result.current.session).toBeNull();
       expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+  });
+
+  describe('multisig detection', () => {
+    it('exposes the detected multisig state after a session is restored', async () => {
+      const { fetchMultisigAccount } = await import('@/lib/stellar-multisig');
+      vi.mocked(fetchMultisigAccount).mockResolvedValueOnce({
+        publicKey: mockSession.publicKey,
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        horizonUrl: 'https://horizon-testnet.stellar.org',
+        rpcUrl: 'https://soroban-testnet.stellar.org',
+        sequence: '1',
+        signers: [
+          { key: mockSession.publicKey, weight: 1, type: 'ed25519_public_key' },
+          { key: 'GCO-SIGNER', weight: 1, type: 'ed25519_public_key' },
+        ],
+        thresholds: { low: 1, medium: 1, high: 2 },
+        masterWeight: 1,
+        isMultisig: true,
+        connectedSignerWeight: 1,
+        fetchedAt: new Date().toISOString(),
+      });
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(mockSession));
+
+      const { result } = renderHook(() => useWallet(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.multisig.status).toBe('ready');
+      });
+
+      expect(result.current.multisig.isMultisig).toBe(true);
+      expect(result.current.multisig.account?.signers).toHaveLength(2);
+    });
+
+    it('records a Horizon failure without dropping the wallet session', async () => {
+      const { fetchMultisigAccount } = await import('@/lib/stellar-multisig');
+      vi.mocked(fetchMultisigAccount).mockRejectedValueOnce(new Error('horizon down'));
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(mockSession));
+
+      const { result } = renderHook(() => useWallet(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.multisig.status).toBe('error');
+      });
+
+      expect(result.current.multisig.error).toBe('horizon down');
+      expect(result.current.status).toBe('connected');
+      expect(result.current.session).toEqual(mockSession);
+    });
+
+    it('resets multisig state on disconnect', async () => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(mockSession));
+
+      const { result } = renderHook(() => useWallet(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.multisig.status).toBe('ready');
+      });
+
+      act(() => {
+        result.current.disconnect();
+      });
+
+      expect(result.current.multisig).toMatchObject({
+        status: 'idle',
+        account: null,
+        isMultisig: false,
+      });
     });
   });
 

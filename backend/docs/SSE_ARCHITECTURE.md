@@ -294,9 +294,21 @@ The indexer worker behavior is controlled by environment variables configured in
 | `SOROBAN_RPC_URL` | Endpoint URL for the Soroban RPC node. | `"https://soroban-testnet.stellar.org"` | Uses default public testnet RPC URL. |
 | `INDEXER_POLL_INTERVAL_MS` | Polling interval in milliseconds between event fetch cycles. | `"5000"` (5 seconds) | Uses default 5000 ms interval. |
 | `INDEXER_START_LEDGER` | Starting Stellar ledger sequence number for cold starts when no `IndexerState` record exists in the database. | `"0"` | Starts indexing from ledger 0 on initial setup. |
-| `INDEXER_DEAD_LETTER_MAX_RETRIES` | Max failed processing attempts before an event is abandoned to the `IndexerDeadLetterEvent` table and the cursor advances past it. | `"5"` | Uses default of 5 attempts. |
+| `INDEXER_REORG_ALERT_THRESHOLD` | Number of reverted ledgers above which a ledger reorg rollback is escalated to dead-letter triage. | `"5"` | Uses default of 5 ledgers. |
 
-Failed events never freeze the indexer: the cursor always advances past successfully processed events even when an earlier event in the batch failed, and each failing event is recorded (with its raw payload) in the `IndexerDeadLetterEvent` table for manual triage. After `INDEXER_DEAD_LETTER_MAX_RETRIES` attempts the event is abandoned and the cursor advances past it.
+Failed events never freeze the indexer: the cursor always advances past successfully processed events even when an earlier event in the batch failed. Each failing event is quarantined in the `IndexerDeadLetterEvent` table with its raw payload and error, where operators can replay or discard it through the admin dead-letter endpoints.
+
+---
+
+### Ledger Reorg & Fork Recovery (issue #1468)
+
+An RPC failover (node A at ledger 1005, node B still at 1002) or a network partition can serve a stale fork. Writing it forward corrupts the indexer's view of stream balances, so the worker checkpoints every ingestion cycle and re-proves those checkpoints before advancing.
+
+* **Checkpoints** — `LedgerCheckpoint` (`prisma/schema.prisma`) stores the `ledgerSequence`, `ledgerHash`, `parentHash`, `eventsCount`, a deterministic `stateRootHash`, and an `isReverted` flag for each ingested ledger. `backend/src/services/checkpoint.service.ts` computes the root and persists the row.
+* **Pre-ingestion verification** — before fetching new events, `verifyAndRecover()` re-reads the newest checkpoints from the RPC node. The first checkpoint whose stored hash no longer matches the canonical ledger bounds the fork: everything above it is invalid. If a checkpoint cannot be read at all (transient RPC outage) the worker **fails safe** and continues forward rather than guessing.
+* **Atomic rollback** — `rollbackAboveLedger(safeLedger)` runs in a single Prisma transaction: it deletes the reverted `StreamEvent` rows, recomputes each affected stream's balances/status from the surviving events (no drift, no orphaned rows), marks the reverted checkpoints `isReverted = true`, and rewinds `IndexerState.lastLedger` to `safeLedger` with a `null` cursor so the canonical sequence is re-ingested from that ledger.
+* **Alerting** — `flowfi_indexer_reorg_events_total` counts recoveries (`outcome="rolled_back"`) and `flowfi_indexer_reverted_ledgers` reports the size of the most recent rollback. A rollback larger than `INDEXER_REORG_ALERT_THRESHOLD` emits a critical log and writes a `ledger_reorg` row to the dead-letter table for operator triage.
+* **Operator controls** — `getReorgStatus()` reports the latest checkpoint and recently reverted ledgers; `recoverFromReorg()` runs the same verification/rollback on demand under the worker mutex.
 
 ---
 

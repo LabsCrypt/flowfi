@@ -2,6 +2,11 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Emit a self-contained server bundle (`.next/standalone`) carrying only the
+  // traced production dependencies. The production Docker image copies this
+  // instead of the full `.next` tree + node_modules, keeping the runtime image
+  // small (issue #1335).
+  output: "standalone",
   // The workspace root lives one level above this directory. Pinning it here
   // prevents Turbopack from inferring a wrong root when stray package-lock
   // files exist outside the repo (e.g. ~/package-lock.json).

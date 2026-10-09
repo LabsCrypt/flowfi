@@ -1,0 +1,91 @@
+name: Weekly disaster recovery verification
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  restore-and-verify:
+    name: Restore latest encrypted backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: recovery-test
+          POSTGRES_DB: flowfi_recovery
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d flowfi_recovery"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.BACKUP_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.BACKUP_AWS_REGION }}
+
+      - name: Find latest backup
+        id: latest
+        shell: bash
+        env:
+          BACKUP_S3_URI: ${{ vars.BACKUP_S3_URI }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$BACKUP_S3_URI" =~ ^s3://([^/]+)(/(.*))?$ ]]; then
+            echo "BACKUP_S3_URI must be s3://bucket/optional-prefix" >&2
+            exit 2
+          fi
+          bucket="${BASH_REMATCH[1]}"
+          prefix="${BASH_REMATCH[3]:-}"
+          [[ -z "$prefix" ]] || prefix="${prefix%/}/"
+          key="$(aws s3api list-objects-v2 --bucket "$bucket" --prefix "$prefix" \
+            --query 'sort_by(Contents,&LastModified)[-1].Key' --output text)"
+          if [[ -z "$key" || "$key" == "None" ]]; then
+            echo "No backup found in $BACKUP_S3_URI" >&2
+            exit 1
+          fi
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Download latest encrypted backup
+        env:
+          BACKUP_BUCKET: ${{ steps.latest.outputs.bucket }}
+          BACKUP_KEY: ${{ steps.latest.outputs.key }}
+        run: aws s3 cp "s3://$BACKUP_BUCKET/$BACKUP_KEY" "$RUNNER_TEMP/latest-backup.tar.gz.enc" --only-show-errors
+      - name: Restore and validate row counts
+        run: bash scripts/db-restore.sh "$RUNNER_TEMP/latest-backup.tar.gz.enc"
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          DATABASE_URL: postgresql://postgres:recovery-test@127.0.0.1:5432/flowfi_recovery
+
+      - name: Verify Prisma schema and migration history
+        run: |
+          npx prisma validate --schema=prisma/schema.prisma
+          npx prisma migrate status --schema=prisma/schema.prisma
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:recovery-test@127.0.0.1:5432/flowfi_recovery

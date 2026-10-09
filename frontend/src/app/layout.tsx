@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Sora } from "next/font/google";
+import { IBM_Plex_Mono } from "next/font/google";
+import { Sora } from "next/font/google";
 import React from "react";
 
 import "./globals.css";
