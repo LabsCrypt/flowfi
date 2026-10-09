@@ -209,6 +209,18 @@ model KycAttestation {
   @@index([status])
 }
 
+// IdempotencyKey model - records the idempotency keys of mutating requests so a
+// client retry cannot be applied twice. A key is only consulted while the
+// original request may still be retried, so the retention worker (Issue #1495)
+// prunes rows older than seven days to keep the table and its index bounded.
+model IdempotencyKey {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // IndexerDeadLetterEvent model - quarantines Soroban events whose processing
 // failed (unexpected payload shape, transient DB lock, RPC timeout mid-handler).
 // A quarantined event is never retried inline by the poll loop, so one malformed
