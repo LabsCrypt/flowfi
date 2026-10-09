@@ -1,5 +1,5 @@
-import { prisma } from '../lib/prisma';
-import { notificationService } from '../services/notification.service';
+import { prisma } from '../lib/prisma.js';
+import { notificationService } from '../services/notification.service.js';
 
 const POLL_INTERVAL_MS = 60_000;
 const RUNWAY_WARNING_HOURS = 24;
@@ -54,8 +54,9 @@ export class NotificationBotWorker {
 
     const streams = await prisma.stream.findMany({
       where: {
-        status: 'active',
-        endTimestamp: {
+        isActive: true,
+        isPaused: false,
+        endTime: {
           gt: BigInt(Math.floor(now / 1000)),
           lt: BigInt(Math.floor(horizon / 1000)),
         },
@@ -64,15 +65,15 @@ export class NotificationBotWorker {
     });
 
     for (const stream of streams) {
-      const key = `${stream.id}:${stream.sender}:RUNWAY_WARNING`;
+      const key = `${stream.streamId}:${stream.sender}:RUNWAY_WARNING`;
       if (this.warned.has(key)) continue;
       this.warned.add(key);
       await notificationService.dispatch({
         type: 'RUNWAY_WARNING',
         address: stream.sender,
         title: '⚠️ Stream runway below 24 hours',
-        body: `Stream #${stream.id} is running low. Refuel to avoid a payroll halt.`,
-        url: `/streams/${stream.id}`,
+        body: `Stream #${stream.streamId} is running low. Refuel to avoid a payroll halt.`,
+        url: `/streams/${stream.streamId}`,
       });
     }
   }

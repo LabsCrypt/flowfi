@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
-const subscribeToPush = vi.fn(async () => ({} as PushSubscription));
-const unsubscribeFromPush = vi.fn(async () => undefined);
-const getExistingSubscription = vi.fn(async () => null as PushSubscription | null);
+const { subscribeToPush, unsubscribeFromPush, getExistingSubscription } = vi.hoisted(() => ({
+  subscribeToPush: vi.fn(async () => ({} as PushSubscription)),
+  unsubscribeFromPush: vi.fn(async () => undefined),
+  getExistingSubscription: vi.fn(async () => null as PushSubscription | null),
+}));
 
 vi.mock('@/lib/notifications/push', async () => {
   const actual = await vi.importActual<typeof import('@/lib/notifications/push')>(

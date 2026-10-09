@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma';
+import { prisma } from '../lib/prisma.js';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import webpush from 'web-push';
 
@@ -44,14 +44,14 @@ export class NotificationService {
         address: input.address,
         p256dh: input.keys.p256dh,
         auth: input.keys.auth,
-        userAgent: input.userAgent,
+        userAgent: input.userAgent ?? null,
       },
       create: {
         address: input.address,
         endpoint: input.endpoint,
         p256dh: input.keys.p256dh,
         auth: input.keys.auth,
-        userAgent: input.userAgent,
+        userAgent: input.userAgent ?? null,
       },
     });
   }

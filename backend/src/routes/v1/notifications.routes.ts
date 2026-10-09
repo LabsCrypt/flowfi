@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { notificationService } from '../../services/notification.service';
+import { notificationService } from '../../services/notification.service.js';
 
 export const notificationsRouter = Router();
 
