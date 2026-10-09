@@ -1,21 +1,41 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+const renderWithQueryClient = (ui: React.ReactElement) => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      {ui}
+    </QueryClientProvider>
+  );
+};
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
 // ─── Mocks ──────────────────────────────────────────────────────────────
 
-const mockSession = {
-  publicKey: "GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD",
-  network: "TESTNET",
-  walletName: "Freighter",
-};
+const { origUseWallet, mockSession } = vi.hoisted(() => {
+  const mockSession = {
+    publicKey: "GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD",
+    network: "TESTNET",
+    walletName: "Freighter",
+  };
+  return {
+    origUseWallet: vi.fn(() => ({
+      session: mockSession,
+      isHydrated: true,
+    })),
+    mockSession,
+  };
+});
 
 vi.mock("@/context/wallet-context", () => ({
-  useWallet: () => ({
-    session: mockSession,
-    isHydrated: true,
-  }),
+  useWallet: origUseWallet,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -166,12 +186,6 @@ describe("StreamDetailsContent loading skeleton", () => {
     vi.clearAllMocks();
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -185,7 +199,7 @@ describe("StreamDetailsContent loading skeleton", () => {
       () => new Promise(() => {}) // never resolves
     );
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Should show skeleton elements, not a simple spinner
     const skeletonRegion = screen.getByRole("status");
@@ -200,21 +214,21 @@ describe("StreamDetailsContent loading skeleton", () => {
   it("transitions from skeleton to stream content when data loads successfully", async () => {
     const mockStream = createMockStream();
 
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = input.toString();
+      if (url.includes("/events")) {
+        return {
+          ok: true,
+          json: async () => ({ events: [], total: 0 }),
+        } as Response;
+      }
+      return {
         ok: true,
         json: async () => mockStream,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response);
+      } as Response;
+    });
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Initially shows skeleton
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -241,7 +255,7 @@ describe("StreamDetailsContent loading skeleton", () => {
       json: async () => ({ error: "Stream not found" }),
     } as Response);
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Initially shows skeleton
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -265,7 +279,7 @@ describe("StreamDetailsContent loading skeleton", () => {
       json: async () => ({ error: "Stream not found" }),
     } as Response);
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     await waitFor(() => {
       expect(screen.getByText(/stream not found/i)).toBeInTheDocument();
@@ -292,7 +306,7 @@ describe("StreamDetailsContent loading skeleton", () => {
         json: async () => ({ events: [], total: 0 }),
       } as Response);
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Once the stream loads, the Claimable stat card should show the value
     // returned by the shared hook, formatted in token units (stroops → XLM).
@@ -309,22 +323,22 @@ describe("StreamDetailsContent loading skeleton", () => {
 async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
   const mockStream = { ...createMockStream(), ...streamOverrides };
 
-  vi.mocked(global.fetch)
-    .mockResolvedValueOnce({
+  vi.mocked(global.fetch).mockImplementation(async (input) => {
+    const url = input.toString();
+    if (url.includes("/events")) {
+      return {
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response;
+    }
+    return {
       ok: true,
       json: async () => mockStream,
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], total: 0 }),
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], total: 0 }),
-    } as Response);
+    } as Response;
+  });
 
   const user = userEvent.setup();
-  render(<StreamDetailsContent streamId={STREAM_ID} />);
+  renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
   await waitFor(() => {
     expect(screen.getByText(/stream details/i)).toBeInTheDocument();
@@ -337,12 +351,6 @@ async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
 
 // Note: handleWithdraw is only visible when the user is the recipient.
 // The mock session matches the sender, so we re-mock useWallet for these tests.
-const { useWallet: origUseWallet } = vi.hoisted(() => {
-  return { useWallet: vi.fn() };
-});
-vi.mock("@/context/wallet-context", () => ({
-  useWallet: origUseWallet,
-}));
 
 const mockWalletForRecipient = (session = {
   publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
@@ -358,12 +366,6 @@ describe("StreamDetailsContent handleWithdraw", () => {
     mockTracker.status = "idle";
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
     mockWalletForRecipient();
   });
@@ -415,12 +417,6 @@ describe("StreamDetailsContent handleTopUp", () => {
     mockTracker.status = "idle";
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
     // TopUp is only visible for the sender
     origUseWallet.mockReturnValue({
@@ -494,12 +490,6 @@ describe("StreamDetailsContent handlePause", () => {
     mockTracker.status = "idle";
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -544,12 +534,6 @@ describe("StreamDetailsContent handleResume", () => {
     mockTracker.status = "idle";
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -594,12 +578,6 @@ describe("StreamDetailsContent handleCancel", () => {
     mockTracker.status = "idle";
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -649,12 +627,6 @@ describe("StreamDetailsContent live-claimable interval", () => {
     mockTracker.status = "idle";
     // Default to a benign empty response so the component's background fetches
     // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
-    global.fetch = vi.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-    );
     global.fetch = createFetchMock();
   });
 
@@ -721,11 +693,21 @@ describe("StreamDetailsContent claimable re-sync + pulse", () => {
 
   async function renderStream(overrides: Record<string, unknown> = {}) {
     const mockStream = { ...createMockStream(), ...overrides };
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => mockStream } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ events: [], total: 0 }) } as Response);
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = input.toString();
+      if (url.includes("/events")) {
+        return {
+          ok: true,
+          json: async () => ({ events: [], total: 0 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => mockStream,
+      } as Response;
+    });
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     await waitFor(() => {
       expect(screen.getByText(/stream details/i)).toBeInTheDocument();

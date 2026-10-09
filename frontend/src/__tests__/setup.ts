@@ -28,3 +28,8 @@ if (typeof window !== 'undefined') {
   });
 }
 
+vi.mock('@/context/NetworkContext', () => ({
+  useNetwork: () => ({ networkId: 'testnet', setNetworkId: vi.fn() }),
+  NetworkProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+

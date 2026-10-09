@@ -1,5 +1,6 @@
 @import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *));
+/* High-contrast is a dark-based theme, so `dark:` utilities apply to it too. */
+@custom-variant dark (&:where(.dark, .dark *, [data-theme="high-contrast"], [data-theme="high-contrast"] *));
 
 .receipt-print {
   display: none;
@@ -87,36 +88,92 @@
 }
 
 :root {
+  /*
+   * Semantic design tokens (#1332). Components and the legacy variables
+   * below read from these; each theme only redefines the tokens.
+   */
+  --color-bg-canvas: #eaf5ff;
+  --color-bg-canvas-alt: #fff4e6;
+  --color-bg-surface: rgba(255, 255, 255, 0.8);
+  --color-border-subtle: rgba(19, 38, 61, 0.12);
+  --color-text-primary: #13263d;
+  --color-text-secondary: #33475f;
+  --color-text-muted: #4c617e;
+  --color-brand-primary: #0f7a99;
+  --color-brand-accent: #10b981;
+  --color-focus-ring: #6366f1;
+
   --background: #020617;
   --foreground: #f8fafc;
-  --accent: #10b981;
+  --accent: var(--color-brand-accent);
   --accent-hover: #059669;
-  --accent-secondary: #6366f1;
+  --accent-secondary: var(--color-focus-ring);
   --accent-tertiary: #0ea5e9;
   --glass: rgba(255, 255, 255, 0.02);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-highlight: rgba(255, 255, 255, 0.12);
 
-  --bg-sky: #eaf5ff;
-  --bg-sand: #fff4e6;
-  --text-main: #13263d;
-  --text-muted: #4c617e;
-  --surface: rgba(255, 255, 255, 0.8);
-  --surface-border: rgba(19, 38, 61, 0.12);
-  --wallet-accent: #0f7a99;
+  --bg-sky: var(--color-bg-canvas);
+  --bg-sand: var(--color-bg-canvas-alt);
+  --text-main: var(--color-text-primary);
+  --text-muted: var(--color-text-muted);
+  --surface: var(--color-bg-surface);
+  --surface-border: var(--color-border-subtle);
+  --wallet-accent: var(--color-brand-primary);
   --accent-strong: #0d5378;
   --danger: #b12f3f;
 }
 
 :root.dark {
+  --color-bg-canvas: #0a1128;
+  --color-bg-canvas-alt: #131b2f;
+  --color-bg-surface: rgba(15, 23, 42, 0.8);
+  --color-border-subtle: rgba(255, 255, 255, 0.12);
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #94a3b8;
+  --color-brand-primary: #38bdf8;
+
   --background: #020617;
   --foreground: #f8fafc;
-  --bg-sky: #0a1128;
-  --bg-sand: #131b2f;
-  --text-main: #f1f5f9;
-  --text-muted: #94a3b8;
-  --surface: rgba(15, 23, 42, 0.8);
-  --surface-border: rgba(255, 255, 255, 0.12);
+}
+
+/*
+ * High-contrast theme (#1332): pure black/white with a yellow focus ring.
+ * Contrast on the #000 canvas: primary #fff 21:1, secondary #f0f0f0 18.9:1,
+ * muted #d9d9d9 15.7:1, brand #5cffb1 15.6:1, accent/focus #ffff00 19.6:1,
+ * borders #fff 21:1 - all above the WCAG AAA 7:1 threshold.
+ */
+[data-theme="high-contrast"] {
+  color-scheme: dark;
+  --color-bg-canvas: #000000;
+  --color-bg-canvas-alt: #000000;
+  --color-bg-surface: #000000;
+  --color-border-subtle: #ffffff;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #f0f0f0;
+  --color-text-muted: #d9d9d9;
+  --color-brand-primary: #5cffb1;
+  --color-brand-accent: #ffff00;
+  --color-focus-ring: #ffff00;
+
+  --background: #000000;
+  --foreground: #ffffff;
+  --accent-hover: #ffe600;
+  --accent-tertiary: #5cffb1;
+  --glass: #000000;
+  --glass-border: #ffffff;
+  --glass-highlight: #ffffff;
+  --accent-strong: #ffff00;
+  --danger: #ff8a8a;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -262,6 +319,63 @@ body {
     radial-gradient(circle at 14% 16%, rgba(14, 165, 233, 0.15) 0%, transparent 37%),
     radial-gradient(circle at 84% 20%, rgba(56, 189, 248, 0.1) 0%, transparent 33%),
     linear-gradient(160deg, var(--bg-sky) 0%, var(--bg-sand) 100%);
+}
+
+[data-theme="high-contrast"] body {
+  background: #000;
+  color: #fff;
+}
+
+/*
+ * Utility classes across the app hard-code slate/zinc/white-alpha colours.
+ * In high-contrast mode collapse them onto the token palette so every text,
+ * border and surface meets 7:1 without touching each component.
+ */
+[data-theme="high-contrast"] [class*="text-slate-"],
+[data-theme="high-contrast"] [class*="text-gray-"],
+[data-theme="high-contrast"] [class*="text-zinc-"],
+[data-theme="high-contrast"] [class*="text-white/"],
+[data-theme="high-contrast"] [class*="text-black"] {
+  color: var(--color-text-primary) !important;
+}
+
+[data-theme="high-contrast"] [class*="border-white/"],
+[data-theme="high-contrast"] [class*="border-black/"],
+[data-theme="high-contrast"] [class*="border-slate-"],
+[data-theme="high-contrast"] [class*="border-gray-"],
+[data-theme="high-contrast"] [class*="border-zinc-"],
+[data-theme="high-contrast"] [class*="border-glass"] {
+  border-color: var(--color-border-subtle) !important;
+}
+
+[data-theme="high-contrast"] [class*="bg-white/"],
+[data-theme="high-contrast"] [class*="bg-black/"],
+[data-theme="high-contrast"] [class*="bg-slate-"],
+[data-theme="high-contrast"] [class*="bg-gray-"],
+[data-theme="high-contrast"] [class*="bg-zinc-"],
+[data-theme="high-contrast"] [class*="from-"],
+[data-theme="high-contrast"] [class*="via-"],
+[data-theme="high-contrast"] [class*="to-"] {
+  background-image: none !important;
+  background-color: var(--color-bg-canvas) !important;
+}
+
+[data-theme="high-contrast"] .blur-3xl {
+  display: none;
+}
+
+[data-theme="high-contrast"] :is(button, a, input, select, textarea, [role="button"]) {
+  border-color: var(--color-border-subtle);
+}
+
+[data-theme="high-contrast"] :is(button, input, select, textarea) {
+  border-width: 2px;
+  border-style: solid;
+}
+
+[data-theme="high-contrast"] :focus-visible {
+  outline: 3px solid var(--color-focus-ring);
+  outline-offset: 3px;
 }
 
 .app-shell {

@@ -25,7 +25,6 @@ import {
 
 /** Ledger rollbacks above this ceiling are escalated to dead-letter triage. */
 const REORG_ALERT_THRESHOLD_DEFAULT = 5;
-
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
 /** Use the ledger close time, not worker processing time, for historical state changes. */

@@ -12,10 +12,10 @@ datasource db {
 
 // User model - represents Stellar wallet addresses interacting with the protocol
 model User {
-  id              String   @id @default(uuid())
-  publicKey       String   @unique // Stellar public key (G...)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id        String   @id @default(uuid())
+  publicKey String   @unique // Stellar public key (G...)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   sentStreams     Stream[] @relation("SentStreams")
@@ -26,28 +26,28 @@ model User {
 
 // Stream model - mirrors on-chain stream state for fast querying
 model Stream {
-  id                String    @id @default(uuid())
-  streamId          BigInt    @unique // On-chain stream ID (Soroban u64)
-  sender            String    // Sender's Stellar public key
-  recipient         String    // Recipient's Stellar public key
-  tokenAddress      String    // Token contract address
-  ratePerSecond     String    // Rate as string to preserve precision (i128)
-  depositedAmount   String    // Total deposited amount (i128)
-  withdrawnAmount   String    // Total withdrawn amount (i128)
-  startTime         BigInt    // Unix timestamp when stream started
-  lastUpdateTime    BigInt    // Unix timestamp of last update
-  endTime           BigInt?   // Unix timestamp when stream ends
-  isActive          Boolean   @default(true)
-  isPaused          Boolean   @default(false)
-  pausedAt          BigInt?   // Unix timestamp when paused
-  totalPausedDuration Int     @default(0) // Accumulated paused duration in seconds
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id                  String   @id @default(uuid())
+  streamId            BigInt   @unique // On-chain stream ID (Soroban u64)
+  sender              String // Sender's Stellar public key
+  recipient           String // Recipient's Stellar public key
+  tokenAddress        String // Token contract address
+  ratePerSecond       String // Rate as string to preserve precision (i128)
+  depositedAmount     String // Total deposited amount (i128)
+  withdrawnAmount     String // Total withdrawn amount (i128)
+  startTime           BigInt // Unix timestamp when stream started
+  lastUpdateTime      BigInt // Unix timestamp of last update
+  endTime             BigInt? // Unix timestamp when stream ends
+  isActive            Boolean  @default(true)
+  isPaused            Boolean  @default(false)
+  pausedAt            BigInt? // Unix timestamp when paused
+  totalPausedDuration Int      @default(0) // Accumulated paused duration in seconds
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   // Relations
-  senderUser        User      @relation("SentStreams", fields: [sender], references: [publicKey])
-  recipientUser     User      @relation("ReceivedStreams", fields: [recipient], references: [publicKey])
-  events            StreamEvent[]
+  senderUser    User          @relation("SentStreams", fields: [sender], references: [publicKey])
+  recipientUser User          @relation("ReceivedStreams", fields: [recipient], references: [publicKey])
+  events        StreamEvent[]
 
   @@index([sender])
   @@index([recipient])
@@ -83,17 +83,17 @@ model LedgerCheckpoint {
 // StreamEvent model - indexer events for tracking all on-chain stream activities
 model StreamEvent {
   id              String   @id @default(uuid())
-  streamId        BigInt   // Reference to on-chain stream ID (Soroban u64)
-  eventType       String   // EventType: "CREATED", "TOPPED_UP", "WITHDRAWN", "CANCELLED", "COMPLETED", "PAUSED", "RESUMED"
-  amount          String?  // Amount involved in the event (for top-ups, withdrawals)
-  transactionHash String   // Stellar transaction hash
-  ledgerSequence  Int      // Ledger sequence number
-  timestamp       BigInt   // Unix timestamp
-  metadata        String?  // JSON string for additional event data
+  streamId        BigInt // Reference to on-chain stream ID (Soroban u64)
+  eventType       String // EventType: "CREATED", "TOPPED_UP", "WITHDRAWN", "CANCELLED", "COMPLETED", "PAUSED", "RESUMED"
+  amount          String? // Amount involved in the event (for top-ups, withdrawals)
+  transactionHash String // Stellar transaction hash
+  ledgerSequence  Int // Ledger sequence number
+  timestamp       BigInt // Unix timestamp
+  metadata        String? // JSON string for additional event data
   createdAt       DateTime @default(now())
 
   // Relations
-  stream          Stream   @relation(fields: [streamId], references: [streamId])
+  stream Stream @relation(fields: [streamId], references: [streamId])
 
   @@unique([transactionHash, eventType])
   @@index([streamId])
@@ -108,15 +108,15 @@ model StreamEvent {
 // WebhookSubscription model - Outgoing webhook configuration for external integrations (Issue #1189)
 model WebhookSubscription {
   id          String   @id @default(uuid())
-  userAddress String   // Stellar public key of the owner
-  targetUrl   String   // Destination webhook URL (must be HTTPS)
-  secretKey   String   // Secret used for HMAC-SHA256 signature
+  userAddress String // Stellar public key of the owner
+  targetUrl   String // Destination webhook URL (must be HTTPS)
+  secretKey   String // Secret used for HMAC-SHA256 signature
   eventTypes  String[] // Array of subscribed event types (e.g., ["STREAM_CREATED", "TOKENS_WITHDRAWN"])
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  deliveries  WebhookDelivery[]
+  deliveries WebhookDelivery[]
 
   @@index([userAddress])
   @@index([isActive])
@@ -124,17 +124,17 @@ model WebhookSubscription {
 
 // WebhookDelivery model - Webhook delivery history and retry tracking (Issue #1189)
 model WebhookDelivery {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   subscriptionId String
   eventType      String
-  payload        String   // JSON
+  payload        String // JSON
   responseStatus Int?
-  attempts       Int      @default(0)
+  attempts       Int       @default(0)
   deliveredAt    DateTime?
   error          String?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
-  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   @@index([subscriptionId])
   @@index([createdAt])
@@ -144,7 +144,7 @@ model WebhookDelivery {
 model AlertHistory {
   id        String   @id @default(uuid())
   streamId  BigInt
-  alertType String   // "WARNING_48H" or "CRITICAL_24H"
+  alertType String // "WARNING_48H" or "CRITICAL_24H"
   sentAt    DateTime @default(now())
 
   @@unique([streamId, alertType, sentAt])
@@ -209,6 +209,7 @@ model KycAttestation {
   @@index([status])
 }
 
+
 // IndexerDeadLetterEvent model - quarantines Soroban events whose processing
 // failed (unexpected payload shape, transient DB lock, RPC timeout mid-handler).
 // A quarantined event is never retried inline by the poll loop, so one malformed
@@ -216,13 +217,13 @@ model KycAttestation {
 // the admin dead-letter endpoints instead.
 model IndexerDeadLetterEvent {
   id             String   @id @default(uuid())
-  eventId        String   // Soroban paging token / event id of the quarantined event
-  eventType      String   // Contract event name, e.g. "stream_created"
-  txHash         String   // Stellar transaction hash
-  ledgerSequence Int      // Ledger the event was emitted in
-  cursor         String?  // Paging token captured alongside the event
-  payload        String   // JSON envelope: base64 XDR for each topic ScVal + value ScVal
-  errorMessage   String   // Failure reason from the processing attempt
+  eventId        String // Soroban paging token / event id of the quarantined event
+  eventType      String // Contract event name, e.g. "stream_created"
+  txHash         String // Stellar transaction hash
+  ledgerSequence Int // Ledger the event was emitted in
+  cursor         String? // Paging token captured alongside the event
+  payload        String // JSON envelope: base64 XDR for each topic ScVal + value ScVal
+  errorMessage   String // Failure reason from the processing attempt
   attempts       Int      @default(1)
   lastAttemptAt  DateTime @default(now())
   createdAt      DateTime @default(now())

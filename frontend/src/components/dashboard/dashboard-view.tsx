@@ -58,11 +58,7 @@ import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
 import { CashflowProjectionChart } from "./CashflowProjectionChart";
 
-// @ts-expect-error unused var
-const DashboardOverviewDynamic = dynamic(
-  () => import("./DashboardOverview").then((m) => m.DashboardOverview),
-  { ssr: false },
-);
+
 const DashboardIncomingDynamic = dynamic(
   () => import("./DashboardIncoming").then((m) => m.DashboardIncoming),
   { ssr: false },
@@ -912,10 +908,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           incomingStreams={filteredIncoming}
           onWithdraw={handleIncomingWithdraw}
           withdrawingStreamId={withdrawingIncomingStreamId}
+          onBatchClaimSuccess={() => void refetchSnapshot()}
           onOpenBatchClaim={() => setShowBatchClaim(true)}
-          onBatchClaimSuccess={() => {
-            void refetchSnapshot();
-          }}
           selectedStreamId={selectedStreamId}
         />
       );
