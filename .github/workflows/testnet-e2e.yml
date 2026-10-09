@@ -62,7 +62,7 @@ jobs:
       - name: Install Stellar CLI
         if: inputs.contract_id == ''
         run: |
-          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps --version 22.0.0
           echo "$HOME/.stellar-cli/bin" >> "$GITHUB_PATH"
 
       - name: Build & optimize WASM
@@ -70,11 +70,11 @@ jobs:
         working-directory: contracts
         run: |
           set -euo pipefail
-          cargo build --package stream_contract --target wasm32-unknown-unknown --release
-          stellar contract optimize \
-            --wasm target/wasm32-unknown-unknown/release/stream_contract.wasm \
-            --wasm-out target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm
-
+          stellar contract build --optimize
+          # The deploy step below reads `.optimized.wasm`; the new build
+          # command optimizes in place, so preserve the legacy filename.
+          cp target/wasm32-unknown-unknown/release/stream_contract.wasm \
+             target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm
       - name: Fund ephemeral deployer & deploy
         id: deploy
         if: inputs.contract_id == ''

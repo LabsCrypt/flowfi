@@ -62,6 +62,26 @@ export const indexerEventsProcessedTotal = new Counter({
   registers: [registry],
 });
 
+/**
+ * Ledger reorg / fork recoveries. Incremented once per recovery so a sustained
+ * non-zero rate (or a single spike) can page an operator: on Stellar a reorg
+ * means either an RPC node served us a stale fork or the indexer is desynced,
+ * both of which need human review even when the rollback itself succeeded.
+ */
+export const indexerReorgEventsTotal = new Counter({
+  name: 'flowfi_indexer_reorg_events_total',
+  help: 'Ledger reorg / fork recoveries triggered by the indexer, by outcome',
+  labelNames: ['outcome'] as const,
+  registers: [registry],
+});
+
+/** Ledgers above the last verified checkpoint that the most recent rollback reverted. */
+export const indexerRevertedLedgers = new Gauge({
+  name: 'flowfi_indexer_reverted_ledgers',
+  help: 'Ledger count reverted by the most recent indexer rollback',
+  registers: [registry],
+});
+
 // ─── SSE ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -162,6 +182,74 @@ export const dbPoolMaxConnections = new Gauge({
   registers: [registry],
 });
 
+/**
+ * Point-in-time sample of the pg pool. Supplied by `pg-pool.ts` via
+ * `registerDbPoolStatsProvider` so this module never imports `pg` (importing
+ * metrics from the worker must not open a database connection).
+ */
+export interface DbPoolStats {
+  total: number;
+  idle: number;
+  waiting: number;
+}
+
+let dbPoolStatsProvider: (() => DbPoolStats) | null = null;
+
+/**
+ * Attach the pool whose `totalCount`/`idleCount`/`waitingCount` the gauges
+ * below should read. Called once from `createPgPool`.
+ */
+export function registerDbPoolStatsProvider(provider: () => DbPoolStats): void {
+  dbPoolStatsProvider = provider;
+}
+
+/**
+ * Read the current pool counts, tolerating a missing or throwing provider so a
+ * broken pool can never make the whole `/metrics` scrape fail.
+ */
+function sampleDbPool(): DbPoolStats {
+  try {
+    return dbPoolStatsProvider?.() ?? { total: 0, idle: 0, waiting: 0 };
+  } catch {
+    return { total: 0, idle: 0, waiting: 0 };
+  }
+}
+
+/**
+ * Connection pool gauges. `waiting` is the one to alert on: a non-zero value
+ * means callers are queued for a connection, which shows up as request latency
+ * long before the pool is technically exhausted.
+ *
+ * Each gauge samples the pool via `collect()` on every scrape rather than being
+ * pushed on a timer, so a scrape always reflects the pool at that instant.
+ */
+export const dbPoolTotalConnections = new Gauge({
+  name: 'flowfi_db_pool_total_connections',
+  help: 'Total PostgreSQL connections currently held by the pool',
+  registers: [registry],
+  collect() {
+    this.set(sampleDbPool().total);
+  },
+});
+
+export const dbPoolIdleConnections = new Gauge({
+  name: 'flowfi_db_pool_idle_connections',
+  help: 'Idle PostgreSQL connections available in the pool',
+  registers: [registry],
+  collect() {
+    this.set(sampleDbPool().idle);
+  },
+});
+
+export const dbPoolWaitingRequests = new Gauge({
+  name: 'flowfi_db_pool_waiting_requests',
+  help: 'Requests queued waiting for a PostgreSQL connection',
+  registers: [registry],
+  collect() {
+    this.set(sampleDbPool().waiting);
+  },
+});
+
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 
 /** Every API request, labelled by low-cardinality route template and status. */
@@ -180,6 +268,31 @@ export const httpRequestDuration = new Histogram({
   registers: [registry],
 });
 
+// ─── Sentinel anomaly detection (Issue #1469) ────────────────────────────────
+
+/** Anomaly incidents raised by the drain sentinel, by rule and severity. */
+export const sentinelIncidentsTotal = new Counter({
+  name: 'flowfi_sentinel_incidents_total',
+  help: 'Anomaly incidents raised by the stream drain sentinel',
+  labelNames: ['ruleId', 'severity'] as const,
+  registers: [registry],
+});
+
+/** Outbound alert deliveries fanned out by the sentinel, by channel + outcome. */
+export const sentinelAlertsDispatchedTotal = new Counter({
+  name: 'flowfi_sentinel_alerts_dispatched_total',
+  help: 'Sentinel alert deliveries by channel and outcome',
+  labelNames: ['channel', 'outcome'] as const,
+  registers: [registry],
+});
+
+/** Aggregate threat score (0-100) derived from recently retained incidents. */
+export const sentinelThreatScore = new Gauge({
+  name: 'flowfi_sentinel_threat_score',
+  help: 'Aggregate anomaly threat score (0-100) over the retention window',
+  registers: [registry],
+});
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -187,6 +300,11 @@ export const httpRequestDuration = new Histogram({
  * be resolved; in that case the previous lag value is cleared rather than
  * reported as a bogus full-network lag.
  */
+/** Record a completed rollback for alerting; 0 clears the gauge after a clean run. */
+export function setIndexerRevertedLedgers(count: number): void {
+  indexerRevertedLedgers.set(count);
+}
+
 export function setIndexerLedgers(currentLedger: number, networkLedger: number): void {
   indexerCurrentLedger.set(currentLedger);
   indexerNetworkLedger.set(networkLedger);
@@ -218,6 +336,11 @@ export function setSseConnectionCounts(countsByTopic: Map<string, number>, total
 export function recordRpcRequest(method: string, seconds: number, outcome: string): void {
   rpcRequestDuration.observe({ method }, seconds);
   rpcRequestsTotal.inc({ method, outcome });
+}
+
+/** Publish the latest sentinel threat score for alerting dashboards. */
+export function setSentinelThreatScore(score: number): void {
+  sentinelThreatScore.set(score);
 }
 
 export function getMetricsRegistry(): Registry {

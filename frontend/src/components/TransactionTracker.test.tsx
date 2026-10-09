@@ -7,7 +7,12 @@ vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: vi.fn(),
+}));
+
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import TransactionTracker, { renderChanges, checkConfirmation } from "./TransactionTracker";
 
 // Base stream builder so each test only overrides the fields it cares about.
@@ -176,7 +181,7 @@ describe("TransactionTracker polling effect", () => {
       await Promise.resolve();
     });
 
-    expect(toast.success).toHaveBeenCalledWith("Stream created successfully!");
+    expect(transactionSuccessToast).toHaveBeenCalledWith("Stream created successfully!");
     // Capture fetch + first poll; any further polls would add more calls.
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -211,7 +216,7 @@ describe("TransactionTracker polling effect", () => {
     expect(toast.error).toHaveBeenCalledWith(
       "Confirmation timeout - please check explorer for status",
     );
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
 
     // MAX_POLL_ATTEMPTS data fetches + the single initial capture fetch. The
     // final run that hits the attempt cap returns before fetching.
@@ -254,13 +259,13 @@ describe("delayed withdrawal confirmation (#1206)", () => {
       await vi.advanceTimersByTimeAsync(3_000);
     });
     expect(onConfirmed).not.toHaveBeenCalled();
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(6_000);
     });
     expect(onConfirmed).toHaveBeenCalledTimes(1);
-    expect(toast.success).toHaveBeenCalledWith("Withdrawn successfully!");
+    expect(transactionSuccessToast).toHaveBeenCalledWith("Withdrawn successfully!");
   });
 
   it("checkConfirmation requires withdrawnAmount to exceed the baseline", () => {
