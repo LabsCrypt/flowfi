@@ -15,6 +15,7 @@ import { globalRateLimiter, healthRateLimiter } from "./middleware/rate-limiter.
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
 import { buildCorsOptions, CorsError } from "./config/cors.js";
+import { getRequestId } from "./lib/request-context.js";
 import logger from "./logger.js";
 import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
 import v1Routes from "./routes/v1/index.js";
@@ -27,11 +28,13 @@ const app = express();
 // or invalid, so the server never runs with an open CORS policy.
 const corsOptions = buildCorsOptions();
 
-// Apply global rate limiter first
-app.use(globalRateLimiter);
-
-// Request ID tracing
+// Request ID tracing must be the very first middleware so that every response
+// carries X-Request-ID — including responses short-circuited by later
+// middleware such as the rate limiter's 429 or the CORS 403 (Issue #1494).
 app.use(requestIdMiddleware);
+
+// Apply global rate limiter
+app.use(globalRateLimiter);
 
 // Request counting/latency for the Prometheus registry
 app.use(metricsMiddleware);
@@ -74,7 +77,14 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
       method: req.method,
       path: req.path,
     });
-    res.status(err.statusCode).json({ error: err.message });
+    const requestId = getRequestId();
+    res
+      .status(err.statusCode)
+      .json(
+        requestId
+          ? { error: err.message, requestId }
+          : { error: err.message },
+      );
     return;
   }
   next(err);

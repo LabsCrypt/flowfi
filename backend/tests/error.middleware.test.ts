@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { errorHandler } from '../src/middleware/error.middleware.js';
 import { ZodError } from 'zod';
 import { Prisma } from '../src/generated/prisma/index.js';
+import { requestContext } from '../src/lib/request-context.js';
 import type { Request, Response, NextFunction } from 'express';
 
 describe('Error Middleware', () => {
@@ -58,5 +59,45 @@ describe('Error Middleware', () => {
     expect(next).toHaveBeenCalledWith(error);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('includes the bound requestId in a 500 error payload (Issue #1494)', () => {
+    const error = new Error('Generic error');
+
+    requestContext.run({ requestId: 'req-error-1' }, () => {
+      errorHandler(error, req as Request, res as Response, next);
+    });
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({
+        code: 'INTERNAL_SERVER_ERROR',
+        requestId: 'req-error-1',
+      }),
+    }));
+  });
+
+  it('includes the bound requestId in a validation error payload (Issue #1494)', () => {
+    const error = new ZodError([{ path: ['field'], message: 'invalid', code: 'custom' }]);
+
+    requestContext.run({ requestId: 'req-error-2' }, () => {
+      errorHandler(error, req as Request, res as Response, next);
+    });
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({
+        code: 'VALIDATION_ERROR',
+        requestId: 'req-error-2',
+      }),
+    }));
+  });
+
+  it('omits requestId when no request context is bound', () => {
+    const error = new Error('Generic error');
+
+    errorHandler(error, req as Request, res as Response, next);
+
+    const body = (res.json as any).mock.calls[0][0];
+    expect(body.error.requestId).toBeUndefined();
   });
 });
