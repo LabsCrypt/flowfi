@@ -1,23 +1,44 @@
 coverage:
+  precision: 2
+  round: down
+  range: "60...90"
   status:
     project:
       backend:
         target: 60%
+        # Fail the PR if backend coverage drops by more than 1%.
+        threshold: 1%
         flags:
           - backend
       contracts:
         target: 70%
+        threshold: 1%
         flags:
           - contracts
       frontend:
         target: auto
+        # Fail the PR if frontend coverage drops by more than 1%.
+        threshold: 1%
         flags:
           - frontend
     patch:
       default:
         target: 60%
 
+flags:
+  backend:
+    paths:
+      - backend/
+    carryforward: true
+  frontend:
+    paths:
+      - frontend/
+    carryforward: true
+  contracts:
+    carryforward: true
+
 comment:
-  layout: "diff, flags, files"
+  # Per-file coverage change table on every PR.
+  layout: "reach, diff, flags, files"
   behavior: default
   require_changes: false

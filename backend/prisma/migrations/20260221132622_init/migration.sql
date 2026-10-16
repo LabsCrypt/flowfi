@@ -6,6 +6,9 @@ CREATE TABLE "User" (
     "updatedAt" TIMESTAMP(3) NOT NULL
 );
 
+-- The referenced columns must be unique before PostgreSQL creates their foreign keys.
+CREATE UNIQUE INDEX "User_publicKey_key" ON "User"("publicKey");
+
 -- CreateTable
 CREATE TABLE "Stream" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -25,6 +28,8 @@ CREATE TABLE "Stream" (
     CONSTRAINT "Stream_recipient_fkey" FOREIGN KEY ("recipient") REFERENCES "User" ("publicKey") ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
+CREATE UNIQUE INDEX "Stream_streamId_key" ON "Stream"("streamId");
+
 -- CreateTable
 CREATE TABLE "StreamEvent" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -40,13 +45,7 @@ CREATE TABLE "StreamEvent" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "User_publicKey_key" ON "User"("publicKey");
-
--- CreateIndex
 CREATE INDEX "User_publicKey_idx" ON "User"("publicKey");
-
--- CreateIndex
-CREATE UNIQUE INDEX "Stream_streamId_key" ON "Stream"("streamId");
 
 -- CreateIndex
 CREATE INDEX "Stream_sender_idx" ON "Stream"("sender");

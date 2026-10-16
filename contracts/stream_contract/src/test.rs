@@ -58,7 +58,7 @@ impl ReentrantFeeToken {
 }
 
 #[test]
-#[ignore = "Soroban host prohibits contract re-entrancy"]
+#[ignore = "Soroban SDK 22+ strictly blocks re-entrancy, so this test cannot run"]
 fn test_fee_transfer_observes_persisted_stream_on_create_and_top_up() {
     let env = Env::default();
     env.mock_all_auths();

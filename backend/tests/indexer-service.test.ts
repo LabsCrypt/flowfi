@@ -10,7 +10,7 @@ const hoisted = vi.hoisted(() => ({
   delete: vi.fn(),
   triggerPoll: vi.fn(),
   processEvent: vi.fn(),
-  runExclusive: vi.fn(),
+  runExclusive: vi.fn(async (fn: () => Promise<unknown>) => fn()),
   sendDeadLetterAlert: vi.fn(),
 }));
 
@@ -45,10 +45,7 @@ vi.mock('../src/logger.js', () => ({
     error: vi.fn(),
     warn: vi.fn(),
   },
-  requestContext: {
-    run: <T>(_store: unknown, fn: () => T): T => fn(),
-    getStore: () => undefined,
-  },
+  requestContext: { getStore: vi.fn(() => undefined), run: (_ctx: unknown, fn: () => unknown) => fn() },
 }));
 
 // The dead-letter alert is a chat webhook side effect; mock it so we can assert
@@ -134,7 +131,7 @@ describe('Indexer Service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default pass-through so resetIndexer runs its upsert inside the mutex.
-    hoisted.runExclusive.mockImplementation(async (fn: () => Promise<void>) => {
+    hoisted.runExclusive.mockImplementation(async (fn: () => Promise<unknown>) => {
       await fn();
     });
   });
@@ -304,9 +301,9 @@ describe('Dead-letter payload serialisation', () => {
     expect(restored.transactionIndex).toBe(event.transactionIndex);
     expect(restored.operationIndex).toBe(event.operationIndex);
     expect(restored.inSuccessfulContractCall).toBe(true);
-    expect((restored.topic[0] as xdr.ScValSymbol).sym.toString()).toBe('stream_created');
-    expect((restored.topic[1] as xdr.ScValU64).u64.toString()).toBe('7');
-    expect(restored.value.toXDR()).toEqual(event.value.toXDR());
+    expect(restored.topic[0]!.type === 'scvSymbol' && restored.topic[0].sym.toString()).toBe('stream_created');
+    expect(restored.topic[1]!.type === 'scvU64' && restored.topic[1].u64.toString()).toBe('7');
+    expect(restored.value.toXdr()).toEqual(event.value.toXdr());
   });
 
   it('preserves contractId so handlers can filter by stream contract', () => {
@@ -517,7 +514,7 @@ describe('replayDeadLetterEvent', () => {
     const replayed = mockedWorker.processEvent.mock.calls[0]![0];
     expect(replayed.id).toBe('event-0001');
     expect(replayed.ledger).toBe(482910);
-    expect((replayed.topic[0] as xdr.ScValSymbol).sym.toString()).toBe('stream_created');
+    expect(replayed.topic[0]!.type === 'scvSymbol' && replayed.topic[0].sym.toString()).toBe('stream_created');
   });
 
   it('increments attempts and refreshes the error when the replay throws', async () => {

@@ -1,11 +1,23 @@
 "use client";
 
-import { Moon, Sun } from "lucide-react";
+import { Contrast, Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
+import { useI18n } from "@/context/i18n-provider";
+import { THEME_CHOICES, isThemeChoice, type ThemeChoice } from "@/lib/themes";
+import type { TranslationKey } from "@/locales";
+
+const ICONS = { system: Monitor, light: Sun, dark: Moon, "high-contrast": Contrast } as const;
+const LABEL_KEYS: Record<ThemeChoice, TranslationKey> = {
+  system: "theme.system",
+  light: "theme.light",
+  dark: "theme.dark",
+  "high-contrast": "theme.highContrast",
+};
 
 export function ModeToggle() {
-  const { theme, setTheme, resolvedTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
+  const { t } = useI18n();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -13,30 +25,37 @@ export function ModeToggle() {
     return () => cancelAnimationFrame(rafId);
   }, []);
 
-  const toggleTheme = () => {
-    setTheme(resolvedTheme === "light" ? "dark" : "light");
-  };
-
   // Prevent hydration mismatch
   if (!isMounted) {
     return (
-      <button className="inline-flex items-center justify-center w-8 h-8" aria-label="Toggle theme">
-        <span className="sr-only">Toggle theme</span>
-      </button>
+      <div className="inline-flex h-8 w-24" aria-hidden="true" />
     );
   }
 
-  const currentTheme = resolvedTheme || theme;
+  const active: ThemeChoice = isThemeChoice(theme) ? theme : "system";
 
   return (
-    <button
-      onClick={toggleTheme}
-      className="inline-flex items-center justify-center w-8 h-8 rounded-lg hover:bg-white/10 dark:hover:bg-black/10 transition-colors"
-      aria-label={`Switch to ${currentTheme === "light" ? "dark" : "light"} mode`}
-    >
-      <Sun className="h-[1.2rem] w-[1.2rem] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90 text-yellow-500" />
-      <Moon className="absolute h-[1.2rem] w-[1.2rem] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0 text-blue-400" />
-      <span className="sr-only">Toggle theme</span>
-    </button>
+    <div role="radiogroup" aria-label={t("theme.label")} className="inline-flex items-center gap-0.5 rounded-lg border border-glass-border p-0.5">
+      {THEME_CHOICES.map((choice) => {
+        const Icon = ICONS[choice];
+        const selected = active === choice;
+        return (
+          <button
+            key={choice}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            aria-label={t(LABEL_KEYS[choice])}
+            title={t(LABEL_KEYS[choice])}
+            onClick={() => setTheme(choice)}
+            className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+              selected ? "bg-accent text-black" : "hover:bg-white/10"
+            }`}
+          >
+            <Icon className="h-4 w-4" aria-hidden="true" />
+          </button>
+        );
+      })}
+    </div>
   );
 }

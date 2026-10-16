@@ -8,17 +8,21 @@ import { ModeToggle } from "./ModeToggle";
 import { WalletButton } from "./wallet/WalletButton";
 import { useModalDialog } from "@/hooks/useModalDialog";
 import { NetworkSelector } from "@/components/NetworkSelector";
+import { LanguageSelector } from "./LanguageSelector";
+import { useI18n } from "@/context/i18n-provider";
+import type { TranslationKey } from "@/locales";
 
-const NAV_LINKS = [
-  { href: "/", label: "Home" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/streams/create", label: "Create Stream" },
-  { href: "/settings", label: "Settings" },
+const NAV_LINKS: { href: string; labelKey: TranslationKey }[] = [
+  { href: "/", labelKey: "nav.home" },
+  { href: "/dashboard", labelKey: "nav.dashboard" },
+  { href: "/streams/create", labelKey: "nav.createStream" },
+  { href: "/settings", labelKey: "nav.settings" },
 ];
 
 export const Navbar = () => {
   const { session, status } = useWallet();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { t } = useI18n();
 
   return (
     <nav className="sticky top-0 z-50 backdrop-blur-md border-b border-glass-border bg-background/50">
@@ -47,10 +51,11 @@ export const Navbar = () => {
         <div className="hidden items-center gap-8 text-sm font-semibold text-slate-400 md:flex">
           {NAV_LINKS.map((link) => (
             <Link key={link.href} href={link.href} className="transition-colors hover:text-accent">
-              {link.label}
+              {t(link.labelKey)}
             </Link>
           ))}
           <ModeToggle />
+          <LanguageSelector />
           <NetworkSelector />
         </div>
 
@@ -61,7 +66,7 @@ export const Navbar = () => {
           <WalletButton />
           <button
             type="button"
-            aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-label={isMobileMenuOpen ? t("nav.menuClose") : t("nav.menuOpen")}
             aria-expanded={isMobileMenuOpen}
             onClick={() => setIsMobileMenuOpen((open) => !open)}
             className="md:hidden text-slate-400 hover:text-accent transition-colors"
@@ -80,6 +85,7 @@ export const Navbar = () => {
 
 const MobileMenu = ({ onClose }: { onClose: () => void }) => {
   const dialogRef = useModalDialog({ onClose });
+  const { t } = useI18n();
 
   return (
     <div
@@ -94,11 +100,12 @@ const MobileMenu = ({ onClose }: { onClose: () => void }) => {
           className="transition-colors hover:text-accent"
           onClick={onClose}
         >
-          {link.label}
+          {t(link.labelKey)}
         </Link>
       ))}
       <NetworkSelector />
       <ModeToggle />
+      <LanguageSelector />
     </div>
   );
 };

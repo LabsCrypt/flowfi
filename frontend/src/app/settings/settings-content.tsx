@@ -13,18 +13,28 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { DisconnectConfirmModal } from "@/components/wallet/DisconnectConfirmModal";
 import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 import { SOUND_STORAGE_KEY } from "@/lib/transaction-feedback";
+import { applyTheme, isThemeChoice, type ThemeChoice } from "@/lib/themes";
+import { LanguageSelector } from "@/components/LanguageSelector";
+import { useI18n } from "@/context/i18n-provider";
 
 type DisplayCurrency = "USD" | "EUR" | "GBP" | "XLM" | "USDC";
 type AmountFormat = "full" | "compact";
 type DecimalPlaces = 2 | 4 | 7;
 
 interface Settings {
-  theme: "light" | "dark" | "system";
+  theme: ThemeChoice;
   displayCurrency: DisplayCurrency;
   amountFormat: AmountFormat;
   decimalPlaces: DecimalPlaces;
   transactionSounds: boolean;
 }
+
+const THEME_LABEL_KEYS = {
+  system: "theme.system",
+  light: "theme.light",
+  dark: "theme.dark",
+  "high-contrast": "theme.highContrast",
+} as const;
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
 const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAMING_CONTRACT || "CDV4K...7ZQY";
@@ -50,9 +60,9 @@ function loadSavedSettings(): Settings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
   const savedDecimals = localStorage.getItem(STORAGE_KEYS.decimalPlaces);
   return {
-    theme:
-      (localStorage.getItem(STORAGE_KEYS.theme) as Settings["theme"]) ||
-      DEFAULT_SETTINGS.theme,
+    theme: isThemeChoice(localStorage.getItem(STORAGE_KEYS.theme))
+      ? (localStorage.getItem(STORAGE_KEYS.theme) as Settings["theme"])
+      : DEFAULT_SETTINGS.theme,
     displayCurrency:
       (localStorage.getItem(STORAGE_KEYS.displayCurrency) as DisplayCurrency) ||
       DEFAULT_SETTINGS.displayCurrency,
@@ -68,12 +78,7 @@ function loadSavedSettings(): Settings {
 
 function applyThemeClass(theme: Settings["theme"]): void {
   if (typeof window === "undefined") return;
-  if (theme === "system") {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    document.documentElement.classList.toggle("dark", prefersDark);
-  } else {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }
+  applyTheme(theme);
 }
 
 function persistSettings(settings: Settings): void {
@@ -86,6 +91,7 @@ function persistSettings(settings: Settings): void {
 
 export default function SettingsContent() {
   const router = useRouter();
+  const { t } = useI18n();
   const { session, disconnect, isHydrated } = useWallet();
 
   const [browserPush, setBrowserPush] = useState(false);
@@ -207,10 +213,10 @@ export default function SettingsContent() {
 
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-white dark:text-black">
-              Settings
+              {t("settings.title")}
             </h1>
             <p className="text-sm opacity-60 mt-1">
-              Manage your FlowFi preferences
+              {t("settings.subtitle")}
             </p>
           </div>
 
@@ -280,28 +286,37 @@ export default function SettingsContent() {
               </div>
               <div>
                 <p className="font-medium text-white dark:text-black">
-                  Appearance
+                  {t("settings.appearance")}
                 </p>
                 <p className="text-sm opacity-60">
-                  Choose your theme preference
+                  {t("settings.appearanceHint")}
                 </p>
               </div>
             </div>
 
-            <div className="flex gap-2">                  {(["light", "dark", "system"] as const).map((t) => (
+            <div className="flex flex-wrap gap-2">{(["system", "light", "dark", "high-contrast"] as const).map((choice) => (
                 <button
-                  key={t}
-                  onClick={() => handleThemeChange(t)}
+                  key={choice}
+                  onClick={() => handleThemeChange(choice)}
                   className={`px-4 py-2 text-sm rounded-xl border transition-all ${
-                    draft.theme === t
+                    draft.theme === choice
                       ? "border-purple-500 bg-purple-500/20 text-white"
                       : "border-white/10 dark:border-black/10 text-white/60 dark:text-black/60 hover:border-white/20"
                   }`}
                 >
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                  {t(THEME_LABEL_KEYS[choice])}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Language */}
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="font-medium text-white dark:text-black">{t("settings.language")}</p>
+              <p className="text-sm opacity-60">{t("settings.languageHint")}</p>
+            </div>
+            <LanguageSelector className="text-white dark:text-black" />
           </div>
 
           {/* Display Preferences */}

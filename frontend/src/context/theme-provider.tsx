@@ -47,8 +47,10 @@ import { ThemeProvider as NextThemesProvider } from "next-themes";
  *
  * ## Configuration
  *
- * - `attribute="class"` — toggles the `dark` class on `<html>`, which Tailwind
- *   uses for its `dark:` variant.
+ * - `attribute={["class", "data-theme"]}` — sets both the theme class (Tailwind's
+ *   `dark:` variant) and `data-theme` (semantic CSS tokens, including the
+ *   `high-contrast` theme) on `<html>` before first paint.
+ * - `themes` — `light`, `dark` and `high-contrast` (see `lib/themes.ts`).
  * - `defaultTheme="dark"` — the theme the pre-paint script applies for users
  *   without a stored preference (and the initial value `useTheme()` reports
  *   before hydration).

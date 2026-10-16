@@ -224,7 +224,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
 
   const tokenSymbol = useMemo(() => {
     if (!stream) return "??";
-    return TOKEN_SYMBOLS[stream.tokenAddress] || stream.tokenAddress.slice(0, 4);
+    return (stream.tokenAddress && TOKEN_SYMBOLS[stream.tokenAddress]) || stream.tokenAddress?.slice(0, 4) || "??";
   }, [stream]);
 
   const { data: tokenPrice } = useTokenPrice({ tokenSymbol, enabled: Boolean(stream) });

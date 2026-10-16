@@ -141,3 +141,13 @@ export class RpcPool {
 
 export const rpcPool = new RpcPool();
 rpcPool.startHealthProbes();
+
+/**
+ * True when at least one configured Soroban RPC endpoint has an operational
+ * (non-OPEN) circuit. Synchronous on purpose: a liveness probe must not spend
+ * an RPC round-trip on its verdict — the background health probes started
+ * above keep this signal current (~30 s granularity).
+ */
+export function rpcPoolHealthy(): boolean {
+  return rpcPool.getHealth().some((endpoint) => endpoint.state !== 'OPEN');
+}
