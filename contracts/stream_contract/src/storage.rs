@@ -122,6 +122,7 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         withdrawn_amount: legacy.withdrawn_amount,
         start_time: legacy.start_time,
         last_update_time: legacy.last_update_time,
+        cliff_time: None,
         is_active: legacy.is_active,
         paused: legacy.paused,
         paused_at: legacy.paused_at,
