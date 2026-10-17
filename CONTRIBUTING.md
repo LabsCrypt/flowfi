@@ -355,7 +355,17 @@ Keep branch names short and descriptive.
 
 # Commit Guidelines & Hooks
 
-This repository uses **Husky** for commit hooks.
+This repository uses **Husky** for commit hooks, with **lint-staged** running checks
+only against the files you staged:
+
+| Staged files | Check |
+| --- | --- |
+| `frontend/**/*.{ts,tsx,js,jsx}` | ESLint |
+| `contracts/**/*.rs` | `cargo fmt --check` + `cargo clippy -D warnings` |
+
+Rust checks are skipped automatically when Cargo is not installed, so a
+JavaScript-only contributor is never blocked. Install a Rust toolchain
+(`rustup`) to have them enforced locally before CI does.
 
 Before committing, ensure:
 

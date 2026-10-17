@@ -1,4 +1,4 @@
-import { prisma } from '../lib/prisma.js';
+import { prisma, withReplicaFallback } from '../lib/prisma.js';
 
 /**
  * Update the status and active flag of a stream in the database.
@@ -71,8 +71,8 @@ export const findStreams = async (params: FindStreamsParams): Promise<FindStream
   const sortField = params.sortField || 'startTime';
   const sortOrder = params.sortOrder || 'desc';
 
-  const [streams, total] = await Promise.all([
-    prisma.stream.findMany({
+  const [streams, total] = await withReplicaFallback((client) => Promise.all([
+    client.stream.findMany({
       where,
       orderBy: { [sortField]: sortOrder },
       take: params.limit,
@@ -82,8 +82,8 @@ export const findStreams = async (params: FindStreamsParams): Promise<FindStream
         recipientUser: true,
       },
     }),
-    prisma.stream.count({ where }),
-  ]);
+    client.stream.count({ where }),
+  ]));
 
   return { streams, total, hasMore: params.offset + streams.length < total };
 };

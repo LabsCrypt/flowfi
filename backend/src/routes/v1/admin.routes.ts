@@ -10,8 +10,10 @@ import {
   previewReplay,
 } from '../../services/indexerService.js';
 import {
+  acknowledgeSentinelAlertHandler,
   discardDeadLetterHandler,
   listDeadLetterHandler,
+  listSentinelAlertsHandler,
   replayAllDeadLetterHandler,
   replayDeadLetterHandler,
 } from '../../controllers/admin.controller.js';
@@ -633,5 +635,95 @@ router.post('/indexer/dead-letter/:id/replay', replayDeadLetterHandler);
  *         description: Dead-letter event not found
  */
 router.delete('/indexer/dead-letter/:id', discardDeadLetterHandler);
+
+// ─── Sentinel anomaly detection (Issue #1469) ─────────────────────────────────
+//
+// The real-time drain sentinel records anomalies as the indexer processes
+// withdrawals and stream creations. These endpoints are the responder
+// interface: current threat score, flagged addresses and incident history.
+// `requireAdmin` (applied router-wide above) guards every one of them.
+
+/**
+ * @openapi
+ * /v1/admin/sentinel/alerts:
+ *   get:
+ *     tags: [Admin]
+ *     summary: List sentinel anomalies, threat score, and flagged addresses
+ *     description: |
+ *       Returns the real-time anomaly dashboard backing the drain sentinel:
+ *       the aggregate 0-100 threat score, the addresses implicated in recent
+ *       anomalies, and the incident history (newest first). Filter by
+ *       `severity`, `address`, or page with `limit`.
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: severity
+ *         schema: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+ *       - in: query
+ *         name: address
+ *         schema: { type: string }
+ *         description: Stellar public key to filter incidents by
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+ *     responses:
+ *       200:
+ *         description: Sentinel dashboard snapshot
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 threatScore:
+ *                   type: object
+ *                   properties:
+ *                     score: { type: integer, example: 75 }
+ *                     level: { type: string, enum: [NONE, LOW, MEDIUM, HIGH, CRITICAL] }
+ *                     incidentCount: { type: integer }
+ *                     bySeverity: { type: object, additionalProperties: { type: integer } }
+ *                     windowMinutes: { type: integer }
+ *                 flaggedAddresses:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       address: { type: string }
+ *                       threatScore: { type: integer }
+ *                       incidentCount: { type: integer }
+ *                       highestSeverity: { type: string }
+ *                       lastIncidentAt: { type: string, format: date-time }
+ *                 incidents:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/SentinelIncident' }
+ *                 count: { type: integer }
+ *                 generatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid severity filter
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *       403:
+ *         description: Forbidden - admin access required
+ */
+router.get('/sentinel/alerts', listSentinelAlertsHandler);
+
+/**
+ * @openapi
+ * /v1/admin/sentinel/alerts/{id}/acknowledge:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Acknowledge a sentinel incident
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Incident acknowledged
+ *       404:
+ *         description: Incident not found
+ */
+router.post('/sentinel/alerts/:id/acknowledge', acknowledgeSentinelAlertHandler);
 
 export default router;

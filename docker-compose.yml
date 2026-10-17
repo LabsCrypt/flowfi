@@ -21,6 +21,122 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  # Used for SSE horizontal scaling (pub/sub fan-out across backend instances)
+  # and rate-limit state sharing. Required for the dev:mock sandbox.
+  # Pinned to Redis 7 (alpine) — same upgrade policy as postgres above.
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: flowfi-pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: flowfi
+      DB_PASSWORD: flowfi_dev_password
+      DB_NAME: flowfi
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      MAX_DB_CONNECTIONS: 20
+      MAX_PREPARED_STATEMENTS: 100
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "flowfi", "-d", "flowfi"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    container_name: flowfi-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Mock Soroban RPC ───────────────────────────────────────────────────────
+  # A lightweight JSON-RPC stub that returns well-formed Soroban responses so
+  # the backend indexer and simulation endpoints work without a live testnet.
+  # Implemented with an inline node one-liner (alpine Node image) — no custom
+  # image build. The command is passed as an exec-form argv list so no shell
+  # quoting is involved and compose/runtime agree byte-for-byte.
+  mock-soroban-rpc:
+    image: node:20-alpine
+    container_name: flowfi-mock-soroban-rpc
+    working_dir: /app
+    command:
+      - node
+      - "-e"
+      - |
+        const http = require('http');
+        const PORT = 8000;
+        const server = http.createServer((req, res) => {
+          let body = '';
+          req.on('data', chunk => { body += chunk; });
+          req.on('end', () => {
+            let id = null;
+            let method = '';
+            try { const j = JSON.parse(body); id = j.id; method = j.method || ''; } catch (_) {}
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+            if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+            let result = {};
+            if (method === 'getLatestLedger') {
+              result = { id: 0, paging_token: '0-0', sequence: 1000000 };
+            } else if (method === 'getEvents') {
+              result = { events: [], latestLedger: 1000000 };
+            } else if (method === 'getTransaction') {
+              result = { status: 'NOT_FOUND' };
+            } else if (method === 'simulateTransaction') {
+              result = { error: 'Mock RPC: simulation not available in sandbox mode' };
+            }
+
+            res.writeHead(200);
+            res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+          });
+        });
+        server.listen(PORT, '0.0.0.0', () => {
+          console.log('Mock Soroban RPC listening on port ' + PORT);
+        });
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - "-e"
+        - |
+          const http = require('http');
+          const req = http.request(
+            { host: '127.0.0.1', port: 8000, method: 'POST',
+              headers: { 'Content-Type': 'application/json' } },
+            (res) => {
+              let body = '';
+              res.on('data', (chunk) => { body += chunk; });
+              res.on('end', () =>
+                process.exit(res.statusCode === 200 && body.includes('sequence') ? 0 : 1));
+            },
+          );
+          req.on('error', () => process.exit(1));
+          req.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestLedger', params: {} }));
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -29,21 +145,62 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      DATABASE_URL: postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi
+      DATABASE_URL: postgresql://flowfi:flowfi_dev_password@pgbouncer:5432/flowfi?pgbouncer=true
+      DATABASE_READ_REPLICA_URL: ${DATABASE_READ_REPLICA_URL:-}
       CORS_ALLOWED_ORIGINS: http://localhost:3000
-      # Uncomment and set values for Soroban integration
-      # SOROBAN_RPC_URL: https://rpc.testnet.stellar.org
-      # STREAM_CONTRACT_ID: CB...YOUR_CONTRACT_ID...
+      REDIS_URL: redis://redis:6379
+      # Mock Soroban RPC — points at the local stub, no testnet funding needed.
+      SOROBAN_RPC_URL: http://mock-soroban-rpc:8000
+      SANDBOX_MODE_ENABLED: "true"
+      # STREAM_CONTRACT_ID intentionally left empty; indexer is a no-op without it.
+      STREAM_CONTRACT_ID: ""
     ports:
       - "3001:3001"
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-soroban-rpc:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      # node-based check: the runtime image only ships busybox wget, which does
+      # not understand GNU flags like --no-verbose/--tries.
+      test:
+        - CMD
+        - node
+        - "-e"
+        - "require('http').get('http://127.0.0.1:3001/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # NEXT_PUBLIC_* are inlined into the client bundle at build time. The
+        # browser talks to the backend over the published host port, so use
+        # localhost here rather than the in-network service name.
+        NEXT_PUBLIC_API_URL: http://localhost:3001/v1
+    container_name: flowfi-frontend
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
 volumes:

@@ -72,6 +72,11 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         name: 'Observability',
         description: 'Prometheus metrics scrape endpoint',
       },
+      {
+        name: 'Compliance',
+        description:
+          'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
+      },
     ],
     components: {
       securitySchemes: {
@@ -440,12 +445,58 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
+        SentinelIncident: {
+          type: 'object',
+          required: ['id', 'ruleId', 'severity', 'title', 'description', 'detectedAt', 'threatScore'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            ruleId: {
+              type: 'string',
+              enum: [
+                'VELOCITY_SPIKE',
+                'MULTI_STREAM_DRAIN',
+                'HIGH_VALUE_DRAIN',
+                'TOKEN_VELOCITY_SPIKE',
+                'ZERO_RUNWAY_FLOOD',
+                'STREAM_CREATION_SPIKE',
+              ],
+            },
+            severity: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            address: { type: 'string', nullable: true, description: 'Stellar public key involved' },
+            token: { type: 'string', nullable: true },
+            streamId: { type: 'string', nullable: true },
+            ledger: { type: 'integer', nullable: true },
+            detectedAt: { type: 'string', format: 'date-time' },
+            threatScore: { type: 'integer', description: 'Per-incident severity weight (10-90)' },
+            evidence: { type: 'object', additionalProperties: true },
+            circuitBreaker: {
+              type: 'object',
+              nullable: true,
+              description: 'HMAC-signed emergency pause proposal (CRITICAL incidents only)',
+              additionalProperties: true,
+            },
+            acknowledged: { type: 'boolean' },
+          },
+        },
         HealthResponse: {
           type: 'object',
           required: ['status', 'db', 'indexerEnabled', 'uptime', 'checks'],
           properties: {
-            status: { type: 'string', enum: ['ok', 'degraded'], example: 'ok' },
+            status: {
+              type: 'string',
+              enum: ['ok', 'degraded'],
+              example: 'ok',
+              description: '`degraded` with HTTP 503 when a liveness check fails; `degraded` with HTTP 200 when only Redis is unavailable or timed out',
+            },
             db: { type: 'string', enum: ['connected', 'disconnected'], example: 'connected' },
+            redis: {
+              type: 'string',
+              enum: ['ok', 'unavailable', 'timeout', 'not_configured'],
+              example: 'ok',
+              description: 'Same as checks.redis.status',
+            },
             indexerEnabled: { type: 'boolean', description: 'Whether the event indexer is configured' },
             indexerLag: { type: 'integer', nullable: true, description: 'Seconds since last indexer update, or null when no state row exists yet' },
             eventsProcessed: { type: 'integer', description: 'Lifetime count of successfully processed indexer events' },
@@ -459,7 +510,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               properties: {
                 database: {
                   type: 'object',
-                  properties: { status: { type: 'string', enum: ['ok', 'down'] } },
+                  properties: { status: { type: 'string', enum: ['ok', 'down', 'timeout'] } },
                 },
                 indexer: {
                   type: 'object',
@@ -471,7 +522,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                 },
                 redis: {
                   type: 'object',
-                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'not_configured'] } },
+                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'timeout', 'not_configured'] } },
                 },
                 sorobanRpc: {
                   type: 'object',

@@ -20,13 +20,22 @@ import {
   validateToken,
   validateAmount,
   validateDuration,
+  getSpendableBalance,
+  XLM_BASE_RESERVE,
   type StreamFormData,
 } from "@/lib/stream-validation";
 
 // ─── Test data ────────────────────────────────────────────────────────────────
 
-// Valid 56-char Stellar public key (starts with G, 55 Base32 chars from A-Z2-7)
-const VALID_KEY = "GG32XLQSZXFBY6W3FNDRBAUNN4UXGA3P3M6DLKU5BU3RQ2UFBVSERB5K";
+// Valid 56-char Stellar public key (Ed25519 StrKey with a correct checksum)
+const VALID_KEY = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7";
+// Same key with a tampered final character -> checksum mismatch
+const INVALID_KEY_CHECKSUM = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR8";
+// Muxed account address (MED25519) which the stream contract does not support
+const MUXED_KEY =
+  "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK";
+const INVALID_KEY_MESSAGE =
+  "Invalid Stellar public key (must start with 'G' and be 56 characters)";
 const INVALID_KEY_SHORT = "GABCDEFGH";
 const INVALID_KEY_LOWERCASE = "gg32xlqszxfby6w3fndrbaunn4uxga3p3m6dlku5bu3rq2ufbvserb5k";
 const INVALID_KEY_WRONG_PREFIX = "SG32XLQSZXFBY6W3FNDRBAUNN4UXGA3P3M6DLKU5BU3RQ2UFBVSERB5K";
@@ -60,26 +69,38 @@ describe("validateRecipient", () => {
 
   it("rejects a short key", () => {
     expect(validateRecipient(INVALID_KEY_SHORT)).toBe(
-      "Invalid Stellar public key format",
+      INVALID_KEY_MESSAGE,
     );
   });
 
   it("rejects a lowercase key", () => {
     expect(validateRecipient(INVALID_KEY_LOWERCASE)).toBe(
-      "Invalid Stellar public key format",
+      INVALID_KEY_MESSAGE,
     );
   });
 
   it("rejects a key with wrong prefix (secret key)", () => {
     expect(validateRecipient(INVALID_KEY_WRONG_PREFIX)).toBe(
-      "Invalid Stellar public key format",
+      INVALID_KEY_MESSAGE,
     );
   });
 
   it("rejects an arbitrary string", () => {
     expect(validateRecipient("not-a-key")).toBe(
-      "Invalid Stellar public key format",
+      INVALID_KEY_MESSAGE,
     );
+  });
+
+  it("rejects a key with an invalid checksum", () => {
+    expect(validateRecipient(INVALID_KEY_CHECKSUM)).toBe(INVALID_KEY_MESSAGE);
+  });
+
+  it("rejects a muxed account address (M...)", () => {
+    expect(validateRecipient(MUXED_KEY)).toBe(INVALID_KEY_MESSAGE);
+  });
+
+  it("accepts a valid key padded with mixed whitespace", () => {
+    expect(validateRecipient(`\n\t ${VALID_KEY} \t`)).toBeNull();
   });
 });
 
@@ -165,6 +186,52 @@ describe("validateAmount", () => {
   });
 });
 
+// ─── XLM base reserve / spendable balance ─────────────────────────────────────
+
+describe("getSpendableBalance", () => {
+  it("subtracts the base reserve from XLM balances", () => {
+    expect(getSpendableBalance("100", "XLM")).toBe(100 - XLM_BASE_RESERVE);
+  });
+
+  it("does not subtract a reserve from non-XLM tokens", () => {
+    expect(getSpendableBalance("100", "USDC")).toBe(100);
+    expect(getSpendableBalance("100")).toBe(100);
+  });
+
+  it("never returns a negative spendable balance", () => {
+    expect(getSpendableBalance("0.5", "XLM")).toBe(0);
+  });
+
+  it("returns null when no usable balance is known", () => {
+    expect(getSpendableBalance(null, "XLM")).toBeNull();
+    expect(getSpendableBalance(undefined, "USDC")).toBeNull();
+    expect(getSpendableBalance("", "XLM")).toBeNull();
+    expect(getSpendableBalance("not-a-number", "XLM")).toBeNull();
+  });
+});
+
+describe("validateAmount with XLM reserve", () => {
+  it("rejects an XLM amount that would dip into the base reserve", () => {
+    // 100 XLM balance, 1 XLM kept in reserve -> 99 spendable
+    expect(validateAmount("99", "100", "XLM")).toBeNull();
+    expect(validateAmount("99.5", "100", "XLM")).toBe(
+      "Amount exceeds wallet balance",
+    );
+  });
+
+  it("still allows the full balance for non-XLM tokens", () => {
+    expect(validateAmount("100", "100", "USDC")).toBeNull();
+  });
+
+  it("applies the reserve check through validateStreamForm step 4", () => {
+    const errors = validateStreamForm(
+      { ...VALID_FORM, token: "XLM", amount: "99.5" },
+      { step: 4, walletBalance: "100" },
+    );
+    expect(errors.amount).toBe("Amount exceeds wallet balance");
+  });
+});
+
 // ─── validateDuration ─────────────────────────────────────────────────────────
 
 describe("validateDuration", () => {
@@ -227,7 +294,7 @@ describe("validateStreamForm", () => {
         ...VALID_FORM,
         recipient: "not-valid",
       });
-      expect(errors.recipient).toBe("Invalid Stellar public key format");
+      expect(errors.recipient).toBe(INVALID_KEY_MESSAGE);
     });
 
     it("checks wallet balance when provided", () => {
@@ -305,11 +372,11 @@ describe("validateStreamForm", () => {
       };
       // Full-form mode (page + dashboard)
       expect(validateStreamForm(data).recipient).toBe(
-        "Invalid Stellar public key format",
+        INVALID_KEY_MESSAGE,
       );
       // Step mode (wizard step 2)
       expect(validateStreamForm(data, { step: 2 }).recipient).toBe(
-        "Invalid Stellar public key format",
+        INVALID_KEY_MESSAGE,
       );
     });
 

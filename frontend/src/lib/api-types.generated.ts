@@ -41,6 +41,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Prometheus metrics
+         * @description Returns the registry in the standard Prometheus exposition format.
+         *     Restricted to the internal cluster network (`METRICS_ALLOWED_CIDRS`)
+         *     and/or a shared bearer token (`METRICS_BEARER_TOKEN`); when both are
+         *     configured the request must satisfy both. Disabled by default in
+         *     production when neither is configured.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Metrics in Prometheus text exposition format */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": string;
+                    };
+                };
+                /** @description Forbidden - request did not originate from an allowed network or present a valid token */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Metrics endpoint is disabled in this environment */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -62,6 +119,14 @@ export interface paths {
          *     enabled and recent per-event failures spike (≥50% of attempts in the
          *     last 5 minutes, with ≥3 samples), the endpoint returns 503 even if
          *     lag looks healthy (the IndexerState upsert bumps updatedAt every poll).
+         *     **Redis** is optional. When it is configured but unavailable or does not
+         *     answer a ping in time, `status` is `degraded` but the response stays
+         *     200, so a Redis outage does not fail liveness probes.
+         *     Every dependency probe runs in parallel and is bounded by
+         *     `HEALTHCHECK_TIMEOUT_MS` (default 800 ms), so the endpoint answers in
+         *     under a second even when a dependency hangs.
+         *     The response is cached in-memory for 2 s so consecutive rapid requests
+         *     do not re-run the probes (issue #1511).
          */
         get: {
             parameters: {
@@ -72,7 +137,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Service is healthy */
+                /** @description Service is healthy (Redis may still be degraded) */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -80,6 +145,13 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["HealthResponse"];
                     };
+                };
+                /** @description Rate limited */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
                 /** @description Service is degraded or unhealthy */
                 503: {
@@ -750,6 +822,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List verified token metadata
+         * @description Returns symbol, name, decimals, contract address and icon for every
+         *     verified Stellar asset. The response carries an `ETag` and a
+         *     `Cache-Control` header; clients should revalidate with
+         *     `If-None-Match` and accept a `304 Not Modified` while the metadata is
+         *     unchanged.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Verified token metadata */
+                200: {
+                    headers: {
+                        /** @description public, max-age=3600, stale-while-revalidate=86400 */
+                        "Cache-Control"?: string;
+                        ETag?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            tokens?: Record<string, never>[];
+                            /** Format: date-time */
+                            updatedAt?: string;
+                        };
+                    };
+                };
+                /** @description Not Modified - the caller's cached copy is still current */
+                304: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/streams": {
         parameters: {
             query?: never;
@@ -923,6 +1052,136 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["Error"];
                     };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/streams/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate a stream contract call
+         * @description Runs a Soroban `simulateTransaction` for the requested action and
+         *     returns an unsigned transaction with the ledger footprint, resource
+         *     limits and a padded resource fee already applied — ready for a
+         *     browser wallet (Freighter, Lobstr, xBull) to sign.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /**
+                         * @example create
+                         * @enum {string}
+                         */
+                        action: "create" | "withdraw" | "cancel" | "top_up" | "batch_withdraw";
+                        /**
+                         * @description Stellar account that will sign the transaction
+                         * @example GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
+                         */
+                        senderPublicKey: string;
+                        /**
+                         * @description Action-specific arguments. `create` needs `recipient`,
+                         *     `amount`, `duration` and `tokenAddress`; `withdraw` and
+                         *     `cancel` need `streamId`; `top_up` needs `streamId` and
+                         *     `amount`; `batch_withdraw` needs `streamIds`.
+                         */
+                        params?: {
+                            /** @example 123 */
+                            streamId?: string;
+                            streamIds?: string[];
+                            /** @example GBBJ6H3FJN34VLIGNU2QZJ4T6NMY4B2LKCVYGCXK5HO3JFXKHTGSHRQ */
+                            recipient?: string;
+                            /**
+                             * @description Amount in the token's smallest unit (i128 as string)
+                             * @example 1000000000
+                             */
+                            amount?: string;
+                            /**
+                             * @description Stream duration in seconds
+                             * @example 2592000
+                             */
+                            duration?: number;
+                            /** @description Token contract address — required for `create` */
+                            tokenAddress?: string;
+                        };
+                    };
+                };
+            };
+            responses: {
+                /** @description Simulation succeeded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example true */
+                            success?: boolean;
+                            data?: {
+                                /**
+                                 * @description Base64-encoded unsigned transaction XDR
+                                 * @example AAAAAB...
+                                 */
+                                unsignedXdr?: string;
+                                /**
+                                 * @description Simulated minimum resource fee in stroops
+                                 * @example 15000
+                                 */
+                                minResourceFee?: string;
+                                /**
+                                 * @description minResourceFee plus a 15% safety buffer
+                                 * @example 17250
+                                 */
+                                recommendedFee?: string;
+                                /** @example 1420500 */
+                                cpuInstructions?: number;
+                                /** @example 524000 */
+                                memoryBytes?: number;
+                                /**
+                                 * @description Last ledger the returned footprint is valid against
+                                 * @example 482910
+                                 */
+                                expiresAtLedger?: number;
+                                /**
+                                 * @description Decoded contract return value (empty string for void returns)
+                                 * @example 100000000
+                                 */
+                                simulatedReturn?: string;
+                            };
+                        };
+                    };
+                };
+                /** @description Invalid parameters or a reverted simulation */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Stream contract is not configured */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -1962,6 +2221,210 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/compliance/kyc-attestation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit a SEP-0009 KYC/AML attestation
+         * @description Allows an organization to submit a cryptographic proof of identity
+         *     verification for a wallet, following the SEP-0009 (Standard KYC / AML
+         *     Fields) schema. Attestations are stored as PENDING for out-of-band
+         *     review and are recorded in the compliance audit trail.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description Stellar public key the identity belongs to */
+                        subjectAddress: string;
+                        /** @description Organization identifier; defaults to the authenticated wallet */
+                        organization?: string;
+                        /** @description Cryptographic proof / signature over the identity payload */
+                        proof: string;
+                        /** @enum {string} */
+                        proofType?: "ed25519" | "secp256k1" | "stellar-signature";
+                        /** @description SEP-0009 KYC/AML fields (snake_case, vendor fields passthrough) */
+                        fields: Record<string, never>;
+                    };
+                };
+            };
+            responses: {
+                /** @description Attestation accepted for review */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid attestation payload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Internal server error */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/compliance/screen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Screen an address against sanctions data
+         * @description Runs the configured sanctions / risk screening provider for a wallet
+         *     address and returns the result. Results are cached for the configured
+         *     TTL. Requires authentication to prevent open enumeration.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description Stellar public key to screen */
+                        address: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Screening result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request body */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Screening provider unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/compliance/screen/{address}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Screen a wallet address (read-only)
+         * @description Convenience GET variant of /v1/compliance/screen for audit tooling.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Stellar public key to screen */
+                    address: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Screening result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Address is required */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Screening provider unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/challenge": {
         parameters: {
             query?: never;
@@ -2446,6 +2909,379 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/indexer/dead-letter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List quarantined indexer events
+         * @description Paginated, filterable view of Soroban events the indexer failed to
+         *     process. Each entry carries the raw payload and the most recent error,
+         *     with `attempts` recording how many times processing has been tried.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    page?: number;
+                    limit?: number;
+                    /** @description Return only events from this ledger */
+                    ledgerSequence?: number;
+                    startDate?: string;
+                    endDate?: string;
+                    eventType?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Paginated dead-letter records */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid query parameters */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - admin access required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/indexer/dead-letter/replay-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replay every pending dead-letter event
+         * @description Replays all pending records sequentially, oldest ledger first, so events
+         *     for the same stream apply in their original order.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Per-record replay outcomes plus an aggregate summary */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/indexer/dead-letter/{id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replay a single quarantined event
+         * @description Re-injects the payload through the indexer pipeline. On success the
+         *     dead-letter row is deleted and the corresponding Stream / StreamEvent
+         *     records are created; on failure `attempts` is incremented and
+         *     `lastAttemptAt` / `errorMessage` are refreshed.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Event replayed and removed from the dead-letter table */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - admin access required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dead-letter event not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Replay ran but failed, or the payload is undecodable */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/indexer/dead-letter/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Permanently discard a quarantined event
+         * @description Deletes an unrecoverable record. The discard is written to the
+         *     application log with the acting admin key so the loss of an on-chain
+         *     event remains auditable.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Record discarded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - admin access required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Dead-letter event not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/sentinel/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sentinel anomalies, threat score, and flagged addresses
+         * @description Returns the real-time anomaly dashboard backing the drain sentinel:
+         *     the aggregate 0-100 threat score, the addresses implicated in recent
+         *     anomalies, and the incident history (newest first). Filter by
+         *     `severity`, `address`, or page with `limit`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    severity?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+                    /** @description Stellar public key to filter incidents by */
+                    address?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Sentinel dashboard snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            threatScore?: {
+                                /** @example 75 */
+                                score?: number;
+                                /** @enum {string} */
+                                level?: "NONE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+                                incidentCount?: number;
+                                bySeverity?: {
+                                    [key: string]: number;
+                                };
+                                windowMinutes?: number;
+                            };
+                            flaggedAddresses?: {
+                                address?: string;
+                                threatScore?: number;
+                                incidentCount?: number;
+                                highestSeverity?: string;
+                                /** Format: date-time */
+                                lastIncidentAt?: string;
+                            }[];
+                            incidents?: components["schemas"]["SentinelIncident"][];
+                            count?: number;
+                            /** Format: date-time */
+                            generatedAt?: string;
+                        };
+                    };
+                };
+                /** @description Invalid severity filter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unauthorized - missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Forbidden - admin access required */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/sentinel/alerts/{id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acknowledge a sentinel incident */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Incident acknowledged */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Incident not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2750,8 +3586,36 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        SentinelIncident: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            ruleId: "VELOCITY_SPIKE" | "MULTI_STREAM_DRAIN" | "HIGH_VALUE_DRAIN" | "TOKEN_VELOCITY_SPIKE" | "ZERO_RUNWAY_FLOOD" | "STREAM_CREATION_SPIKE";
+            /** @enum {string} */
+            severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+            title: string;
+            description: string;
+            /** @description Stellar public key involved */
+            address?: string | null;
+            token?: string | null;
+            streamId?: string | null;
+            ledger?: number | null;
+            /** Format: date-time */
+            detectedAt: string;
+            /** @description Per-incident severity weight (10-90) */
+            threatScore: number;
+            evidence?: {
+                [key: string]: unknown;
+            };
+            /** @description HMAC-signed emergency pause proposal (CRITICAL incidents only) */
+            circuitBreaker?: {
+                [key: string]: unknown;
+            } | null;
+            acknowledged?: boolean;
+        };
         HealthResponse: {
             /**
+             * @description `degraded` with HTTP 503 when a liveness check fails; `degraded` with HTTP 200 when only Redis is unavailable or timed out
              * @example ok
              * @enum {string}
              */
@@ -2761,6 +3625,12 @@ export interface components {
              * @enum {string}
              */
             db: "connected" | "disconnected";
+            /**
+             * @description Same as checks.redis.status
+             * @example ok
+             * @enum {string}
+             */
+            redis?: "ok" | "unavailable" | "timeout" | "not_configured";
             /** @description Whether the event indexer is configured */
             indexerEnabled: boolean;
             /** @description Seconds since last indexer update, or null when no state row exists yet */
@@ -2782,7 +3652,7 @@ export interface components {
             checks: {
                 database?: {
                     /** @enum {string} */
-                    status?: "ok" | "down";
+                    status?: "ok" | "down" | "timeout";
                 };
                 indexer?: {
                     /** @enum {string} */
@@ -2792,7 +3662,7 @@ export interface components {
                 };
                 redis?: {
                     /** @enum {string} */
-                    status?: "ok" | "unavailable" | "not_configured";
+                    status?: "ok" | "unavailable" | "timeout" | "not_configured";
                 };
                 sorobanRpc?: {
                     /** @enum {string} */

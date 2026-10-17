@@ -25,6 +25,8 @@ services:
         value: info
 
       # ─── Required Infrastructure ──────────────────────────────────────────
+      # The backend refuses to start in production unless FRONTEND_URL and/or
+      # CORS_ALLOWED_ORIGINS lists at least one valid frontend origin.
       - key: CORS_ALLOWED_ORIGINS
         value: "https://app.flowfi.xyz,https://flowfi.xyz" # Replace with your deployed frontend origin(s)
       

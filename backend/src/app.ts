@@ -11,25 +11,21 @@ import {
   type VersionedRequest,
 } from "./middleware/api-version.middleware.js";
 import { sandboxMiddleware } from "./middleware/sandbox.middleware.js";
-import { globalRateLimiter } from "./middleware/rate-limiter.middleware.js";
+import { globalRateLimiter, healthRateLimiter } from "./middleware/rate-limiter.middleware.js";
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
+import { buildCorsOptions, CorsError } from "./config/cors.js";
+import logger from "./logger.js";
+import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
 
 const app = express();
-const isProduction = process.env.NODE_ENV === "production";
-const rawCors = process.env.CORS_ALLOWED_ORIGINS ?? "";
-const allowedOrigins = rawCors
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 
-// Default in development to only localhost:3000 (frontend dev server)
-if (!process.env.CORS_ALLOWED_ORIGINS && !isProduction) {
-  allowedOrigins.push("http://localhost:3000");
-}
+// Resolved once at startup; throws in production when FRONTEND_URL is missing
+// or invalid, so the server never runs with an open CORS policy.
+const corsOptions = buildCorsOptions();
 
 // Apply global rate limiter first
 app.use(globalRateLimiter);
@@ -66,36 +62,47 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      // Allow non-browser clients (no Origin header)
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-        return;
-      }
-
-      // Not allowed
-      callback(new Error("CORS origin not allowed"));
-    },
-    credentials: true,
-  }),
-);
+// CORS runs before the body parser, auth and routes, so preflight OPTIONS
+// requests are answered here and never reach route-level auth.
+app.use(cors(corsOptions));
 
 // Convert CORS errors into 403 responses so callers get a clear status code
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
-  if (err instanceof Error && err.message === "CORS origin not allowed") {
-    res.status(403).json({ error: "CORS origin not allowed" });
+  if (err instanceof CorsError) {
+    logger.warn("CORS origin rejected", {
+      origin: err.origin.slice(0, 256),
+      method: req.method,
+      path: req.path,
+    });
+    res.status(err.statusCode).json({ error: err.message });
     return;
   }
   next(err);
 });
-app.use(express.json({ limit: "1mb" }));
+// JSON body parsing.
+//
+// Standard REST endpoints get a tight 100kb ceiling so a multi-megabyte body
+// cannot pin memory or stall the event loop. The bulk routes that legitimately
+// carry many records (batch stream creation, CSV payroll import, and the
+// batch-withdraw simulation payload) get 1mb instead.
+//
+// The larger parser MUST be registered first: Express runs middleware in
+// registration order, so a request that reaches the 100kb parser first can
+// never be rescued by the larger one further down the chain.
+const BULK_JSON_PATHS = [
+  "/v1/streams/batch",
+  "/v1/streams/import",
+  "/v1/payroll/import",
+  // `/v1/streams/simulate` accepts `batch_withdraw`, whose `streamIds` array can
+  // be large for payroll recipients.
+  "/v1/streams/simulate",
+];
+app.use(BULK_JSON_PATHS, express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "100kb" }));
+
+// BigInt-safe JSON responses (Issue #1493): Prisma bigint columns must be
+// emitted as decimal strings, never throw in res.json().
+app.use(bigIntSafeJsonMiddleware);
 
 // Sandbox mode detection (before versioning)
 app.use(sandboxMiddleware);
@@ -141,7 +148,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // Health check routes
-app.use("/health", healthRoutes);
+app.use("/health", healthRateLimiter, healthRoutes);
 
 // Prometheus scrape endpoint. Mounted after the metrics middleware so scrapes
 // are themselves counted, and outside the versioned API surface because

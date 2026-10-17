@@ -1,9 +1,9 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "../generated/prisma/index.js";
-import { prisma } from "../lib/prisma.js";
+import { prisma, withReplicaFallback } from "../lib/prisma.js";
 import logger from "../logger.js";
-import { claimableAmountService } from "../services/claimable.service.js";
+import { claimableAmountService, calculateHistoricalStreamSnapshot, StreamSnapshotHistoryError } from "../services/claimable.service.js";
 import {
   getStreamFromChain,
   getClaimableFromChain,
@@ -286,7 +286,7 @@ export const getStream = async (req: Request, res: Response) => {
       return sendApiError(res, 400, "INVALID_STREAM_ID", "Invalid streamId parameter");
     }
 
-    const stream = await prisma.stream.findUnique({
+    const stream = await withReplicaFallback((client) => client.stream.findUnique({
       where: { streamId: parsedStreamId },
       include: {
         senderUser: true,
@@ -295,7 +295,7 @@ export const getStream = async (req: Request, res: Response) => {
           orderBy: { timestamp: "desc" },
         },
       },
-    });
+    }));
 
     if (!stream) {
       // Fallback: try live RPC
@@ -385,8 +385,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       whereClause.eventType = eventType;
     }
 
-    const [events, total] = await Promise.all([
-      prisma.streamEvent.findMany({
+    const [events, total] = await withReplicaFallback((client) => Promise.all([
+      client.streamEvent.findMany({
         where: whereClause,
         // `timestamp` is not unique (events in the same block/ledger can
         // share a timestamp), so it can't be the sole sort key for cursor
@@ -396,8 +396,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
         take: limit,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
       }),
-      prisma.streamEvent.count({ where: whereClause }),
-    ]);
+      client.streamEvent.count({ where: whereClause }),
+    ]));
 
     const hasMore = cursor
       ? events.length === limit
@@ -433,10 +433,11 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
       }
     }
 
-    const stream = await prisma.stream.findUnique({
+    const stream = await withReplicaFallback((client) => client.stream.findUnique({
       where: { streamId: parsedStreamId },
       select: {
         streamId: true,
+        tokenAddress: true,
         ratePerSecond: true,
         depositedAmount: true,
         withdrawnAmount: true,
@@ -448,7 +449,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
         totalPausedDuration: true,
         updatedAt: true,
       },
-    });
+    }));
 
     if (!stream) {
       // Fallback: try live RPC for claimable amount
@@ -493,6 +494,47 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
   }
 };
 
+/** Return reconstructed balances and lifecycle status at a Unix timestamp. */
+export const getStreamSnapshot = async (req: Request, res: Response) => {
+  try {
+    const streamIdParam = Array.isArray(req.params.streamId) ? req.params.streamId[0] : req.params.streamId;
+    const streamId = parseStreamId(streamIdParam);
+    if (streamId === null) return sendApiError(res, 400, 'INVALID_STREAM_ID', 'Invalid streamId parameter');
+
+    const rawTimestamp = req.query.timestamp;
+    if (typeof rawTimestamp !== 'string' || !/^\d+$/.test(rawTimestamp)) {
+      return sendApiError(res, 400, 'INVALID_TIMESTAMP', 'timestamp must be a non-negative Unix timestamp in seconds');
+    }
+    const timestamp = Number(rawTimestamp);
+    if (!Number.isSafeInteger(timestamp)) {
+      return sendApiError(res, 400, 'INVALID_TIMESTAMP', 'timestamp must be a safe Unix timestamp in seconds');
+    }
+
+    const target = BigInt(timestamp);
+    const stream = await prisma.stream.findUnique({
+      where: { streamId },
+      select: {
+        streamId: true,
+        ratePerSecond: true,
+        startTime: true,
+        events: {
+          where: { timestamp: { lte: target } },
+          orderBy: [{ timestamp: 'asc' }, { ledgerSequence: 'asc' }],
+          select: { eventType: true, amount: true, timestamp: true, metadata: true, ledgerSequence: true },
+        },
+      },
+    });
+    if (!stream) return sendApiError(res, 404, 'NOT_FOUND', 'Stream not found');
+
+    return res.status(200).json(calculateHistoricalStreamSnapshot(stream, stream.events, timestamp));
+  } catch (error) {
+    if (error instanceof StreamSnapshotHistoryError) {
+      return sendApiError(res, 409, 'HISTORY_UNAVAILABLE', error.message);
+    }
+    logger.error('Error reconstructing historical stream snapshot:', error);
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'A technical error occurred. Please try again later.');
+  }
+};
 /**
  * Get user-level stream summary used by dashboard/profile cards.
  */
@@ -521,13 +563,14 @@ export const getUserStreamSummary = async (
     // unbounded DB queries.  Power users with more than MAX_USER_STREAMS
     // streams receive a truncated summary (the `truncated` flag lets the
     // frontend offer a pagination/export fallback).
-    const [outgoingStreams, incomingStreams] = await Promise.all([
-      prisma.stream.findMany({
+    const [outgoingStreams, incomingStreams] = await withReplicaFallback((client) => Promise.all([
+      client.stream.findMany({
         where: { sender: address },
         orderBy: { startTime: "desc" },
         take: MAX_USER_STREAMS,
         select: {
           streamId: true,
+          tokenAddress: true,
           ratePerSecond: true,
           depositedAmount: true,
           withdrawnAmount: true,
@@ -540,12 +583,13 @@ export const getUserStreamSummary = async (
           updatedAt: true,
         },
       }),
-      prisma.stream.findMany({
+      client.stream.findMany({
         where: { recipient: address },
         orderBy: { startTime: "desc" },
         take: MAX_USER_STREAMS,
         select: {
           streamId: true,
+          tokenAddress: true,
           ratePerSecond: true,
           depositedAmount: true,
           withdrawnAmount: true,
@@ -558,7 +602,7 @@ export const getUserStreamSummary = async (
           updatedAt: true,
         },
       }),
-    ]);
+    ]));
 
     const calculatedAt = Math.floor(nowMs / 1000);
 
