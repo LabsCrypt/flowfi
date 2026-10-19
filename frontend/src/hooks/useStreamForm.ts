@@ -433,20 +433,22 @@ export function useStreamForm(
       const newErrors = validateStreamForm(formData, {
         step,
         walletBalance,
+        senderAddress: walletPublicKey,
       });
       setErrors(newErrors);
       return Object.keys(newErrors).length === 0;
     },
-    [formData, walletBalance],
+    [formData, walletBalance, walletPublicKey],
   );
 
   const validateAll = useCallback((): boolean => {
     const newErrors = validateStreamForm(formData, {
       walletBalance,
+      senderAddress: walletPublicKey,
     });
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  }, [formData, walletBalance]);
+  }, [formData, walletBalance, walletPublicKey]);
 
   const setMaxAmount = useCallback(() => {
     const spendable = getSpendableBalance(walletBalance, formData.token);

@@ -196,6 +196,9 @@ import { fetchTokenBalanceDisplay } from "@/lib/soroban";
 // Valid Stellar Ed25519 public key (correct StrKey checksum)
 const VALID_KEY = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7";
 
+// Distinct valid Stellar Ed25519 public key for the connected sender wallet
+const SENDER_KEY = "GA3JE5IXBSOR6DCLZSGN7JIWQWO45RCS7PUFKKVXWSTE4Y75ISIDMHJG";
+
 // A different recipient, used to make sure polling does NOT pick it.
 const OTHER_KEY = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 
@@ -223,7 +226,7 @@ function renderWizard(overrides: Partial<React.ComponentProps<typeof StreamCreat
     <StreamCreationWizard
       onClose={onClose}
       onSubmit={onSubmit}
-      walletPublicKey={VALID_KEY}
+      walletPublicKey={SENDER_KEY}
       {...overrides}
     />
   );
@@ -350,6 +353,35 @@ describe("StreamCreationWizard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Invalid Stellar public key (must start with 'G' and be 56 characters)",
     );
+  });
+
+  it("shows inline error, disables Next, and blocks advancing on step 2 when recipient matches connected sender wallet", () => {
+    renderWizard({ walletPublicKey: SENDER_KEY });
+    clickNext(); // 1 -> 2
+    fireEvent.change(screen.getByLabelText("Recipient Address"), {
+      target: { value: SENDER_KEY },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Recipient address cannot be the same as your connected sender wallet",
+    );
+    expect(screen.getByText("Next").closest("button")).toBeDisabled();
+
+    clickNext();
+    expect(screen.getByText("Step 2 of 5")).toBeInTheDocument();
+  });
+
+  it("blocks recipient matching connected sender wallet case-insensitively and with surrounding whitespace", () => {
+    renderWizard({ walletPublicKey: SENDER_KEY });
+    clickNext(); // 1 -> 2
+    fireEvent.change(screen.getByLabelText("Recipient Address"), {
+      target: { value: `  ${SENDER_KEY.toLowerCase()}  ` },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Recipient address cannot be the same as your connected sender wallet",
+    );
+    expect(screen.getByText("Next").closest("button")).toBeDisabled();
   });
 
   it("advances past step 2 with a valid recipient", () => {
@@ -711,7 +743,7 @@ describe("StreamCreationWizard", () => {
       <StreamCreationWizard
         onClose={vi.fn()}
         onSubmit={onSubmit}
-        walletPublicKey={VALID_KEY}
+        walletPublicKey={SENDER_KEY}
       />
     );
 
@@ -746,7 +778,7 @@ describe("StreamCreationWizard", () => {
       <StreamCreationWizard
         onClose={vi.fn()}
         onSubmit={onSubmit}
-        walletPublicKey={VALID_KEY}
+        walletPublicKey={SENDER_KEY}
       />
     );
 
@@ -785,7 +817,7 @@ describe("StreamCreationWizard", () => {
       <StreamCreationWizard
         onClose={vi.fn()}
         onSubmit={onSubmit}
-        walletPublicKey={VALID_KEY}
+        walletPublicKey={SENDER_KEY}
       />
     );
 
@@ -810,7 +842,7 @@ describe("StreamCreationWizard", () => {
       <StreamCreationWizard
         onClose={vi.fn()}
         onSubmit={onSubmit}
-        walletPublicKey={VALID_KEY}
+        walletPublicKey={SENDER_KEY}
       />
     );
 
