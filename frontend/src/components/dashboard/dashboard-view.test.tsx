@@ -43,6 +43,7 @@ vi.mock("@/lib/soroban", () => ({
   getTokenAddress: vi.fn((symbol: string) => symbol),
   toSorobanErrorMessage: vi.fn((e) => String(e)),
   fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("1000"),
+  TOKEN_ADDRESSES: { XLM: "CXLM" },
 }));
 
 vi.mock("@/lib/stellar", () => ({
@@ -71,6 +72,10 @@ vi.mock("../stream-creation/CancelConfirmModal", () => ({
 
 vi.mock("./StreamDetailsModal", () => ({
   StreamDetailsModal: () => <div data-testid="details-modal" />,
+}));
+
+vi.mock("./CashflowProjectionChart", () => ({
+  CashflowProjectionChart: () => <div data-testid="cashflow-chart" />,
 }));
 
 vi.mock("../ui/Button", () => ({
@@ -216,4 +221,73 @@ describe("DashboardView + useDashboard cache integration", () => {
       callsBeforeRetry,
     );
   }, 20000);
+
+  it("hides the Paused tab count badge when there are zero paused streams", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DashboardView session={session} onDisconnect={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/start your first stream/i)).toBeInTheDocument(),
+    );
+
+    expect(screen.queryByTestId("paused-tab-badge")).toBeNull();
+  });
+
+  it("displays the exact count badge next to the Paused tab when paused streams exist", async () => {
+    const makeBackendStream = (id: string, streamId: number, isPaused: boolean) => ({
+      id,
+      streamId,
+      sender: PUBLIC_KEY,
+      recipient: "GRECIPIENT0000000000000000000000000000000000000000000000",
+      tokenAddress: "CXLM",
+      ratePerSecond: "100",
+      depositedAmount: "100000000",
+      withdrawnAmount: "0",
+      startTime: 1_700_000_000,
+      lastUpdateTime: 1_700_000_000,
+      createdAt: "2024-01-01T00:00:00.000Z",
+      updatedAt: "2024-01-01T00:00:00.000Z",
+      isActive: true,
+      isPaused,
+      events: [],
+    });
+
+    const outgoing = [
+      makeBackendStream("out-1", 101, true),
+      makeBackendStream("out-2", 102, false),
+    ];
+    const incoming = [
+      makeBackendStream("in-1", 201, true),
+      makeBackendStream("in-2", 202, true),
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        return jsonResponse(url.includes("sender=") ? outgoing : incoming);
+      }),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DashboardView session={session} onDisconnect={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const badge = await screen.findByTestId("paused-tab-badge");
+    expect(badge).toHaveTextContent("3");
+    expect(badge).toHaveAttribute("aria-label", "3 paused streams");
+  });
 });

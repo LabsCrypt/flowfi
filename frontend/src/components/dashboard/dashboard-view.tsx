@@ -616,6 +616,15 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     [snapshot],
   );
 
+  const pausedCount = React.useMemo(
+    () =>
+      [
+        ...(snapshot?.outgoingStreams ?? []),
+        ...(snapshot?.incomingStreams ?? []),
+      ].filter((stream) => stream.status === "Paused").length,
+    [snapshot],
+  );
+
   // Keep the keyboard-selected row visible as j/k move the highlight.
   React.useEffect(() => {
     if (!selectedStreamId) return;
@@ -981,7 +990,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             <button
               key={item.id}
               type="button"
-              className="sidebar-item"
+              className="sidebar-item flex items-center justify-between"
               data-active={activeTab === item.id ? "true" : undefined}
               aria-current={activeTab === item.id ? "page" : undefined}
               onClick={() => {
@@ -990,7 +999,16 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
                 router.replace(`?${params.toString()}`);
               }}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.id === "paused" && pausedCount > 0 && (
+                <span
+                  data-testid="paused-tab-badge"
+                  aria-label={`${pausedCount} paused ${pausedCount === 1 ? "stream" : "streams"}`}
+                  className="ml-2 inline-flex items-center justify-center rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
+                >
+                  {pausedCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
