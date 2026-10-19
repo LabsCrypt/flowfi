@@ -95,3 +95,49 @@ describe("ActivityHistory CSV export", () => {
     expect(downloadCSV).not.toHaveBeenCalled();
   });
 });
+
+describe("ActivityHistory malformed metadata", () => {
+  it("renders a fallback for FEE_CONFIG_UPDATED with malformed metadata instead of throwing", () => {
+    const event = makeEvent({
+      eventType: "FEE_CONFIG_UPDATED",
+      metadata: "{not valid json",
+    });
+
+    expect(() => render(<ActivityHistory events={[event]} />)).not.toThrow();
+    expect(screen.getByText("Fee configuration updated")).toBeInTheDocument();
+  });
+
+  it("renders a fallback for ADMIN_TRANSFERRED with malformed metadata instead of throwing", () => {
+    const event = makeEvent({
+      eventType: "ADMIN_TRANSFERRED",
+      metadata: "}{ truncated",
+    });
+
+    expect(() => render(<ActivityHistory events={[event]} />)).not.toThrow();
+    expect(screen.getByText("Admin transferred")).toBeInTheDocument();
+  });
+
+  it("still renders parsed detail for well-formed FEE_CONFIG_UPDATED metadata", () => {
+    const event = makeEvent({
+      eventType: "FEE_CONFIG_UPDATED",
+      metadata: JSON.stringify({ old_fee_rate_bps: 100, new_fee_rate_bps: 250 }),
+    });
+
+    render(<ActivityHistory events={[event]} />);
+    expect(
+      screen.getByText("Fee configuration updated: 1% → 2.5%")
+    ).toBeInTheDocument();
+  });
+
+  it("still renders parsed detail for well-formed ADMIN_TRANSFERRED metadata", () => {
+    const event = makeEvent({
+      eventType: "ADMIN_TRANSFERRED",
+      metadata: JSON.stringify({ new_admin: "GABCDEF123" }),
+    });
+
+    render(<ActivityHistory events={[event]} />);
+    expect(
+      screen.getByText("Admin transferred to GABCDEF123")
+    ).toBeInTheDocument();
+  });
+});

@@ -1,9 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { X, Copy, Check, QrCode } from "lucide-react";
-import { Button } from "../ui/Button";
-import toast from "react-hot-toast";
+import { X, QrCode } from "lucide-react";
+import { CopyButton } from "./CopyButton";
 
 interface ShareAddressModalProps {
   address: string;
@@ -11,18 +9,6 @@ interface ShareAddressModalProps {
 }
 
 export function ShareAddressModal({ address, onClose }: ShareAddressModalProps) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      toast.success("Address copied to clipboard");
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      toast.error("Failed to copy address");
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -50,23 +36,14 @@ export function ShareAddressModal({ address, onClose }: ShareAddressModalProps) 
             <p className="font-mono text-sm break-all">{address}</p>
           </div>
 
-          <Button
-            onClick={handleCopy}
-            className="w-full flex items-center justify-center gap-2"
-            glow
-          >
-            {copied ? (
-              <>
-                <Check className="h-4 w-4" />
-                Copied!
-              </>
-            ) : (
-              <>
-                <Copy className="h-4 w-4" />
-                Copy Address
-              </>
-            )}
-          </Button>
+          <CopyButton
+            text={address}
+            label="Copy Address"
+            copiedLabel="Copied!"
+            successMessage="Address copied to clipboard"
+            showLabel
+            className="w-full border border-white/10 bg-accent/10 py-2.5 font-semibold text-white hover:bg-accent/20"
+          />
 
           <div className="pt-4 border-t border-white/10">
             <h3 className="text-sm font-semibold mb-2">How it works</h3>

@@ -1,4 +1,62 @@
-use soroban_sdk::{contracttype, Address, Vec};
+use soroban_sdk::{contractclient, contracttype, Address, BytesN, Env, Vec};
+
+/// SEP-40-style price oracle interface (#1482).
+///
+/// `#[contractclient]` generates [`OracleClient`], which `verify_and_unlock_milestone`
+/// uses for `PriceTarget` conditions' cross-contract `lastprice` calls.
+///
+/// The asset argument mirrors the SEP-40 `Asset` wire shape as its own
+/// contracttype so the generated invocation matches oracle deployments
+/// without pulling SDK type differences into our ABI.
+// The trait itself is never implemented or named directly — `#[contractclient]`
+// consumes it to generate `OracleClient`, which lib.rs invokes. rustc's
+// dead-code pass doesn't credit that generated usage, so silence the lint.
+#[allow(dead_code)]
+#[contractclient(name = "OracleClient")]
+pub trait PriceOracle {
+    /// Last recorded price for `asset`, or `None` when the oracle has none.
+    fn lastprice(env: Env, asset: OracleAsset) -> Option<PriceData>;
+}
+
+/// Stellar DEX router interface used by `withdraw_and_swap` (#1466).
+///
+/// `#[contractclient]` generates [`DexRouter`], the cross-contract client the
+/// contract invokes to swap a stream's principal token for a target asset.
+#[allow(dead_code)]
+#[contractclient(name = "DexRouter")]
+pub trait DexRouterInterface {
+    fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: Vec<Address>,
+        to: Address,
+        deadline: u64,
+    ) -> Vec<i128>;
+}
+
+/// Asset identifier passed to [`PriceOracle::lastprice`] (#1482).
+///
+/// Encoded identically to the SEP-40 `Asset` enum: `Native` is the native
+/// XLM, `Other` wraps a token contract address.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OracleAsset {
+    /// The native asset (XLM).
+    Native,
+    /// A non-native token, keyed by its contract address.
+    Other(Address),
+}
+
+/// A single oracle price reading (#1482).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceData {
+    /// Price in the oracle's own decimals.
+    pub price: i128,
+    /// Ledger timestamp the reading was taken at.
+    pub timestamp: u64,
+}
 
 /// Maximum number of unlock steps a single step-tranche schedule may declare.
 ///
@@ -6,12 +64,75 @@ use soroban_sdk::{contracttype, Address, Vec};
 /// the Soroban CPU/memory budget regardless of how many streams are batched.
 pub const MAX_VESTING_STEPS: u32 = 12;
 
+/// Maximum number of conditional milestones per conditional stream (#1482).
+///
+/// Same budget rationale as [`MAX_VESTING_STEPS`]: verification and withdrawal
+/// iterate the whole list in one transaction.
+pub const MAX_CONDITIONAL_MILESTONES: u32 = 12;
+
+/// Maximum allowed protocol fee in basis points (100 bps = 1%, max 100 BPS = 1%).
+pub const MAX_ALLOWED_FEE_BPS: u32 = 100;
+
+/// A single recipient in a protocol fee split.
+///
+/// `share_bps` is basis points (100 = 1%, sum of all shares must equal 10_000).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeRecipient {
+    pub recipient: Address,
+    pub share_bps: u32,
+}
+
+/// Protocol-wide fee configuration with multi-recipient treasury splits.
+///
+/// `fee_bps` is the total fee in basis points (max 100 bps = 1%).
+/// `splits` defines how the collected fee is distributed recipients.
+/// `is_enabled` toggles fee collection on or off.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolFeeConfig {
+    pub fee_bps: u32,
+    pub splits: Vec<FeeRecipient>,
+    pub is_enabled: bool,
+}
+
+/// Role of a participant in a stream position.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionRole {
+    Sender,
+    Recipient,
+}
+
+/// Metadata for a stream position receipt (NFT/soulbound token).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPositionMetadata {
+    pub stream_id: u64,
+    pub role: PositionRole,
+    pub token_address: Address,
+    pub rate_per_second: i128,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub is_transferable: bool,
+}
+
+/// Maximum age (seconds) of an oracle price reading still considered fresh
+/// for `PriceTarget` verification (#1482).
+pub const ORACLE_PRICE_MAX_AGE_SECS: u64 = 3600;
+
 /// Maximum number of streams a single `batch_withdraw` call may process.
 ///
 /// Guards against blowing the transaction's CPU and memory limits; recipients
 /// holding more streams than this must split their withdrawal into several
 /// transactions.
 pub const MAX_BATCH_WITHDRAW: u32 = 30;
+
+/// Maximum number of streams a single `batch_create_streams` call may create.
+///
+/// Bounded so one payroll transaction stays inside the Soroban CPU and memory
+/// budget; a larger payroll must be split across several transactions.
+pub const MAX_BATCH_CREATE: u32 = 50;
 
 /// Status of a payment stream.
 #[contracttype]
@@ -69,6 +190,45 @@ pub enum VestingSchedule {
     HybridCliffLinear(u64, i128),
 }
 
+/// Condition that gates a conditional milestone's release (#1482).
+///
+/// `#[contracttype]` enums cannot carry named struct-variant fields, so
+/// `PriceTarget` and `OracleAttestation` encode their fields positionally.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UnlockCondition {
+    /// No condition: the tranche unlocks purely by time. Kept so a mixed
+    /// schedule can blend time-based and condition-based milestones.
+    TimeOnly(u64),
+    /// Unlocks when the oracle's last price for the stream's token crosses
+    /// `target_price` — above it when `is_above`, otherwise at or below it.
+    /// Positional: `(oracle_address, target_price, is_above)`.
+    PriceTarget(Address, i128, bool),
+    /// Unlocks when `oracle_signer` has authorized an attestation carrying
+    /// `attestation_id` on this contract. Positional:
+    /// `(oracle_signer, attestation_id)`.
+    OracleAttestation(Address, BytesN<32>),
+}
+
+/// One KPI-gated tranche of a conditional streaming stream (#1482).
+///
+/// Amounts and conditions are fixed at creation. `is_unlocked` is flipped by
+/// `verify_and_unlock_milestone` once the condition has been observed true;
+/// the unlocked amount then flows through the same claimed bookkeeping as a
+/// step-tranche unlock.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConditionalMilestone {
+    /// Caller-assigned tranche id, unique within its stream.
+    pub milestone_id: u32,
+    /// Amount unlocked once `condition` is satisfied. Strictly positive.
+    pub amount: i128,
+    /// Condition that must hold before this tranche unlocks.
+    pub condition: UnlockCondition,
+    /// Whether the condition has already been verified true.
+    pub is_unlocked: bool,
+}
+
 /// Centralized storage key strategy.
 ///
 /// All contract storage is keyed exclusively through this enum, ensuring:
@@ -92,6 +252,18 @@ pub enum DataKey {
     /// so the upgrade history is tracked here instead. Absent — read as
     /// `BytesN::zero` — means the contract has never been upgraded in place.
     ContractWasmHash,
+    /// Conditional milestone list for one stream (#1482), instance storage.
+    /// Kept off `Stream` so the persisted `Stream` schema stays frozen for
+    /// the migration path (`migrate` re-encodes records; adding a field here
+    /// would orphan every pre-existing row).
+    ConditionalMilestones(u64),
+    /// Emitted `OracleAttestation` ids for one stream (instance storage),
+    /// so a attestation cannot unlock two milestones.
+    AttestedIds(u64),
+    /// Protocol fee configuration with multi-recipient treasury splits.
+    ProtocolFeeConfig,
+    /// Position metadata for a stream (instance storage).
+    StreamPosition(u64),
 }
 
 /// Immutable state of a payment stream.
@@ -140,8 +312,56 @@ pub struct Stream {
     pub arbiter: Option<Address>,
     /// Dispute status for escrow cancellations (for #1319).
     pub dispute_status: DisputeStatus,
+    /// Whether this stream has yield generation enabled.
+    /// When true, idle deposited tokens are routed to a yield strategy adapter.
+    pub yield_enabled: bool,
     /// Whether this stream uses allowance-based funding (for #1318).
     pub is_allowance_based: bool,
+}
+
+impl Stream {
+    /// Returns `true` if the stream has `StreamStatus::Active`.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.status == StreamStatus::Active
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Paused`.
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.status == StreamStatus::Paused
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Cancelled`.
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        self.status == StreamStatus::Cancelled
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Completed`.
+    #[inline]
+    pub fn is_completed(&self) -> bool {
+        self.status == StreamStatus::Completed
+    }
+}
+
+/// Alias for DataKey representing storage keys in the contract.
+pub type StorageKey = DataKey;
+
+/// A single stream to create inside `batch_create_streams`.
+///
+/// The batch entrypoint takes one struct per stream rather than N parallel
+/// vectors so that a malformed payroll cannot desynchronise its fields.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchStreamInput {
+    pub recipient: Address,
+    pub token_address: Address,
+    pub amount: i128,
+    pub duration: u64,
+    /// Seconds after creation before anything becomes claimable. `None` drips
+    /// from the first ledger-second.
+    pub cliff_duration: Option<u64>,
 }
 
 /// Protocol-wide configuration, fee circuit breaker and guardian role.

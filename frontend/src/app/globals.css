@@ -223,6 +223,22 @@
   }
 }
 
+@keyframes claimable-tick-flash {
+  0% {
+    background-color: rgba(16, 185, 129, 0.22);
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4);
+  }
+
+  100% {
+    background-color: rgba(16, 185, 129, 0);
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0);
+  }
+}
+
+.claimable-tick-flash {
+  animation: claimable-tick-flash 650ms ease-out;
+}
+
 *,
 *::before,
 *::after {
@@ -1700,7 +1716,8 @@ body {
   .animate-shimmer,
   .animate-bounce,
   .animate-pulse,
-  .animate-spin {
+  .animate-spin,
+  .claimable-tick-flash {
     animation: none !important;
   }
 }

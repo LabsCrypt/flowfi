@@ -21,7 +21,10 @@ export function projectCashflow(streams: ProjectionStream[], horizonDays: number
   let cumulative = streams.filter((stream) => stream.direction === "incoming").reduce((sum, stream) => sum + stream.withdrawn, 0);
   return Array.from({ length: horizonDays + 1 }, (_, index) => {
     const date = new Date(start); date.setDate(start.getDate() + index);
-    const day = streams.reduce((total, stream) => {
+    // The series starts at the beginning of today, so the first point has not
+    // had a full day to accrue yet. Crediting it one day of flow would shift the
+    // whole projection a day into the future.
+    const day = index === 0 ? 0 : streams.reduce((total, stream) => {
       if (!stream.isActive || stream.isPaused || (stream.startTime && stream.startTime * 1000 > date.getTime())) return total;
       const amount = stream.ratePerSecond * 86400;
       return total + (stream.direction === "incoming" ? amount : -amount);

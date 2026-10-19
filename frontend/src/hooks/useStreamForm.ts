@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   validateStreamForm,
+  getSpendableBalance,
   type StreamFormData,
   type StreamFormErrors,
 } from "@/lib/stream-validation";
@@ -250,6 +251,17 @@ function persistCustomTemplates(key: string, items: StreamTemplate[]): void {
   }
 }
 
+/**
+ * Format a spendable balance as an amount string using Stellar's 7-decimal
+ * precision. The value is floored (never rounded up) so the resulting "Max"
+ * can never exceed the wallet's actual spendable balance.
+ */
+function toSpendableAmountString(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const floored = Math.floor(value * 1e7 + 1e-3) / 1e7;
+  return floored.toFixed(7).replace(/\.?0+$/, "");
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useStreamForm(
@@ -428,9 +440,12 @@ export function useStreamForm(
   }, [formData, walletBalance]);
 
   const setMaxAmount = useCallback(() => {
-    if (!walletBalance) return;
-    updateFormData({ amount: walletBalance });
-  }, [walletBalance, updateFormData]);
+    const spendable = getSpendableBalance(walletBalance, formData.token);
+    if (spendable === null) return;
+    const amount = toSpendableAmountString(spendable);
+    if (!amount) return;
+    updateFormData({ amount });
+  }, [walletBalance, formData.token, updateFormData]);
 
   // ── Template helpers ────────────────────────────────────────────────────
 
