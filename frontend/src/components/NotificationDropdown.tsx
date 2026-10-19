@@ -25,6 +25,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
+    const triggerRef = useRef<HTMLButtonElement>(null);
 
     const { events: streamEvents, connected } = useStreamEvents({
         userPublicKeys: [publicKey],
@@ -122,6 +123,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.key === "Escape") {
                 setIsOpen(false);
+                triggerRef.current?.focus();
                 return;
             }
 
@@ -178,9 +180,11 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     {unreadCount} new notifications
 </span>
             <button
+                ref={triggerRef}
                 onClick={handleDropdownOpen}
                 aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
                 aria-expanded={isOpen}
+                aria-controls="notifications-dropdown-menu"
                 aria-haspopup="dialog"
                 className="relative p-2 text-slate-400 hover:text-accent transition-colors"
                 disabled={!connected}
@@ -207,6 +211,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
 
             {isOpen && (
                 <div
+                    id="notifications-dropdown-menu"
                     role="dialog"
                     aria-label="Notifications"
                     className="absolute right-0 mt-2 w-80 bg-background/95 backdrop-blur-md border border-glass-border rounded-2xl shadow-2xl z-[100] overflow-hidden animate-in fade-in slide-in-from-top-2"
@@ -218,7 +223,10 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                             {!connected && <span className="text-xs text-red-400">Reconnecting...</span>}
 
                             <button
-                                onClick={() => setIsOpen(false)}
+                                onClick={() => {
+                                    setIsOpen(false);
+                                    triggerRef.current?.focus();
+                                }}
                                 aria-label="Close notifications"
                                 className="text-slate-400 hover:text-white"
                             >
