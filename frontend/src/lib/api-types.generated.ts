@@ -676,7 +676,7 @@ export interface paths {
         };
         /**
          * Fetch user activity history
-         * @description Returns a paginated chronological history of all stream events associated with the user.
+         * @description Returns a paginated chronological history of all stream events associated with the authenticated wallet. The `publicKey` path parameter must match the authenticated caller.
          */
         get: {
             parameters: {
@@ -706,6 +706,24 @@ export interface paths {
                 };
                 /** @description Invalid pagination parameters */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized - missing or invalid authentication token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Forbidden - `publicKey` does not match the authenticated wallet */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -2083,8 +2101,10 @@ export interface paths {
          *
          *     **Sandbox Mode:**
          *     - Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`
-         *     - Sandbox events are clearly marked with `_sandbox` metadata
-         *     - Sandbox events are isolated from production events
+         *     - The `connected` frame and every event delivered to a sandbox
+         *       connection are tagged with `_sandbox: true`
+         *     - Sandbox mode labels/tags events; it does not route to a separate
+         *       datastore or otherwise isolate stored data
          */
         get: {
             parameters: {

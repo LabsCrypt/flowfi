@@ -65,3 +65,36 @@ events.onmessage = (e) => console.log(JSON.parse(e.data));
 
 Next: [Core concepts](/core-concepts) or the [interactive
 playground](/api-reference/playground).
+
+## Running in Local Sandbox Mode
+
+The local mock sandbox lets you run the frontend and backend with seeded demo
+data, without a funded Testnet wallet or live Soroban RPC. From the repository
+root, install dependencies once and start the full stack:
+
+```bash
+npm install
+npm run dev:mock
+```
+
+This starts PostgreSQL, Redis, and the mock Soroban RPC, prepares and seeds the
+local database with `scripts/seed-mock-data.ts`, then starts the backend and
+frontend. The backend is launched with `SANDBOX_MODE_ENABLED=true` by the
+`dev:mock:start` script. The backend configuration uses this variable name
+(rather than `SANDBOX_MODE`).
+
+To run the seed script directly, first ensure the local database is running and
+its schema has been prepared, then run this command from the repository root:
+
+```bash
+npx tsx scripts/seed-mock-data.ts
+```
+
+The script uses `DATABASE_URL` if set; otherwise, it defaults to the local
+sandbox database at `******localhost:5433/flowfi`.
+
+Once the services are running, open the app at [http://localhost:3000](http://localhost:3000).
+Select **Sandbox** in the frontend network selector to use the local mock RPC
+for network-dependent features. The mock RPC does not support transaction
+simulation, so use the Testnet workflow above when testing real Stellar
+transactions.

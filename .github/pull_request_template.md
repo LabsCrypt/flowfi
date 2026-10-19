@@ -56,6 +56,7 @@ Closes #
 - [ ] I have commented my code, particularly in hard-to-understand areas
 - [ ] I have made corresponding changes to the documentation
 - [ ] Updated Postman/Hoppscotch API collections if routes changed
+- [ ] If routes or response shapes changed, ran the OpenAPI api-types drift check (`npm run codegen:openapi` in `backend/`, then `npm run codegen:api-types` in `frontend/`) and committed the regenerated `flowfi.openapi.json` / `api-types.generated.ts`
 - [ ] My changes generate no new warnings
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests pass locally with my changes

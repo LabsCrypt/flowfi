@@ -1,4 +1,68 @@
 import { prisma, withReplicaFallback } from '../lib/prisma.js';
+import type { Prisma } from '../generated/prisma/index.js';
+
+/**
+ * Transaction client passed to interactive Prisma transactions.
+ */
+export type PrismaTxClient = Prisma.TransactionClient;
+
+/**
+ * Atomically mark a stream as cancelled (via the API) and write a provisional
+ * CANCELLED StreamEvent in the same transaction.
+ *
+ * The indexer's handleStreamCancelled writes an authoritative event for the
+ * real on-chain StreamCancelled event later; both variants share the
+ * (transactionHash, eventType) unique key, so the indexer reconciles (updates)
+ * the provisional record instead of creating a duplicate.
+ *
+ * Issue #1219: without the provisional event the cancelled stream matched
+ * neither the "active" filter (isActive=false) nor the "cancelled" filter
+ * (requires a CANCELLED event) and disappeared from all status views until
+ * the on-chain event was indexed.
+ */
+export const markCancelledProvisionally = async (
+  streamId: bigint,
+  txHash: string,
+  txClient?: PrismaTxClient,
+) => {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const run = async (tx: PrismaTxClient) => {
+    await tx.stream.update({
+      where: { streamId },
+      data: {
+        isActive: false,
+      },
+    });
+
+    await tx.streamEvent.upsert({
+      where: {
+        transactionHash_eventType: {
+          transactionHash: txHash,
+          eventType: 'CANCELLED',
+        },
+      },
+      create: {
+        streamId,
+        eventType: 'CANCELLED',
+        amount: null,
+        transactionHash: txHash,
+        // Ledger details are unknown until the indexer sees the real event;
+        // ledgerSequence 0 + provisional metadata marks this as API-written.
+        ledgerSequence: 0,
+        timestamp,
+        metadata: JSON.stringify({ provisional: true, source: 'api-cancel' }),
+      },
+      // If another request already wrote the provisional event for this
+      // transaction, don't clobber it with a second provisional copy.
+      update: {},
+    });
+  };
+
+  if (txClient) {
+    return run(txClient);
+  }
+  return prisma.$transaction(run);
+};
 
 /**
  * Update the status and active flag of a stream in the database.

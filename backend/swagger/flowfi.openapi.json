@@ -3,7 +3,7 @@
   "info": {
     "title": "FlowFi API",
     "version": "1.0.0",
-    "description": "API documentation for FlowFi - Real-time payment streaming on Stellar\n\n## Performance & Caching\nThe API implements caching for frequently accessed endpoints, such as claimable amount calculations. \n- **Claimable Cache TTL**: 5 seconds\n- **Invalidation**: Automatically cleared when a withdrawal event occurs.\n\n## Sandbox Mode\n\nFlowFi API supports sandbox mode for testing without affecting production data.\n\n**Enable Sandbox Mode:**\n- Header: `X-Sandbox-Mode: true`\n- Query Parameter: `?sandbox=true`\n\n**Sandbox Features:**\n- Isolated database (separate from production)\n- All responses include `_sandbox` metadata\n- Response headers include `X-Sandbox-Mode: true`\n- Safe for testing and development\n\nSee [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.",
+    "description": "API documentation for FlowFi - Real-time payment streaming on Stellar\n\n## Performance & Caching\nThe API implements caching for frequently accessed endpoints, such as claimable amount calculations. \n- **Claimable Cache TTL**: 5 seconds\n- **Invalidation**: Automatically cleared when a withdrawal event occurs.\n\n## Sandbox Mode\n\nFlowFi API supports sandbox mode for labelling test traffic.\n\n**Enable Sandbox Mode:**\n- Header: `X-Sandbox-Mode: true`\n- Query Parameter: `?sandbox=true`\n\nSandbox mode is only available when the server is started with\n`SANDBOX_MODE_ENABLED=true`.\n\n**Sandbox Features:**\n- Event payloads returned to sandbox clients are tagged with `_sandbox: true`\n  so test data is distinguishable from production records.\n- Response headers include `X-Sandbox-Mode: true` and `X-Environment: sandbox`.\n\n**Note:** Sandbox mode currently labels requests/responses and tags events; it\ndoes not route traffic to a separate datastore.\n\nSee [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.",
     "contact": {
       "name": "FlowFi Team",
       "url": "https://github.com/LabsCrypt/flowfi"
@@ -51,6 +51,10 @@
     {
       "name": "Compliance",
       "description": "Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints"
+    },
+    {
+      "name": "Analytics",
+      "description": "Public protocol statistics (TVL, history, DefiLlama)"
     }
   ],
   "components": {
@@ -1544,7 +1548,12 @@
           "Users"
         ],
         "summary": "Fetch user activity history",
-        "description": "Returns a paginated chronological history of all stream events associated with the user.",
+        "description": "Returns a paginated chronological history of all stream events associated with the authenticated wallet. The `publicKey` path parameter must match the authenticated caller.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "in": "path",
@@ -1588,6 +1597,26 @@
           },
           "400": {
             "description": "Invalid pagination parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - `publicKey` does not match the authenticated wallet",
             "content": {
               "application/json": {
                 "schema": {
@@ -3147,7 +3176,7 @@
           "Events"
         ],
         "summary": "Subscribe to real-time stream events",
-        "description": "Establishes a Server-Sent Events (SSE) connection for real-time updates.\n\n**Reconnection Strategy:**\n- Browser automatically reconnects with exponential backoff\n- Initial retry: 1s, max: 30s\n- Client should implement custom reconnection logic for production\n\n**Event Types:**\n- `stream.created` - New stream created\n- `stream.topped_up` - Stream received additional funds\n- `stream.withdrawn` - Funds withdrawn from stream\n- `stream.cancelled` - Stream cancelled\n- `stream.completed` - Stream completed\n\n**Sandbox Mode:**\n- Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`\n- Sandbox events are clearly marked with `_sandbox` metadata\n- Sandbox events are isolated from production events\n",
+        "description": "Establishes a Server-Sent Events (SSE) connection for real-time updates.\n\n**Reconnection Strategy:**\n- Browser automatically reconnects with exponential backoff\n- Initial retry: 1s, max: 30s\n- Client should implement custom reconnection logic for production\n\n**Event Types:**\n- `stream.created` - New stream created\n- `stream.topped_up` - Stream received additional funds\n- `stream.withdrawn` - Funds withdrawn from stream\n- `stream.cancelled` - Stream cancelled\n- `stream.completed` - Stream completed\n\n**Sandbox Mode:**\n- Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`\n- The `connected` frame and every event delivered to a sandbox\n  connection are tagged with `_sandbox: true`\n- Sandbox mode labels/tags events; it does not route to a separate\n  datastore or otherwise isolate stored data\n",
         "parameters": [
           {
             "in": "header",
@@ -3575,6 +3604,164 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/analytics/tvl": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Current protocol TVL partitioned by token asset",
+        "description": "Read-only protocol statistics. No authentication is required because\nevery payload here is public (the same numbers a block explorer\nwould show). Subject to the API's global rate limiter.\n",
+        "responses": {
+          "200": {
+            "description": "TVL snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "Current TVL snapshot partitioned by token asset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests"
+          },
+          "500": {
+            "description": "TVL snapshot unavailable"
+          }
+        }
+      }
+    },
+    "/v1/analytics/historical": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Pre-aggregated time-series points for frontend charts",
+        "description": "Historical TVL and volume series at a fixed interval. No\nauthentication is required; subject to the API's global rate limiter.\n",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d",
+                "1y"
+              ],
+              "default": "30d"
+            },
+            "description": "Lookback window"
+          },
+          {
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1h",
+                "1d"
+              ],
+              "default": "1d"
+            },
+            "description": "Granularity of each point"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Time-series points",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "array",
+                      "description": "Aggregated time-series points for the requested period and interval"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid period or interval"
+          },
+          "429": {
+            "description": "Too many requests"
+          },
+          "500": {
+            "description": "Historical analytics unavailable"
+          }
+        }
+      }
+    },
+    "/v1/analytics/defillama": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "DefiLlama adapter payload",
+        "description": "TVL and activity numbers in the shape DefiLlama's adapter format\nexpects, so the protocol can be listed without a separate adapter.\nNo authentication is required; subject to the global rate limiter.\n",
+        "responses": {
+          "200": {
+            "description": "DefiLlama adapter payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "DefiLlama-shaped adapter payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests"
+          },
+          "500": {
+            "description": "DefiLlama adapter unavailable"
           }
         }
       }

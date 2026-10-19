@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { updateStatus, findStreams } from '../src/repositories/stream.repository.js';
+import { updateStatus, findStreams, markCancelledProvisionally } from '../src/repositories/stream.repository.js';
 import { prisma } from '../src/lib/prisma.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
@@ -10,6 +10,10 @@ vi.mock('../src/lib/prisma.js', () => ({
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    streamEvent: {
+      upsert: vi.fn(),
+    },
+    $transaction: vi.fn((fn: any) => fn(prisma)),
   },
 }));
 
@@ -49,6 +53,42 @@ describe('Stream Repository', () => {
         where: { streamId: 123n },
         data: { isActive: true },
       });
+    });
+  });
+
+  describe('markCancelledProvisionally', () => {
+    it('atomically marks the stream inactive and writes a provisional CANCELLED event', async () => {
+      await markCancelledProvisionally(123n, 'tx_hash_abc');
+
+      expect(prisma.stream.update).toHaveBeenCalledWith({
+        where: { streamId: 123n },
+        data: { isActive: false },
+      });
+
+      expect(prisma.streamEvent.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            transactionHash_eventType: {
+              transactionHash: 'tx_hash_abc',
+              eventType: 'CANCELLED',
+            },
+          },
+          create: expect.objectContaining({
+            streamId: 123n,
+            eventType: 'CANCELLED',
+            transactionHash: 'tx_hash_abc',
+            ledgerSequence: 0,
+          }),
+        }),
+      );
+
+      const createArg = (prisma.streamEvent.upsert as any).mock.calls[0][0].create;
+      expect(JSON.parse(createArg.metadata)).toMatchObject({ provisional: true });
+    });
+
+    it('runs inside a transaction so the status and event are written together', async () => {
+      await markCancelledProvisionally(123n, 'tx_hash_abc');
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
   });
 

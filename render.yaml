@@ -46,15 +46,9 @@ services:
       - key: KEEPER_SECRET_KEY
         sync: false # Sensitive: Stellar secret key (S...) for signing on-chain top-ups
       
-      - key: SOROBAN_SECRET_KEY
-        sync: false # Sensitive: Stellar secret key (S...) for signing on-chain cancel actions
-
       # ─── Admin & Security (Required for admin endpoints) ──────────────────
       - key: ADMIN_PUBLIC_KEY
         value: "" # REQUIRED: Stellar public key (G...) of the authorized admin
-      
-      - key: ADMIN_SECRET
-        sync: false # Sensitive: Bearer token for admin metrics/actions
 
       # ─── Optional Configuration ───────────────────────────────────────────
       - key: REDIS_URL

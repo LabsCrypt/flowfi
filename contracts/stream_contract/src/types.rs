@@ -18,6 +18,23 @@ pub trait PriceOracle {
     fn lastprice(env: Env, asset: OracleAsset) -> Option<PriceData>;
 }
 
+/// Stellar DEX router interface used by `withdraw_and_swap` (#1466).
+///
+/// `#[contractclient]` generates [`DexRouter`], the cross-contract client the
+/// contract invokes to swap a stream's principal token for a target asset.
+#[allow(dead_code)]
+#[contractclient(name = "DexRouter")]
+pub trait DexRouterInterface {
+    fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        amount_out_min: i128,
+        path: Vec<Address>,
+        to: Address,
+        deadline: u64,
+    ) -> Vec<i128>;
+}
+
 /// Asset identifier passed to [`PriceOracle::lastprice`] (#1482).
 ///
 /// Encoded identically to the SEP-40 `Asset` enum: `Native` is the native
@@ -52,6 +69,53 @@ pub const MAX_VESTING_STEPS: u32 = 12;
 /// Same budget rationale as [`MAX_VESTING_STEPS`]: verification and withdrawal
 /// iterate the whole list in one transaction.
 pub const MAX_CONDITIONAL_MILESTONES: u32 = 12;
+
+/// Maximum allowed protocol fee in basis points (100 bps = 1%, max 100 BPS = 1%).
+pub const MAX_ALLOWED_FEE_BPS: u32 = 100;
+
+/// A single recipient in a protocol fee split.
+///
+/// `share_bps` is basis points (100 = 1%, sum of all shares must equal 10_000).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeRecipient {
+    pub recipient: Address,
+    pub share_bps: u32,
+}
+
+/// Protocol-wide fee configuration with multi-recipient treasury splits.
+///
+/// `fee_bps` is the total fee in basis points (max 100 bps = 1%).
+/// `splits` defines how the collected fee is distributed recipients.
+/// `is_enabled` toggles fee collection on or off.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolFeeConfig {
+    pub fee_bps: u32,
+    pub splits: Vec<FeeRecipient>,
+    pub is_enabled: bool,
+}
+
+/// Role of a participant in a stream position.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionRole {
+    Sender,
+    Recipient,
+}
+
+/// Metadata for a stream position receipt (NFT/soulbound token).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPositionMetadata {
+    pub stream_id: u64,
+    pub role: PositionRole,
+    pub token_address: Address,
+    pub rate_per_second: i128,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub is_transferable: bool,
+}
 
 /// Maximum age (seconds) of an oracle price reading still considered fresh
 /// for `PriceTarget` verification (#1482).
@@ -196,6 +260,10 @@ pub enum DataKey {
     /// Emitted `OracleAttestation` ids for one stream (instance storage),
     /// so a attestation cannot unlock two milestones.
     AttestedIds(u64),
+    /// Protocol fee configuration with multi-recipient treasury splits.
+    ProtocolFeeConfig,
+    /// Position metadata for a stream (instance storage).
+    StreamPosition(u64),
 }
 
 /// Immutable state of a payment stream.
@@ -244,8 +312,37 @@ pub struct Stream {
     pub arbiter: Option<Address>,
     /// Dispute status for escrow cancellations (for #1319).
     pub dispute_status: DisputeStatus,
+    /// Whether this stream has yield generation enabled.
+    /// When true, idle deposited tokens are routed to a yield strategy adapter.
+    pub yield_enabled: bool,
     /// Whether this stream uses allowance-based funding (for #1318).
     pub is_allowance_based: bool,
+}
+
+impl Stream {
+    /// Returns `true` if the stream has `StreamStatus::Active`.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.status == StreamStatus::Active
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Paused`.
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.status == StreamStatus::Paused
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Cancelled`.
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        self.status == StreamStatus::Cancelled
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Completed`.
+    #[inline]
+    pub fn is_completed(&self) -> bool {
+        self.status == StreamStatus::Completed
+    }
 }
 
 /// Alias for DataKey representing storage keys in the contract.

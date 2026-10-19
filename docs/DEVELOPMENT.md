@@ -123,11 +123,16 @@ cd flowfi
 docker compose up -d postgres
 ```
 
-(Optional for SSE fanout testing)
+Optional — start Redis for multi-instance SSE fanout testing:
 
 ```bash
 docker compose up -d redis
 ```
+
+The Redis service in `docker-compose.yml` is published on
+`localhost:6379`, which is the value set for `REDIS_URL` in
+`backend/.env.example` (`redis://localhost:6379`), so no extra configuration
+is needed to reach it.
 
 ---
 

@@ -112,12 +112,88 @@ pub enum StreamError {
     /// The conditional milestone list would exceed
     /// `MAX_CONDITIONAL_MILESTONES`.
     TooManyMilestones = 44,
+    /// Protocol fee exceeds the maximum allowed cap (max 100 bps / 1%).
+    FeeExceedsMaximum = 45,
+    /// The sum of recipient shares in a fee split does not equal 10_000 bps.
+    InvalidFeeSplit = 46,
+    /// The deadline has expired for a cross-asset withdrawal.
+    DeadlineExpired = 47,
+    /// The DEX swap returned less than the caller's minimum output amount.
+    InsufficientOutput = 48,
 }
+
+/// Type alias mapping `ContractError` to `StreamError` for off-chain testing and SDK callers.
+pub type ContractError = StreamError;
 
 impl StreamError {
     /// Alias for `InvalidDuration` representing an invalid time range (e.g. end_time <= start_time or zero duration).
     #[allow(non_upper_case_globals)]
     pub const InvalidTimeRange: StreamError = StreamError::InvalidDuration;
+
+    /// Returns the unique numeric `u32` code associated with this error variant.
+    #[inline]
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+impl TryFrom<u32> for StreamError {
+    type Error = ();
+
+    #[inline]
+    fn try_from(code: u32) -> Result<Self, Self::Error> {
+        match code {
+            1 => Ok(StreamError::InvalidAmount),
+            2 => Ok(StreamError::StreamNotFound),
+            3 => Ok(StreamError::Unauthorized),
+            4 => Ok(StreamError::StreamInactive),
+            5 => Ok(StreamError::AlreadyInitialized),
+            6 => Ok(StreamError::NotAdmin),
+            7 => Ok(StreamError::InvalidFeeRate),
+            8 => Ok(StreamError::NotInitialized),
+            9 => Ok(StreamError::InvalidDuration),
+            10 => Ok(StreamError::InvalidTokenAddress),
+            11 => Ok(StreamError::InvalidRate),
+            12 => Ok(StreamError::StreamPaused),
+            13 => Ok(StreamError::StreamNotPaused),
+            14 => Ok(StreamError::StreamAlreadyPaused),
+            15 => Ok(StreamError::ProtocolPaused),
+            16 => Ok(StreamError::EmptyVestingSchedule),
+            17 => Ok(StreamError::TooManyVestingSteps),
+            18 => Ok(StreamError::NonMonotonicVestingSteps),
+            19 => Ok(StreamError::InvalidVestingStepAmount),
+            20 => Ok(StreamError::VestingStepTotalMismatch),
+            21 => Ok(StreamError::VestingStepBeforeStart),
+            22 => Ok(StreamError::InvalidCliffParameters),
+            23 => Ok(StreamError::BatchTooLarge),
+            24 => Ok(StreamError::NotGuardian),
+            25 => Ok(StreamError::UnsupportedMigration),
+            26 => Ok(StreamError::StateVersionTooNew),
+            27 => Ok(StreamError::TopUpUnsupported),
+            28 => Ok(StreamError::RateModificationUnsupported),
+            29 => Ok(StreamError::InvalidNewRate),
+            30 => Ok(StreamError::DisputeNotSupported),
+            31 => Ok(StreamError::NoActiveDispute),
+            32 => Ok(StreamError::NotArbiter),
+            33 => Ok(StreamError::AllowanceLocked),
+            34 => Ok(StreamError::ArithmeticOverflow),
+            35 => Ok(StreamError::StreamNotActive),
+            36 => Ok(StreamError::StreamStillActive),
+            37 => Ok(StreamError::InvalidMilestone),
+            38 => Ok(StreamError::OraclePriceUnavailable),
+            39 => Ok(StreamError::OraclePriceStale),
+            40 => Ok(StreamError::ConditionNotMet),
+            41 => Ok(StreamError::MilestoneAlreadyUnlocked),
+            42 => Ok(StreamError::InvalidAttestation),
+            43 => Ok(StreamError::MilestoneCallerUnauthorized),
+            44 => Ok(StreamError::TooManyMilestones),
+            45 => Ok(StreamError::FeeExceedsMaximum),
+            46 => Ok(StreamError::InvalidFeeSplit),
+            47 => Ok(StreamError::DeadlineExpired),
+            48 => Ok(StreamError::InsufficientOutput),
+            _ => Err(()),
+        }
+    }
 }
 
 // ─── Test diagnostics (compiled only under `cfg(test)`) ───────────────────
@@ -134,7 +210,7 @@ impl StreamError {
 pub(crate) mod test_diagnostics {
     extern crate std;
 
-    use super::StreamError;
+    use super::{ContractError, StreamError};
     use core::fmt;
 
     impl StreamError {
@@ -185,6 +261,10 @@ pub(crate) mod test_diagnostics {
                 StreamError::InvalidAttestation => "InvalidAttestation",
                 StreamError::MilestoneCallerUnauthorized => "MilestoneCallerUnauthorized",
                 StreamError::TooManyMilestones => "TooManyMilestones",
+                StreamError::FeeExceedsMaximum => "FeeExceedsMaximum",
+                StreamError::InvalidFeeSplit => "InvalidFeeSplit",
+                StreamError::DeadlineExpired => "DeadlineExpired",
+                StreamError::InsufficientOutput => "InsufficientOutput",
             }
         }
     }
@@ -256,7 +336,7 @@ pub(crate) mod test_diagnostics {
         use std::string::ToString;
 
         /// (variant, identifier, documented numeric code) for every variant.
-        const ALL_VARIANTS: [(StreamError, &str, u32); 27] = [
+        const ALL_VARIANTS: [(StreamError, &str, u32); 48] = [
             (StreamError::InvalidAmount, "InvalidAmount", 1),
             (StreamError::StreamNotFound, "StreamNotFound", 2),
             (StreamError::Unauthorized, "Unauthorized", 3),
@@ -312,6 +392,43 @@ pub(crate) mod test_diagnostics {
             ),
             (StreamError::StateVersionTooNew, "StateVersionTooNew", 26),
             (StreamError::TopUpUnsupported, "TopUpUnsupported", 27),
+            (
+                StreamError::RateModificationUnsupported,
+                "RateModificationUnsupported",
+                28,
+            ),
+            (StreamError::InvalidNewRate, "InvalidNewRate", 29),
+            (StreamError::DisputeNotSupported, "DisputeNotSupported", 30),
+            (StreamError::NoActiveDispute, "NoActiveDispute", 31),
+            (StreamError::NotArbiter, "NotArbiter", 32),
+            (StreamError::AllowanceLocked, "AllowanceLocked", 33),
+            (StreamError::ArithmeticOverflow, "ArithmeticOverflow", 34),
+            (StreamError::StreamNotActive, "StreamNotActive", 35),
+            (StreamError::StreamStillActive, "StreamStillActive", 36),
+            (StreamError::InvalidMilestone, "InvalidMilestone", 37),
+            (
+                StreamError::OraclePriceUnavailable,
+                "OraclePriceUnavailable",
+                38,
+            ),
+            (StreamError::OraclePriceStale, "OraclePriceStale", 39),
+            (StreamError::ConditionNotMet, "ConditionNotMet", 40),
+            (
+                StreamError::MilestoneAlreadyUnlocked,
+                "MilestoneAlreadyUnlocked",
+                41,
+            ),
+            (StreamError::InvalidAttestation, "InvalidAttestation", 42),
+            (
+                StreamError::MilestoneCallerUnauthorized,
+                "MilestoneCallerUnauthorized",
+                43,
+            ),
+            (StreamError::TooManyMilestones, "TooManyMilestones", 44),
+            (StreamError::FeeExceedsMaximum, "FeeExceedsMaximum", 45),
+            (StreamError::InvalidFeeSplit, "InvalidFeeSplit", 46),
+            (StreamError::DeadlineExpired, "DeadlineExpired", 47),
+            (StreamError::InsufficientOutput, "InsufficientOutput", 48),
         ];
 
         #[test]
@@ -326,6 +443,27 @@ pub(crate) mod test_diagnostics {
             for (variant, _, code) in ALL_VARIANTS {
                 assert_eq!(variant as u32, code);
             }
+        }
+
+        #[test]
+        fn test_contract_error_round_trip_and_code() {
+            for (variant, _, code) in ALL_VARIANTS {
+                // Verify .code() returns the documented discriminant
+                assert_eq!(variant.code(), code);
+
+                // Verify ContractError::try_from(u32) returns Ok(variant)
+                let from_code = ContractError::try_from(code);
+                assert_eq!(from_code, Ok(variant));
+
+                // Verify round trip: try_from(variant.code()) == Ok(variant)
+                assert_eq!(ContractError::try_from(variant.code()), Ok(variant));
+            }
+
+            // Unknown error codes must return Err(())
+            assert_eq!(ContractError::try_from(0), Err(()));
+            assert_eq!(ContractError::try_from(49), Err(()));
+            assert_eq!(ContractError::try_from(100), Err(()));
+            assert_eq!(ContractError::try_from(u32::MAX), Err(()));
         }
 
         #[test]

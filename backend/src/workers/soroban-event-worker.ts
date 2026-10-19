@@ -1166,31 +1166,35 @@ export class SorobanEventWorker {
       });
       if (existingEvent) {
         logger.warn(
-          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CANCELLED`,
+          `[SorobanWorker] Reconciling existing StreamEvent: txHash=${event.txHash} type=CANCELLED`,
         );
-      } else {
-        await tx.streamEvent.upsert({
-          where: {
-            transactionHash_eventType: {
-              transactionHash: event.txHash,
-              eventType: "CANCELLED",
-            },
-          },
-          create: {
-            streamId,
-            eventType: "CANCELLED",
-            amount: refundedAmount,
-            transactionHash: event.txHash,
-            ledgerSequence: event.ledger,
-            timestamp,
-            metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
-          },
-          update: {
-            ledgerSequence: event.ledger,
-            timestamp,
-          },
-        });
       }
+      await tx.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "CANCELLED",
+          },
+        },
+        create: {
+          streamId,
+          eventType: "CANCELLED",
+          amount: refundedAmount,
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
+        },
+        // When an API-cancelled stream already wrote a provisional CANCELLED
+        // event (issue #1219), replace the provisional fields with the
+        // authoritative ledger details from the indexed on-chain event.
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+          amount: refundedAmount,
+          metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
+        },
+      });
     });
 
     sseService.broadcastToStream(String(streamId), "stream.cancelled", {

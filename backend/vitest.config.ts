@@ -23,7 +23,6 @@ export default defineConfig({
                 '**/*.spec.ts',
                 'prisma/**',
                 'src/index.ts',
-                'src/lib/prisma-sandbox.ts',
                 'src/services/indexer-integration.example.ts',
                 'src/services/indexer.service.ts',
                 'src/services/sorobanService.ts',

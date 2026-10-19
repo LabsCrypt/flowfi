@@ -33,6 +33,14 @@ if (typeof window !== "undefined") {
 const searchParamsMock = { get: vi.fn() };
 const push = vi.fn();
 
+// Overridable wallet state so individual tests can simulate a connected wallet.
+const mockUseWallet = vi.hoisted(() =>
+  vi.fn(() => ({
+    status: "disconnected",
+    session: null as null | { publicKey: string },
+  })),
+);
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
   useSearchParams: () => searchParamsMock,
@@ -43,15 +51,18 @@ vi.mock("react-hot-toast", () => ({
 }));
 
 vi.mock("@/context/wallet-context", () => ({
-  useWallet: () => ({ status: "disconnected", session: null }),
+  useWallet: mockUseWallet,
 }));
 
 vi.mock("@/lib/soroban", () => ({
   createStream: vi.fn(),
-  toBaseUnits: vi.fn(),
-  toDurationSeconds: vi.fn(),
-  getTokenAddress: vi.fn(),
-  toSorobanErrorMessage: vi.fn(),
+  toBaseUnits: vi.fn((value: string) =>
+    BigInt(Math.round(parseFloat(value || "0") * 10 ** 7)),
+  ),
+  toDurationSeconds: vi.fn(() => 0n),
+  getTokenAddress: vi.fn(() => "token-address"),
+  toSorobanErrorMessage: vi.fn(() => "error"),
+  fetchTokenBalanceDisplay: vi.fn().mockResolvedValue("1000"),
   TOKEN_ADDRESSES: { XLM: "xlm-address", USDC: "usdc-address" },
 }));
 
@@ -60,6 +71,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import CreateStreamContent from "../create-stream-content";
+import { createStream } from "@/lib/soroban";
 
 function getRecipientInput() {
   return screen.getByLabelText(/recipient/i) as HTMLInputElement;
@@ -78,6 +90,7 @@ describe("CreateStreamContent sessionStorage draft persistence", () => {
     vi.clearAllMocks();
     sessionStorageMock.clear();
     searchParamsMock.get.mockReturnValue(null);
+    mockUseWallet.mockReturnValue({ status: "disconnected", session: null });
   });
 
   it("saves form data to sessionStorage when fields change", async () => {
@@ -270,5 +283,61 @@ describe("CreateStreamContent sessionStorage draft persistence", () => {
     expect(getRecipientInput().value).toBe("");
     expect(getAmountInput().value).toBe("");
     expect(getDurationInput().value).toBe("30");
+  });
+});
+
+describe("CreateStreamContent recipient validation (issue #1205)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorageMock.clear();
+    searchParamsMock.get.mockReturnValue(null);
+    mockUseWallet.mockReturnValue({
+      status: "connected",
+      session: {
+        publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
+      },
+    });
+  });
+
+  it("shows an inline error and never calls createStream for a malformed address", async () => {
+    render(<CreateStreamContent />);
+
+    await act(async () => {
+      fireEvent.change(getRecipientInput(), {
+        target: { value: "not-a-valid-stellar-key" },
+      });
+      fireEvent.change(getAmountInput(), { target: { value: "100" } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start streaming/i }));
+    });
+
+    expect(
+      await screen.findByText(/invalid stellar public key/i),
+    ).toBeInTheDocument();
+    expect(createStream).not.toHaveBeenCalled();
+  });
+
+  it("calls createStream for a valid address", async () => {
+    (createStream as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      txHash: "tx_hash_valid",
+    });
+
+    render(<CreateStreamContent />);
+
+    await act(async () => {
+      fireEvent.change(getRecipientInput(), {
+        target: { value: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7" },
+      });
+      fireEvent.change(getAmountInput(), { target: { value: "100" } });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /start streaming/i }));
+    });
+
+    expect(createStream).toHaveBeenCalledTimes(1);
   });
 });
