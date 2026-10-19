@@ -1,0 +1,2 @@
+stellar-sdk
+pydantic>=2.7

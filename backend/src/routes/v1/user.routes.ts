@@ -171,7 +171,9 @@ router.get("/:publicKey", getUser);
  *     tags:
  *       - Users
  *     summary: Fetch user activity history
- *     description: Returns a paginated chronological history of all stream events associated with the user.
+ *     description: Returns a paginated chronological history of all stream events associated with the authenticated wallet. The `publicKey` path parameter must match the authenticated caller.
+ *     security:
+ *       - BearerAuth: []
  *     parameters:
  *       - in: path
  *         name: publicKey
@@ -205,6 +207,18 @@ router.get("/:publicKey", getUser);
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       403:
+ *         description: Forbidden - `publicKey` does not match the authenticated wallet
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       404:
  *         description: User not found
  *         content:
@@ -218,7 +232,7 @@ router.get("/:publicKey", getUser);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get("/:publicKey/events", getUserEvents);
+router.get("/:publicKey/events", requireAuth, getUserEvents);
 
 export default router;
 

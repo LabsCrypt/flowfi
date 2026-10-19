@@ -1,8 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
-import { Prisma } from '../generated/prisma/index.js';
 import { ZodError, type ZodIssue } from 'zod';
 import logger from '../logger.js';
-import { ApiError, sendApiError } from '../types/api-error.js';
+import { ApiError as TypeApiError, sendApiError } from '../types/api-error.js';
+import { ApiError as LibApiError, fromPrismaError, sanitizeDatabaseErrorMessage } from '../lib/api-error.js';
 
 /**
  * Global error handler middleware
@@ -19,6 +19,20 @@ export const errorHandler = (
         return next(err);
     }
 
+    // body-parser signals an over-limit body with `type: 'entity.too.large'`
+    // (and status 413). Translate it to the API's standard JSON error envelope
+    // instead of leaking the raw parser message.
+    const maybeStatus = (err as { status?: number; statusCode?: number })?.status
+        ?? (err as { statusCode?: number })?.statusCode;
+    if ((err as { type?: string })?.type === 'entity.too.large' || maybeStatus === 413) {
+        return sendApiError(
+            res,
+            413,
+            'PAYLOAD_TOO_LARGE',
+            'Request payload exceeds the allowed size limit.',
+        );
+    }
+
     if (err instanceof ZodError) {
         return sendApiError(res, 400, 'VALIDATION_ERROR', 'Request validation failed', err.issues.map((e: ZodIssue) => ({
             path: e.path.join('.'),
@@ -27,27 +41,30 @@ export const errorHandler = (
         })));
     }
 
-    if (err instanceof ApiError) {
-        return sendApiError(res, err.statusCode, err.code, err.message, err.details);
+    // Intercept Prisma database errors to prevent schema disclosure
+    const prismaError = fromPrismaError(err);
+    if (prismaError) {
+        return sendApiError(res, prismaError.status, prismaError.code, prismaError.message);
     }
 
-    // Handle Prisma Errors
-    if (err instanceof Prisma.PrismaClientKnownRequestError) {
-        // Unique constraint violation
-        if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
-            const target = ((err as Prisma.PrismaClientKnownRequestError).meta?.target as string[])?.join(', ') || 'field';
-            return sendApiError(res, 409, 'CONFLICT', `Record with this ${target} already exists.`);
-        }
-
-        // Record not found
-        if ((err as Prisma.PrismaClientKnownRequestError).code === 'P2025') {
-            return sendApiError(res, 404, 'NOT_FOUND', 'The requested record was not found.');
-        }
+    if (
+        err instanceof TypeApiError ||
+        err instanceof LibApiError ||
+        (err instanceof Error && 'statusCode' in err && 'code' in err) ||
+        (err instanceof Error && 'status' in err && 'code' in err)
+    ) {
+        const statusCode = (err as any).statusCode ?? (err as any).status ?? 500;
+        const code = (err as any).code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR');
+        let message = (err as any).message || 'Request failed';
+        message = sanitizeDatabaseErrorMessage(message, statusCode);
+        return sendApiError(res, statusCode, code, message, (err as any).details);
     }
 
     // Default Error
     const statusCode = (err instanceof Error && (err as any).status) || (err instanceof Error && (err as any).statusCode) || 500;
-    const message = statusCode === 500 ? 'A technical error occurred. Please try again later.' : (err instanceof Error ? err.message : 'Request failed');
+    let message = statusCode === 500 ? 'A technical error occurred. Please try again later.' : (err instanceof Error ? err.message : 'Request failed');
+    message = sanitizeDatabaseErrorMessage(message, statusCode);
     const code = statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR';
     return sendApiError(res, statusCode, code, message);
 };
+

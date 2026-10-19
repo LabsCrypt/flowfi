@@ -27,6 +27,7 @@ function calculateStreamRunway(stream: any, now: number): RunwayCalculation {
   const result = claimableAmountService.getClaimableAmount(
     {
       streamId: stream.streamId,
+      tokenAddress: stream.tokenAddress,
       ratePerSecond: stream.ratePerSecond,
       depositedAmount: stream.depositedAmount,
       withdrawnAmount: stream.withdrawnAmount,
