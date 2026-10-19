@@ -106,4 +106,42 @@ describe("StreamDetailsModal clipboard copy", () => {
       await screen.findByRole("button", { name: /recipient address copied/i }),
     ).toBeInTheDocument();
   });
+
+  it("renders a Copy Stream ID button in the modal header that copies stream.id and shows the copied state", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+
+    render(
+      <StreamDetailsModal
+        stream={STREAM}
+        onClose={vi.fn()}
+        onCancelClick={vi.fn()}
+        onTopUpClick={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(`ID: ${STREAM.id}`)).toBeInTheDocument();
+    const copyStreamIdButton = screen.getByRole("button", { name: /copy stream id/i });
+    expect(copyStreamIdButton).toBeInTheDocument();
+
+    await user.click(copyStreamIdButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(STREAM.id);
+    });
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalledWith("Stream ID copied");
+    });
+    expect(toastError).not.toHaveBeenCalled();
+
+    const copiedButton = await screen.findByRole("button", { name: /stream id copied/i });
+    expect(copiedButton).toBeInTheDocument();
+    expect(copiedButton.querySelector("svg.text-green-400")).not.toBeNull();
+  });
 });

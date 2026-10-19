@@ -39,10 +39,20 @@ export const StreamDetailsModal: React.FC<StreamDetailsModalProps> = ({
                 className="glass-card relative w-full max-w-2xl mx-4 rounded-3xl border border-glass-border p-8 shadow-2xl animate-in fade-in zoom-in-95"
             >
                 {/* Header */}
-                <div className="flex items-center justify-between mb-8">
-                    <div>
+                <div className="flex items-start justify-between gap-4 mb-8">
+                    <div className="min-w-0">
                         <h2 id="stream-details-modal-title" className="text-2xl font-black tracking-tight">Stream Details</h2>
-                        <p className="text-sm text-slate-400 font-mono">ID: {stream.id}</p>
+                        <div className="mt-1 inline-flex max-w-full items-center gap-2 rounded-full border border-glass-border bg-white/5 px-3 py-1">
+                            <p className="text-sm text-slate-400 font-mono truncate">ID: {stream.id}</p>
+                            <CopyButton
+                                text={stream.id}
+                                label="Copy"
+                                copiedLabel="Copied!"
+                                ariaLabel="Copy Stream ID"
+                                copiedAriaLabel="Stream ID copied"
+                                successMessage="Stream ID copied"
+                            />
+                        </div>
                     </div>
                     <button
                         onClick={onClose}
