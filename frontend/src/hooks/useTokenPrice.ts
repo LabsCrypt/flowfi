@@ -20,7 +20,7 @@ const TOKEN_MAPPING: Record<string, { coingeckoId: string; decimals: number }> =
 
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds
 
-interface TokenPrice {
+export interface TokenPrice {
   tokenSymbol: string;
   priceUSD: number;
   priceEUR: number;
@@ -38,7 +38,7 @@ interface UseTokenPriceOptions {
  * Returns stablecoin parity for USDC/EURC when live data is unavailable.
  */
 export function useTokenPrice({ tokenSymbol, enabled = true }: UseTokenPriceOptions) {
-  return useQuery<TokenPrice>({
+  const query = useQuery<TokenPrice>({
     queryKey: ["tokenPrice", tokenSymbol],
     queryFn: async () => {
       const mapping = TOKEN_MAPPING[tokenSymbol.toUpperCase()];
@@ -102,6 +102,18 @@ export function useTokenPrice({ tokenSymbol, enabled = true }: UseTokenPriceOpti
     enabled,
     refetchOnWindowFocus: false,
   });
+
+  const lastUpdatedAt: number | null =
+    typeof query.data?.timestamp === "number" && Number.isFinite(query.data.timestamp)
+      ? query.data.timestamp
+      : query.dataUpdatedAt > 0
+        ? query.dataUpdatedAt
+        : null;
+
+  return {
+    ...query,
+    lastUpdatedAt,
+  };
 }
 
 /**

@@ -1,8 +1,32 @@
 "use client";
 
-
 import { useTokenPrice, formatFiatAmount, formatRatePerPeriod } from "@/hooks/useTokenPrice";
 import { useSettings } from "@/hooks/useSettings";
+
+export const STALE_PRICE_THRESHOLD_MS = 5 * 60 * 1000;
+
+export function getPriceStaleness(
+  lastUpdatedAt: number | null | undefined,
+  nowMs: number = Date.now(),
+): {
+  isStale: boolean;
+  staleMinutes: number;
+  tooltip: string | null;
+} {
+  if (typeof lastUpdatedAt !== "number" || !Number.isFinite(lastUpdatedAt)) {
+    return { isStale: false, staleMinutes: 0, tooltip: null };
+  }
+  const ageMs = nowMs - lastUpdatedAt;
+  if (ageMs <= STALE_PRICE_THRESHOLD_MS) {
+    return { isStale: false, staleMinutes: 0, tooltip: null };
+  }
+  const staleMinutes = Math.max(1, Math.floor(ageMs / 60_000));
+  return {
+    isStale: true,
+    staleMinutes,
+    tooltip: `Price estimate last updated ${staleMinutes} minutes ago`,
+  };
+}
 
 interface FiatEquivalentProps {
   tokenSymbol: string;
@@ -28,7 +52,11 @@ export function FiatEquivalent({
   className = "",
 }: FiatEquivalentProps) {
   const { displayCurrency } = useSettings();
-  const { data: tokenPrice, isLoading } = useTokenPrice({ tokenSymbol });
+  const {
+    data: tokenPrice,
+    isLoading,
+    lastUpdatedAt: hookLastUpdatedAt,
+  } = useTokenPrice({ tokenSymbol });
 
   if (isLoading || !tokenPrice) {
     return (
@@ -39,12 +67,62 @@ export function FiatEquivalent({
   }
 
   // Determine currency from display setting
-  const currency = displayCurrency === "USD" || displayCurrency === "XLM" || displayCurrency === "USDC"
-    ? "USD"
-    : displayCurrency as "USD" | "EUR" | "GBP";
+  const currency =
+    displayCurrency === "USD" || displayCurrency === "XLM" || displayCurrency === "USDC"
+      ? "USD"
+      : (displayCurrency as "USD" | "EUR" | "GBP");
 
   const priceKey = `price${currency}` as keyof typeof tokenPrice;
-  const tokenPriceForCurrency = tokenPrice[priceKey] as number || tokenPrice.priceUSD;
+  const candidatePrice = tokenPrice[priceKey] ?? tokenPrice.priceUSD;
+  const tokenPriceForCurrency =
+    typeof candidatePrice === "number" && Number.isFinite(candidatePrice)
+      ? candidatePrice
+      : 0;
+
+  const resolvedLastUpdatedAt =
+    typeof hookLastUpdatedAt === "number" && Number.isFinite(hookLastUpdatedAt)
+      ? hookLastUpdatedAt
+      : typeof tokenPrice.timestamp === "number" && Number.isFinite(tokenPrice.timestamp)
+        ? tokenPrice.timestamp
+        : null;
+
+  const { isStale, tooltip: staleTooltip } = getPriceStaleness(
+    resolvedLastUpdatedAt,
+  );
+
+  const staleWarningIndicator =
+    isStale && staleTooltip ? (
+      <span
+        data-testid="stale-price-warning"
+        title={staleTooltip}
+        aria-label={staleTooltip}
+        aria-describedby="fiat-stale-price-tooltip"
+        tabIndex={0}
+        className="group relative inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 text-xs font-medium text-amber-400 cursor-help focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+      >
+        <svg
+          className="h-3.5 w-3.5 shrink-0 text-amber-400"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+        <span
+          id="fiat-stale-price-tooltip"
+          role="tooltip"
+          className="sr-only group-hover:not-sr-only group-focus-visible:not-sr-only group-hover:absolute group-hover:bottom-full group-hover:left-1/2 group-hover:-translate-x-1/2 group-hover:mb-1.5 group-hover:whitespace-nowrap group-hover:rounded-md group-hover:bg-slate-900 group-hover:px-2.5 group-hover:py-1 group-hover:text-xs group-hover:text-amber-200 group-hover:shadow-lg group-hover:border group-hover:border-amber-500/30 z-20"
+        >
+          {staleTooltip}
+        </span>
+      </span>
+    ) : null;
 
   return (
     <div className={`space-y-2 ${className}`}>
@@ -65,12 +143,13 @@ export function FiatEquivalent({
               currency
             )} {currency})
           </span>
+          {staleWarningIndicator}
         </div>
       )}
 
       {/* Rate display */}
       {(showRate || showDaily || showMonthly) && ratePerSecond && (
-        <div className="flex flex-wrap gap-3 text-sm">
+        <div className="flex flex-wrap items-center gap-3 text-sm">
           {showRate && (
             <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-800/50 text-slate-300">
               <span className="font-mono">
@@ -123,6 +202,7 @@ export function FiatEquivalent({
               </span>
             </span>
           )}
+          {!amount && staleWarningIndicator}
         </div>
       )}
     </div>
