@@ -10,6 +10,7 @@ import {
 import { prisma } from '../src/lib/prisma.js';
 
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   prisma: {
     streamEvent: {
       findMany: vi.fn(),

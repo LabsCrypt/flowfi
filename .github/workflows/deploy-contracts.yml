@@ -54,7 +54,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspace: "contracts -> target"
+          workspaces: "contracts -> target"
 
       - name: Install Stellar CLI
         run: |

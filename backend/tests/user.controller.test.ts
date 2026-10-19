@@ -4,6 +4,7 @@ import { prisma } from '../src/lib/prisma.js';
 import type { Request, Response } from 'express';
 
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   prisma: {
     user: {
       findUnique: vi.fn(),
@@ -138,6 +139,32 @@ describe('User Controller', () => {
   });
 
   describe('getUserEvents', () => {
+    // Issue #1533: the endpoint is authenticated and scoped to the caller.
+    const VIEWER = 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ';
+
+    beforeEach(() => {
+      (req as any).user = { publicKey: VIEWER };
+    });
+
+    it('returns 401 when the request is unauthenticated (#1533)', async () => {
+      req.params = { publicKey: VIEWER };
+      delete (req as any).user;
+
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(prisma.streamEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns 403 when requesting another wallet\'s history (#1533)', async () => {
+      req.params = { publicKey: 'GCNO64M4RVXL4QA43XCMQHA4S2MYUWLFEAYS6OQUXNA4EFC7XUMXBBEY' };
+
+      await getUserEvents(req as Request, res as Response, next);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(prisma.streamEvent.findMany).not.toHaveBeenCalled();
+    });
+
     it('should return 400 if publicKey is missing', async () => {
       req.params = {};
       await getUserEvents(req as Request, res as Response, next);

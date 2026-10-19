@@ -1,0 +1,36 @@
+# Dockerignore for builds whose context is the repository root (the frontend
+# image, issue #1335). The backend image uses backend/.dockerignore instead.
+# Keeping the context lean makes builds faster and avoids leaking local state.
+
+# Version control / editor / CI
+.git
+.gitignore
+.gitattributes
+.github
+.husky
+.vscode
+.idea
+
+# Dependencies and build output — reinstalled/rebuilt inside the image
+node_modules
+**/node_modules
+frontend/.next
+frontend/out
+frontend/coverage
+backend/dist
+backend/coverage
+backend/src/generated
+
+# Tests and docs are not needed to build the app image
+**/__tests__/**
+**/*.test.*
+**/*.spec.*
+e2e
+docs
+contracts
+
+# Secrets / local state
+.env
+.env.*
+*.log
+npm-debug.log*
