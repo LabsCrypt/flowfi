@@ -145,6 +145,11 @@ export function CalendarView({
     return days;
   }, [currentDate, filteredStreams]);
 
+  const now = new Date();
+  const isViewingCurrentMonth =
+    currentDate.getFullYear() === now.getFullYear() &&
+    currentDate.getMonth() === now.getMonth();
+
   const goToPrevMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
   };
@@ -194,24 +199,34 @@ export function CalendarView({
       {/* Navigation */}
       <div className="flex items-center justify-between mb-4">
         <button
+          type="button"
           onClick={goToPrevMonth}
+          aria-label="Previous month"
           className="p-2 rounded-lg hover:bg-white/5 transition-colors"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
         <div className="flex items-center gap-4">
-          <h4 className="text-lg font-semibold">
+          <h4 className="text-lg font-semibold" data-testid="calendar-current-month">
             {currentDate.toLocaleString("default", { month: "long", year: "numeric" })}
           </h4>
           <button
+            type="button"
             onClick={goToToday}
-            className="px-3 py-1 text-sm rounded-lg border border-slate-700 hover:border-accent transition-colors"
+            disabled={isViewingCurrentMonth}
+            className={`px-3 py-1 text-sm rounded-lg border transition-colors ${
+              isViewingCurrentMonth
+                ? "border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
+                : "border-accent/50 bg-accent/10 text-accent hover:bg-accent/20 hover:border-accent"
+            }`}
           >
             Today
           </button>
         </div>
         <button
+          type="button"
           onClick={goToNextMonth}
+          aria-label="Next month"
           className="p-2 rounded-lg hover:bg-white/5 transition-colors"
         >
           <ChevronRight className="h-5 w-5" />
@@ -232,27 +247,38 @@ export function CalendarView({
         {calendarDays.map((day, index) => (
           <div
             key={index}
-            className={`bg-slate-900/30 p-2 min-h-[100px] ${
+            data-testid={day.isToday ? "calendar-today-cell" : undefined}
+            aria-current={day.isToday ? "date" : undefined}
+            className={`p-2 min-h-[100px] transition-colors ${
               !day.isCurrentMonth ? "opacity-50" : ""
-            } ${day.isToday ? "ring-1 ring-accent" : ""}`}
+            } ${
+              day.isToday
+                ? "bg-accent/10 dark:bg-accent/15 ring-2 ring-inset ring-accent"
+                : "bg-slate-900/30"
+            }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span
-                className={`text-sm ${
-                  day.isToday
-                    ? "text-accent font-bold"
-                    : day.isCurrentMonth
-                    ? "text-slate-300"
-                    : "text-slate-600"
-                }`}
-              >
-                {day.date.getDate()}
-              </span>
-              {day.isToday && (
-                <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
-                  Today
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`text-sm ${
+                    day.isToday
+                      ? "text-accent font-bold"
+                      : day.isCurrentMonth
+                      ? "text-slate-700 dark:text-slate-300"
+                      : "text-slate-400 dark:text-slate-600"
+                  }`}
+                >
+                  {day.date.getDate()}
                 </span>
-              )}
+                {day.isToday && (
+                  <span
+                    data-testid="calendar-today-badge"
+                    className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
+                  >
+                    Today
+                  </span>
+                )}
+              </div>
               {day.streams.length > 0 && (
                 <span className="text-xs text-slate-500">
                   {day.streams.length}
