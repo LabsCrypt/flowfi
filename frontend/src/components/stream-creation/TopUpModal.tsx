@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { hasValidPrecision, validateAmountInput } from "@/utils/amount";
 import { useModalDialog } from "@/hooks/useModalDialog";
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 
 interface TopUpModalProps {
   streamId: string;
@@ -61,7 +62,7 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
     setIsSubmitting(true);
     try {
       await onConfirm(streamId, amount);
-      toast.success(`Successfully added ${amount} ${token} to stream`);
+      transactionSuccessToast(`Successfully added ${amount} ${token} to stream`);
     } catch {
       toast.error("Failed to top up stream. Please try again.");
       setIsSubmitting(false);

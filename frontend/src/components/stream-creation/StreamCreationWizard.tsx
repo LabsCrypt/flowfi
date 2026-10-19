@@ -9,13 +9,17 @@ import { TokenStep } from "./TokenStep";
 import { AmountStep } from "./AmountStep";
 import { ScheduleStep } from "./ScheduleStep";
 import { TemplateStep } from "./TemplateStep";
-import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { useRouter } from "next/navigation";
 import { getApiBaseUrl } from "@/lib/api/_shared";
+import { MultisigRequiredError, toBaseUnits } from "@/lib/soroban";
+import type { MultisigRoutingResult } from "@/lib/stellar-multisig";
+import { MultisigSignModal } from "../wallet/MultisigSignModal";
 import {
   useStreamForm,
   type StreamFormData,
 } from "@/hooks/useStreamForm";
+import { validateAmount } from "@/lib/stream-validation";
 
 // Re-export StreamFormData so existing imports keep working
 export type { StreamFormData };
@@ -42,6 +46,13 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   const [txHash, setTxHash] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [timeoutError, setTimeoutError] = useState(false);
+
+  // Multisig co-signing state (Issue #1471): populated when the wallet's
+  // signature is below the account's required signing weight.
+  const [multisigProposal, setMultisigProposal] = useState<{
+    xdr: string;
+    routing: MultisigRoutingResult;
+  } | null>(null);
 
   const router = useRouter();
 
@@ -75,9 +86,28 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     isCloseDisabled: isSubmitting || isPolling,
   });
 
+  // Re-derive amount validity on every render — rather than only when "Next"
+  // is clicked — so the final submit stays disabled until the deposit amount is
+  // valid against the connected wallet's balance (issue #1507).
+  const amountError = validateAmount(
+    formData.amount,
+    walletBalance,
+    formData.token,
+  );
+  const amountValid = amountError === null;
+  const canSubmit = !isSubmitting && amountValid;
+
   const handleApplyTemplate = (templateId: string) => {
     const msg = applyTemplateHook(templateId);
     if (msg) setTemplateSaveMessage(msg);
+  };
+
+  const scrollToFirstError = () => {
+    // Scroll to first error if validation fails
+    const firstError = document.querySelector('[role="alert"]');
+    if (firstError) {
+      firstError.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   };
 
   const handleSaveCustomTemplate = () => {
@@ -101,11 +131,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         }
       }
     } else {
-      // Scroll to first error if validation fails
-      const firstError = document.querySelector('[role="alert"]');
-      if (firstError) {
-        firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      scrollToFirstError();
     }
   };
 
@@ -119,24 +145,50 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
     }
   };
 
-  const startPolling = async (senderAddress: string) => {
+  const startPolling = async (senderAddress: string, form: StreamFormData) => {
     const startTime = Date.now();
     const TIMEOUT_MS = 30000; // 30 seconds
     const POLL_INTERVAL = 2000; // 2 seconds
     const baseUrl = getApiBaseUrl();
 
+    // Identify the stream the user just created instead of assuming the API's
+    // first result is it (issue #1204). We match on the submitted recipient and
+    // deposit amount, then prefer the most recently created match.
+    const expectedRecipient = form.recipient.trim().toLowerCase();
+    const expectedDeposit = toBaseUnits(form.amount);
+
     while (Date.now() - startTime < TIMEOUT_MS) {
       try {
         const response = await fetch(`${baseUrl}/v1/streams?sender=${senderAddress}`);
         const payload = await response.json();
-        const streams = Array.isArray(payload) ? payload : (payload.data ?? []);
-        
-        // Assuming the latest stream is what we want
-        if (streams && streams.length > 0) {
-          // Found!
-          const newStream = streams[0]; // Simplification
-          toast.success("Stream indexed and confirmed!");
-          router.push(`/streams/${newStream.streamId}`); // Updated path to match new structure
+        const streams: Array<Record<string, unknown>> = Array.isArray(payload)
+          ? payload
+          : (payload.data ?? []);
+
+        const candidates = streams.filter((stream) => {
+          if (typeof stream.recipient !== "string") return false;
+          if (stream.recipient.toLowerCase() !== expectedRecipient) return false;
+          // depositedAmount is stored in base units. Streams surfaced from the
+          // live RPC fallback may omit it, in which case recipient + recency
+          // decides the match.
+          if (typeof stream.depositedAmount === "string") {
+            try {
+              return BigInt(stream.depositedAmount) === expectedDeposit;
+            } catch {
+              return false;
+            }
+          }
+          return true;
+        });
+
+        if (candidates.length > 0) {
+          const newStream = candidates.reduce((latest, stream) => {
+            const latestTime = Date.parse(String(latest.createdAt)) || 0;
+            const streamTime = Date.parse(String(stream.createdAt)) || 0;
+            return streamTime > latestTime ? stream : latest;
+          });
+          transactionSuccessToast("Stream indexed and confirmed!");
+          router.push(`/streams/${String(newStream.streamId)}`);
           return;
         }
       } catch (e) {
@@ -150,6 +202,15 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   };
 
   const handleSubmit = async () => {
+    // Authoritative pre-submission wallet balance check (issue #1507): the
+    // balance may have finished loading after the user advanced past the
+    // amount step, so re-validate it here and send the user back if needed.
+    if (!validateStep(4)) {
+      setCurrentStep(4);
+      scrollToFirstError();
+      return;
+    }
+
     if (validateStep(currentStep)) {
       setIsSubmitting(true);
       try {
@@ -159,18 +220,23 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         
         // Step 2: Start Polling for Indexer
         setIsPolling(true);
-        await startPolling(walletPublicKey || "");
+        await startPolling(walletPublicKey || "", formData);
         
       } catch (error) {
+        // Multisig accounts: instead of surfacing a raw broadcast failure,
+        // hand the partial envelope to the co-signing coordinator.
+        if (error instanceof MultisigRequiredError) {
+          logger.info("Multisig co-signing required; opening proposal flow.");
+          setMultisigProposal({ xdr: error.signedXdr, routing: error.routing });
+          setIsSubmitting(false);
+          return;
+        }
+
         logger.error("Failed to create stream:", error);
         setIsSubmitting(false);
       }
     } else {
-      // Scroll to first error if validation fails
-      const firstError = document.querySelector('[role="alert"]');
-      if (firstError) {
-        firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      scrollToFirstError();
     }
   };
 
@@ -221,13 +287,9 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
       case 5:
         return (
           <ScheduleStep
-            duration={formData.duration}
-            durationUnit={formData.durationUnit}
-            onDurationChange={(value) => updateFormData({ duration: value })}
-            onUnitChange={(value) => updateFormData({ durationUnit: value })}
-            error={errors.duration}
-            amount={formData.amount}
-            token={formData.token}
+            formData={formData}
+            errors={errors}
+            onUpdate={updateFormData}
           />
         );
       default:
@@ -236,6 +298,7 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   };
 
   return (
+    <>
     <div 
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       role="dialog"
@@ -384,37 +447,63 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
         </div>
 
         {!isPolling && (
-          <div className="flex justify-between gap-4 pt-6 border-t border-glass-border">
-            <div>
-              {currentStep > 1 && (
-                <Button variant="outline" onClick={handleBack}>
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  Back
+          <>
+            {currentStep === STEPS.length && !amountValid && (
+              <p className="pt-6 text-sm text-red-400" role="alert">
+                {amountError}
+              </p>
+            )}
+            <div className="flex justify-between gap-4 pt-6 border-t border-glass-border">
+              <div>
+                {currentStep > 1 && (
+                  <Button variant="outline" onClick={handleBack}>
+                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                    Back
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-4">
+                <Button variant="outline" onClick={onClose} disabled={isSubmitting || isPolling}>
+                  Cancel
                 </Button>
-              )}
+                {currentStep < STEPS.length ? (
+                  <Button onClick={handleNext}>
+                    Next
+                    <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Button>
+                ) : (
+                  <Button
+                    loading={isSubmitting}
+                    onClick={handleSubmit}
+                    disabled={!canSubmit}
+                  >
+                    Create Stream
+                  </Button>
+                )}
+              </div>
             </div>
-            <div className="flex gap-4">
-              <Button variant="outline" onClick={onClose} disabled={isSubmitting || isPolling}>
-                Cancel
-              </Button>
-              {currentStep < STEPS.length ? (
-                <Button onClick={handleNext}>
-                  Next
-                  <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </Button>
-              ) : (
-                <Button loading={isSubmitting} onClick={handleSubmit}>
-                  Create Stream
-                </Button>
-              )}
-            </div>
-          </div>
+          </>
         )}
       </div>
     </div>
+
+    {multisigProposal && (
+      <MultisigSignModal
+        account={multisigProposal.routing.account}
+        initialXdr={multisigProposal.xdr}
+        onClose={() => setMultisigProposal(null)}
+        onSubmitted={(hash) => {
+          setMultisigProposal(null);
+          setTxHash(hash);
+          setIsPolling(true);
+          void startPolling(walletPublicKey || "", formData);
+        }}
+      />
+    )}
+    </>
   );
 };

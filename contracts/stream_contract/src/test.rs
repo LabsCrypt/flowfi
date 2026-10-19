@@ -4,17 +4,99 @@ use std::string::ToString;
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
-    token, xdr, Address, Env, Symbol, TryFromVal,
+    testutils::{storage::Persistent as _, Address as _, Events, Ledger},
+    token, vec, xdr, Address, Bytes, BytesN, Env, Symbol, TryFromVal, Val, Vec as SorobanVec,
 };
 
+use errors::test_diagnostics::assert_stream_error;
 use errors::StreamError;
 use events::{
-    AdminTransferredEvent, FeeCollectedEvent, FeeConfigUpdatedEvent, InitializedEvent,
-    StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent, StreamPausedEvent,
-    StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    emit_stream_cancelled, emit_stream_created, emit_tokens_withdrawn, AdminTransferredEvent,
+    ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
+    HybridCliffStreamCreatedEvent, InitializedEvent, ProtocolPauseStatusEvent, ProtocolPausedEvent,
+    StateMigratedEvent, StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamCompletedEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamResumedEvent, StreamToppedUpEvent,
+    TokensWithdrawnEvent,
 };
-use types::{DataKey, Stream, StreamStatus};
+use types::{
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
+    StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+};
+
+/// Minimal fee-token double that reads the stream from inside the treasury
+/// transfer. This makes the fee transfer an actual re-entrancy boundary in the
+/// test instead of a second, sequential public call.
+#[contract]
+struct ReentrantFeeToken;
+
+#[contractimpl]
+impl ReentrantFeeToken {
+    pub fn decimals(_env: Env) -> u32 {
+        7
+    }
+
+    pub fn transfer(env: Env, _from: Address, to: Address, _amount: i128) {
+        if to == env.current_contract_address() {
+            let stream_contract: Address = env
+                .storage()
+                .instance()
+                .get(&Symbol::new(&env, "stream_contract"))
+                .unwrap();
+            // The host forbids re-entering `StreamContract` while it is still on
+            // the call stack, so read the persisted record directly instead of
+            // calling `get_stream`. The ordering assertion is about what had
+            // been written *before* the fee transfer, not about the getter.
+            let observed = env.as_contract(&stream_contract, || {
+                crate::storage::try_load_stream(&env, 1)
+            });
+            env.storage().instance().set(
+                &Symbol::new(&env, "observed_deposit"),
+                &observed.unwrap().deposited_amount,
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "Soroban host prohibits contract re-entrancy"]
+fn test_fee_transfer_observes_persisted_stream_on_create_and_top_up() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let token = env.register(ReentrantFeeToken, ());
+    let client = create_contract(&env);
+    env.as_contract(&token, || {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "stream_contract"), &client.address);
+    });
+
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&Address::generate(&env), &token, &500);
+
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    assert_eq!(stream_id, 1);
+    let observed_create_deposit: i128 = env.as_contract(&token, || {
+        env.storage()
+            .instance()
+            .get(&Symbol::new(&env, "observed_deposit"))
+            .unwrap()
+    });
+    assert_eq!(observed_create_deposit, 950);
+
+    client.top_up_stream(&sender, &stream_id, &500);
+    let observed_top_up_deposit: i128 = env.as_contract(&token, || {
+        env.storage()
+            .instance()
+            .get(&Symbol::new(&env, "observed_deposit"))
+            .unwrap()
+    });
+    assert_eq!(observed_top_up_deposit, 1_425);
+}
+// NOTE: fee-transfer CEI (persist before transfer) is verified via
+// post-call state/events, not via re-entrant callback: Soroban hosts
+// forbid contract re-entry ("Contract re-entry is not allowed"), so a
+// fee token cannot call back into get_stream during transfer.
 
 // ─── Test Helpers ─────────────────────────────────────────────────────────────
 
@@ -35,6 +117,26 @@ fn create_contract(env: &Env) -> StreamContractClient<'_> {
 fn mint(env: &Env, token_address: &Address, recipient: &Address, amount: i128) {
     let asset = token::StellarAssetClient::new(env, token_address);
     asset.mint(recipient, &amount);
+}
+
+/// Builds a step-tranche schedule from `(unlock_time, unlock_amount)` pairs.
+///
+/// `vec!` only accepts what it can hand to `Vec::from_array`, so the steps are
+/// pushed individually — which also keeps the test call sites readable.
+fn step_schedule(env: &Env, steps: &[(u64, i128)]) -> SorobanVec<VestingStep> {
+    let mut schedule = SorobanVec::new(env);
+    for (unlock_time, unlock_amount) in steps {
+        schedule.push_back(VestingStep {
+            unlock_time: *unlock_time,
+            unlock_amount: *unlock_amount,
+        });
+    }
+    schedule
+}
+
+/// Advances the ledger clock by `seconds`.
+fn advance(env: &Env, seconds: u64) {
+    env.ledger().with_mut(|l| l.timestamp += seconds);
 }
 
 // ─── DataKey Serialization ────────────────────────────────────────────────────
@@ -73,6 +175,11 @@ fn test_datakey_stream_serializes_deterministically() {
         paused: false,
         paused_at: None,
         status: StreamStatus::Active,
+        schedule: VestingSchedule::Linear,
+        arbiter: None,
+        dispute_status: DisputeStatus::None,
+        yield_enabled: false,
+        is_allowance_based: false,
     };
     env.as_contract(&contract_id, || {
         env.storage().persistent().set(&key, &stream);
@@ -119,7 +226,7 @@ fn test_initialize_rejects_second_call() {
 
     client.initialize(&admin, &treasury, &100);
     let result = client.try_initialize(&admin, &treasury, &100);
-    assert_eq!(result, Err(Ok(StreamError::AlreadyInitialized)));
+    assert_stream_error!(result, StreamError::AlreadyInitialized);
 }
 
 #[test]
@@ -133,7 +240,7 @@ fn test_initialize_rejects_invalid_fee_rate() {
 
     // 1 001 bps > MAX_FEE_RATE_BPS (1 000)
     let result = client.try_initialize(&admin, &treasury, &1001);
-    assert_eq!(result, Err(Ok(StreamError::InvalidFeeRate)));
+    assert_stream_error!(result, StreamError::InvalidFeeRate);
 }
 
 #[test]
@@ -166,7 +273,7 @@ fn test_update_fee_config_rejects_non_admin() {
 
     client.initialize(&admin, &treasury, &500);
     let result = client.try_update_fee_config(&attacker, &treasury, &100);
-    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+    assert_stream_error!(result, StreamError::NotAdmin);
 }
 
 #[test]
@@ -180,7 +287,7 @@ fn test_update_fee_config_rejects_invalid_fee_rate() {
 
     client.initialize(&admin, &treasury, &500);
     let result = client.try_update_fee_config(&admin, &treasury, &1001);
-    assert_eq!(result, Err(Ok(StreamError::InvalidFeeRate)));
+    assert_stream_error!(result, StreamError::InvalidFeeRate);
 }
 
 #[test]
@@ -194,7 +301,7 @@ fn test_update_fee_config_rejects_not_initialized() {
 
     // Call update_fee_config before initialize
     let result = client.try_update_fee_config(&admin, &treasury, &100);
-    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+    assert_stream_error!(result, StreamError::NotInitialized);
 }
 
 #[test]
@@ -307,7 +414,7 @@ fn test_create_stream_rejects_zero_amount() {
         &0,
         &100,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidAmount)));
+    assert_stream_error!(result, StreamError::InvalidAmount);
 }
 
 #[test]
@@ -324,7 +431,7 @@ fn test_create_stream_rejects_negative_amount() {
         &-1,
         &100,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidAmount)));
+    assert_stream_error!(result, StreamError::InvalidAmount);
 }
 
 #[test]
@@ -337,7 +444,119 @@ fn test_create_stream_rejects_zero_duration() {
     let client = create_contract(&env);
 
     let result = client.try_create_stream(&sender, &Address::generate(&env), &token, &500, &0);
-    assert_eq!(result, Err(Ok(StreamError::InvalidDuration)));
+    assert_stream_error!(result, StreamError::InvalidDuration);
+    assert_stream_error!(result, StreamError::InvalidTimeRange);
+}
+
+#[test]
+fn test_create_stream_rejects_equal_start_and_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let client = create_contract(&env);
+
+    // Caller computes duration = end_time - start_time.
+    // When start_time == end_time, duration is 0.
+    let start_time = 1_000_u64;
+    let end_time = 1_000_u64;
+    let duration = end_time.saturating_sub(start_time);
+    assert_eq!(duration, 0);
+
+    let result = client.try_create_stream(&sender, &recipient, &token, &500, &duration);
+
+    // Verify it reverts with StreamError::InvalidTimeRange (and StreamError::InvalidDuration).
+    assert_stream_error!(result, StreamError::InvalidTimeRange);
+    assert_stream_error!(result, StreamError::InvalidDuration);
+
+    // Verify sender balance is completely untouched (no tokens transferred).
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&sender), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+
+    // Verify stream is not created and stream ID 1 does not exist.
+    assert!(client.get_stream(&1).is_none());
+
+    // Verify no stream_created event was emitted.
+    let events = env.events().all();
+    let created_event = events.iter().find(|e| {
+        Symbol::try_from_val(&env, &e.1.get(0).unwrap())
+            .map(|s: Symbol| s == Symbol::new(&env, "stream_created"))
+            .unwrap_or(false)
+    });
+    assert!(
+        created_event.is_none(),
+        "stream_created event must not be emitted on zero duration"
+    );
+}
+
+#[test]
+fn test_create_stream_rejects_start_time_after_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let client = create_contract(&env);
+
+    // When start_time > end_time, caller calculates duration using checked_sub.
+    // An inverted time range cannot produce a positive valid duration.
+    let start_time = 2_000_u64;
+    let end_time = 1_000_u64;
+    let duration_opt = end_time.checked_sub(start_time);
+    assert!(duration_opt.is_none());
+
+    // If caller falls back to 0 or saturating_sub on inverted range:
+    let duration = end_time.saturating_sub(start_time);
+    assert_eq!(duration, 0);
+
+    let result = client.try_create_stream(&sender, &recipient, &token, &500, &duration);
+    assert_stream_error!(result, StreamError::InvalidTimeRange);
+    assert_stream_error!(result, StreamError::InvalidDuration);
+
+    // Balance untouched.
+    let token_client = token::Client::new(&env, &token);
+    assert_eq!(token_client.balance(&sender), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+}
+
+#[test]
+fn test_create_stream_strictly_validates_duration_before_rate_arithmetic() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    let client = create_contract(&env);
+
+    // Division by zero in rate calculation (amount / duration) or instant 100% vesting
+    // must be strictly prevented before arithmetic:
+    // Testing multiple amounts with 0 duration:
+    for amount in [1, 500, 1_000, 10_000] {
+        let result = client.try_create_stream(&sender, &recipient, &token, &amount, &0);
+        assert_stream_error!(
+            result,
+            StreamError::InvalidTimeRange,
+            "amount with zero duration must return InvalidTimeRange without host panic"
+        );
+    }
+
+    // Now verify that when end_time > start_time (valid positive duration),
+    // creation succeeds and rate arithmetic proceeds normally:
+    let start_time = env.ledger().timestamp();
+    let end_time = start_time + 100;
+    let valid_duration = end_time - start_time;
+    assert!(valid_duration > 0);
+
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &valid_duration);
+    assert_eq!(stream_id, 1);
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.rate_per_second, 10); // 1000 / 100 = 10
+    assert_eq!(stream.deposited_amount, 1_000);
 }
 
 #[test]
@@ -355,7 +574,7 @@ fn test_create_stream_rejects_invalid_token_address() {
         &500,
         &100,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidTokenAddress)));
+    assert_stream_error!(result, StreamError::InvalidTokenAddress);
 }
 
 #[test]
@@ -484,9 +703,9 @@ fn test_top_up_rejects_zero_amount() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_top_up_stream(&sender, &id, &0),
-        Err(Ok(StreamError::InvalidAmount))
+        StreamError::InvalidAmount
     );
 }
 
@@ -501,9 +720,9 @@ fn test_top_up_rejects_negative_amount() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_top_up_stream(&sender, &id, &-50),
-        Err(Ok(StreamError::InvalidAmount))
+        StreamError::InvalidAmount
     );
 }
 
@@ -513,9 +732,9 @@ fn test_top_up_rejects_nonexistent_stream() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_top_up_stream(&Address::generate(&env), &999, &1_000),
-        Err(Ok(StreamError::StreamNotFound))
+        StreamError::StreamNotFound
     );
 }
 
@@ -531,9 +750,9 @@ fn test_top_up_rejects_unauthorized_sender() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_top_up_stream(&attacker, &id, &1_000),
-        Err(Ok(StreamError::Unauthorized))
+        StreamError::Unauthorized
     );
 }
 
@@ -549,9 +768,9 @@ fn test_top_up_rejects_inactive_stream() {
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
     client.cancel_stream(&sender, &id);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_top_up_stream(&sender, &id, &1_000),
-        Err(Ok(StreamError::StreamInactive))
+        StreamError::StreamInactive
     );
 }
 
@@ -674,9 +893,9 @@ fn test_withdraw_rejects_non_recipient() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &500, &100);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_withdraw(&attacker, &id),
-        Err(Ok(StreamError::Unauthorized))
+        StreamError::Unauthorized
     );
 }
 
@@ -686,9 +905,9 @@ fn test_withdraw_rejects_missing_stream() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_withdraw(&Address::generate(&env), &999),
-        Err(Ok(StreamError::StreamNotFound))
+        StreamError::StreamNotFound
     );
 }
 
@@ -705,9 +924,9 @@ fn test_withdraw_rejects_inactive_stream() {
     let id = client.create_stream(&sender, &recipient, &token, &500, &100);
     client.cancel_stream(&sender, &id);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamInactive))
+        StreamError::StreamInactive
     );
 }
 
@@ -782,9 +1001,9 @@ fn test_cancel_stream_rejects_non_sender() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &500, &100);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_cancel_stream(&attacker, &id),
-        Err(Ok(StreamError::Unauthorized))
+        StreamError::Unauthorized
     );
 }
 
@@ -794,9 +1013,9 @@ fn test_cancel_stream_rejects_missing_stream() {
     env.mock_all_auths();
     let client = create_contract(&env);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_cancel_stream(&Address::generate(&env), &999),
-        Err(Ok(StreamError::StreamNotFound))
+        StreamError::StreamNotFound
     );
 }
 
@@ -812,9 +1031,9 @@ fn test_cancel_stream_rejects_already_inactive() {
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &500, &100);
     client.cancel_stream(&sender, &id);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_cancel_stream(&sender, &id),
-        Err(Ok(StreamError::StreamInactive))
+        StreamError::StreamInactive
     );
 }
 
@@ -1123,6 +1342,45 @@ fn test_cancel_stream_refunds_sender() {
 }
 
 #[test]
+fn test_cancel_fully_accrued_stream_without_withdraw_is_cancelled() {
+    // #1543: a stream that has fully accrued but was never withdrawn and is then
+    // cancelled must pay 100% of the deposit to the recipient with a zero refund
+    // to the sender, and end as `Cancelled` — never `Completed`, which only
+    // `apply_withdrawal` can set.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token);
+
+    // 1_000 tokens over 100 seconds = 10 tokens/second.
+    let stream_id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Advance well past the full duration without ever calling withdraw.
+    env.ledger().with_mut(|l| l.timestamp += 10_000);
+
+    let sender_balance_before = token_client.balance(&sender);
+    client.cancel_stream(&sender, &stream_id);
+
+    // Recipient gets the entire deposit; sender gets a zero refund.
+    assert_eq!(token_client.balance(&recipient), 1_000);
+    assert_eq!(token_client.balance(&sender) - sender_balance_before, 0);
+    assert_eq!(token_client.balance(&contract_id), 0);
+
+    // The cancel path must record `Cancelled`, not `Completed`.
+    let stream = client.get_stream(&stream_id).unwrap();
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert!(!stream.is_active);
+    assert_eq!(stream.withdrawn_amount, 1_000);
+}
+
+#[test]
 fn test_cancel_stream_after_partial_withdrawal() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1308,7 +1566,7 @@ fn test_create_stream_invalid_token() {
         &100,
         &10,
     );
-    assert_eq!(result, Err(Ok(StreamError::InvalidTokenAddress)));
+    assert_stream_error!(result, StreamError::InvalidTokenAddress);
 }
 
 #[test]
@@ -1329,6 +1587,83 @@ fn test_create_stream_self_stream() {
 }
 
 #[test]
+fn test_withdraw_self_stream_credits_shared_address_once() {
+    // #1544: with sender == recipient, a withdrawal pays the same Address that
+    // funded the stream. The accrued amount must be credited exactly once, with
+    // no double-count, and claiming the remainder must total the deposit.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let actor = Address::generate(&env);
+    mint(&env, &token, &actor, 1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token);
+
+    // 1_000 tokens over 1_000 s = 1 token/s.
+    let id = client.create_stream(&actor, &actor, &token, &1_000, &1_000);
+    // Creation moved the whole deposit into the contract.
+    assert_eq!(token_client.balance(&actor), 0);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    let claimed = client.withdraw(&actor, &id);
+
+    // 300 accrued is credited once — not once per "side" of the stream.
+    assert_eq!(claimed, 300);
+    assert_eq!(token_client.balance(&actor), 300);
+
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(s.withdrawn_amount, 300);
+    assert!(s.is_active);
+
+    // The remaining 700 brings the shared address to the full deposit exactly.
+    env.ledger().with_mut(|l| l.timestamp += 700);
+    let rest = client.withdraw(&actor, &id);
+    assert_eq!(rest, 700);
+    assert_eq!(token_client.balance(&actor), 1_000);
+
+    let s = client.get_stream(&id).unwrap();
+    assert_eq!(s.status, StreamStatus::Completed);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_cancel_self_stream_settles_both_transfers() {
+    // #1544: cancel_stream issues two transfers — accrued to the recipient and
+    // the refund to the sender. With sender == recipient both legs land on the
+    // same Address and must sum to exactly the deposit, with nothing lost or
+    // duplicated.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let actor = Address::generate(&env);
+    mint(&env, &token, &actor, 1_000);
+
+    let contract_id = env.register(StreamContract, ());
+    let client = StreamContractClient::new(&env, &contract_id);
+    let token_client = token::Client::new(&env, &token);
+
+    let id = client.create_stream(&actor, &actor, &token, &1_000, &1_000);
+    assert_eq!(token_client.balance(&actor), 0);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+
+    let balance_before = token_client.balance(&actor);
+    client.cancel_stream(&actor, &id);
+    let balance_after = token_client.balance(&actor);
+
+    // accrued (300) + refunded (700) both target `actor`: exactly the deposit.
+    assert_eq!(balance_after - balance_before, 1_000);
+    assert_eq!(token_client.balance(&contract_id), 0);
+
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    assert_eq!(s.withdrawn_amount, 300);
+}
+
+#[test]
 fn test_create_stream_zero_rate() {
     // amount < duration → rate_per_second rounds to 0; must now be rejected.
     let env = Env::default();
@@ -1339,7 +1674,49 @@ fn test_create_stream_zero_rate() {
 
     let client = create_contract(&env);
     let result = client.try_create_stream(&sender, &Address::generate(&env), &token, &1, &1_000);
-    assert_eq!(result, Err(Ok(StreamError::InvalidRate)));
+    assert_stream_error!(result, StreamError::InvalidRate);
+}
+
+// Issue #1542: a rejected `create_stream` must roll back *everything* it did —
+// the gross transfer from the sender, any fee it computed for the treasury, and
+// the stream-id counter bump — not merely return `InvalidRate`.
+#[test]
+fn test_create_stream_invalid_rate_rolls_back_transfer_fee_and_counter() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 100);
+
+    let client = create_contract(&env);
+    // A 1% protocol fee makes the gross (100) and net (99) diverge: 99 / 1_000
+    // rounds to a 0/s rate, which `create_stream` rejects as `InvalidRate`.
+    client.initialize(&admin, &treasury, &100);
+
+    let token_client = token::Client::new(&env, &token);
+    let sender_before = token_client.balance(&sender);
+    let treasury_before = token_client.balance(&treasury);
+    let contract_before = token_client.balance(&client.address);
+
+    let result = client.try_create_stream(&sender, &recipient, &token, &100, &1_000);
+    assert_stream_error!(result, StreamError::InvalidRate);
+
+    // The sender's gross transfer to the contract is unwound and no fee was
+    // retained by the contract or paid to the treasury.
+    assert_eq!(token_client.balance(&sender), sender_before);
+    assert_eq!(token_client.balance(&treasury), treasury_before);
+    assert_eq!(token_client.balance(&client.address), contract_before);
+
+    // `next_stream_id` bumps before the rate guard, so the failed attempt must
+    // not consume an ID: the next successful stream is still stream #1.
+    let stream_id = client.create_stream(&sender, &recipient, &token, &100, &10);
+    assert_eq!(stream_id, 1);
+    assert!(client.get_stream(&stream_id).is_some());
+    // The successful create did charge the fee, proving the fee machinery ran.
+    assert_eq!(token_client.balance(&treasury), treasury_before + 1);
 }
 
 #[test]
@@ -1412,9 +1789,9 @@ fn test_withdraw_zero_balance() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::InvalidAmount))
+        StreamError::InvalidAmount
     );
 }
 
@@ -1465,9 +1842,9 @@ fn test_withdraw_rejects_double_withdraw_after_completion() {
     assert_eq!(s.status, StreamStatus::Completed);
 
     // Try to withdraw again — should return StreamInactive error.
-    assert_eq!(
+    assert_stream_error!(
         client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamInactive))
+        StreamError::StreamInactive
     );
 }
 
@@ -1509,9 +1886,9 @@ fn test_top_up_on_completed_stream() {
 
     // Top-up on a completed (inactive) stream must fail.
     mint(&env, &token, &sender, 500);
-    assert_eq!(
+    assert_stream_error!(
         client.try_top_up_stream(&sender, &id, &500),
-        Err(Ok(StreamError::StreamInactive))
+        StreamError::StreamInactive
     );
 }
 
@@ -1546,9 +1923,9 @@ fn test_cancel_by_non_sender() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_cancel_stream(&Address::generate(&env), &id),
-        Err(Ok(StreamError::Unauthorized))
+        StreamError::Unauthorized
     );
 }
 
@@ -1567,9 +1944,9 @@ fn test_cancel_after_completion() {
     env.ledger().with_mut(|l| l.timestamp += 200);
     client.withdraw(&recipient, &id);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_cancel_stream(&sender, &id),
-        Err(Ok(StreamError::StreamInactive))
+        StreamError::StreamInactive
     );
 }
 
@@ -1694,9 +2071,9 @@ fn test_pause_by_non_sender_fails() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_pause_stream(&Address::generate(&env), &id),
-        Err(Ok(StreamError::Unauthorized))
+        StreamError::Unauthorized
     );
 }
 
@@ -1711,9 +2088,9 @@ fn test_resume_non_paused_stream_fails() {
     let client = create_contract(&env);
     let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_resume_stream(&sender, &id),
-        Err(Ok(StreamError::StreamNotPaused))
+        StreamError::StreamNotPaused
     );
 }
 
@@ -1730,9 +2107,9 @@ fn test_pause_already_paused_stream_fails() {
 
     client.pause_stream(&sender, &id);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_pause_stream(&sender, &id),
-        Err(Ok(StreamError::StreamAlreadyPaused))
+        StreamError::StreamAlreadyPaused
     );
 }
 
@@ -1752,9 +2129,9 @@ fn test_withdraw_on_paused_stream_fails() {
     client.pause_stream(&sender, &id);
     env.ledger().with_mut(|l| l.timestamp += 100);
 
-    assert_eq!(
+    assert_stream_error!(
         client.try_withdraw(&recipient, &id),
-        Err(Ok(StreamError::StreamPaused))
+        StreamError::StreamPaused
     );
 }
 
@@ -1798,6 +2175,42 @@ fn test_is_stream_completed_helper() {
     client.withdraw(&recipient, &id);
 
     assert!(client.is_stream_completed(&id));
+}
+
+// ─── Missing-state read-only queries (#1541) ─────────────────────────────────
+
+#[test]
+fn test_get_stream_missing_id_returns_none() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // A never-created ID must read as `None` rather than a `StreamNotFound`
+    // error, exercising `try_load_stream`'s absent-key branch.
+    assert!(client.get_stream(&0).is_none());
+    assert!(client.get_stream(&1).is_none());
+    assert!(client.get_stream(&u64::MAX).is_none());
+}
+
+#[test]
+fn test_get_fee_config_before_initialize_returns_none() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // `initialize` has never been called, so `try_load_config` has no record to
+    // decode and `get_fee_config` must report the absence as `None`.
+    assert!(client.get_fee_config().is_none());
+}
+
+#[test]
+fn test_is_stream_completed_missing_id_returns_false() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // A never-created stream is not "completed"; the missing branch of
+    // `try_load_stream` must map to `false` rather than panic.
+    assert!(!client.is_stream_completed(&0));
+    assert!(!client.is_stream_completed(&1));
+    assert!(!client.is_stream_completed(&u64::MAX));
 }
 
 #[test]
@@ -2123,9 +2536,9 @@ fn test_resume_on_cancelled_stream_fails() {
 
     // Resume on a cancelled stream must fail.
     let result = client.try_resume_stream(&sender, &id);
-    assert_eq!(
+    assert_stream_error!(
         result,
-        Err(Ok(StreamError::StreamNotActive)),
+        StreamError::StreamNotActive,
         "resume_stream must return StreamNotActive on an inactive stream"
     );
 
@@ -2266,6 +2679,11 @@ fn test_fuzz_claimable_overflow_and_cancel_invariants() {
             } else {
                 None
             },
+            schedule: VestingSchedule::Linear,
+            arbiter: None,
+            dispute_status: DisputeStatus::None,
+            yield_enabled: false,
+            is_allowance_based: false,
             status: if paused {
                 StreamStatus::Paused
             } else {
@@ -2337,7 +2755,7 @@ fn test_transfer_admin_rejects_non_admin() {
 
     client.initialize(&admin, &treasury, &100);
     let result = client.try_transfer_admin(&attacker, &Address::generate(&env));
-    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+    assert_stream_error!(result, StreamError::NotAdmin);
 }
 
 #[test]
@@ -2347,7 +2765,7 @@ fn test_transfer_admin_rejects_not_initialized() {
     let client = create_contract(&env);
 
     let result = client.try_transfer_admin(&Address::generate(&env), &Address::generate(&env));
-    assert_eq!(result, Err(Ok(StreamError::NotInitialized)));
+    assert_stream_error!(result, StreamError::NotInitialized);
 }
 
 #[test]
@@ -2373,7 +2791,7 @@ fn test_transfer_admin_new_admin_can_update_fee_config() {
 
     // Old admin must no longer be able to update fee config.
     let result = client.try_update_fee_config(&admin, &treasury, &50);
-    assert_eq!(result, Err(Ok(StreamError::NotAdmin)));
+    assert_stream_error!(result, StreamError::NotAdmin);
 }
 
 #[test]
@@ -2456,7 +2874,7 @@ fn test_withdraw_on_paused_stream_returns_stream_inactive() {
 
     // Withdraw must be rejected while paused.
     let result = client.try_withdraw(&recipient, &id);
-    assert_eq!(result, Err(Ok(StreamError::StreamPaused)));
+    assert_stream_error!(result, StreamError::StreamPaused);
 }
 
 #[test]
@@ -2687,11 +3105,7 @@ fn test_withdraw_state_committed_before_transfer_prevents_double_payout() {
     // during the token transfer). State was already committed, so no additional
     // tokens have accrued and the call must fail with InvalidAmount.
     let result = client.try_withdraw(&recipient, &id);
-    assert_eq!(
-        result,
-        Err(Ok(StreamError::InvalidAmount)),
-        "re-entrant withdrawal at same timestamp must fail: state must be committed before transfer"
-    );
+    assert_stream_error!(result, StreamError::InvalidAmount, "re-entrant withdrawal at same timestamp must fail: state must be committed before transfer");
 
     // Token balance must reflect exactly one payout.
     let token_client = token::Client::new(&env, &token);
@@ -2717,9 +3131,9 @@ fn test_cancel_state_committed_before_transfers_prevents_double_cancel() {
 
     // Stream is now inactive; a second cancel (simulating re-entry) must fail.
     let result = client.try_cancel_stream(&sender, &id);
-    assert_eq!(
+    assert_stream_error!(
         result,
-        Err(Ok(StreamError::StreamInactive)),
+        StreamError::StreamInactive,
         "re-entrant cancel must fail: stream marked inactive before transfers"
     );
 
@@ -2910,207 +3324,3885 @@ fn test_stream_created_event_field_names_match_decoder_expectations() {
     );
 }
 
-// ─── #1297 Overflow regressions for the #1224 unchecked arithmetic sites ──────
-//
-// Issue #1224 ("Functional Edge Case #22") identified five call sites that used
-// plain `+=` / `*` / `+` while the rest of the file uses checked or saturating
-// arithmetic. `overflow-checks` is on for both the release profile the WASM
-// ships with and the dev profile these tests run under, so an overflow at any
-// of them panicked and aborted the whole transaction instead of returning a
-// `StreamError`. The tests below pin each site at its boundary and assert the
-// typed `ArithmeticOverflow` error.
-//
-//   1. `collect_fee`      — `amount * fee_rate_bps`
-//   2. `top_up_stream`    — `deposited_amount +=`
-//   3. `apply_withdrawal` — `withdrawn_amount +=`
-//   4. `top_up_stream`    — `now + (remaining / rate) as u64`
-//   5. `resume_stream`    — `now + (remaining / rate) as u64`
+// ═══════════════════════════════════════════════════════════════════════════
+// F1 — Protocol Circuit Breaker
+// ═══════════════════════════════════════════════════════════════════════════
 
-/// Overwrites a stream record in place.
+/// Builds a token, an initialized protocol, and an admin/guardian/outsider trio.
 ///
-/// Reaching an i128 boundary through the public API alone would take an
-/// impractical number of calls, so these tests park the stream one step below
-/// the ceiling and then drive the real entrypoint across it. Same technique as
-/// `test_claimable_max_i128_rate_overflow` and
-/// `test_calculate_claimable_underflow_returns_zero` above.
-fn force_stream(env: &Env, client: &StreamContractClient<'_>, stream_id: u64, stream: &Stream) {
-    env.as_contract(&client.address, || {
+/// Returns the contract *address* rather than a client, because a client borrows
+/// the `Env` and cannot be returned alongside it. Tests build their own client
+/// with `StreamContractClient::new(&env, &contract)`.
+fn setup_paused_env() -> (Env, Address, Address, Address, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let contract = env.register(StreamContract, ());
+    let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let client = StreamContractClient::new(&env, &contract);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    client.set_emergency_guardian(&admin, &Some(guardian.clone()));
+    (env, token, contract, admin, guardian, outsider)
+}
+
+#[test]
+fn test_initialize_leaves_protocol_unpaused_without_guardian() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    let config = client.get_fee_config().unwrap();
+    assert!(!config.is_protocol_paused);
+    assert_eq!(config.emergency_guardian, None);
+    assert!(!client.is_protocol_paused());
+}
+
+#[test]
+fn test_admin_can_pause_and_unpause_protocol() {
+    let (env, _token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    client.set_protocol_pause(&admin, &true);
+    assert!(client.is_protocol_paused());
+    assert!(client.get_fee_config().unwrap().is_protocol_paused);
+
+    client.set_protocol_pause(&admin, &false);
+    assert!(!client.is_protocol_paused());
+}
+
+#[test]
+fn test_guardian_can_pause_protocol() {
+    let (env, _token, contract, _admin, guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    client.set_protocol_pause(&guardian, &true);
+    assert!(client.is_protocol_paused());
+}
+
+#[test]
+fn test_guardian_cannot_unpause_protocol() {
+    let (env, _token, contract, admin, guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    client.set_protocol_pause(&admin, &true);
+    // Asymmetric authority: a guardian may trip the breaker but never clear it.
+    assert_stream_error!(
+        client.try_set_protocol_pause(&guardian, &false),
+        StreamError::NotAdmin
+    );
+    assert!(client.is_protocol_paused());
+}
+
+#[test]
+fn test_pause_rejects_outsider() {
+    let (env, _token, contract, _admin, _guardian, outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    assert_stream_error!(
+        client.try_set_protocol_pause(&outsider, &true),
+        StreamError::NotGuardian
+    );
+    assert!(!client.is_protocol_paused());
+}
+
+#[test]
+fn test_pause_without_guardian_rejects_outsider() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    assert_stream_error!(
+        client.try_set_protocol_pause(&outsider, &true),
+        StreamError::NotGuardian
+    );
+}
+
+#[test]
+fn test_set_protocol_pause_rejects_unauthenticated_caller() {
+    let (env, _token, contract, _admin, _guardian, outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    // Drop the blanket mock so require_auth actually has to be satisfied.
+    env.set_auths(&[]);
+    assert!(client.try_set_protocol_pause(&outsider, &true).is_err());
+}
+
+#[test]
+fn test_set_protocol_pause_emits_event() {
+    let (env, _token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    env.ledger().with_mut(|l| l.timestamp = 4_242);
+
+    client.set_protocol_pause(&admin, &true);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "protocol_pause_status")
+        })
+        .expect("protocol_pause_status event not found");
+
+    let payload: ProtocolPauseStatusEvent =
+        ProtocolPauseStatusEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.caller, admin);
+    assert!(payload.paused);
+    assert_eq!(payload.timestamp, 4_242);
+}
+
+#[test]
+fn test_protocol_pause_and_unpause_emit_dedicated_event() {
+    let (env, _token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    // Pause the protocol
+    client.set_protocol_pause(&admin, &true);
+
+    let events = env.events().all();
+    let pause_ev = events
+        .iter()
+        .find(|e| {
+            e.1.len() >= 2
+                && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                    == Symbol::new(&env, "FlowFi")
+                && Symbol::try_from_val(&env, &e.1.get(1).unwrap()).unwrap()
+                    == Symbol::new(&env, "ProtocolPaused")
+        })
+        .expect("ProtocolPaused event not found on pause");
+
+    let pause_payload: ProtocolPausedEvent =
+        ProtocolPausedEvent::try_from_val(&env, &pause_ev.2).unwrap();
+    assert_eq!(pause_payload.admin, admin);
+    assert!(pause_payload.is_paused);
+
+    // Unpause the protocol
+    client.set_protocol_pause(&admin, &false);
+
+    let unpause_events = env.events().all();
+    let unpause_ev = unpause_events
+        .iter()
+        .find(|e| {
+            e.1.len() >= 2
+                && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                    == Symbol::new(&env, "FlowFi")
+                && Symbol::try_from_val(&env, &e.1.get(1).unwrap()).unwrap()
+                    == Symbol::new(&env, "ProtocolPaused")
+        })
+        .expect("ProtocolPaused event not found on unpause");
+
+    let unpause_payload: ProtocolPausedEvent =
+        ProtocolPausedEvent::try_from_val(&env, &unpause_ev.2).unwrap();
+    assert_eq!(unpause_payload.admin, admin);
+    assert!(!unpause_payload.is_paused);
+}
+
+#[test]
+fn test_set_emergency_pause_emits_dedicated_event() {
+    let (env, _token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    // Pause via set_emergency_pause
+    client.set_emergency_pause(&admin, &true);
+
+    let events = env.events().all();
+    let pause_ev = events
+        .iter()
+        .find(|e| {
+            e.1.len() >= 2
+                && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                    == Symbol::new(&env, "FlowFi")
+                && Symbol::try_from_val(&env, &e.1.get(1).unwrap()).unwrap()
+                    == Symbol::new(&env, "ProtocolPaused")
+        })
+        .expect("ProtocolPaused event not found on emergency pause");
+
+    let pause_payload: ProtocolPausedEvent =
+        ProtocolPausedEvent::try_from_val(&env, &pause_ev.2).unwrap();
+    assert_eq!(pause_payload.admin, admin);
+    assert!(pause_payload.is_paused);
+
+    // Unpause via set_emergency_pause
+    client.set_emergency_pause(&admin, &false);
+
+    let unpause_events = env.events().all();
+    let unpause_ev = unpause_events
+        .iter()
+        .find(|e| {
+            e.1.len() >= 2
+                && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                    == Symbol::new(&env, "FlowFi")
+                && Symbol::try_from_val(&env, &e.1.get(1).unwrap()).unwrap()
+                    == Symbol::new(&env, "ProtocolPaused")
+        })
+        .expect("ProtocolPaused event not found on emergency unpause");
+
+    let unpause_payload: ProtocolPausedEvent =
+        ProtocolPausedEvent::try_from_val(&env, &unpause_ev.2).unwrap();
+    assert_eq!(unpause_payload.admin, admin);
+    assert!(!unpause_payload.is_paused);
+}
+
+#[test]
+fn test_set_emergency_guardian_by_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    client.set_emergency_guardian(&admin, &Some(guardian.clone()));
+    assert_eq!(
+        client.get_fee_config().unwrap().emergency_guardian,
+        Some(guardian)
+    );
+
+    // Clearing the role leaves the admin as sole authority.
+    client.set_emergency_guardian(&admin, &None);
+    assert_eq!(client.get_fee_config().unwrap().emergency_guardian, None);
+}
+
+#[test]
+fn test_set_emergency_guardian_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    assert_stream_error!(
+        client.try_set_emergency_guardian(&outsider, &Some(Address::generate(&env))),
+        StreamError::NotAdmin
+    );
+}
+
+#[test]
+fn test_set_emergency_guardian_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let guardian = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    client.set_emergency_guardian(&admin, &Some(guardian.clone()));
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "emergency_guardian_updated")
+        })
+        .expect("emergency_guardian_updated event not found");
+
+    let payload: EmergencyGuardianUpdatedEvent =
+        EmergencyGuardianUpdatedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.admin, admin);
+    assert_eq!(payload.guardian, Some(guardian));
+}
+
+#[test]
+fn test_set_protocol_pause_rejects_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    assert_stream_error!(
+        client.try_set_protocol_pause(&Address::generate(&env), &true),
+        StreamError::NotInitialized
+    );
+}
+
+#[test]
+fn test_paused_protocol_blocks_create_stream() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    client.set_protocol_pause(&admin, &true);
+
+    assert_stream_error!(
+        client.try_create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000),
+        StreamError::ProtocolPaused
+    );
+    // The guard fires before any token movement, so nothing was escrowed.
+    assert_eq!(token::Client::new(&env, &token).balance(&sender), 1_000);
+}
+
+#[test]
+fn test_paused_protocol_blocks_step_vesting_stream() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    client.set_protocol_pause(&admin, &true);
+
+    let steps = step_schedule(&env, &[(100, 500), (200, 500)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::ProtocolPaused
+    );
+}
+
+#[test]
+fn test_paused_protocol_blocks_hybrid_cliff_stream() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    client.set_protocol_pause(&admin, &true);
+
+    assert_stream_error!(
+        client.try_create_hybrid_cliff_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &500,
+            &400,
+            &600
+        ),
+        StreamError::ProtocolPaused
+    );
+}
+
+#[test]
+fn test_paused_protocol_blocks_top_up_stream() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    client.set_protocol_pause(&admin, &true);
+
+    assert_stream_error!(
+        client.try_top_up_stream(&sender, &id, &500),
+        StreamError::ProtocolPaused
+    );
+}
+
+#[test]
+fn test_paused_protocol_still_allows_withdraw() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    client.set_protocol_pause(&admin, &true);
+
+    // The fund-safety guarantee: a pause must never trap or censor vested funds.
+    assert_eq!(client.withdraw(&recipient, &id), 100);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 100);
+}
+
+#[test]
+fn test_paused_protocol_still_allows_batch_withdraw() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let a = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let b = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    client.set_protocol_pause(&admin, &true);
+
+    let result = client.batch_withdraw(&recipient, &vec![&env, a, b]);
+    assert_eq!(result, vec![&env, (a, 100), (b, 100)]);
+}
+
+#[test]
+fn test_paused_protocol_still_allows_cancel_stream() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    client.set_protocol_pause(&admin, &true);
+
+    // Cancellation returns the sender's unearned capital, so it stays open too.
+    client.cancel_stream(&sender, &id);
+    let balances = token::Client::new(&env, &token);
+    assert_eq!(balances.balance(&recipient), 100);
+    // 1_000 minted, 1_000 escrowed, 900 refunded after the 100 vested payout.
+    assert_eq!(balances.balance(&sender), 900);
+}
+
+#[test]
+fn test_unpause_restores_creations_and_top_ups() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+
+    client.set_protocol_pause(&admin, &true);
+    client.set_protocol_pause(&admin, &false);
+
+    client.top_up_stream(&sender, &id, &500);
+    let created = client.create_stream(&sender, &Address::generate(&env), &token, &500, &500);
+    assert!(created > id);
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_500);
+}
+
+#[test]
+fn test_pause_does_not_freeze_existing_stream_accrual() {
+    let (env, token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 50);
+    client.set_protocol_pause(&admin, &true);
+    advance(&env, 50);
+
+    // The breaker gates new money in, it does not stop time for existing
+    // streams — otherwise a pause would silently forfeit vested wages.
+    assert_eq!(client.get_claimable_amount(&id), Some(100));
+}
+
+#[test]
+fn test_update_fee_config_preserves_pause_and_guardian_state() {
+    let (env, _token, contract, admin, guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+
+    client.set_protocol_pause(&admin, &true);
+    let new_treasury = Address::generate(&env);
+    client.update_fee_config(&admin, &new_treasury, &250);
+
+    let config = client.get_fee_config().unwrap();
+    assert!(config.is_protocol_paused, "pause state was clobbered");
+    assert_eq!(config.emergency_guardian, Some(guardian));
+    assert_eq!(config.fee_rate_bps, 250);
+    assert_eq!(config.treasury, new_treasury);
+}
+
+#[test]
+fn test_transfer_admin_preserves_pause_and_guardian_state() {
+    let (env, _token, contract, admin, guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let new_admin = Address::generate(&env);
+
+    client.set_protocol_pause(&admin, &true);
+    client.transfer_admin(&admin, &new_admin);
+
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.admin, new_admin);
+    assert!(config.is_protocol_paused, "in-force pause was dropped");
+    assert_eq!(config.emergency_guardian, Some(guardian));
+}
+
+#[test]
+fn test_only_new_admin_can_clear_pause_after_transfer() {
+    let (env, _token, contract, admin, _guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let new_admin = Address::generate(&env);
+
+    client.set_protocol_pause(&admin, &true);
+    client.transfer_admin(&admin, &new_admin);
+
+    // The outgoing admin has lost every privilege, including unpausing.
+    assert_stream_error!(
+        client.try_set_protocol_pause(&admin, &false),
+        StreamError::NotAdmin
+    );
+    client.set_protocol_pause(&new_admin, &false);
+    assert!(!client.is_protocol_paused());
+}
+
+#[test]
+fn test_guardian_role_is_revocable_by_new_admin() {
+    let (env, _token, contract, admin, guardian, _outsider) = setup_paused_env();
+    let client = StreamContractClient::new(&env, &contract);
+    let new_admin = Address::generate(&env);
+
+    client.transfer_admin(&admin, &new_admin);
+    // The guardian slot is carried over, so the guardian can still trip — but
+    // it can never clear, and a new admin can drop the role at will.
+    client.set_protocol_pause(&guardian, &true);
+    client.set_emergency_guardian(&new_admin, &None);
+    assert!(client.is_protocol_paused());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F2 — Milestone (Step-Tranche) Vesting
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Creates a funded step-tranche stream and returns its ID.
+///
+/// `pairs` is the `(unlock_time, unlock_amount)` schedule; the amounts must sum
+/// to `deposit`, which is what `create_step_vesting_stream` enforces.
+#[allow(clippy::too_many_arguments)]
+fn create_step_stream(
+    env: &Env,
+    client: &StreamContractClient,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    deposit: i128,
+    pairs: &[(u64, i128)],
+) -> u64 {
+    let steps = step_schedule(env, pairs);
+    client.create_step_vesting_stream(sender, recipient, token, &deposit, &steps)
+}
+
+#[test]
+fn test_create_step_vesting_stream_persists_schedule() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let steps = step_schedule(&env, &[(100, 400), (200, 300), (300, 300)]);
+    let id = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &steps);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.sender, sender);
+    assert_eq!(stream.recipient, recipient);
+    assert_eq!(stream.deposited_amount, 1_000);
+    assert_eq!(stream.withdrawn_amount, 0);
+    assert!(stream.is_active);
+    // A step schedule unlocks by timestamp, not by rate.
+    assert_eq!(stream.rate_per_second, 0);
+    assert_eq!(
+        stream.schedule,
+        VestingSchedule::StepTranches(steps.clone())
+    );
+}
+
+#[test]
+fn test_step_vesting_claimable_is_zero_before_first_step() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 500), (200, 500)],
+    );
+    advance(&env, 99);
+
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+}
+
+#[test]
+fn test_step_vesting_claims_exact_cumulative_total() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 250), (200, 250), (300, 500)],
+    );
+
+    advance(&env, 100);
+    assert_eq!(client.get_claimable_amount(&id), Some(250));
+    assert_eq!(client.withdraw(&recipient, &id), 250);
+
+    // The engine is anchored to absolute unlock times and subtracts what has
+    // already been paid, so each call yields only the newly unlocked step.
+    advance(&env, 100);
+    assert_eq!(client.get_claimable_amount(&id), Some(250));
+    assert_eq!(client.withdraw(&recipient, &id), 250);
+
+    advance(&env, 100);
+    assert_eq!(client.get_claimable_amount(&id), Some(500));
+    assert_eq!(client.withdraw(&recipient, &id), 500);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 1_000);
+}
+
+#[test]
+fn test_step_vesting_claim_lands_exactly_on_unlock_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 400), (500, 600)],
+    );
+
+    advance(&env, 100);
+    // `unlock_time <= T` is inclusive, so the step opens on the exact ledger.
+    assert_eq!(client.get_claimable_amount(&id), Some(400));
+    advance(&env, 399);
+    assert_eq!(client.get_claimable_amount(&id), Some(400));
+    advance(&env, 1);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+}
+
+#[test]
+fn test_step_vesting_marks_completed_when_fully_claimed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 1_000)],
+    );
+
+    advance(&env, 100);
+    client.withdraw(&recipient, &id);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(!stream.is_active);
+    assert_eq!(stream.status, StreamStatus::Completed);
+    assert!(client.is_stream_completed(&id));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamInactive
+    );
+}
+
+#[test]
+fn test_step_vesting_single_claim_collects_all_unlocked_steps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 100), (200, 200), (300, 300), (400, 400)],
+    );
+
+    // A recipient who only checks in at the end collects everything at once.
+    advance(&env, 1_000);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+}
+
+#[test]
+fn test_step_vesting_rejects_empty_schedule() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let steps = SorobanVec::new(&env);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::EmptyVestingSchedule
+    );
+}
+
+#[test]
+fn test_step_vesting_accepts_exactly_twelve_steps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_200);
+
+    let pairs: std::vec::Vec<(u64, i128)> = (1..=MAX_VESTING_STEPS)
+        .map(|i| ((i as u64) * 100, 100))
+        .collect();
+    let id = create_step_stream(&env, &client, &sender, &recipient, &token, 1_200, &pairs);
+
+    advance(&env, 600);
+    assert_eq!(client.get_claimable_amount(&id), Some(600));
+    advance(&env, 600);
+    assert_eq!(client.withdraw(&recipient, &id), 1_200);
+}
+
+#[test]
+fn test_step_vesting_rejects_more_than_twelve_steps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_300);
+
+    let pairs: std::vec::Vec<(u64, i128)> = (1..=MAX_VESTING_STEPS + 1)
+        .map(|i| ((i as u64) * 100, 100))
+        .collect();
+    let steps = step_schedule(&env, &pairs);
+
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_300,
+            &steps
+        ),
+        StreamError::TooManyVestingSteps
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_non_monotonic_steps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // 200 then 100: out of order, so "sum of steps with unlock_time <= T" is
+    // ambiguous at the boundary.
+    let steps = step_schedule(&env, &[(200, 500), (100, 500)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::NonMonotonicVestingSteps
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_duplicate_unlock_times() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let steps = step_schedule(&env, &[(100, 500), (100, 500)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::NonMonotonicVestingSteps
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_non_positive_step_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let steps = step_schedule(&env, &[(100, 1_000), (200, 0)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::InvalidVestingStepAmount
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_total_mismatch() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // Steps sum to 900, deposit is 1_000: 100 would be unclaimable forever.
+    let steps = step_schedule(&env, &[(100, 400), (200, 500)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::VestingStepTotalMismatch
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_step_at_or_before_start() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // A step at t=0 is already claimable at creation, which defeats the point.
+    let steps = step_schedule(&env, &[(0, 1_000)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &steps
+        ),
+        StreamError::VestingStepBeforeStart
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_invalid_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+
+    let steps = step_schedule(&env, &[(100, 1_000)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &1_000,
+            &steps
+        ),
+        StreamError::InvalidTokenAddress
+    );
+}
+
+#[test]
+fn test_step_vesting_rejects_non_positive_deposit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+
+    let steps = step_schedule(&env, &[(100, 1_000)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &0,
+            &steps
+        ),
+        StreamError::InvalidAmount
+    );
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &-1,
+            &steps
+        ),
+        StreamError::InvalidAmount
+    );
+}
+
+#[test]
+fn test_step_vesting_with_fee_must_sum_to_net_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    // 1% fee: a 1_000 deposit nets 990.
+    client.initialize(&admin, &treasury, &100);
+
+    // Steps summing to the gross 1_000 must fail — they overshoot the net 990.
+    let gross_steps = step_schedule(&env, &[(100, 1_000)]);
+    assert_stream_error!(
+        client.try_create_step_vesting_stream(&sender, &recipient, &token, &1_000, &gross_steps),
+        StreamError::VestingStepTotalMismatch
+    );
+
+    let net_steps = step_schedule(&env, &[(100, 500), (200, 490)]);
+    let id = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &net_steps);
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 990);
+    assert_eq!(token::Client::new(&env, &token).balance(&treasury), 10);
+}
+
+#[test]
+fn test_step_vesting_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 400), (200, 600)],
+    );
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "step_vesting_stream_created")
+        })
+        .expect("step_vesting_stream_created event not found");
+
+    let payload: StepVestingStreamCreatedEvent =
+        StepVestingStreamCreatedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.sender, sender);
+    assert_eq!(payload.recipient, recipient);
+    assert_eq!(payload.deposited_amount, 1_000);
+    assert_eq!(payload.step_count, 2);
+    assert_eq!(payload.last_unlock_time, 200);
+}
+
+#[test]
+fn test_step_vesting_cancel_settles_unlocked_and_refunds_future() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 200), (200, 300), (300, 500)],
+    );
+
+    // Cancel between steps 1 and 2: step 1 settles, steps 2 and 3 refund.
+    advance(&env, 150);
+    client.cancel_stream(&sender, &id);
+
+    let balances = token::Client::new(&env, &token);
+    assert_eq!(balances.balance(&recipient), 200);
+    assert_eq!(balances.balance(&sender), 800);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert!(!stream.is_active);
+    assert_eq!(stream.withdrawn_amount, 200);
+}
+
+#[test]
+fn test_step_vesting_cancel_before_any_step_refunds_everything() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 500), (200, 500)],
+    );
+
+    advance(&env, 50);
+    client.cancel_stream(&sender, &id);
+
+    let balances = token::Client::new(&env, &token);
+    assert_eq!(balances.balance(&recipient), 0);
+    assert_eq!(balances.balance(&sender), 1_000);
+}
+
+#[test]
+fn test_step_vesting_cancel_after_full_unlock_pays_recipient_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 500), (200, 500)],
+    );
+
+    advance(&env, 500);
+    client.cancel_stream(&sender, &id);
+
+    let balances = token::Client::new(&env, &token);
+    assert_eq!(balances.balance(&recipient), 1_000);
+    assert_eq!(balances.balance(&sender), 0);
+}
+
+#[test]
+fn test_step_vesting_cancel_after_partial_claim_settles_remainder() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 250), (200, 250), (300, 500)],
+    );
+
+    advance(&env, 100);
+    assert_eq!(client.withdraw(&recipient, &id), 250);
+    advance(&env, 100);
+    client.cancel_stream(&sender, &id);
+
+    let balances = token::Client::new(&env, &token);
+    // Recipient ends up with steps 1 + 2; step 3 returns to the sender.
+    assert_eq!(balances.balance(&recipient), 500);
+    assert_eq!(balances.balance(&sender), 500);
+}
+
+#[test]
+fn test_step_vesting_pause_freezes_claimable_at_paused_at() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 500), (500, 500)],
+    );
+
+    advance(&env, 100);
+    client.pause_stream(&sender, &id);
+    // Step 2 unlocks while paused; accrual must stay frozen at t=100.
+    advance(&env, 400);
+    assert_eq!(client.get_claimable_amount(&id), Some(500));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamPaused
+    );
+}
+
+#[test]
+fn test_step_vesting_resume_does_not_divide_by_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 500), (500, 500)],
+    );
+
+    advance(&env, 100);
+    client.pause_stream(&sender, &id);
+    advance(&env, 50);
+    // rate_per_second is 0 for a step schedule; the old end-time math would
+    // have panicked on a division by zero here.
+    let new_end = client.resume_stream(&sender, &id);
+    assert_eq!(
+        new_end, 500,
+        "a step stream projects to its final unlock step"
+    );
+
+    advance(&env, 400);
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+}
+
+#[test]
+fn test_step_vesting_get_vesting_schedule_query() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let linear = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    assert_eq!(
+        client.get_vesting_schedule(&linear),
+        Some(VestingSchedule::Linear)
+    );
+
+    let steps = step_schedule(&env, &[(100, 600), (200, 400)]);
+    let id = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &steps);
+    assert_eq!(
+        client.get_vesting_schedule(&id),
+        Some(VestingSchedule::StepTranches(steps))
+    );
+
+    assert_eq!(client.get_vesting_schedule(&9_999), None);
+}
+
+#[test]
+fn test_step_vesting_projected_end_time_is_final_step() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 200), (900, 300), (1_800, 500)],
+    );
+
+    assert_eq!(client.get_projected_end_time(&id), Some(1_800));
+    assert_eq!(client.get_projected_end_time(&9_999), None);
+}
+
+#[test]
+fn test_step_vesting_top_up_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 1_000)],
+    );
+
+    // A step schedule must sum to the deposit, so extra tokens have nowhere
+    // legitimate to go: accepting them would strand them or defer them to the
+    // final milestone without saying so.
+    assert_stream_error!(
+        client.try_top_up_stream(&sender, &id, &500),
+        StreamError::TopUpUnsupported
+    );
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_000);
+}
+
+#[test]
+fn test_step_vesting_claimable_never_exceeds_remaining_across_many_polls() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = create_step_stream(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        1_000,
+        &[(100, 100), (250, 200), (500, 300), (1_000, 400)],
+    );
+
+    // Polling more often than the milestones fire must never over-pay.
+    let mut collected: i128 = 0;
+    for _ in 0..1_000 {
+        advance(&env, 1);
+        let claimable = client.get_claimable_amount(&id).unwrap();
+        let remaining = 1_000 - collected;
+        assert!(
+            claimable <= remaining,
+            "claimable {claimable} exceeded remaining {remaining}"
+        );
+        if claimable > 0 {
+            collected += client.withdraw(&recipient, &id);
+        }
+        if client.is_stream_completed(&id) {
+            break;
+        }
+    }
+    assert_eq!(collected, 1_000);
+    assert!(client.is_stream_completed(&id));
+}
+
+// ─── Hybrid cliff + linear ─────────────────────────────────────────────────
+
+#[test]
+fn test_hybrid_cliff_holds_everything_until_the_cliff() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // 400 at the cliff, then the remaining 600 over 600s at 1/s.
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &400, &600);
+
+    advance(&env, 499);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+
+    advance(&env, 1);
+    assert_eq!(client.get_claimable_amount(&id), Some(400));
+}
+
+#[test]
+fn test_hybrid_cliff_drips_tail_after_cliff() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &400, &600);
+
+    advance(&env, 500);
+    assert_eq!(client.withdraw(&recipient, &id), 400);
+    advance(&env, 200);
+    // 600 remainder at 1/s for 200s past the cliff.
+    assert_eq!(client.get_claimable_amount(&id), Some(200));
+    assert_eq!(client.withdraw(&recipient, &id), 200);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 600);
+}
+
+#[test]
+fn test_hybrid_cliff_drains_fully_at_end_of_linear_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &400, &600);
+
+    // Cliff at 500 plus the 600s linear tail.
+    advance(&env, 1_100);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+    assert!(client.is_stream_completed(&id));
+}
+
+#[test]
+fn test_hybrid_cliff_tail_is_capped_at_post_cliff_remainder() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    // 200 at the cliff, 800 remainder over 80s at 10/s.
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &200, &80);
+
+    // Far past the end of the linear tail: the claim is the whole deposit, and
+    // the rate extrapolation must not push it past that.
+    advance(&env, 100_000);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+}
+
+#[test]
+fn test_hybrid_cliff_rejects_cliff_not_after_start() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    assert_stream_error!(
+        client.try_create_hybrid_cliff_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &0,
+            &400,
+            &600
+        ),
+        StreamError::InvalidCliffParameters
+    );
+}
+
+#[test]
+fn test_hybrid_cliff_rejects_cliff_consuming_whole_deposit() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // A cliff equal to the deposit leaves no linear component at all.
+    assert_stream_error!(
+        client.try_create_hybrid_cliff_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &500,
+            &1_000,
+            &600
+        ),
+        StreamError::InvalidCliffParameters
+    );
+}
+
+#[test]
+fn test_hybrid_cliff_rejects_zero_duration_and_tiny_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    assert_stream_error!(
+        client.try_create_hybrid_cliff_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &500,
+            &400,
+            &0
+        ),
+        StreamError::InvalidCliffParameters
+    );
+
+    // 600 remaining spread over 10_000s rounds to 0/s and would never unlock.
+    assert_stream_error!(
+        client.try_create_hybrid_cliff_stream(
+            &sender,
+            &Address::generate(&env),
+            &token,
+            &1_000,
+            &500,
+            &400,
+            &10_000
+        ),
+        StreamError::InvalidCliffParameters
+    );
+}
+
+#[test]
+fn test_hybrid_cliff_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &400, &600);
+
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "hybrid_cliff_stream_created")
+        })
+        .expect("hybrid_cliff_stream_created event not found");
+
+    let payload: HybridCliffStreamCreatedEvent =
+        HybridCliffStreamCreatedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert_eq!(payload.cliff_time, 500);
+    assert_eq!(payload.cliff_unlock_amount, 400);
+    assert_eq!(payload.rate_per_second, 1);
+    assert_eq!(payload.deposited_amount, 1_000);
+}
+
+#[test]
+fn test_hybrid_cliff_allows_top_up_and_extends_tail() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &400, &600);
+
+    // Unlike a step schedule, extra deposit here just extends the tail at the
+    // same rate — no invariant is broken.
+    client.top_up_stream(&sender, &id, &600);
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_600);
+
+    advance(&env, 100_000);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_600));
+}
+
+#[test]
+fn test_cliff_at_exact_start_time_vests_linearly() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    mint(&env, &token, &sender, 1_000);
+
+    // 0-second cliff: cliff_duration = 0, so cliff_time == start_time.
+    // Duration is 100 seconds, total amount is 1_000, linear rate is 10/s.
+    let id = client.create_stream_with_cliff(&sender, &recipient, &token, &1_000, &100, &0);
+
+    // Before/at start_time (elapsed = 0):
+    // Cliff is at start_time, so cliff is immediately satisfied, but 0 elapsed means 0 claimable.
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&client.address), 1_000);
+
+    // Midpoint (advance 50s): exactly 500 vested
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(500));
+    assert_eq!(client.withdraw(&recipient, &id), 500);
+    assert_eq!(token_client.balance(&recipient), 500);
+    assert_eq!(token_client.balance(&client.address), 500);
+
+    // Stop time (advance 50s, total elapsed = 100): remaining 500 vested
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(500));
+    assert_eq!(client.withdraw(&recipient, &id), 500);
+    assert_eq!(token_client.balance(&recipient), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+    assert!(client.is_stream_completed(&id));
+
+    // After stop_time (advance 10s): nothing left to claim
+    advance(&env, 10);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamInactive
+    );
+}
+
+#[test]
+fn test_cliff_at_exact_stop_time_unlocks_all_at_end() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    mint(&env, &token, &sender, 1_000);
+
+    // Full-duration cliff: cliff_duration == duration (100s), so cliff_time == stop_time.
+    let id = client.create_stream_with_cliff(&sender, &recipient, &token, &1_000, &100, &100);
+
+    // At start_time: cliff not reached, 0 claimable
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&client.address), 1_000);
+
+    // Midpoint (advance 50s): cliff still in future (50 < 100), claimable is 0
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+
+    // Just before stop_time (advance 49s, elapsed = 99s): cliff still in future (99 < 100)
+    advance(&env, 49);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::InvalidAmount
+    );
+    assert_eq!(token_client.balance(&recipient), 0);
+
+    // At exact stop_time (advance 1s, elapsed = 100s == cliff_time):
+    // 100% of funds unlock at stop_time!
+    advance(&env, 1);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+    assert_eq!(token_client.balance(&recipient), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+    assert!(client.is_stream_completed(&id));
+
+    // After stop_time (advance 10s): nothing left to claim, stream remains completed
+    advance(&env, 10);
+    assert_eq!(client.get_claimable_amount(&id), Some(0));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamInactive
+    );
+    assert!(client.is_stream_completed(&id));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F3 — In-Place Upgrades & State Migration
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A real, valid contract Wasm used as an in-place upgrade target.
+///
+/// Taken from the soroban-sdk 22.0.9 `doctest_fixtures/contract.wasm` fixture:
+/// the host validates the executable against its own Wasm parser, so a byte
+/// blob that is not a genuine module cannot exercise `upgrade` at all.
+const UPGRADE_TARGET_WASM: &[u8] = &[
+    0, 97, 115, 109, 1, 0, 0, 0, 1, 20, 4, 96, 1, 126, 1, 126, 96, 2, 127, 126, 0, 96, 2, 126, 126,
+    1, 126, 96, 0, 0, 2, 13, 2, 1, 105, 1, 48, 0, 0, 1, 105, 1, 95, 0, 0, 3, 6, 5, 1, 2, 3, 3, 3,
+    5, 3, 1, 0, 16, 6, 25, 3, 127, 1, 65, 128, 128, 192, 0, 11, 127, 0, 65, 128, 128, 192, 0, 11,
+    127, 0, 65, 128, 128, 192, 0, 11, 7, 47, 5, 6, 109, 101, 109, 111, 114, 121, 2, 0, 3, 97, 100,
+    100, 0, 3, 1, 95, 0, 6, 10, 95, 95, 100, 97, 116, 97, 95, 101, 110, 100, 3, 1, 11, 95, 95, 104,
+    101, 97, 112, 95, 98, 97, 115, 101, 3, 2, 10, 140, 2, 5, 93, 2, 1, 127, 1, 126, 2, 64, 2, 64,
+    32, 1, 167, 65, 255, 1, 113, 34, 2, 65, 192, 0, 70, 13, 0, 2, 64, 32, 2, 65, 6, 70, 13, 0, 66,
+    1, 33, 3, 66, 131, 144, 128, 128, 128, 1, 33, 1, 12, 2, 11, 32, 1, 66, 8, 136, 33, 1, 66, 0,
+    33, 3, 12, 1, 11, 66, 0, 33, 3, 32, 1, 16, 128, 128, 128, 128, 0, 33, 1, 11, 32, 0, 32, 1, 55,
+    3, 8, 32, 0, 32, 3, 55, 3, 0, 11, 153, 1, 1, 1, 127, 35, 128, 128, 128, 128, 0, 65, 32, 107,
+    34, 2, 36, 128, 128, 128, 128, 0, 32, 2, 65, 16, 106, 32, 0, 16, 130, 128, 128, 128, 0, 2, 64,
+    2, 64, 32, 2, 40, 2, 16, 13, 0, 32, 2, 41, 3, 24, 33, 0, 32, 2, 32, 1, 16, 130, 128, 128, 128,
+    0, 32, 2, 41, 3, 0, 167, 13, 0, 32, 0, 32, 2, 41, 3, 8, 124, 34, 1, 32, 0, 84, 13, 1, 2, 64, 2,
+    64, 32, 1, 66, 255, 255, 255, 255, 255, 255, 255, 255, 0, 86, 13, 0, 32, 1, 66, 8, 134, 66, 6,
+    132, 33, 0, 12, 1, 11, 32, 1, 16, 129, 128, 128, 128, 0, 33, 0, 11, 32, 2, 65, 32, 106, 36,
+    128, 128, 128, 128, 0, 32, 0, 15, 11, 0, 0, 11, 16, 132, 128, 128, 128, 0, 0, 11, 9, 0, 16,
+    133, 128, 128, 128, 0, 0, 11, 4, 0, 0, 0, 11, 2, 0, 11, 0, 75, 14, 99, 111, 110, 116, 114, 97,
+    99, 116, 115, 112, 101, 99, 118, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 97, 100, 100, 0, 0, 0,
+    0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 97, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 1, 98, 0, 0, 0, 0,
+    0, 0, 6, 0, 0, 0, 1, 0, 0, 0, 6, 0, 30, 17, 99, 111, 110, 116, 114, 97, 99, 116, 101, 110, 118,
+    109, 101, 116, 97, 118, 48, 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0, 0, 123, 14, 99, 111, 110, 116,
+    114, 97, 99, 116, 109, 101, 116, 97, 118, 48, 0, 0, 0, 0, 0, 0, 0, 5, 114, 115, 118, 101, 114,
+    0, 0, 0, 0, 0, 0, 6, 49, 46, 55, 52, 46, 48, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 114, 115, 115, 100,
+    107, 118, 101, 114, 0, 0, 0, 57, 50, 49, 46, 48, 46, 49, 45, 112, 114, 101, 118, 105, 101, 119,
+    46, 49, 35, 49, 49, 54, 99, 51, 53, 98, 99, 57, 101, 48, 51, 102, 52, 98, 49, 98, 53, 101, 54,
+    53, 98, 53, 101, 101, 56, 51, 49, 97, 101, 48, 102, 56, 54, 97, 97, 57, 50, 102, 100, 0, 0, 0,
+];
+
+/// Uploads [`UPGRADE_TARGET_WASM`] to the test ledger and returns its hash.
+fn upload_upgrade_target(env: &Env) -> BytesN<32> {
+    env.deployer().upload_contract_wasm(UPGRADE_TARGET_WASM)
+}
+
+/// Rewrites the config in the pre-v2 three-field shape and clears the version.
+///
+/// Returns `(admin, treasury)` so callers can keep authenticating as the admin
+/// of the downgraded record.
+fn downgrade_state_to_v0(env: &Env, contract: &Address) -> (Address, Address) {
+    env.as_contract(contract, || {
+        let current: ProtocolConfig = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProtocolConfig)
+            .expect("config present");
+
+        let legacy = LegacyProtocolConfig {
+            admin: current.admin,
+            treasury: current.treasury,
+            fee_rate_bps: current.fee_rate_bps,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::ProtocolConfig, &legacy);
+        // Absent version is what `get_contract_version` reads as 0.
+        env.storage().instance().remove(&DataKey::ContractVersion);
+
+        (legacy.admin, legacy.treasury)
+    })
+}
+
+/// Rewrites one stream record in the pre-v2 shape (no `schedule` field).
+fn downgrade_stream_to_v0(env: &Env, contract: &Address, stream_id: u64) {
+    env.as_contract(contract, || {
+        let current: Stream = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Stream(stream_id))
+            .expect("stream present");
+
+        let legacy = LegacyStream {
+            sender: current.sender,
+            recipient: current.recipient,
+            token_address: current.token_address,
+            rate_per_second: current.rate_per_second,
+            deposited_amount: current.deposited_amount,
+            withdrawn_amount: current.withdrawn_amount,
+            start_time: current.start_time,
+            last_update_time: current.last_update_time,
+            is_active: current.is_active,
+            paused: current.paused,
+            paused_at: current.paused_at,
+            status: current.status,
+        };
         env.storage()
             .persistent()
-            .set(&types::DataKey::Stream(stream_id), stream);
+            .set(&DataKey::Stream(stream_id), &legacy);
     });
 }
 
-/// Site 1 — `collect_fee`: `amount * (cfg.fee_rate_bps as i128)`.
+/// Number of fields in the raw record at `stream_id`.
 ///
-/// At the maximum fee rate the multiplication overflows for any amount above
-/// `i128::MAX / 1_000`, so `i128::MAX` is well past the boundary.
+/// The shape helpers below cannot simply try to decode: a `#[contracttype]`
+/// decode that does not match the stored map aborts the invocation with a host
+/// error rather than returning an `Err`, so a "does it decode?" probe is not a
+/// question that can be asked safely. Counting fields can.
+fn raw_stream_field_count(env: &Env, contract: &Address, stream_id: u64) -> u32 {
+    env.as_contract(contract, || {
+        let raw: Val = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Stream(stream_id))
+            .expect("stream record present");
+        soroban_sdk::Map::<Symbol, Val>::try_from_val(env, &raw)
+            .expect("stream record is a map")
+            .len()
+    })
+}
+
+/// True when the raw record at `stream_id` decodes as the current [`Stream`].
+fn stream_record_is_current_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
+    // The current `Stream` shape is 18 fields: `LegacyStream` carries neither
+    // `schedule`/`cliff_time` nor the dispute/allowance/yield fields.
+    raw_stream_field_count(env, contract, stream_id) == 18
+}
+
+/// True when the raw record at `stream_id` decodes as the pre-v2 [`LegacyStream`].
+fn stream_record_is_legacy_shape(env: &Env, contract: &Address, stream_id: u64) -> bool {
+    raw_stream_field_count(env, contract, stream_id) == 12
+}
+
+/// True when the raw config decodes as the current [`ProtocolConfig`].
+fn config_record_is_current_shape(env: &Env, contract: &Address) -> bool {
+    env.as_contract(contract, || {
+        let raw: Val = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProtocolConfig)
+            .expect("config present");
+        soroban_sdk::Map::<Symbol, Val>::try_from_val(env, &raw)
+            .expect("config is a map")
+            .len()
+            // The breaker/guardian fields are what separate the two shapes.
+            == 5
+    })
+}
+
+// ─── Version Pinning ─────────────────────────────────────────────────────────
+
 #[test]
-fn test_create_stream_rejects_fee_multiplication_overflow() {
+fn test_initialize_pins_state_version_two() {
     let env = Env::default();
     env.mock_all_auths();
+    let client = create_contract(&env);
+    assert_eq!(client.get_contract_version(), 0, "pre-initialize default");
 
+    client.initialize(&Address::generate(&env), &Address::generate(&env), &0);
+    assert_eq!(client.get_contract_version(), 2);
+}
+
+#[test]
+fn test_initialize_rejects_double_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    assert_stream_error!(
+        client.try_initialize(&admin, &Address::generate(&env), &0),
+        StreamError::AlreadyInitialized
+    );
+    // A rejected re-initialize must not move the schema version backwards.
+    assert_eq!(client.get_contract_version(), 2);
+}
+
+// ─── upgrade ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_upgrade_records_new_executable_hash() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    let hash = upload_upgrade_target(&env);
+    client.upgrade(&hash);
+
+    // The recorded hash is readable state, so the next upgrade can chain
+    // without the host exposing a live-executable getter.
+    env.as_contract(&client.address, || {
+        let recorded: BytesN<32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::ContractWasmHash)
+            .expect("hash recorded");
+        assert_eq!(recorded, hash);
+    });
+}
+
+#[test]
+fn test_upgrade_does_not_disturb_funds_or_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
     let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    mint(&env, &token, &sender, i128::MAX);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 2_000);
+    let contract = client.address.clone();
 
-    let client = create_contract(&env);
-    client.initialize(
-        &Address::generate(&env),
-        &Address::generate(&env),
-        &MAX_FEE_RATE_BPS,
-    );
+    let linear = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let steps = step_schedule(&env, &[(100, 500), (200, 500)]);
+    let stepped = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &steps);
 
-    assert_eq!(
-        client.try_create_stream(&sender, &recipient, &token, &i128::MAX, &1_000),
-        Err(Ok(StreamError::ArithmeticOverflow))
-    );
+    let hash = upload_upgrade_target(&env);
+    client.upgrade(&hash);
+
+    // `update_current_contract_wasm` takes effect when the invocation returns,
+    // so from here on this address runs the *target* module and none of this
+    // contract's entrypoints exist. A swap must not rewrite a single record, so
+    // state is inspected directly on the host side.
+    env.as_contract(&contract, || {
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ContractVersion)
+            .expect("version present");
+        assert_eq!(version, 2, "a code swap must not move the schema version");
+
+        let linear_record: Stream = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Stream(linear))
+            .expect("linear stream present");
+        assert_eq!(linear_record.schedule, VestingSchedule::Linear);
+        assert_eq!(linear_record.deposited_amount, 1_000);
+        assert_eq!(linear_record.recipient, recipient);
+
+        let stepped_record: Stream = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Stream(stepped))
+            .expect("stepped stream present");
+        assert_eq!(
+            stepped_record.schedule,
+            VestingSchedule::StepTranches(steps)
+        );
+        assert_eq!(stepped_record.deposited_amount, 1_000);
+    });
+
+    // Both escrows are still parked at the contract address.
+    let balances = token::Client::new(&env, &token);
+    assert_eq!(balances.balance(&sender), 0);
+    assert_eq!(balances.balance(&contract), 2_000);
+    assert_eq!(balances.balance(&recipient), 0);
 }
 
-/// Site 2 — `top_up_stream`: `stream.deposited_amount += net_amount`.
-///
-/// The stream is parked one unit below `i128::MAX`, so any positive top-up
-/// pushes the deposited total out of range.
 #[test]
-fn test_top_up_rejects_deposited_amount_overflow() {
+fn test_upgrade_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let (token, _) = create_token(&env);
-    let sender = Address::generate(&env);
-    mint(&env, &token, &sender, 20_000);
-
     let client = create_contract(&env);
-    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    env.ledger().with_mut(|l| l.timestamp = 9_100);
 
-    let mut stream = client.get_stream(&id).unwrap();
-    stream.deposited_amount = i128::MAX - 1;
-    force_stream(&env, &client, id, &stream);
+    let hash = upload_upgrade_target(&env);
+    client.upgrade(&hash);
 
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &5_000),
-        Err(Ok(StreamError::ArithmeticOverflow))
-    );
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "contract_upgraded")
+        })
+        .expect("contract_upgraded event not found");
+
+    let payload: ContractUpgradedEvent = ContractUpgradedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.admin, admin);
+    assert_eq!(payload.new_wasm_hash, hash);
+    // Never upgraded in place before this call, so the "old" hash is the zero
+    // sentinel rather than a genuine previous executable.
+    assert_eq!(payload.old_wasm_hash, BytesN::from_array(&env, &[0u8; 32]));
+    assert_eq!(payload.timestamp, 9_100);
 }
 
-/// Site 3 — `apply_withdrawal`: `stream.withdrawn_amount += amount`.
-///
-/// Exercised at the boundary rather than past it. `calculate_claimable` clamps
-/// its result to `deposited_amount - withdrawn_amount`, which makes
-/// `withdrawn_amount + claimable <= deposited_amount <= i128::MAX` an invariant
-/// of every reachable call, so no input can push this site over. The test pins
-/// the exact state where the sum lands on `i128::MAX`: the checked add must
-/// succeed and the withdrawal must complete, so a future change to that clamp
-/// which does let this site overflow surfaces here as a test failure instead of
-/// as an aborted transaction in production.
 #[test]
-fn test_withdraw_at_i128_max_withdrawn_boundary_does_not_overflow() {
+fn test_upgrade_requires_admin_auth_and_records_no_hash_without_it() {
     let env = Env::default();
     env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let contract = client.address.clone();
+    client.initialize(&admin, &Address::generate(&env), &0);
+    let hash = upload_upgrade_target(&env);
 
+    // `upgrade` takes no caller argument — it gates on `config.admin`'s
+    // `require_auth`, so withholding the admin's signature is the only way a
+    // non-admin can reach it, and the call must fail without side effects.
+    env.set_auths(&[]);
+    assert!(client.try_upgrade(&hash).is_err());
+
+    // A refused upgrade must be a total no-op: no half-installed executable and
+    // no hash written, or the next upgrade would report a binary that never ran.
+    env.as_contract(&contract, || {
+        let recorded: Option<BytesN<32>> = env.storage().instance().get(&DataKey::ContractWasmHash);
+        assert!(
+            recorded.is_none(),
+            "a rejected upgrade still recorded a hash"
+        );
+    });
+}
+
+#[test]
+fn test_upgrade_before_initialize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let hash = upload_upgrade_target(&env);
+
+    assert_stream_error!(client.try_upgrade(&hash), StreamError::NotInitialized);
+}
+
+#[test]
+fn test_recorded_wasm_hash_is_zero_before_first_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let contract = client.address.clone();
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    // A freshly deployed contract has no recorded upgrade, so the "previous
+    // executable" the event reports is the zero sentinel rather than a real hash.
+    env.as_contract(&contract, || {
+        let recorded: Option<BytesN<32>> = env.storage().instance().get(&DataKey::ContractWasmHash);
+        assert!(recorded.is_none(), "initialize must not record a hash");
+    });
+}
+
+#[test]
+fn test_upgrade_to_identical_wasm_keeps_state_readable() {
+    let env = Env::default();
+    env.mock_all_auths();
     let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    mint(&env, &token, &sender, 20_000);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
 
-    let client = create_contract(&env);
-    let id = client.create_stream(&sender, &recipient, &token, &10_000, &100);
+    // Upgrading to the contract's *own* built artifact is the no-op upgrade
+    // that must still be safe. Requires a prior release wasm build, so the test
+    // degrades to a no-op when only the unit-test build is present.
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../target/wasm32-unknown-unknown/release/stream_contract.wasm"
+    );
+    let Ok(wasm) = std::fs::read(path) else {
+        std::eprintln!("skipping: build the release wasm first ({} absent)", path);
+        return;
+    };
+    let hash = env
+        .deployer()
+        .upload_contract_wasm(Bytes::from_slice(&env, &wasm));
+    client.upgrade(&hash);
 
-    // 1 000 units still claimable, and withdrawn + claimable lands exactly on
-    // i128::MAX. The huge rate makes `streamed` exceed `remaining`, so the
-    // clamp rather than the elapsed time decides the amount.
-    let mut stream = client.get_stream(&id).unwrap();
-    stream.deposited_amount = i128::MAX;
-    stream.withdrawn_amount = i128::MAX - 1_000;
-    stream.rate_per_second = i128::MAX;
-    force_stream(&env, &client, id, &stream);
-
-    env.ledger().with_mut(|l| l.timestamp += 10);
-
-    assert_eq!(client.try_withdraw(&recipient, &id), Ok(Ok(1_000)));
-
-    let settled = client.get_stream(&id).unwrap();
-    assert_eq!(settled.withdrawn_amount, i128::MAX);
-    assert!(!settled.is_active);
-    assert_eq!(settled.status, StreamStatus::Completed);
+    assert_eq!(client.get_contract_version(), 2);
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_000);
+    advance(&env, 100);
+    assert_eq!(client.withdraw(&recipient, &id), 100);
 }
 
-/// Remaining balance whose drain time cannot be represented as a `u64`.
-///
-/// `Q = 3 * 2^64 - 101`. At one unit per second the stream needs `Q` seconds to
-/// drain, which is past `u64::MAX`. The pre-fix code truncated that quotient
-/// with `as u64`, giving `2^64 - 101`, then panicked on `now + (2^64 - 101)`
-/// for any `now > 100`. The fixed code rejects the quotient before it is ever
-/// truncated.
-const END_TIME_OVERFLOW_REMAINING: i128 = 3 * (1_i128 << 64) - 101;
+// ─── migrate ──────────────────────────────────────────────────────────────────
 
-/// Ledger timestamp for the two end-time tests. Any value above 100 makes the
-/// pre-fix truncated addition overflow.
-const END_TIME_OVERFLOW_NOW: u64 = 1_000;
-
-/// Site 4 — `top_up_stream`: `now + (remaining / rate_per_second) as u64`.
 #[test]
-fn test_top_up_rejects_end_time_projection_overflow() {
+fn test_migrate_requires_admin_auth_and_changes_nothing_without_it() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let (token, _) = create_token(&env);
-    let sender = Address::generate(&env);
-    mint(&env, &token, &sender, 20_000);
-
     let client = create_contract(&env);
-    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
+    let admin = Address::generate(&env);
+    let contract = client.address.clone();
+    client.initialize(&admin, &Address::generate(&env), &0);
+    downgrade_state_to_v0(&env, &contract);
 
-    env.ledger()
-        .with_mut(|l| l.timestamp = END_TIME_OVERFLOW_NOW);
-
-    // A 10-unit top-up brings the deposited balance to exactly Q. Anchoring
-    // last_update_time at `now` keeps the claimable amount at 0, so the whole
-    // balance counts as remaining.
-    let mut stream = client.get_stream(&id).unwrap();
-    stream.deposited_amount = END_TIME_OVERFLOW_REMAINING - 10;
-    stream.withdrawn_amount = 0;
-    stream.rate_per_second = 1;
-    stream.last_update_time = END_TIME_OVERFLOW_NOW;
-    force_stream(&env, &client, id, &stream);
-
-    assert_eq!(
-        client.try_top_up_stream(&sender, &id, &10),
-        Err(Ok(StreamError::ArithmeticOverflow))
+    // `migrate` takes no caller argument — it gates on `config.admin`'s
+    // `require_auth`, so withholding the admin's signature is the only way a
+    // non-admin can reach it, and the call must fail without side effects.
+    env.set_auths(&[]);
+    assert!(client.try_migrate(&2).is_err());
+    assert_eq!(client.get_contract_version(), 0);
+    assert!(
+        !config_record_is_current_shape(&env, &contract),
+        "a refused migration still rewrote the config"
     );
 }
 
-/// Site 5 — `resume_stream`: `now + (remaining / rate_per_second) as u64`.
 #[test]
-fn test_resume_rejects_end_time_projection_overflow() {
+fn test_migrate_before_initialize_rejected() {
     let env = Env::default();
     env.mock_all_auths();
-
-    let (token, _) = create_token(&env);
-    let sender = Address::generate(&env);
-    mint(&env, &token, &sender, 20_000);
-
     let client = create_contract(&env);
-    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &100);
 
-    env.ledger()
-        .with_mut(|l| l.timestamp = END_TIME_OVERFLOW_NOW);
+    assert_stream_error!(client.try_migrate(&2), StreamError::NotInitialized);
+}
 
-    // Paused with paused_at == last_update_time, so nothing accrued while
-    // paused and the full balance is still remaining at resume.
+#[test]
+fn test_migrate_to_current_version_is_a_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    client.migrate(&2);
+    assert_eq!(client.get_contract_version(), 2);
+
+    // Idempotent: no event, no error, no state change.
+    let before = env.events().all().len();
+    client.migrate(&2);
+    assert_eq!(env.events().all().len(), before);
+}
+
+#[test]
+fn test_migrate_rejects_downgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    assert_stream_error!(client.try_migrate(&1), StreamError::UnsupportedMigration);
+    assert_eq!(client.get_contract_version(), 2);
+}
+
+#[test]
+fn test_migrate_rejects_target_newer_than_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+
+    // This binary cannot write v3, so it must refuse rather than half-apply.
+    assert_stream_error!(client.try_migrate(&3), StreamError::UnsupportedMigration);
+    assert_eq!(client.get_contract_version(), 2);
+}
+
+#[test]
+fn test_migrate_rejects_state_newer_than_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    let contract = client.address.clone();
+
+    // Simulate having been downgraded onto by an older binary: v99 state must
+    // be flagged, not silently overwritten with a v2 layout.
+    env.as_contract(&contract, || {
+        env.storage()
+            .instance()
+            .set(&DataKey::ContractVersion, &99u32);
+    });
+
+    assert_stream_error!(client.try_migrate(&2), StreamError::StateVersionTooNew);
+    assert_eq!(client.get_contract_version(), 99);
+}
+
+#[test]
+fn test_migrate_from_v0_rewrites_config_and_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.initialize(&admin, &treasury, &100);
+    let contract = client.address.clone();
+
+    let (legacy_admin, legacy_treasury) = downgrade_state_to_v0(&env, &contract);
+    assert_eq!(legacy_admin, admin);
+    assert_eq!(legacy_treasury, treasury);
+    assert_eq!(client.get_contract_version(), 0);
+    assert!(!config_record_is_current_shape(&env, &contract));
+
+    client.migrate(&2);
+
+    // Snapshot the log straight after the call: `env.as_contract` opens a new
+    // host frame, which discards the events of everything before it.
+    let events = env.events().all();
+
+    assert_eq!(client.get_contract_version(), 2);
+    assert!(config_record_is_current_shape(&env, &contract));
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.admin, admin);
+    assert_eq!(config.treasury, treasury);
+    assert_eq!(config.fee_rate_bps, 100);
+    assert!(!config.is_protocol_paused);
+    assert_eq!(config.emergency_guardian, None);
+
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "state_migrated")
+        })
+        .expect("state_migrated event not found");
+    let payload: StateMigratedEvent = StateMigratedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.admin, admin);
+    assert_eq!(payload.old_version, 0);
+    assert_eq!(payload.new_version, 2);
+}
+
+#[test]
+fn test_migrate_from_v1_rewrites_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    let contract = client.address.clone();
+
+    // v1 was already versioned but still pre-dates the breaker fields.
+    downgrade_state_to_v0(&env, &contract);
+    env.as_contract(&contract, || {
+        env.storage()
+            .instance()
+            .set(&DataKey::ContractVersion, &1u32);
+    });
+
+    client.migrate(&2);
+    assert_eq!(client.get_contract_version(), 2);
+    assert!(config_record_is_current_shape(&env, &contract));
+}
+
+// ─── Lazy Legacy Decoding ────────────────────────────────────────────────────
+
+#[test]
+fn test_legacy_config_decodes_with_breaker_defaults() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.initialize(&admin, &treasury, &250);
+    let contract = client.address.clone();
+
+    downgrade_state_to_v0(&env, &contract);
+
+    // Reads must work before `migrate` runs, and a pre-breaker record has to
+    // default to "not paused" with no guardian rather than a garbage read.
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.admin, admin);
+    assert_eq!(config.treasury, treasury);
+    assert_eq!(config.fee_rate_bps, 250);
+    assert!(!config.is_protocol_paused);
+    assert_eq!(config.emergency_guardian, None);
+    assert!(!client.is_protocol_paused());
+}
+
+#[test]
+fn test_legacy_config_is_writable_through_the_breaker_api() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    let contract = client.address.clone();
+
+    downgrade_state_to_v0(&env, &contract);
+    let guardian = Address::generate(&env);
+    client.set_emergency_guardian(&admin, &Some(guardian.clone()));
+    client.set_protocol_pause(&admin, &true);
+
+    assert!(client.is_protocol_paused());
+    // The first write through the new API is what heals the record.
+    assert!(config_record_is_current_shape(&env, &contract));
+    assert_eq!(client.get_contract_version(), 0, "read is not a migration");
+
+    client.migrate(&2);
+    assert_eq!(client.get_contract_version(), 2);
+    // Pause survives the explicit migration — it is in force, not a draft.
+    assert!(client.is_protocol_paused());
+    assert_eq!(
+        client.get_fee_config().unwrap().emergency_guardian,
+        Some(guardian)
+    );
+}
+
+#[test]
+fn test_legacy_config_still_charges_fees_before_migration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+    client.initialize(&admin, &treasury, &100);
+    let contract = client.address.clone();
+
+    downgrade_state_to_v0(&env, &contract);
+    // 10_000 at 1% nets 9_900, which spreads to 9/s over 1_000s. (A 1_000
+    // deposit would net 990 — a 0/s rate, rejected as `InvalidRate`.)
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &10_000, &1_000);
+
+    // Fee collection reads the config through the same tolerant loader; losing
+    // the fee on legacy state would be a silent revenue bug.
+    assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 9_900);
+    assert_eq!(client.get_stream(&id).unwrap().rate_per_second, 9);
+    assert_eq!(token::Client::new(&env, &token).balance(&treasury), 100);
+    assert_eq!(client.get_contract_version(), 0);
+}
+
+#[test]
+fn test_legacy_stream_decodes_as_linear_and_withdraws() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+
+    downgrade_stream_to_v0(&env, &contract, id);
+    assert!(stream_record_is_legacy_shape(&env, &contract, id));
+    assert!(!stream_record_is_current_shape(&env, &contract, id));
+
+    // Escrowed funds must remain reachable even though the record no longer
+    // decodes in the current shape.
+    advance(&env, 100);
+    assert_eq!(client.get_claimable_amount(&id), Some(100));
+    assert_eq!(client.withdraw(&recipient, &id), 100);
+    assert_eq!(client.get_projected_end_time(&id), Some(1_000));
+}
+
+#[test]
+fn test_legacy_stream_heals_on_write() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+
+    downgrade_stream_to_v0(&env, &contract, id);
+    advance(&env, 100);
+    client.withdraw(&recipient, &id);
+
+    // Any write persists the current shape; only reads leave the record legacy.
+    assert!(stream_record_is_current_shape(&env, &contract, id));
+    assert!(!stream_record_is_legacy_shape(&env, &contract, id));
+    let healed = client.get_stream(&id).unwrap();
+    assert_eq!(healed.schedule, VestingSchedule::Linear);
+    assert_eq!(healed.withdrawn_amount, 100);
+}
+
+#[test]
+fn test_legacy_stream_reads_alone_never_heal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &Address::generate(&env), &token, &1_000, &1_000);
+    let contract = client.address.clone();
+
+    downgrade_stream_to_v0(&env, &contract, id);
+    advance(&env, 100);
+    // `migrate` cannot enumerate persistent storage, so a read must stay
+    // side-effect free.
+    for _ in 0..5 {
+        assert_eq!(client.get_claimable_amount(&id), Some(100));
+        assert_eq!(client.get_stream(&id).unwrap().deposited_amount, 1_000);
+    }
+    assert!(stream_record_is_legacy_shape(&env, &contract, id));
+    assert!(!stream_record_is_current_shape(&env, &contract, id));
+}
+
+#[test]
+fn test_legacy_paused_stream_stays_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 50);
+    client.pause_stream(&sender, &id);
+    let contract = client.address.clone();
+    downgrade_stream_to_v0(&env, &contract, id);
+
+    // Losing the paused flag on decode would silently unfreeze a stream the
+    // sender deliberately stopped.
+    advance(&env, 50);
+    assert_eq!(client.get_claimable_amount(&id), Some(50));
+    assert_stream_error!(
+        client.try_withdraw(&recipient, &id),
+        StreamError::StreamPaused
+    );
+}
+
+#[test]
+fn test_missing_stream_still_reports_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+    client.initialize(&Address::generate(&env), &Address::generate(&env), &0);
+
+    // The legacy fallback must not turn "absent" into a phantom stream.
+    assert_eq!(client.get_stream(&1_234), None);
+    assert_stream_error!(
+        client.try_withdraw(&Address::generate(&env), &1_234),
+        StreamError::StreamNotFound
+    );
+}
+
+#[test]
+fn test_legacy_records_survive_a_real_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+
+    downgrade_state_to_v0(&env, &contract);
+    downgrade_stream_to_v0(&env, &contract, id);
+    assert_eq!(client.get_contract_version(), 0);
+
+    // All contract calls happen before the swap: afterwards this address runs
+    // the target module, so the entrypoints no longer exist.
+    advance(&env, 100);
+    assert_eq!(client.withdraw(&recipient, &id), 100);
+    client.migrate(&2);
+    assert_eq!(client.get_contract_version(), 2);
+    assert!(config_record_is_current_shape(&env, &contract));
+    assert!(stream_record_is_current_shape(&env, &contract, id));
+
+    let hash = upload_upgrade_target(&env);
+    client.upgrade(&hash);
+
+    // The very last check: a code swap on healed state changes nothing.
+    env.as_contract(&contract, || {
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ContractVersion)
+            .expect("version present");
+        assert_eq!(version, 2);
+
+        let raw: Val = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Stream(id))
+            .expect("stream present");
+        let healed: Stream = Stream::try_from_val(&env, &raw).expect("still current shape");
+        assert_eq!(healed.withdrawn_amount, 100);
+        assert_eq!(healed.schedule, VestingSchedule::Linear);
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F4 — Batch Withdrawals
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Creates `count` linear streams of `deposit` over `duration`, all owed to
+/// `recipient`, and returns their IDs.
+#[allow(clippy::too_many_arguments)]
+fn create_linear_fanout(
+    env: &Env,
+    client: &StreamContractClient,
+    sender: &Address,
+    recipient: &Address,
+    token: &Address,
+    count: u32,
+    deposit: i128,
+    duration: u64,
+) -> SorobanVec<u64> {
+    let mut ids = SorobanVec::new(env);
+    for _ in 0..count {
+        ids.push_back(client.create_stream(sender, recipient, token, &deposit, &duration));
+    }
+    ids
+}
+
+#[test]
+fn test_batch_withdraw_pays_every_stream_in_one_call() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 3_000);
+
+    let ids = create_linear_fanout(&env, &client, &sender, &recipient, &token, 3, 1_000, 1_000);
+    advance(&env, 100);
+
+    let result = client.batch_withdraw(&recipient, &ids);
+    assert_eq!(result.len(), 3);
+    for id in ids.iter() {
+        let (_, amount) = result.iter().find(|(k, _)| *k == id).unwrap();
+        assert_eq!(amount, 100);
+    }
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 300);
+}
+
+#[test]
+fn test_batch_withdraw_returns_id_and_amount_pairs_in_request_order() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 3_000);
+
+    let ids = create_linear_fanout(&env, &client, &sender, &recipient, &token, 3, 1_000, 1_000);
+    advance(&env, 250);
+
+    // Deliberately not the creation order, so a reordering implementation
+    // cannot pass by accident.
+    let request = vec![
+        &env,
+        ids.get(2).unwrap(),
+        ids.get(0).unwrap(),
+        ids.get(1).unwrap(),
+    ];
+    let result = client.batch_withdraw(&recipient, &request);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result.get(0).unwrap(), (ids.get(2).unwrap(), 250));
+    assert_eq!(result.get(1).unwrap(), (ids.get(0).unwrap(), 250));
+    assert_eq!(result.get(2).unwrap(), (ids.get(1).unwrap(), 250));
+}
+
+#[test]
+fn test_batch_withdraw_of_empty_list_is_a_noop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    advance(&env, 100);
+
+    let result = client.batch_withdraw(&recipient, &vec![&env]);
+    assert!(result.is_empty());
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+}
+
+#[test]
+fn test_batch_withdraw_single_stream_matches_withdraw() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let batched = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let single = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    advance(&env, 400);
+
+    let result = client.batch_withdraw(&recipient, &vec![&env, batched]);
+    assert_eq!(result.get(0).unwrap(), (batched, 400));
+    // The single-stream path must agree exactly, or batching would be a way to
+    // get different accounting than the unbatched call.
+    assert_eq!(client.withdraw(&recipient, &single), 400);
+}
+
+#[test]
+fn test_batch_withdraw_skips_streams_with_nothing_claimable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 4_000);
+
+    // A step stream whose first milestone is still in the future contributes
+    // nothing and must be omitted from the result, not reported as zero.
+    let linear = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let steps = step_schedule(&env, &[(1_000, 1_000)]);
+    let stepped = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &steps);
+    let linear2 = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    mint(&env, &token, &sender, 1_000);
+
+    advance(&env, 100);
+    let result = client.batch_withdraw(&recipient, &vec![&env, linear, stepped, linear2]);
+
+    assert_eq!(result.len(), 2);
+    assert!(
+        !result.iter().any(|(id, _)| id == stepped),
+        "a zero-claim stream was reported"
+    );
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 200);
+}
+
+#[test]
+fn test_batch_withdraw_skips_paused_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let paused = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let live = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    client.pause_stream(&sender, &paused);
+
+    let result = client.batch_withdraw(&recipient, &vec![&env, paused, live]);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), (live, 100));
+    assert_eq!(client.get_stream(&paused).unwrap().withdrawn_amount, 0);
+}
+
+#[test]
+fn test_batch_withdraw_skips_completed_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let drained = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let live = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 1_000);
+    assert_eq!(client.withdraw(&recipient, &drained), 1_000);
+    assert!(client.is_stream_completed(&drained));
+
+    let result = client.batch_withdraw(&recipient, &vec![&env, drained, live]);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), (live, 1_000));
+}
+
+#[test]
+fn test_batch_withdraw_rejects_foreign_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let thief = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let mine = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let theirs = client.create_stream(&sender, &thief, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    // Ownership is checked per stream, so one foreign ID cannot be laundered
+    // through a batch of legitimate ones.
+    assert_stream_error!(
+        client.try_batch_withdraw(&recipient, &vec![&env, mine, theirs]),
+        StreamError::Unauthorized
+    );
+    // The whole call is rejected: no partial payout escapes.
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+    assert_eq!(client.get_stream(&mine).unwrap().withdrawn_amount, 0);
+}
+
+#[test]
+fn test_batch_withdraw_rejects_foreign_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    assert_stream_error!(
+        client.try_batch_withdraw(&attacker, &vec![&env, id]),
+        StreamError::Unauthorized
+    );
+    assert_eq!(token::Client::new(&env, &token).balance(&attacker), 0);
+}
+
+#[test]
+fn test_batch_withdraw_rejects_missing_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    assert_stream_error!(
+        client.try_batch_withdraw(&recipient, &vec![&env, id, 9_999]),
+        StreamError::StreamNotFound
+    );
+    // A typo in one ID must not cost the caller the rest of the batch.
+    assert_eq!(client.get_stream(&id).unwrap().withdrawn_amount, 0);
+}
+
+#[test]
+fn test_batch_withdraw_rejects_unauthenticated_recipient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    env.set_auths(&[]);
+    assert!(client
+        .try_batch_withdraw(&recipient, &vec![&env, id])
+        .is_err());
+    assert_eq!(client.get_stream(&id).unwrap().withdrawn_amount, 0);
+}
+
+#[test]
+fn test_batch_withdraw_accepts_exactly_thirty_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 30_000);
+
+    let ids = create_linear_fanout(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        MAX_BATCH_WITHDRAW,
+        1_000,
+        1_000,
+    );
+    advance(&env, 100);
+
+    let result = client.batch_withdraw(&recipient, &ids);
+    assert_eq!(result.len(), MAX_BATCH_WITHDRAW);
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&recipient),
+        100 * MAX_BATCH_WITHDRAW as i128
+    );
+}
+
+#[test]
+fn test_batch_withdraw_rejects_more_than_thirty_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 31_000);
+
+    let ids = create_linear_fanout(
+        &env,
+        &client,
+        &sender,
+        &recipient,
+        &token,
+        MAX_BATCH_WITHDRAW + 1,
+        1_000,
+        1_000,
+    );
+    advance(&env, 100);
+
+    // The cap exists to bound one invocation's work; enforcing it only at the
+    // edge would let an oversized batch through unchecked.
+    assert_stream_error!(
+        client.try_batch_withdraw(&recipient, &ids),
+        StreamError::BatchTooLarge
+    );
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+}
+
+#[test]
+fn test_batch_withdraw_handles_mixed_tokens() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token_a, _) = create_token(&env);
+    let (token_b, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token_a, &sender, 1_000);
+    mint(&env, &token_b, &sender, 1_000);
+
+    let a = client.create_stream(&sender, &recipient, &token_a, &1_000, &1_000);
+    let b = client.create_stream(&sender, &recipient, &token_b, &1_000, &1_000);
+    advance(&env, 100);
+
+    let result = client.batch_withdraw(&recipient, &vec![&env, a, b]);
+    assert_eq!(result.len(), 2);
+    // The batch returns amounts per stream, not a single total, precisely
+    // because the streams need not share a token.
+    assert_eq!(result.get(0).unwrap(), (a, 100));
+    assert_eq!(result.get(1).unwrap(), (b, 100));
+    assert_eq!(token::Client::new(&env, &token_a).balance(&recipient), 100);
+    assert_eq!(token::Client::new(&env, &token_b).balance(&recipient), 100);
+}
+
+#[test]
+fn test_batch_withdraw_handles_mixed_schedules() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 4_000);
+
+    let linear = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let steps = step_schedule(&env, &[(100, 300), (1_000, 700)]);
+    let stepped = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &steps);
+    let cliff =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &400, &600);
+    mint(&env, &token, &sender, 1_000);
+    let linear2 = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    let result = client.batch_withdraw(&recipient, &vec![&env, linear, stepped, cliff, linear2]);
+
+    // One call, four different accrual rules: linear 100, step 300, hybrid
+    // still 0 before its cliff, linear 100.
+    assert_eq!(result.len(), 3);
+    assert_eq!(result.get(0).unwrap(), (linear, 100));
+    assert_eq!(result.get(1).unwrap(), (stepped, 300));
+    assert_eq!(result.get(2).unwrap(), (linear2, 100));
+    assert!(!result.iter().any(|(id, _)| id == cliff));
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 500);
+}
+
+#[test]
+fn test_batch_withdraw_marks_streams_completed_and_emits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let a = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let b = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 1_000);
+    let result = client.batch_withdraw(&recipient, &vec![&env, a, b]);
+    assert_eq!(result.len(), 2);
+
+    // Snapshot now: the host only exposes the events of the most recent
+    // invocation, so any follow-up call would clear them.
+    let events = env.events().all();
+
+    // A batch must leave the same terminal state the single path would, or a
+    // completed stream could be paid twice by a later batch.
+    assert!(client.is_stream_completed(&a));
+    assert!(client.is_stream_completed(&b));
+    assert_eq!(
+        client.get_stream(&a).unwrap().status,
+        StreamStatus::Completed
+    );
+
+    let withdrawals: u32 = events
+        .iter()
+        .filter(|e| {
+            e.1.len() >= 2
+                && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                    == Symbol::new(&env, "tokens_withdrawn")
+        })
+        .count() as u32;
+    let completions: u32 = events
+        .iter()
+        .filter(|e| {
+            e.1.len() >= 2
+                && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                    == Symbol::new(&env, "stream_completed")
+        })
+        .count() as u32;
+    assert_eq!(withdrawals, 2);
+    assert_eq!(completions, 2);
+}
+
+#[test]
+fn test_batch_withdraw_event_carries_per_stream_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+    let a = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let b = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 300);
+    client.batch_withdraw(&recipient, &vec![&env, a, b]);
+
+    // Indexers key off `tokens_withdrawn`, so each stream needs its own event
+    // rather than one aggregate the backend cannot attribute.
+    let events = env.events().all();
+    for id in [a, b] {
+        let ev = events
+            .iter()
+            .find(|e| {
+                e.1.len() >= 2
+                    && Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                        == Symbol::new(&env, "tokens_withdrawn")
+                    && u64::try_from_val(&env, &e.1.get(1).unwrap()) == Ok(id)
+            })
+            .unwrap_or_else(|| panic!("no tokens_withdrawn event for stream {id}"));
+        let payload: TokensWithdrawnEvent =
+            TokensWithdrawnEvent::try_from_val(&env, &ev.2).unwrap();
+        assert_eq!(payload.stream_id, id);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.amount, 300);
+    }
+}
+
+#[test]
+fn test_batch_withdraw_is_idempotent_within_a_ledger() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 500);
+    assert_eq!(client.batch_withdraw(&recipient, &vec![&env, id]).len(), 1);
+    // Time has not moved, so the accrual is already zero: a second call in the
+    // same ledger must not pay the same window twice.
+    let second = client.batch_withdraw(&recipient, &vec![&env, id]);
+    assert!(second.is_empty());
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 500);
+}
+
+#[test]
+fn test_batch_withdraw_accrues_across_successive_ledgers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    let mut total: i128 = 0;
+    for _ in 0..4 {
+        advance(&env, 250);
+        let result = client.batch_withdraw(&recipient, &vec![&env, id]);
+        total += result.get(0).map(|(_, a)| a).unwrap_or(0);
+    }
+    // 4 x 250s at 1/s, never over-paying the 1_000 deposited.
+    assert_eq!(total, 1_000);
+    assert!(client.is_stream_completed(&id));
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 1_000);
+}
+
+#[test]
+fn test_batch_withdraw_during_protocol_pause_pays_vested_funds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin, &Address::generate(&env), &0);
+    mint(&env, &token, &sender, 2_000);
+    let a = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let b = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 100);
+    client.set_protocol_pause(&admin, &true);
+
+    let result = client.batch_withdraw(&recipient, &vec![&env, a, b]);
+    assert_eq!(result.len(), 2);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 200);
+}
+
+#[test]
+fn test_batch_withdraw_before_initialize_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = create_contract(&env);
+
+    assert_stream_error!(
+        client.try_batch_withdraw(&Address::generate(&env), &vec![&env, 1u64]),
+        StreamError::StreamNotFound
+    );
+}
+
+#[test]
+fn test_batch_withdraw_never_exceeds_escrow_across_many_streams() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let ids = create_linear_fanout(&env, &client, &sender, &recipient, &token, 10, 1_000, 1_000);
+    let contract = client.address.clone();
+    let balances = token::Client::new(&env, &token);
+
+    // Poll far more often than the streams vest, and assert after every batch
+    // that the payouts never exceed what was actually held in escrow.
+    for _ in 0..200 {
+        advance(&env, 10);
+        client.batch_withdraw(&recipient, &ids);
+        let paid = balances.balance(&recipient);
+        assert!(paid <= 10_000, "overpaid {paid} of 10_000 escrowed");
+    }
+
+    advance(&env, 1_000);
+    client.batch_withdraw(&recipient, &ids);
+    assert_eq!(balances.balance(&recipient), 10_000);
+    assert_eq!(balances.balance(&contract), 0, "escrow not fully drained");
+}
+
+#[test]
+fn test_batch_withdraw_with_duplicate_stream_ids() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    let contract_address = client.address.clone();
+    assert_eq!(token_client.balance(&recipient), 0);
+    assert_eq!(token_client.balance(&contract_address), 1_000);
+
+    // Advance 500 seconds so exactly 500 tokens are vested
+    advance(&env, 500);
+
+    let contract_balance_before = token_client.balance(&contract_address);
+    let recipient_balance_before = token_client.balance(&recipient);
+    assert_eq!(contract_balance_before, 1_000);
+    assert_eq!(recipient_balance_before, 0);
+
+    // Invoke batch_withdraw with duplicate IDs [id, id]
+    let result = client.batch_withdraw(&recipient, &vec![&env, id, id]);
+
+    // The first iteration claims the 500 claimable tokens; the duplicate second
+    // iteration observes 0 remaining claimable and is cleanly skipped.
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), (id, 500));
+
+    // Confirm token contract balances before and after batch_withdraw
+    let contract_balance_after = token_client.balance(&contract_address);
+    let recipient_balance_after = token_client.balance(&recipient);
+    assert_eq!(contract_balance_after, 500);
+    assert_eq!(recipient_balance_after, 500);
+
+    // Verify stream record accurately reflects the withdrawn amount
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 500);
+    assert_eq!(stream.deposited_amount, 1_000);
+
+    // Advance to stop_time and pass duplicates [id, id, id]
+    advance(&env, 500);
+    let result_drained = client.batch_withdraw(&recipient, &vec![&env, id, id, id]);
+    assert_eq!(result_drained.len(), 1);
+    assert_eq!(result_drained.get(0).unwrap(), (id, 500));
+
+    assert_eq!(token_client.balance(&contract_address), 0);
+    assert_eq!(token_client.balance(&recipient), 1_000);
+
+    let final_stream = client.get_stream(&id).unwrap();
+    assert_eq!(final_stream.withdrawn_amount, 1_000);
+    assert!(final_stream.is_completed());
+}
+
+#[test]
+fn test_stream_status_helper_methods() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Initially active
     let mut stream = client.get_stream(&id).unwrap();
-    stream.deposited_amount = END_TIME_OVERFLOW_REMAINING;
-    stream.withdrawn_amount = 0;
-    stream.rate_per_second = 1;
-    stream.last_update_time = 500;
-    stream.paused = true;
-    stream.paused_at = Some(500);
+    assert!(stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(!stream.is_completed());
+
+    // Pause stream
+    client.pause_stream(&sender, &id);
+    let paused_stream = client.get_stream(&id).unwrap();
+    assert!(!paused_stream.is_active());
+    assert!(paused_stream.is_paused());
+    assert!(!paused_stream.is_cancelled());
+    assert!(!paused_stream.is_completed());
+
+    // Resume stream
+    client.resume_stream(&sender, &id);
+    let resumed_stream = client.get_stream(&id).unwrap();
+    assert!(resumed_stream.is_active());
+    assert!(!resumed_stream.is_paused());
+    assert!(!resumed_stream.is_cancelled());
+    assert!(!resumed_stream.is_completed());
+
+    // Fully withdraw to complete
+    advance(&env, 100);
+    client.withdraw(&recipient, &id);
+    let completed_stream = client.get_stream(&id).unwrap();
+    assert!(!completed_stream.is_active());
+    assert!(!completed_stream.is_paused());
+    assert!(!completed_stream.is_cancelled());
+    assert!(completed_stream.is_completed());
+
+    // Cancel test on a second stream
+    mint(&env, &token, &sender, 1_000);
+    let id2 = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    client.cancel_stream(&sender, &id2);
+    let cancelled_stream = client.get_stream(&id2).unwrap();
+    assert!(!cancelled_stream.is_active());
+    assert!(!cancelled_stream.is_paused());
+    assert!(cancelled_stream.is_cancelled());
+    assert!(!cancelled_stream.is_completed());
+
+    // Synthetic status test covering all variants
+    stream.status = StreamStatus::Active;
+    assert!(stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(!stream.is_completed());
+
     stream.status = StreamStatus::Paused;
-    force_stream(&env, &client, id, &stream);
+    assert!(!stream.is_active());
+    assert!(stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(!stream.is_completed());
 
-    assert_eq!(
-        client.try_resume_stream(&sender, &id),
-        Err(Ok(StreamError::ArithmeticOverflow))
+    stream.status = StreamStatus::Cancelled;
+    assert!(!stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(stream.is_cancelled());
+    assert!(!stream.is_completed());
+
+    stream.status = StreamStatus::Completed;
+    assert!(!stream.is_active());
+    assert!(!stream.is_paused());
+    assert!(!stream.is_cancelled());
+    assert!(stream.is_completed());
+}
+
+// ─── Coverage: modify_rate (#1316) ──────────────────────────────────────────
+
+#[test]
+fn test_coverage_modify_rate_recomputes_end_time_and_emits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    let new_end = client.modify_rate(&sender, &id, &2);
+
+    // 1_000 remaining at 2/s → 500s projected end, from the current timestamp.
+    let now = env.ledger().timestamp();
+    assert_eq!(new_end, now + 500);
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.rate_per_second, 2);
+    assert_eq!(stream.last_update_time, now);
+}
+
+#[test]
+fn test_coverage_modify_rate_rejects_non_linear_schedule() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let steps = step_schedule(&env, &[(100, 500), (200, 500)]);
+    let id = client.create_step_vesting_stream(&sender, &recipient, &token, &1_000, &steps);
+
+    let result = client.try_modify_rate(&sender, &id, &2_000);
+    assert_eq!(result, Err(Ok(StreamError::RateModificationUnsupported)));
+}
+
+// ─── Coverage: allowance streams (#1318) ───────────────────────────────────
+
+#[test]
+fn test_coverage_create_allowance_stream_gates_on_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    // No allowance yet → creation is rejected.
+    let result = client.try_create_allowance_stream(&sender, &recipient, &token, &1_000);
+    assert_eq!(result, Err(Ok(StreamError::AllowanceLocked)));
+
+    // Approve the contract as spender, then creation succeeds.
+    token::Client::new(&env, &token).approve(
+        &sender,
+        &client.address,
+        &10_000,
+        &(env.ledger().sequence() + 1_000),
     );
+    let id = client.create_allowance_stream(&sender, &recipient, &token, &1_000);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert!(stream.is_allowance_based);
+    assert_eq!(stream.deposited_amount, 0);
+    assert_eq!(stream.rate_per_second, 1);
+    assert_eq!(stream.status, StreamStatus::Active);
+}
+
+// ─── Coverage: dispute & escrow (#1319) ────────────────────────────────────
+
+/// Seeds an arbiter directly on the stream's storage. The arbiter slot is
+/// intentionally immutable through the public API, so tests reach in the same
+/// way the escrow deployment flow would.
+fn seed_arbiter(env: &Env, client: &StreamContractClient, stream_id: u64, arbiter: &Address) {
+    let mut stream = client.get_stream(&stream_id).unwrap();
+    stream.arbiter = Some(arbiter.clone());
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&types::DataKey::Stream(stream_id), &stream);
+    });
+}
+
+#[test]
+fn test_coverage_dispute_request_then_rejected_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    // Both streams are created before the arbiter is seeded below: creation
+    // re-validates the token contract cross-contract, which must not run
+    // after direct storage injection.
+    let no_arbiter_id = client.create_stream(&sender, &recipient, &token, &100, &100);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    seed_arbiter(&env, &client, id, &arbiter);
+
+    // Without an arbiter a dispute cannot even be requested.
+    let result = client.try_request_dispute(&sender, &no_arbiter_id);
+    assert_eq!(result, Err(Ok(StreamError::DisputeNotSupported)));
+
+    client.request_dispute(&sender, &id);
+    assert_eq!(
+        client.get_stream(&id).unwrap().dispute_status,
+        DisputeStatus::Requested
+    );
+
+    // A non-arbiter cannot resolve; the arbiter rejects; the stream stays
+    // active with the dispute recorded as resolved(false).
+    let result = client.try_resolve_dispute(&Address::generate(&env), &id, &true);
+    assert_eq!(result, Err(Ok(StreamError::NotArbiter)));
+
+    client.resolve_dispute(&arbiter, &id, &false);
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.dispute_status, DisputeStatus::Resolved(false));
+    assert!(stream.is_active);
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        1_100
+    );
+}
+
+#[test]
+fn test_coverage_dispute_approved_resolution_cancels_and_distributes() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    seed_arbiter(&env, &client, id, &arbiter);
+
+    advance(&env, 500);
+    client.request_dispute(&sender, &id);
+    client.resolve_dispute(&arbiter, &id, &true);
+
+    // Resolution pays accrued 500 to the recipient and refunds 500 to the
+    // sender, then terminates the stream.
+    let balances = token::Client::new(&env, &token);
+    assert_eq!(balances.balance(&recipient), 500);
+    assert_eq!(balances.balance(&sender), 500);
+    assert_eq!(balances.balance(&client.address), 0);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert!(!stream.is_active);
+    assert_eq!(stream.dispute_status, DisputeStatus::Resolved(true));
+}
+
+// ─── Coverage: close_stream ────────────────────────────────────────────────
+
+#[test]
+fn test_coverage_close_stream_prunes_fully_withdrawn_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Active streams cannot be pruned.
+    let result = client.try_close_stream(&sender, &id);
+    assert_eq!(result, Err(Ok(StreamError::StreamStillActive)));
+
+    advance(&env, 1_000);
+    client.withdraw(&recipient, &id);
+    assert!(client.is_stream_completed(&id));
+
+    client.close_stream(&sender, &id);
+    assert!(client.get_stream(&id).is_none());
+
+    // Already-pruned streams are gone for good.
+    let result = client.try_close_stream(&sender, &id);
+    assert_eq!(result, Err(Ok(StreamError::StreamNotFound)));
+}
+
+// ─── Coverage: conditional streams & milestones (#1482) ────────────────────
+
+/// Minimal SEP-40-style price oracle used to exercise `PriceTarget`
+/// milestones' cross-contract `lastprice` calls.
+#[contract]
+pub struct TestOracle;
+
+use soroban_sdk::{contract, contractimpl};
+
+#[contractimpl]
+impl TestOracle {
+    /// Seeds (or clears, with `None`) the single oracle reading.
+    pub fn set_reading(env: Env, reading: Option<types::PriceData>) {
+        env.storage().instance().set(&0u32, &reading);
+    }
+
+    pub fn lastprice(env: Env, _asset: types::OracleAsset) -> Option<types::PriceData> {
+        env.storage().instance().get(&0u32).unwrap_or(None)
+    }
+}
+
+#[test]
+fn test_coverage_conditional_stream_timeonly_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let milestones = vec![
+        &env,
+        ConditionalMilestone {
+            milestone_id: 1,
+            amount: 600,
+            condition: UnlockCondition::TimeOnly(200),
+            is_unlocked: false,
+        },
+        ConditionalMilestone {
+            milestone_id: 2,
+            amount: 400,
+            condition: UnlockCondition::TimeOnly(500),
+            is_unlocked: false,
+        },
+    ];
+
+    let id = client.create_conditional_stream(&sender, &recipient, &token, &1_000, &milestones);
+
+    // The whole gross amount sits in escrow; tranches stay time-locked.
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        1_000
+    );
+
+    // Verifying an unknown milestone id is rejected.
+    let result = client.try_verify_and_unlock_milestone(&recipient, &id, &99);
+    assert_eq!(result, Err(Ok(StreamError::InvalidMilestone)));
+
+    // Not-yet-due milestone does not unlock.
+    let result = client.try_verify_and_unlock_milestone(&recipient, &id, &1);
+    assert_eq!(result, Err(Ok(StreamError::ConditionNotMet)));
+
+    advance(&env, 200);
+    client.verify_and_unlock_milestone(&recipient, &id, &1);
+
+    // Double-verification is rejected...
+    let result = client.try_verify_and_unlock_milestone(&recipient, &id, &1);
+    assert_eq!(result, Err(Ok(StreamError::MilestoneAlreadyUnlocked)));
+
+    // ...and the unlocked tranche is immediately claimable (600 so far).
+    assert_eq!(client.get_claimable_amount(&id).unwrap(), 600);
+
+    // Neither party other than sender/recipient may verify.
+    let result = client.try_verify_and_unlock_milestone(&Address::generate(&env), &id, &2);
+    assert_eq!(result, Err(Ok(StreamError::MilestoneCallerUnauthorized)));
+
+    advance(&env, 300);
+    client.verify_and_unlock_milestone(&sender, &id, &2);
+    assert_eq!(client.get_claimable_amount(&id).unwrap(), 1_000);
+
+    let withdrawn = client.withdraw(&recipient, &id);
+    assert_eq!(withdrawn, 1_000);
+    assert!(client.is_stream_completed(&id));
+}
+
+#[test]
+fn test_coverage_conditional_stream_price_target_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let oracle_id = env.register(TestOracle, ());
+    mint(&env, &token, &sender, 1_000);
+
+    let milestones = vec![
+        &env,
+        ConditionalMilestone {
+            milestone_id: 1,
+            amount: 1_000,
+            condition: UnlockCondition::PriceTarget(oracle_id.clone(), 500, true),
+            is_unlocked: false,
+        },
+    ];
+    let id = client.create_conditional_stream(&sender, &recipient, &token, &1_000, &milestones);
+
+    // Move past the freshness window so the stale-reading case is testable.
+    advance(&env, 7_200);
+
+    // No reading at all → OraclePriceUnavailable.
+    let result = client.try_verify_and_unlock_milestone(&recipient, &id, &1);
+    assert_eq!(result, Err(Ok(StreamError::OraclePriceUnavailable)));
+
+    // A reading older than the freshness window → OraclePriceStale.
+    env.as_contract(&oracle_id, || {
+        TestOracle::set_reading(
+            env.clone(),
+            Some(types::PriceData {
+                price: 600,
+                timestamp: env.ledger().timestamp().saturating_sub(4_000),
+            }),
+        );
+    });
+    let result = client.try_verify_and_unlock_milestone(&recipient, &id, &1);
+    assert_eq!(result, Err(Ok(StreamError::OraclePriceStale)));
+
+    // Fresh price below the target → ConditionNotMet.
+    env.as_contract(&oracle_id, || {
+        TestOracle::set_reading(
+            env.clone(),
+            Some(types::PriceData {
+                price: 499,
+                timestamp: env.ledger().timestamp(),
+            }),
+        );
+    });
+    let result = client.try_verify_and_unlock_milestone(&recipient, &id, &1);
+    assert_eq!(result, Err(Ok(StreamError::ConditionNotMet)));
+
+    // Fresh price at the target (>=) → unlock, then withdraw.
+    env.as_contract(&oracle_id, || {
+        TestOracle::set_reading(
+            env.clone(),
+            Some(types::PriceData {
+                price: 500,
+                timestamp: env.ledger().timestamp(),
+            }),
+        );
+    });
+    client.verify_and_unlock_milestone(&recipient, &id, &1);
+
+    let withdrawn = client.withdraw(&recipient, &id);
+    assert_eq!(withdrawn, 1_000);
+    assert!(client.is_stream_completed(&id));
+}
+// ─── Emission helper wire format ─────────────────────────────────────────────
+//
+// `events.rs` owns the (topic, payload) wire format via its `emit_*` helpers.
+// These tests pin the topic symbol, topic arity and payload round-trip for a
+// representative helper per topic shape, so a change that breaks the format
+// backend indexers depend on fails here rather than in production decoding.
+mod emit_helpers {
+    use super::*;
+
+    fn capture_single_topic_event(env: &Env, topic: &str) -> (SorobanVec<Val>, Val) {
+        let events = env.events().all();
+        let ev = events
+            .iter()
+            .find(|e| {
+                Symbol::try_from_val(env, &e.1.get(0).unwrap()).unwrap() == Symbol::new(env, topic)
+            })
+            .expect("expected event not found");
+        (ev.1, ev.2)
+    }
+
+    /// Publishes `f`'s event inside a contract context so it carries a contract
+    /// ID, matching how `emit_*` helpers fire in production entrypoints.
+    fn with_contract_context<F: FnOnce()>(env: &Env, f: F) {
+        let contract = create_contract(env);
+        let id = contract.address.clone();
+        env.as_contract(&id, f);
+    }
+
+    #[test]
+    fn emit_stream_created_publishes_topic_and_roundtrips_payload() {
+        let env = Env::default();
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        with_contract_context(&env, || {
+            emit_stream_created(
+                &env,
+                StreamCreatedEvent {
+                    stream_id: 7,
+                    sender: sender.clone(),
+                    recipient: recipient.clone(),
+                    rate_per_second: 1_000,
+                    token_address: token.clone(),
+                    deposited_amount: 123_456,
+                    start_time: 42,
+                },
+            );
+        });
+
+        let (topics, data) = capture_single_topic_event(&env, "stream_created");
+        // Topic 0 is the event name; topic 1 is the indexed stream ID.
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "stream_created")
+        );
+        let indexed_id = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(indexed_id, 7);
+
+        let payload = StreamCreatedEvent::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.stream_id, 7);
+        assert_eq!(payload.sender, sender);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.rate_per_second, 1_000);
+        assert_eq!(payload.token_address, token);
+        assert_eq!(payload.deposited_amount, 123_456);
+        assert_eq!(payload.start_time, 42);
+    }
+
+    #[test]
+    fn emit_tokens_withdrawn_publishes_topic_and_roundtrips_payload() {
+        let env = Env::default();
+        let recipient = Address::generate(&env);
+
+        with_contract_context(&env, || {
+            emit_tokens_withdrawn(
+                &env,
+                TokensWithdrawnEvent {
+                    stream_id: 3,
+                    recipient: recipient.clone(),
+                    amount: 999,
+                    timestamp: 1_000,
+                },
+            );
+        });
+
+        let (topics, data) = capture_single_topic_event(&env, "tokens_withdrawn");
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "tokens_withdrawn")
+        );
+        let indexed_id = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(indexed_id, 3);
+
+        let payload = TokensWithdrawnEvent::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.stream_id, 3);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.amount, 999);
+        assert_eq!(payload.timestamp, 1_000);
+    }
+
+    #[test]
+    fn emit_stream_cancelled_publishes_topic_and_roundtrips_payload() {
+        let env = Env::default();
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        with_contract_context(&env, || {
+            emit_stream_cancelled(
+                &env,
+                StreamCancelledEvent {
+                    stream_id: 11,
+                    sender: sender.clone(),
+                    recipient: recipient.clone(),
+                    amount_withdrawn: 500,
+                    refunded_amount: 2_500,
+                },
+            );
+        });
+
+        let (topics, data) = capture_single_topic_event(&env, "stream_cancelled");
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "stream_cancelled")
+        );
+        let indexed_id = u64::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+        assert_eq!(indexed_id, 11);
+
+        let payload = StreamCancelledEvent::try_from_val(&env, &data).unwrap();
+        assert_eq!(payload.stream_id, 11);
+        assert_eq!(payload.sender, sender);
+        assert_eq!(payload.recipient, recipient);
+        assert_eq!(payload.amount_withdrawn, 500);
+        assert_eq!(payload.refunded_amount, 2_500);
+    }
+}
+
+// ─── Storage TTL Extension & Position Bumping (Issue #1519) ───────────────────
+
+#[test]
+fn test_querying_stream_metadata_automatically_extends_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+    let key = DataKey::Stream(id);
+
+    let initial_ttl = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(initial_ttl >= storage::PERSISTENT_LIFETIME_THRESHOLD);
+
+    // Mock ledger sequence increment: advance ledger by 400,000 ledgers
+    // This simulates infrequent access over a long timeframe (e.g. 4-year vesting)
+    // reducing the remaining TTL well below PERSISTENT_LIFETIME_THRESHOLD (120,960)
+    env.ledger().with_mut(|l| {
+        l.sequence_number += 400_000;
+    });
+
+    let ttl_before_query = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(
+        ttl_before_query < storage::PERSISTENT_LIFETIME_THRESHOLD,
+        "TTL before query ({ttl_before_query}) must be below threshold ({})",
+        storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+
+    // Querying stream metadata via get_stream automatically triggers bump_position_ttl
+    let stream = client.get_stream(&id).expect("stream must exist");
+    assert_eq!(stream.deposited_amount, 1_000);
+
+    let ttl_after_query = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(
+        ttl_after_query >= storage::PERSISTENT_BUMP_AMOUNT - 10,
+        "TTL after get_stream query ({ttl_after_query}) should be bumped near max ({})",
+        storage::PERSISTENT_BUMP_AMOUNT
+    );
+    assert!(ttl_after_query > ttl_before_query);
+}
+
+#[test]
+fn test_all_read_only_position_queries_extend_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+    let key = DataKey::Stream(id);
+
+    let refresh_instance = || {
+        env.as_contract(&contract, || {
+            env.storage().instance().extend_ttl(
+                storage::INSTANCE_LIFETIME_THRESHOLD,
+                storage::INSTANCE_BUMP_AMOUNT,
+            );
+        });
+    };
+
+    // Test get_claimable_amount extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert!(client.get_claimable_amount(&id).is_some());
+    let ttl_after_claimable =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_claimable >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Test get_vesting_schedule extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert_eq!(
+        client.get_vesting_schedule(&id),
+        Some(VestingSchedule::Linear)
+    );
+    let ttl_after_schedule =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_schedule >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Test get_projected_end_time extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert!(client.get_projected_end_time(&id).is_some());
+    let ttl_after_end_time =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_end_time >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Test is_stream_completed extends TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    assert!(!client.is_stream_completed(&id));
+    let ttl_after_completed =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_completed >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+}
+
+#[test]
+fn test_bump_position_ttl_helper_directly() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 10_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    let contract = client.address.clone();
+    let key: types::StorageKey = types::DataKey::Stream(id);
+
+    let refresh_instance = || {
+        env.as_contract(&contract, || {
+            env.storage().instance().extend_ttl(
+                storage::INSTANCE_LIFETIME_THRESHOLD,
+                storage::INSTANCE_BUMP_AMOUNT,
+            );
+        });
+    };
+
+    // Advance sequence number to drain TTL
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    let ttl_before = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_before < storage::PERSISTENT_LIFETIME_THRESHOLD);
+
+    // Call bump_position_ttl helper directly
+    env.as_contract(&contract, || {
+        storage::bump_position_ttl(&env, &key);
+    });
+
+    let ttl_after = env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Calling bump_position_ttl on a non-existent key gracefully does not panic
+    let non_existent_key = types::DataKey::Stream(999_999);
+    env.as_contract(&contract, || {
+        storage::bump_position_ttl(&env, &non_existent_key);
+    });
+
+    // Test explicit contract method bump_stream_ttl
+    env.ledger().with_mut(|l| l.sequence_number += 400_000);
+    refresh_instance();
+    assert!(
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key))
+            < storage::PERSISTENT_LIFETIME_THRESHOLD
+    );
+    client.bump_stream_ttl(&id);
+    let ttl_after_contract_bump =
+        env.as_contract(&contract, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_after_contract_bump >= storage::PERSISTENT_BUMP_AMOUNT - 10);
+
+    // Contract method bump_stream_ttl returns StreamNotFound on non-existent stream
+    assert_eq!(
+        client.try_bump_stream_ttl(&999_999),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+// ─── Yield Strategy Tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_yield_enabled_stored_on_stream_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    // Create stream with yield_enabled concept - the flag is stored in state.
+    // Since the public API doesn't yet accept a yield_enabled parameter,
+    // we verify the field exists and defaults to false by checking
+    // the stream struct directly.
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    let stream = client.get_stream(&id).unwrap();
+    assert!(
+        !stream.yield_enabled,
+        "yield_enabled should default to false"
+    );
+}
+
+#[test]
+fn test_yield_distribution_mock() {
+    // Yield generation is opt-in and disabled by default, so a stream still
+    // follows the standard fee/withdraw math. This mock exercises that path
+    // without requiring a real yield-pool contract.
+    use soroban_sdk::Env;
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    client.initialize(&treasury, &treasury, &250);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // Advance time so some tokens accrue.
+    env.ledger().with_mut(|l| l.timestamp += 100);
+
+    // Withdraw should work and consume the accrued amount. The 250 bps fee
+    // leaves 975 deposited, so the rate is 9 tokens/second over 100 seconds.
+    let claimed = client.withdraw(&recipient, &id);
+    assert_eq!(claimed, 900);
+
+    // Verify the stream has recorded the withdrawal against the net deposit.
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 900);
+    assert_eq!(stream.deposited_amount, 975);
 }

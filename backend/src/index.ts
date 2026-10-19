@@ -1,5 +1,10 @@
+// OpenTelemetry must be initialised before any instrumented module is loaded —
+// the auto-instrumentations patch http/express/pg at require time.
+import "./lib/otel.js";
+
 import dotenv from "dotenv";
 import app from "./app.js";
+import { loadEnv } from "./config/env.js";
 import logger from "./logger.js";
 import { startWorkers, stopWorkers } from "./workers/index.js";
 import { sseService } from "./services/sse.service.js";
@@ -7,6 +12,10 @@ import { connectRedis, disconnectRedis } from "./lib/redis.js";
 import { rpcPool } from "./lib/rpc-pool.js";
 
 dotenv.config();
+
+// Fail fast on missing/invalid DATABASE_URL, PORT, NODE_ENV, SOROBAN_RPC_URL
+// before any connection is attempted (issue #1646).
+const env = loadEnv();
 
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -21,11 +30,14 @@ const startServer = async () => {
     await connectRedis();
     await sseService.initRedisSubscription();
 
-    const port = process.env.PORT || 3001;
+    const port = env.port;
     const server = app.listen(port, () => {
       logger.info(`Server started on port ${port}`);
       logger.info(
         `API Documentation available at http://localhost:${port}/api-docs`,
+      );
+      logger.info(
+        `Prometheus metrics available at http://localhost:${port}/metrics`,
       );
     });
 
@@ -72,6 +84,18 @@ const startServer = async () => {
       const { prisma: db } = await import("./lib/prisma.js");
       await db.$disconnect();
       logger.info("Database connection closed.");
+
+      // 7. Drain the pg pool so idle clients are closed cleanly and no dangling
+      // connections are left for Postgres to reap via server-side keepalives.
+      // `drainPgPool` bounds the wait so a wedged query cannot hang teardown.
+      try {
+        const { pool } = await import("./lib/prisma.js");
+        const { drainPgPool } = await import("./lib/pg-pool.js");
+        await drainPgPool(pool, { timeoutMs: SHUTDOWN_TIMEOUT_MS });
+      } catch (err) {
+        logger.warn("pg pool drain timed out or failed:", err);
+        exitCode = 1;
+      }
 
       process.exit(exitCode);
     };

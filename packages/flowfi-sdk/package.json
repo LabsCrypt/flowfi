@@ -1,7 +1,7 @@
 {
   "name": "@flowfi/sdk",
   "version": "0.1.0",
-  "description": "Typed TypeScript client for the FlowFi API, generated from the OpenAPI spec via scripts/generate-sdk.sh",
+  "description": "Typed TypeScript client for FlowFi: REST bindings plus standalone Soroban transaction builder with client-side signing",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -13,13 +13,27 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
     "codegen": "../../scripts/generate-sdk.sh"
   },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^17.0.1"
+  },
+  "peerDependencies": {
+    "@stellar/freighter-api": "^6.0.1"
+  },
+  "peerDependenciesMeta": {
+    "@stellar/freighter-api": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
   }
 }

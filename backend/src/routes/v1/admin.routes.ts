@@ -9,6 +9,14 @@ import {
   previewReset,
   previewReplay,
 } from '../../services/indexerService.js';
+import {
+  acknowledgeSentinelAlertHandler,
+  discardDeadLetterHandler,
+  listDeadLetterHandler,
+  listSentinelAlertsHandler,
+  replayAllDeadLetterHandler,
+  replayDeadLetterHandler,
+} from '../../controllers/admin.controller.js';
 
 import { prisma, pool } from '../../lib/prisma.js';
 import { getPoolMetrics } from '../../lib/pg-pool.js';
@@ -500,5 +508,222 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Replay failed' });
   }
 });
+
+// ─── Dead-letter quarantine ───────────────────────────────────────────────────
+//
+// Events the indexer could not process are quarantined instead of retried
+// inline, so one malformed payload cannot stall the worker cursor. These routes
+// are the operator interface to that table: inspect, replay, or discard.
+//
+// `requireAdmin` is applied router-wide above, so every route here requires an
+// admin JWT and answers 401/403 to unauthenticated callers.
+
+/**
+ * @openapi
+ * /v1/admin/indexer/dead-letter:
+ *   get:
+ *     tags: [Admin]
+ *     summary: List quarantined indexer events
+ *     description: |
+ *       Paginated, filterable view of Soroban events the indexer failed to
+ *       process. Each entry carries the raw payload and the most recent error,
+ *       with `attempts` recording how many times processing has been tried.
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, minimum: 1, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+ *       - in: query
+ *         name: ledgerSequence
+ *         schema: { type: integer }
+ *         description: Return only events from this ledger
+ *       - in: query
+ *         name: startDate
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: endDate
+ *         schema: { type: string, format: date-time }
+ *       - in: query
+ *         name: eventType
+ *         schema: { type: string, example: stream_created }
+ *     responses:
+ *       200:
+ *         description: Paginated dead-letter records
+ *       400:
+ *         description: Invalid query parameters
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - admin access required
+ */
+router.get('/indexer/dead-letter', listDeadLetterHandler);
+
+/**
+ * @openapi
+ * /v1/admin/indexer/dead-letter/replay-all:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Replay every pending dead-letter event
+ *     description: |
+ *       Replays all pending records sequentially, oldest ledger first, so events
+ *       for the same stream apply in their original order.
+ *     security: [{ adminAuth: [] }]
+ *     responses:
+ *       200:
+ *         description: Per-record replay outcomes plus an aggregate summary
+ */
+router.post('/indexer/dead-letter/replay-all', replayAllDeadLetterHandler);
+
+/**
+ * @openapi
+ * /v1/admin/indexer/dead-letter/{id}/replay:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Replay a single quarantined event
+ *     description: |
+ *       Re-injects the payload through the indexer pipeline. On success the
+ *       dead-letter row is deleted and the corresponding Stream / StreamEvent
+ *       records are created; on failure `attempts` is incremented and
+ *       `lastAttemptAt` / `errorMessage` are refreshed.
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Event replayed and removed from the dead-letter table
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - admin access required
+ *       404:
+ *         description: Dead-letter event not found
+ *       422:
+ *         description: Replay ran but failed, or the payload is undecodable
+ */
+router.post('/indexer/dead-letter/:id/replay', replayDeadLetterHandler);
+
+/**
+ * @openapi
+ * /v1/admin/indexer/dead-letter/{id}:
+ *   delete:
+ *     tags: [Admin]
+ *     summary: Permanently discard a quarantined event
+ *     description: |
+ *       Deletes an unrecoverable record. The discard is written to the
+ *       application log with the acting admin key so the loss of an on-chain
+ *       event remains auditable.
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Record discarded
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden - admin access required
+ *       404:
+ *         description: Dead-letter event not found
+ */
+router.delete('/indexer/dead-letter/:id', discardDeadLetterHandler);
+
+// ─── Sentinel anomaly detection (Issue #1469) ─────────────────────────────────
+//
+// The real-time drain sentinel records anomalies as the indexer processes
+// withdrawals and stream creations. These endpoints are the responder
+// interface: current threat score, flagged addresses and incident history.
+// `requireAdmin` (applied router-wide above) guards every one of them.
+
+/**
+ * @openapi
+ * /v1/admin/sentinel/alerts:
+ *   get:
+ *     tags: [Admin]
+ *     summary: List sentinel anomalies, threat score, and flagged addresses
+ *     description: |
+ *       Returns the real-time anomaly dashboard backing the drain sentinel:
+ *       the aggregate 0-100 threat score, the addresses implicated in recent
+ *       anomalies, and the incident history (newest first). Filter by
+ *       `severity`, `address`, or page with `limit`.
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: severity
+ *         schema: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+ *       - in: query
+ *         name: address
+ *         schema: { type: string }
+ *         description: Stellar public key to filter incidents by
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+ *     responses:
+ *       200:
+ *         description: Sentinel dashboard snapshot
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 threatScore:
+ *                   type: object
+ *                   properties:
+ *                     score: { type: integer, example: 75 }
+ *                     level: { type: string, enum: [NONE, LOW, MEDIUM, HIGH, CRITICAL] }
+ *                     incidentCount: { type: integer }
+ *                     bySeverity: { type: object, additionalProperties: { type: integer } }
+ *                     windowMinutes: { type: integer }
+ *                 flaggedAddresses:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       address: { type: string }
+ *                       threatScore: { type: integer }
+ *                       incidentCount: { type: integer }
+ *                       highestSeverity: { type: string }
+ *                       lastIncidentAt: { type: string, format: date-time }
+ *                 incidents:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/SentinelIncident' }
+ *                 count: { type: integer }
+ *                 generatedAt: { type: string, format: date-time }
+ *       400:
+ *         description: Invalid severity filter
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication token
+ *       403:
+ *         description: Forbidden - admin access required
+ */
+router.get('/sentinel/alerts', listSentinelAlertsHandler);
+
+/**
+ * @openapi
+ * /v1/admin/sentinel/alerts/{id}/acknowledge:
+ *   post:
+ *     tags: [Admin]
+ *     summary: Acknowledge a sentinel incident
+ *     security: [{ adminAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Incident acknowledged
+ *       404:
+ *         description: Incident not found
+ */
+router.post('/sentinel/alerts/:id/acknowledge', acknowledgeSentinelAlertHandler);
 
 export default router;

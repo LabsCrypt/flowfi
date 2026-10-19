@@ -19,6 +19,7 @@ import {
   getTokenAddress,
 } from "@/lib/soroban";
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { useRouter } from "next/navigation";
 import {
   Upload,
@@ -181,7 +182,7 @@ export function BatchStreamWizard({
       }
 
       if (completed > 0) {
-        toast.success(`Successfully created ${completed} stream(s)`);
+        transactionSuccessToast(`Successfully created ${completed} stream(s)`);
         router.push("/dashboard");
       }
     } catch (err) {
@@ -582,5 +583,4 @@ export function BatchStreamWizard({
     </div>
   );
 }
-
 

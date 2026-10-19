@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS } from '../src/controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getStreamSnapshot, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS } from '../src/controllers/stream.controller.js';
 import { prisma } from '../src/lib/prisma.js';
-import { claimableAmountService } from '../src/services/claimable.service.js';
+import { claimableAmountService, calculateHistoricalStreamSnapshot } from '../src/services/claimable.service.js';
 import * as sorobanService from '../src/services/sorobanService.js';
 import type { Request, Response } from 'express';
 
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   prisma: {
     stream: {
       upsert: vi.fn(),
@@ -26,6 +27,8 @@ vi.mock("../src/services/claimable.service.js", () => ({
   claimableAmountService: {
     getClaimableAmount: vi.fn(),
   },
+  calculateHistoricalStreamSnapshot: vi.fn(),
+  StreamSnapshotHistoryError: class extends Error {},
 }));
 
 vi.mock("../src/services/sorobanService.js", () => ({
@@ -207,6 +210,20 @@ describe("Stream Controller", () => {
       );
     });
 
+    it('should return 400 when depositedAmount exceeds i128 max (#1532)', async () => {
+      req.body.depositedAmount = '170141183460469231731687303715884105728';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(prisma.stream.findUnique).not.toHaveBeenCalled();
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.stringContaining('depositedAmount') }),
+        })
+      );
+    });
+
     it('should return 400, not 500, when depositedAmount is missing', async () => {
       delete req.body.depositedAmount;
       await createStream(req as Request, res as Response);
@@ -311,6 +328,45 @@ describe("Stream Controller", () => {
     });
   });
 
+  describe('getStreamSnapshot', () => {
+    it('validates the timestamp before querying stream history', async () => {
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '12.5' };
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(prisma.stream.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('loads only events through the requested timestamp and returns the replayed snapshot', async () => {
+      const events = [{ eventType: 'CREATED', amount: '1000', timestamp: 100n, metadata: null, ledgerSequence: 1 }];
+      const snapshot = {
+        streamId: '123', timestamp: 150, depositedAmount: '1000', withdrawnAmount: '0',
+        claimableAmount: '500', unvestedAmount: '500', statusAtTimestamp: 'ACTIVE',
+      };
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '150' };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123n, ratePerSecond: '10', startTime: 100n, events,
+      });
+      (calculateHistoricalStreamSnapshot as any).mockReturnValue(snapshot);
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+        where: { streamId: 123n },
+        select: expect.objectContaining({
+          events: expect.objectContaining({
+            where: { timestamp: { lte: 150n } },
+            orderBy: [{ timestamp: 'asc' }, { ledgerSequence: 'asc' }],
+          }),
+        }),
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(snapshot);
+    });
+  });
   describe("getUserStreamSummary", () => {
     it("should return 400 when address is missing", async () => {
       req.params = {} as any;

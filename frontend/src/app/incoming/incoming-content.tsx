@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import toast from "react-hot-toast";
 import TransactionTracker, {
   useTransactionTracker,
@@ -34,6 +35,12 @@ function LoadingCard() {
 export default function IncomingContent() {
   const { session, status, isHydrated } = useWallet();
   const tracker = useTransactionTracker();
+  // Stream being withdrawn and its withdrawn total (base units) before the
+  // withdrawal, so the tracker only confirms once the indexer shows an increase.
+  const [pendingWithdrawal, setPendingWithdrawal] = useState<{
+    streamId: string;
+    expectedChanges: { withdrawnAmountAbove: string };
+  } | null>(null);
 
   const incomingStreamsQuery = useIncomingStreams(session?.publicKey);
   const withdrawMutation = useWithdrawIncomingStream(
@@ -55,6 +62,12 @@ export default function IncomingContent() {
   );
 
   const handleWithdraw = async (stream: IncomingStreamRecord) => {
+    setPendingWithdrawal({
+      streamId: String(stream.streamId),
+      expectedChanges: {
+        withdrawnAmountAbove: BigInt(Math.floor(stream.withdrawn * 1e7)).toString(),
+      },
+    });
     tracker.start();
 
     try {
@@ -165,6 +178,9 @@ export default function IncomingContent() {
               action="withdraw"
               txHash={tracker.txHash}
               error={tracker.error}
+              streamId={pendingWithdrawal?.streamId}
+              expectedChanges={pendingWithdrawal?.expectedChanges}
+              onConfirmed={tracker.succeed}
             />
           </section>
         )}

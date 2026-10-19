@@ -5,6 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 
 /**
  * components/dashboard/dashboard-view.tsx
@@ -41,7 +42,11 @@ import {
   toSorobanErrorMessage,
 } from "@/lib/soroban";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SSEStatusIndicator } from "./SSEStatusIndicator";
+import { BatchClaimDrawer } from "./BatchClaimDrawer";
+import { KeyboardShortcutBadge } from "./KeyboardShortcutBadge";
+import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import {
   StreamCreationWizard,
   type StreamFormData,
@@ -51,6 +56,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
+import { CashflowProjectionChart } from "./CashflowProjectionChart";
 
 // @ts-expect-error unused var
 const DashboardOverviewDynamic = dynamic(
@@ -358,11 +364,13 @@ const StreamsTable = React.memo(function StreamsTable({
   onTopUp,
   onCancel,
   onShowDetails,
+  selectedStreamId = null,
 }: {
   snapshot: DashboardSnapshot | null;
   onTopUp: (stream: Stream) => void;
   onCancel: (stream: Stream) => void;
   onShowDetails: (stream: Stream) => void;
+  selectedStreamId?: string | null;
 }) {
   if (!snapshot) return null;
   return (
@@ -391,7 +399,13 @@ const StreamsTable = React.memo(function StreamsTable({
               .map((stream) => (
                 <tr
                   key={stream.id}
-                  className="cursor-pointer hover:bg-white/5"
+                  data-stream-id={stream.id}
+                  aria-selected={selectedStreamId === stream.id}
+                  className={`cursor-pointer hover:bg-white/5 ${
+                    selectedStreamId === stream.id
+                      ? "bg-accent/10 ring-1 ring-inset ring-accent/40"
+                      : ""
+                  }`}
                   onClick={(e) => {
                     if ((e.target as HTMLElement).closest("button")) return;
                     onShowDetails(stream);
@@ -526,11 +540,137 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       : "Failed to fetch dashboard data."
     : null;
 
+  // ── Stream search & keyboard navigation ───────────────────────────────────
+  const [showShortcuts, setShowShortcuts] = React.useState(false);
+  const [showBatchClaim, setShowBatchClaim] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [selectedIndex, setSelectedIndex] = React.useState(0);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  const matchesSearch = React.useCallback(
+    (stream: Stream) => {
+      const query = searchQuery.trim().toLowerCase();
+      if (!query) return true;
+      return (
+        stream.recipient.toLowerCase().includes(query) ||
+        stream.id.toLowerCase().includes(query) ||
+        stream.token.toLowerCase().includes(query) ||
+        stream.status.toLowerCase().includes(query)
+      );
+    },
+    [searchQuery],
+  );
+
+  const filteredIncoming = React.useMemo(
+    () => (snapshot?.incomingStreams ?? []).filter(matchesSearch),
+    [snapshot, matchesSearch],
+  );
+  const filteredOutgoing = React.useMemo(
+    () => (snapshot?.outgoingStreams ?? []).filter(matchesSearch),
+    [snapshot, matchesSearch],
+  );
+  const filteredSnapshot = React.useMemo<DashboardSnapshot | null>(
+    () => (snapshot ? { ...snapshot, outgoingStreams: filteredOutgoing } : null),
+    [snapshot, filteredOutgoing],
+  );
+
+  /** Rows the j/k shortcuts move through for the currently active tab. */
+  const navigableStreams = React.useMemo(() => {
+    if (activeTab === "incoming") return filteredIncoming;
+    if (activeTab === "paused") {
+      return [...filteredOutgoing, ...filteredIncoming].filter(
+        (stream) => stream.status === "Paused",
+      );
+    }
+    return filteredOutgoing.filter((stream) => stream.status === "Active");
+  }, [activeTab, filteredIncoming, filteredOutgoing]);
+
+  const safeIndex =
+    navigableStreams.length === 0
+      ? -1
+      : Math.min(selectedIndex, navigableStreams.length - 1);
+  const selectedStreamId =
+    safeIndex >= 0 ? navigableStreams[safeIndex]?.id ?? null : null;
+
+  const moveSelection = React.useCallback(
+    (delta: number) => {
+      setSelectedIndex((current) => {
+        if (navigableStreams.length === 0) return 0;
+        return Math.max(
+          0,
+          Math.min(navigableStreams.length - 1, current + delta),
+        );
+      });
+    },
+    [navigableStreams.length],
+  );
+
+  const hasClaimable = React.useMemo(
+    () =>
+      (snapshot?.incomingStreams ?? []).some(
+        (stream) =>
+          stream.isActive &&
+          stream.status === "Active" &&
+          stream.deposited > stream.withdrawn,
+      ),
+    [snapshot],
+  );
+
+  // Keep the keyboard-selected row visible as j/k move the highlight.
+  React.useEffect(() => {
+    if (!selectedStreamId) return;
+    const row = document.querySelector(
+      `[data-stream-id="${selectedStreamId}"]`,
+    );
+    if (row && typeof row.scrollIntoView === "function") {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedStreamId]);
+
+  useKeyboardShortcuts(
+    [
+      {
+        key: "/",
+        handler: (event) => {
+          event.preventDefault();
+          searchInputRef.current?.focus();
+        },
+      },
+      { key: "j", handler: () => moveSelection(1) },
+      { key: "k", handler: () => moveSelection(-1) },
+      {
+        key: "c",
+        handler: () => {
+          if (!hasClaimable) return;
+          if (activeTab !== "incoming") {
+            const params = new URLSearchParams(searchParams.toString());
+            params.set("tab", "incoming");
+            router.replace(`?${params.toString()}`);
+          }
+          setShowBatchClaim(true);
+        },
+      },
+      { key: "?", handler: () => setShowShortcuts(true) },
+      {
+        key: "Escape",
+        handler: () => {
+          setShowShortcuts(false);
+          setShowBatchClaim(false);
+        },
+        allowInEditable: true,
+      },
+    ],
+    // Kept enabled while the cheatsheet is open so Escape can dismiss it;
+    // suspended while a blocking overlay (wizard / action modal) is up.
+    !showWizard && !modal,
+  );
+
   const {
     events: streamEvents,
     connected,
     reconnecting,
     error,
+    retryNow,
   } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
@@ -650,7 +790,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       addStreamLocally(data);
       // We don't call setShowWizard(false) here anymore, the wizard handles its own flow
-      toast.success("Transaction confirmed on-chain!", { id: toastId });
+      transactionSuccessToast("Transaction confirmed on-chain!", { id: toastId });
       return result;
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
@@ -667,7 +807,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       topUpStreamLocally(streamId, parseFloat(amountStr));
       setModal(null);
-      toast.success("Stream topped up successfully!", { id: toastId });
+      transactionSuccessToast("Stream topped up successfully!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;
@@ -682,7 +822,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
       });
       removeStreamLocally(streamId);
       setModal(null);
-      toast.success("Stream cancelled.", { id: toastId });
+      transactionSuccessToast("Stream cancelled.", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;
@@ -697,7 +837,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         streamId: BigInt(stream.id.replace(/\D/g, "") || "0"),
       });
       await refetchSnapshot();
-      toast.success("Withdrawal successful!", { id: toastId });
+      transactionSuccessToast("Withdrawal successful!", { id: toastId });
     } catch (err) {
       toast.error(toSorobanErrorMessage(err), { id: toastId });
       throw err;
@@ -752,11 +892,13 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
+          <CashflowProjectionChart streams={[...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })), ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token }))]} />
           <StreamsTable
-            snapshot={snapshot}
+            snapshot={filteredSnapshot}
             onTopUp={handleTopUp}
             onCancel={handleCancel}
             onShowDetails={handleShowDetails}
+            selectedStreamId={selectedStreamId}
           />
           <RecentActivityList snapshot={snapshot} onCreateStream={handleShowWizard} />
         </div>
@@ -767,9 +909,14 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (activeTab === "incoming") {
       return (
         <DashboardIncomingDynamic
-          incomingStreams={snapshot!.incomingStreams}
+          incomingStreams={filteredIncoming}
           onWithdraw={handleIncomingWithdraw}
           withdrawingStreamId={withdrawingIncomingStreamId}
+          onOpenBatchClaim={() => setShowBatchClaim(true)}
+          onBatchClaimSuccess={() => {
+            void refetchSnapshot();
+          }}
+          selectedStreamId={selectedStreamId}
         />
       );
     }
@@ -777,11 +924,12 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (activeTab === "outgoing") {
       return (
         <DashboardOutgoingDynamic
-          outgoingStreams={snapshot!.outgoingStreams}
+          outgoingStreams={filteredOutgoing}
           onTopUp={(s) => setModal({ type: "topup", stream: s })}
           onCancel={(s) => setModal({ type: "cancel", stream: s })}
           onShowDetails={(s) => setModal({ type: "details", stream: s })}
           setShowWizard={() => setShowWizard(true)}
+          selectedStreamId={selectedStreamId}
         />
       );
     }
@@ -789,8 +937,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     if (activeTab === "paused") {
       return (
         <DashboardPausedDynamic
-          outgoingStreams={snapshot!.outgoingStreams}
-          incomingStreams={snapshot!.incomingStreams}
+          outgoingStreams={filteredOutgoing}
+          incomingStreams={filteredIncoming}
         />
       );
     }
@@ -857,10 +1005,29 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                id="stream-search"
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search streams…"
+                aria-label="Search streams"
+                className="w-44 rounded-lg border border-white/10 bg-white/5 px-3 py-2 pr-9 text-sm outline-none transition-colors focus:border-accent md:w-56"
+              />
+              <kbd
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-white/15 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-slate-400"
+              >
+                /
+              </kbd>
+            </div>
             <SSEStatusIndicator
               connected={connected}
               reconnecting={reconnecting}
               error={error}
+              onRetry={retryNow}
             />
             <Button onClick={() => setShowWizard(true)} glow>
               Create Stream
@@ -883,7 +1050,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
 
         {renderContent()}
 
-        <div className="dashboard-actions">
+        <div className="dashboard-actions flex flex-wrap items-center justify-between gap-3">
+          <KeyboardShortcutBadge onOpen={() => setShowShortcuts(true)} />
           <button
             type="button"
             className="secondary-button"
@@ -894,6 +1062,19 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         </div>
       </section>
 
+      {showBatchClaim && (
+        <BatchClaimDrawer
+          streams={filteredIncoming}
+          onClose={() => setShowBatchClaim(false)}
+          onSuccess={async () => {
+            await refetchSnapshot();
+          }}
+        />
+      )}
+      <KeyboardShortcutsModal
+        open={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
       {showWizard && (
         <StreamCreationWizard
           onClose={() => setShowWizard(false)}
