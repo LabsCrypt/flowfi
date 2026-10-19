@@ -165,6 +165,19 @@ describe('RecipientStep', () => {
     });
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it('shows immediate inline error when recipient equals connected sender wallet address', () => {
+    render(
+      <RecipientStep
+        value={`  ${VALID_KEY.toLowerCase()}  `}
+        onChange={vi.fn()}
+        senderAddress={VALID_KEY}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Recipient address cannot be the same as your connected sender wallet',
+    );
+  });
 });
 
 // ─── AmountStep ──────────────────────────────────────────────────────────────

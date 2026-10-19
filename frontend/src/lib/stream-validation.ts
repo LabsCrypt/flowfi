@@ -70,6 +70,9 @@ export function getSpendableBalance(
 
 export type StreamFormErrors = Partial<Record<keyof StreamFormData, string>>;
 
+export const SAME_SENDER_RECIPIENT_ERROR =
+  "Recipient address cannot be the same as your connected sender wallet";
+
 export interface ValidationOptions {
   /**
    * When provided, only validate the fields relevant to the given wizard step:
@@ -84,16 +87,26 @@ export interface ValidationOptions {
   step?: number;
   /** Display-formatted wallet balance for the selected token (e.g. "1000.5") */
   walletBalance?: string | null;
+  /** Connected sender wallet Stellar public key to prevent self-streaming */
+  senderAddress?: string | null;
 }
 
 // ─── Individual field validators ──────────────────────────────────────────────
 
 export function validateRecipient(
   recipient: string,
+  senderAddress?: string | null,
 ): string | null {
   const trimmed = recipient.trim();
   if (!trimmed) {
     return "Recipient address is required";
+  }
+  const normalizedSender = senderAddress?.trim();
+  if (
+    normalizedSender &&
+    trimmed.toLowerCase() === normalizedSender.toLowerCase()
+  ) {
+    return SAME_SENDER_RECIPIENT_ERROR;
   }
   if (!isValidStellarPublicKey(trimmed)) {
     return "Invalid Stellar public key (must start with 'G' and be 56 characters)";
@@ -170,7 +183,7 @@ export function validateStreamForm(
   data: StreamFormData,
   options: ValidationOptions = {},
 ): StreamFormErrors {
-  const { step, walletBalance } = options;
+  const { step, walletBalance, senderAddress } = options;
   const errors: StreamFormErrors = {};
 
   const shouldValidate = (
@@ -180,7 +193,7 @@ export function validateStreamForm(
   // Step 1 = Template selection — no field validation required
   // Step 2 = Recipient
   if (shouldValidate(2)) {
-    const recipientError = validateRecipient(data.recipient);
+    const recipientError = validateRecipient(data.recipient, senderAddress);
     if (recipientError) errors.recipient = recipientError;
   }
 

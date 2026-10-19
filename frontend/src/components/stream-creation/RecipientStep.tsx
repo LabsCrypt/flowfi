@@ -6,17 +6,32 @@ interface RecipientStepProps {
   value: string;
   onChange: (value: string) => void;
   error?: string;
+  senderAddress?: string | null;
 }
 
 const STELLAR_PUBLIC_KEY_LENGTH = 56;
+
+function getPersistedWalletPublicKey(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem("flowfi.wallet.session.v1");
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { publicKey?: unknown };
+    return typeof parsed?.publicKey === "string" ? parsed.publicKey : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export const RecipientStep: React.FC<RecipientStepProps> = ({
   value,
   onChange,
   error,
+  senderAddress,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [touched, setTouched] = useState(false);
+  const effectiveSenderAddress = senderAddress ?? getPersistedWalletPublicKey();
 
   // Auto-focus on mount
   useEffect(() => {
@@ -24,13 +39,19 @@ export const RecipientStep: React.FC<RecipientStepProps> = ({
   }, []);
 
   const trimmed = value.trim();
+  const normalizedSender = effectiveSenderAddress?.trim();
+  const isSameAsSender =
+    Boolean(normalizedSender) &&
+    trimmed.length > 0 &&
+    trimmed.toLowerCase() === normalizedSender!.toLowerCase();
 
   // Real-time feedback: validate once the user has committed the field
-  // (blur / paste) or entered a full-length key, so partial typing does not
-  // flash errors while still catching bad checksums immediately.
+  // (blur / paste), entered a full-length key, or matched the connected sender,
+  // so partial typing does not flash errors while still catching bad checksums
+  // and self-streams immediately.
   const liveError =
-    touched || trimmed.length >= STELLAR_PUBLIC_KEY_LENGTH
-      ? validateRecipient(value)
+    touched || trimmed.length >= STELLAR_PUBLIC_KEY_LENGTH || isSameAsSender
+      ? validateRecipient(value, effectiveSenderAddress)
       : null;
 
   // The wizard-provided error (set on step validation) takes precedence.
