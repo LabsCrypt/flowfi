@@ -61,6 +61,7 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
         streamId: true,
         sender: true,
         recipient: true,
+        tokenAddress: true,
         ratePerSecond: true,
         depositedAmount: true,
         withdrawnAmount: true,

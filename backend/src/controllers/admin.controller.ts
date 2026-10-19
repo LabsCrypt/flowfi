@@ -9,6 +9,10 @@ import {
   replayAllDeadLetterEvents,
   replayDeadLetterEvent,
 } from '../services/indexerService.js';
+import {
+  getSentinelService,
+  isSentinelSeverity,
+} from '../services/sentinel.service.js';
 import logger from '../logger.js';
 
 /** Parse an optional positive-integer query param. */
@@ -35,6 +39,71 @@ function readSingleQueryParam(value: unknown): string | undefined {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : undefined;
   return typeof value === 'string' ? value : undefined;
 }
+
+/**
+ * GET /api/v1/admin/sentinel/alerts
+ *
+ * Sentinel dashboard feed (Issue #1469): current threat score, the addresses
+ * implicated in recent anomalies, and the incident history itself. Supports
+ * `severity`, `address` and `limit` filters so on-call tooling can pull just
+ * the CRITICAL slice during an incident.
+ */
+export const listSentinelAlertsHandler = async (req: Request, res: Response) => {
+  const rawSeverity = readSingleQueryParam(req.query.severity)?.toUpperCase();
+  const severity =
+    rawSeverity && isSentinelSeverity(rawSeverity) ? rawSeverity : undefined;
+  if (rawSeverity && !severity) {
+    return res.status(400).json({
+      error: 'severity must be one of LOW, MEDIUM, HIGH, CRITICAL',
+    });
+  }
+
+  const limit = parseOptionalInt(readSingleQueryParam(req.query.limit));
+  const address = readSingleQueryParam(req.query.address);
+
+  try {
+    const sentinel = getSentinelService();
+    const incidents = sentinel.getAlerts({
+      ...(severity ? { severity } : {}),
+      ...(address ? { address } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    });
+
+    return res.status(200).json({
+      threatScore: sentinel.getThreatScore(),
+      flaggedAddresses: sentinel.getFlaggedAddresses(),
+      incidents,
+      count: incidents.length,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error('[AdminController] Failed to list sentinel alerts:', err);
+    return res.status(500).json({ error: 'Failed to list sentinel alerts' });
+  }
+};
+
+/**
+ * POST /api/v1/admin/sentinel/alerts/:id/acknowledge
+ *
+ * Marks an incident reviewed so a responding engineer can distinguish the
+ * anomalies still needing attention from the ones already triaged.
+ */
+export const acknowledgeSentinelAlertHandler = async (
+  req: Request,
+  res: Response,
+) => {
+  const rawId = req.params.id;
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  if (!id) {
+    return res.status(400).json({ error: 'id is required' });
+  }
+
+  const acknowledged = getSentinelService().acknowledgeAlert(id);
+  if (!acknowledged) {
+    return res.status(404).json({ error: 'Sentinel incident not found' });
+  }
+  return res.status(200).json({ ok: true, id, acknowledged: true });
+};
 
 /**
  * GET /api/v1/admin/indexer/dead-letter
@@ -169,10 +238,7 @@ export const discardDeadLetterHandler = async (req: Request, res: Response) => {
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
   if (!id) {
     return res.status(400).json({ error: 'id is required' });
-  }
-
-  const discardedBy = (req as AuthenticatedRequest).user?.publicKey ?? 'unknown';
-
+  }  const discardedBy = (req as AuthenticatedRequest).user?.publicKey ?? 'unknown';
   try {
     const discarded = await discardDeadLetterEvent(id, discardedBy);
     return res.status(200).json({ ok: true, discarded });

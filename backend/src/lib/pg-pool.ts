@@ -1,8 +1,10 @@
 import pg from 'pg';
+import logger from '../logger.js';
 import {
   dbPoolConnections,
   dbPoolMaxConnections,
   dbQueryDuration,
+  registerDbPoolStatsProvider,
 } from './metrics.js';
 
 const parsePositiveIntegerEnv = (name: string, defaultValue: number): number => {
@@ -17,24 +19,47 @@ const parsePositiveIntegerEnv = (name: string, defaultValue: number): number => 
 
 export const createPgPoolConfig = (overrides?: Partial<pg.PoolConfig>): pg.PoolConfig => ({
   connectionString: process.env.DATABASE_URL,
-  max: parsePositiveIntegerEnv('PG_POOL_MAX', 10),
-  idleTimeoutMillis: parsePositiveIntegerEnv('PG_IDLE_TIMEOUT_MS', 30_000),
-  connectionTimeoutMillis: parsePositiveIntegerEnv('PG_CONNECTION_TIMEOUT_MS', 5_000),
+  max: parsePositiveIntegerEnv('PG_POOL_MAX', 20),
+  idleTimeoutMillis: parsePositiveIntegerEnv('PG_IDLE_TIMEOUT_MS', 10_000),
+  connectionTimeoutMillis: parsePositiveIntegerEnv('PG_CONNECTION_TIMEOUT_MS', 2_000),
   statement_timeout: parsePositiveIntegerEnv('PG_STATEMENT_TIMEOUT_MS', 30_000),
   ...overrides,
 });
 
 /**
- * Publish pool utilisation gauges.
+ * Snapshot of the pool counts, in the shape the admin API and the Prometheus
+ * gauges consume.
  *
  * `waitingCount` is the number to alert on: a non-zero value means callers are
  * queued for a connection, which surfaces as request latency long before the
  * pool would be considered "full".
  */
+export interface PoolMetrics {
+  totalCount: number;
+  idleCount: number;
+  waitingCount: number;
+}
+
+export function getPoolMetrics(pool: pg.Pool): PoolMetrics {
+  return {
+    totalCount: pool.totalCount ?? 0,
+    idleCount: pool.idleCount ?? 0,
+    waitingCount: pool.waitingCount ?? 0,
+  };
+}
+
+/**
+ * Publish the legacy labelled `flowfi_db_pool_connections{state=…}` gauge.
+ *
+ * The three per-state gauges (`flowfi_db_pool_*_connections`) are sampled at
+ * scrape time instead; this helper keeps the older aggregate series populated
+ * for dashboards/alerts that were built against it before the split.
+ */
 export function publishPoolMetrics(pool: pg.Pool): void {
-  dbPoolConnections.set({ state: 'total' }, pool.totalCount ?? 0);
-  dbPoolConnections.set({ state: 'idle' }, pool.idleCount ?? 0);
-  dbPoolConnections.set({ state: 'waiting' }, pool.waitingCount ?? 0);
+  const { totalCount, idleCount, waitingCount } = getPoolMetrics(pool);
+  dbPoolConnections.set({ state: 'total' }, totalCount);
+  dbPoolConnections.set({ state: 'idle' }, idleCount);
+  dbPoolConnections.set({ state: 'waiting' }, waitingCount);
   dbPoolMaxConnections.set(pool.options?.max ?? 0);
 }
 
@@ -109,14 +134,22 @@ const POOL_METRICS_INTERVAL_MS = Number(
   process.env.PG_POOL_METRICS_INTERVAL_MS ?? 5_000,
 );
 
-export const createPgPool = (): pg.Pool => {
-  const pool = new pg.Pool(createPgPoolConfig());
+export const createPgPool = (overrides?: Partial<pg.PoolConfig>): pg.Pool => {
+  const pool = new pg.Pool(createPgPoolConfig(overrides));
 
   instrumentPoolQueryTiming(pool);
 
+  // Scrape-time sampling: the dedicated pool gauges read the live counts via
+  // the registered provider on every `/metrics` request, so the scrape always
+  // reflects the pool at that instant (no stale interval-sampled values).
+  registerDbPoolStatsProvider(() => {
+    const { totalCount, idleCount, waitingCount } = getPoolMetrics(pool);
+    return { total: totalCount, idle: idleCount, waiting: waitingCount };
+  });
+
   // `totalCount`/`idleCount`/`waitingCount` are mutated only by pg itself, so a
-  // low-frequency sampler keeps the gauges fresh without adding per-query
-  // overhead. `unref` keeps the timer from holding the process open.
+  // low-frequency sampler keeps the legacy labelled gauge fresh without adding
+  // per-query overhead. `unref` keeps the timer from holding the process open.
   const sampler = setInterval(() => publishPoolMetrics(pool), POOL_METRICS_INTERVAL_MS);
   sampler.unref?.();
 
@@ -124,3 +157,40 @@ export const createPgPool = (): pg.Pool => {
 
   return pool;
 };
+
+export interface DrainPgPoolOptions {
+  /**
+   * Maximum time to wait for in-flight queries to flush before giving up.
+   * Defaults to `PG_POOL_DRAIN_TIMEOUT_MS`, falling back to 30s so a wedged
+   * query can never hold container teardown open indefinitely.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * Gracefully drain a pg pool during process shutdown (SIGTERM/SIGINT).
+ *
+ * `pool.end()` closes every idle client immediately and waits for clients with
+ * in-flight queries to finish before closing them, which prevents abruptly
+ * killed containers from leaving dangling connections for Postgres to reap via
+ * server-side keepalives. The wait is bounded: on timeout the promise rejects
+ * and callers should still force-exit so the process cannot hang.
+ *
+ * Rejects (rather than swallowing) when `pool.end()` itself fails or the
+ * timeout elapses, so shutdown exit codes can reflect the failure.
+ */
+export async function drainPgPool(pool: pg.Pool, options: DrainPgPoolOptions = {}): Promise<void> {
+  const timeoutMs =
+    options.timeoutMs ?? parsePositiveIntegerEnv('PG_POOL_DRAIN_TIMEOUT_MS', 30_000);
+
+  logger.info('Draining database pool...');
+
+  await Promise.race([
+    pool.end(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`pg pool drain timed out after ${timeoutMs}ms`)), timeoutMs),
+    ),
+  ]);
+
+  logger.info('Database pool drained.');
+}

@@ -5,10 +5,12 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import app from '../src/app.js';
+import { prisma } from '../src/lib/prisma.js';
 import { __authChallengeTestUtils, requireAdmin, signJwt } from '../src/middleware/auth.js';
 
 // Mocking prisma for any downstream dependency
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   default: {
     stream: { findMany: vi.fn(() => Promise.resolve([])) },
     streamEvent: {

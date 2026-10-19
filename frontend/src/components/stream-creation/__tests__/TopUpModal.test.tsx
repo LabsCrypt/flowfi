@@ -6,7 +6,12 @@ vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
 }));
 
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: vi.fn(),
+}));
+
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { TopUpModal } from "../TopUpModal";
 
 describe("TopUpModal", () => {
@@ -78,7 +83,7 @@ describe("TopUpModal", () => {
       await waitFor(() => {
         expect(baseProps.onConfirm).toHaveBeenCalledWith("stream-42", "100.5");
       });
-      expect(toast.success).toHaveBeenCalledWith("Successfully added 100.5 USDC to stream");
+      expect(transactionSuccessToast).toHaveBeenCalledWith("Successfully added 100.5 USDC to stream");
     });
   });
 
@@ -93,7 +98,7 @@ describe("TopUpModal", () => {
         expect(toast.error).toHaveBeenCalledWith("Failed to top up stream. Please try again.");
       });
       expect(getConfirmButton()).toBeEnabled();
-      expect(toast.success).not.toHaveBeenCalled();
+      expect(transactionSuccessToast).not.toHaveBeenCalled();
     });
   });
 

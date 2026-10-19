@@ -78,6 +78,7 @@ vi.mock('../../src/lib/redis.js', () => ({
 }));
 
 vi.mock('../../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(mockPrisma)),
   prisma: mockPrisma,
 }));
 
