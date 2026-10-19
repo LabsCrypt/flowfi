@@ -11,7 +11,10 @@ vi.mock("@/lib/transaction-feedback", () => ({
 
 import toast from "react-hot-toast";
 import { transactionSuccessToast } from "@/lib/transaction-feedback";
-import { CancelConfirmModal } from "../CancelConfirmModal";
+import {
+  CancelConfirmModal,
+  calculateCancelSplitPercentages,
+} from "../CancelConfirmModal";
 
 describe("CancelConfirmModal submission and validation", () => {
   const baseProps = {
@@ -84,6 +87,92 @@ describe("CancelConfirmModal submission and validation", () => {
 
     await act(async () => {
       resolveConfirm();
+    });
+  });
+
+  describe("streamed vs refunded percentage bar", () => {
+    it("renders dual-segment progress bar with 1-decimal formatted percentages", () => {
+      render(
+        <CancelConfirmModal
+          {...baseProps}
+          deposited={1000}
+          withdrawn={645}
+        />,
+      );
+
+      expect(screen.getByTestId("cancel-split-label")).toHaveTextContent(
+        "64.5% Streamed / 35.5% Refunded",
+      );
+      const progressbar = screen.getByRole("progressbar", {
+        name: /streamed vs refunded tokens/i,
+      });
+      expect(progressbar).toHaveAttribute("aria-valuenow", "64.5");
+      expect(screen.getByTestId("cancel-streamed-segment")).toHaveStyle({
+        width: "64.5%",
+      });
+      expect(screen.getByTestId("cancel-refunded-segment")).toHaveStyle({
+        width: "35.5%",
+      });
+    });
+
+    it("handles 0% streamed edge case without NaN", () => {
+      render(
+        <CancelConfirmModal
+          {...baseProps}
+          deposited={500}
+          withdrawn={0}
+        />,
+      );
+
+      expect(screen.getByTestId("cancel-split-label")).toHaveTextContent(
+        "0.0% Streamed / 100.0% Refunded",
+      );
+      expect(screen.getByTestId("cancel-streamed-segment")).toHaveStyle({
+        width: "0.0%",
+      });
+      expect(screen.getByTestId("cancel-refunded-segment")).toHaveStyle({
+        width: "100.0%",
+      });
+    });
+
+    it("handles 100% streamed and overflow edge cases without exceeding 100%", () => {
+      const { rerender } = render(
+        <CancelConfirmModal
+          {...baseProps}
+          deposited={500}
+          withdrawn={500}
+        />,
+      );
+
+      expect(screen.getByTestId("cancel-split-label")).toHaveTextContent(
+        "100.0% Streamed / 0.0% Refunded",
+      );
+      expect(screen.getByTestId("cancel-streamed-segment")).toHaveStyle({
+        width: "100.0%",
+      });
+      expect(screen.getByTestId("cancel-refunded-segment")).toHaveStyle({
+        width: "0.0%",
+      });
+
+      // Withdrawn slightly exceeding deposited should clamp cleanly to 100.0% / 0.0%
+      rerender(
+        <CancelConfirmModal
+          {...baseProps}
+          deposited={500}
+          withdrawn={600}
+        />,
+      );
+      expect(screen.getByTestId("cancel-split-label")).toHaveTextContent(
+        "100.0% Streamed / 0.0% Refunded",
+      );
+
+      // Zero or non-finite deposited should not produce NaN
+      expect(calculateCancelSplitPercentages(0, 0).summaryLabel).toBe(
+        "0.0% Streamed / 100.0% Refunded",
+      );
+      expect(calculateCancelSplitPercentages(Number.NaN, 50).summaryLabel).toBe(
+        "0.0% Streamed / 100.0% Refunded",
+      );
     });
   });
 });

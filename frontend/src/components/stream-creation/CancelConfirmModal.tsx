@@ -24,6 +24,38 @@ interface CancelConfirmModalProps {
   onClose: () => void;
 }
 
+export function calculateCancelSplitPercentages(
+  deposited: number,
+  withdrawn: number,
+): {
+  streamedPercent: number;
+  refundedPercent: number;
+  streamedFormatted: string;
+  refundedFormatted: string;
+  summaryLabel: string;
+} {
+  const safeDeposited =
+    Number.isFinite(deposited) && deposited > 0 ? deposited : 0;
+  const safeWithdrawn =
+    Number.isFinite(withdrawn) && withdrawn > 0 ? withdrawn : 0;
+
+  const rawRatio = safeDeposited > 0 ? safeWithdrawn / safeDeposited : 0;
+  const clampedRatio = Math.min(1, Math.max(0, rawRatio));
+
+  const streamedPercent = Number((clampedRatio * 100).toFixed(1));
+  const refundedPercent = Number((100 - streamedPercent).toFixed(1));
+  const streamedFormatted = streamedPercent.toFixed(1);
+  const refundedFormatted = refundedPercent.toFixed(1);
+
+  return {
+    streamedPercent,
+    refundedPercent,
+    streamedFormatted,
+    refundedFormatted,
+    summaryLabel: `${streamedFormatted}% Streamed / ${refundedFormatted}% Refunded`,
+  };
+}
+
 export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
   streamId,
   recipient,
@@ -37,7 +69,13 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
 
   const dialogRef = useModalDialog({ onClose, isCloseDisabled: isSubmitting });
 
-  const remaining = deposited - withdrawn;
+  const remaining = Math.max(0, deposited - withdrawn);
+  const {
+    streamedPercent,
+    streamedFormatted,
+    refundedFormatted,
+    summaryLabel,
+  } = calculateCancelSplitPercentages(deposited, withdrawn);
 
   const handleConfirm = async () => {
     setIsSubmitting(true);
@@ -93,7 +131,7 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
         </div>
 
         {/* Stream summary */}
-        <div className="mb-6 rounded-lg bg-white/5 border border-glass-border divide-y divide-glass-border text-sm">
+        <div className="mb-4 rounded-lg bg-white/5 border border-glass-border divide-y divide-glass-border text-sm">
           <div className="flex justify-between px-4 py-3">
             <span className="text-slate-400">Stream</span>
             <code className="text-accent font-mono text-xs">{streamId}</code>
@@ -109,6 +147,49 @@ export const CancelConfirmModal: React.FC<CancelConfirmModalProps> = ({
           <div className="flex justify-between px-4 py-3">
             <span className="text-slate-400">Remaining in stream</span>
             <span className="font-semibold text-accent">{remaining} {token}</span>
+          </div>
+        </div>
+
+        {/* Visual streamed vs refunded percentage bar */}
+        <div className="mb-6 rounded-lg bg-white/5 border border-glass-border p-4 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-medium text-slate-300">Token Split</span>
+            <span
+              data-testid="cancel-split-label"
+              className="font-mono font-semibold text-foreground"
+            >
+              {summaryLabel}
+            </span>
+          </div>
+          <div
+            role="progressbar"
+            aria-label="Streamed vs refunded tokens"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={streamedPercent}
+            data-testid="cancel-split-bar"
+            className="flex h-2.5 w-full overflow-hidden rounded-full bg-slate-800"
+          >
+            <div
+              data-testid="cancel-streamed-segment"
+              className="bg-emerald-500 transition-all duration-300"
+              style={{ width: `${streamedFormatted}%` }}
+            />
+            <div
+              data-testid="cancel-refunded-segment"
+              className="bg-accent transition-all duration-300"
+              style={{ width: `${refundedFormatted}%` }}
+            />
+          </div>
+          <div className="mt-2 flex items-center justify-between text-slate-400">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+              <span>{streamedFormatted}% Streamed</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
+              <span>{refundedFormatted}% Refunded</span>
+            </span>
           </div>
         </div>
 
