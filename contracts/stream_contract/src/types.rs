@@ -295,7 +295,7 @@ pub struct Stream {
     pub start_time: u64,
     /// Ledger timestamp of the last state mutation, in Unix epoch seconds.
     pub last_update_time: u64,
-    /// Optional timestamp before which no tokens are claimable.
+    /// Ledger timestamp before which tokens cannot be withdrawn (`None` if no cliff), in Unix epoch seconds.
     pub cliff_time: Option<u64>,
     /// `false` once fully withdrawn or cancelled. Always set.
     pub is_active: bool,

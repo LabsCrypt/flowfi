@@ -9,6 +9,12 @@
  */
 
 import type { CreateStreamParams } from './types.js';
+export {
+  calculateRatePerSecond,
+  calculateAlignedDeposit,
+  calculateRequiredDeposit,
+} from './math.js';
+
 
 export interface BuildCallArgs {
   /** Source account (G...) paying the fee and authorizing the call. */
@@ -75,7 +81,7 @@ export async function buildContractCallXdr(args: {
 
   const encodedArgs = encodeMethodArgs(method, methodArgs, { nativeToScVal });
 
-  const op = contract.call(method, ...encodedArgs);
+  const op = (contract as any).call(method, ...(encodedArgs as any[]));
   const tx = new TransactionBuilder(source, {
     fee: String(baseFeeStroops ?? FALLBACK_BASE_FEE_STROOPS),
     networkPassphrase,
@@ -91,8 +97,8 @@ export async function buildContractCallXdr(args: {
 function encodeMethodArgs(
   method: string,
   methodArgs: unknown[],
-  codecs: { nativeToScVal: (v: unknown, opts?: { type?: string }) => unknown },
-): unknown[] {
+  codecs: { nativeToScVal: (v: unknown, opts?: any) => any },
+): any[] {
   const { nativeToScVal } = codecs;
   switch (method) {
     case 'create_stream':
@@ -125,21 +131,76 @@ function encodeMethodArgs(
   }
 }
 
+/**
+ * Validates stream timestamps and positive amounts before building contract invocation XDR (#1659).
+ */
+export function validateStreamParams(params: CreateStreamParams): void {
+  const amount = params.amount ?? params.depositAmount;
+  if (amount === undefined || amount <= 0n) {
+    throw new Error('createStream: depositAmount must be greater than 0');
+  }
+
+  if (params.startTime !== undefined && params.stopTime !== undefined) {
+    const start = BigInt(params.startTime);
+    const stop = BigInt(params.stopTime);
+    if (stop <= start) {
+      throw new Error('createStream: stopTime must be greater than startTime');
+    }
+    if (params.cliffTime !== undefined) {
+      const cliff = BigInt(params.cliffTime);
+      if (cliff < start) {
+        throw new Error('createStream: cliffTime cannot be before startTime');
+      }
+      if (cliff > stop) {
+        throw new Error('createStream: cliffTime cannot be after stopTime');
+      }
+    }
+  }
+
+  if (params.duration !== undefined) {
+    if (params.duration <= 0) {
+      throw new Error('createStream: duration must be > 0');
+    }
+    if (params.cliffDuration !== undefined) {
+      if (params.cliffDuration <= 0 || params.cliffDuration > params.duration) {
+        throw new Error('createStream: cliffDuration must satisfy 0 < cliff <= duration');
+      }
+    }
+  }
+}
+
 /** Build a `create_stream` (or cliff variant) unsigned envelope. */
 export async function buildCreateStreamXdr(
   params: CreateStreamParams,
   build: BuildCallArgs,
 ): Promise<string> {
+  validateStreamParams(params);
+
+  const amount = (params.amount ?? params.depositAmount)!;
+  let duration = params.duration;
+  let cliffDuration = params.cliffDuration;
+
+  if (duration === undefined && params.startTime !== undefined && params.stopTime !== undefined) {
+    duration = Number(BigInt(params.stopTime) - BigInt(params.startTime));
+    if (params.cliffTime !== undefined) {
+      cliffDuration = Number(BigInt(params.cliffTime) - BigInt(params.startTime));
+    }
+  }
+
+  if (duration === undefined) {
+    throw new Error('createStream: duration or (startTime and stopTime) must be provided');
+  }
+
   const { nativeToScVal, Address } = await import('@stellar/stellar-sdk');
   void Address;
-  const method = params.cliffDuration !== undefined ? 'create_stream_with_cliff' : 'create_stream';
+  const method = cliffDuration !== undefined ? 'create_stream_with_cliff' : 'create_stream';
   const methodArgs: unknown[] = [
     params.sender,
     params.recipient,
     params.tokenAddress,
-    params.amount,
-    params.duration,
-    ...(params.cliffDuration !== undefined ? [params.cliffDuration] : []),
+    amount,
+    duration,
+    ...(cliffDuration !== undefined ? [cliffDuration] : []),
   ];
   void nativeToScVal;
   return buildContractCallXdr({
@@ -150,6 +211,26 @@ export async function buildCreateStreamXdr(
     methodArgs,
   });
 }
+
+/**
+ * Standalone Soroban transaction builder for FlowFi streams (#1659).
+ */
+export class StreamTransactionBuilder {
+  constructor(private buildArgs?: BuildCallArgs) {}
+
+  static async createStream(params: CreateStreamParams, build: BuildCallArgs): Promise<string> {
+    return buildCreateStreamXdr(params, build);
+  }
+
+  async createStream(params: CreateStreamParams, build?: BuildCallArgs): Promise<string> {
+    const args = build ?? this.buildArgs;
+    if (!args) {
+      throw new Error('StreamTransactionBuilder: build args (sourceAccount, contractId, networkPassphrase) are required');
+    }
+    return buildCreateStreamXdr(params, args);
+  }
+}
+
 
 /** Build a `withdraw` envelope for a single stream. */
 export async function buildWithdrawXdr(

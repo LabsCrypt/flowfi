@@ -7206,3 +7206,69 @@ fn test_yield_distribution_mock() {
     assert_eq!(stream.withdrawn_amount, 900);
     assert_eq!(stream.deposited_amount, 975);
 }
+
+// ─── Issue #1656: get_remaining_balance view function ───────────────────────
+
+#[test]
+fn test_get_remaining_balance_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // 1. Initial remaining balance before any withdrawal
+    let balance = client.get_remaining_balance(&id);
+    assert_eq!(balance, 1_000);
+
+    // 2. Advance time and make a partial withdrawal
+    advance(&env, 400);
+    let claimed = client.withdraw(&recipient, &id);
+    assert_eq!(claimed, 400);
+
+    let balance_after_partial = client.get_remaining_balance(&id);
+    assert_eq!(balance_after_partial, 600);
+
+    // 3. Complete stream withdrawal
+    advance(&env, 600);
+    let claimed_final = client.withdraw(&recipient, &id);
+    assert_eq!(claimed_final, 600);
+    assert!(client.is_stream_completed(&id));
+
+    // After completion, remaining balance should be 0
+    let balance_completed = client.get_remaining_balance(&id);
+    assert_eq!(balance_completed, 0);
+}
+
+#[test]
+fn test_get_remaining_balance_not_found() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    let res = client.try_get_remaining_balance(&99999);
+    assert_eq!(res, Err(Ok(StreamError::StreamNotFound)));
+}
+
+#[test]
+fn test_get_remaining_balance_cancelled() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    advance(&env, 300);
+    client.cancel_stream(&sender, &id);
+
+    let balance = client.get_remaining_balance(&id);
+    assert_eq!(balance, 0);
+}
+

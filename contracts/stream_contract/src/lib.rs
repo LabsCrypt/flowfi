@@ -2575,6 +2575,26 @@ impl StreamContract {
         })
     }
 
+    /// Returns the unwithdrawn remaining token balance of a stream (`deposited_amount - withdrawn_amount`).
+    ///
+    /// Returns `0` if the stream is already cancelled or completed.
+    ///
+    /// # Errors
+    /// - `StreamNotFound` — no stream exists with `stream_id`.
+    pub fn get_remaining_balance(env: Env, stream_id: u64) -> Result<i128, StreamError> {
+        let stream = try_load_stream(&env, stream_id).ok_or(StreamError::StreamNotFound)?;
+        if stream.status == StreamStatus::Cancelled
+            || stream.status == StreamStatus::Completed
+            || !stream.is_active
+        {
+            return Ok(0);
+        }
+        Ok(stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount))
+    }
+
+
     /// Returns the unlock curve governing a stream, or `None` if it is unknown.
     ///
     /// Callers building a vesting UI need the step list itself, not just the
