@@ -2594,7 +2594,6 @@ impl StreamContract {
             .saturating_sub(stream.withdrawn_amount))
     }
 
-
     /// Returns the unlock curve governing a stream, or `None` if it is unknown.
     ///
     /// Callers building a vesting UI need the step list itself, not just the

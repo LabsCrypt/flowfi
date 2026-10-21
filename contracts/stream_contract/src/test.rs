@@ -7271,4 +7271,3 @@ fn test_get_remaining_balance_cancelled() {
     let balance = client.get_remaining_balance(&id);
     assert_eq!(balance, 0);
 }
-
