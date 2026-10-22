@@ -16,6 +16,8 @@ class MockEventSource {
   onmessage: EventHandler | null = null;
   onerror: ErrorHandler | null = null;
   readyState = 0;
+  /** Mirrors the real EventSource: no events are delivered once closed. */
+  closed = false;
 
   private handlers: Map<string, EventHandler[]> = new Map();
 
@@ -37,7 +39,17 @@ class MockEventSource {
 
   /** Fire a named event as if it arrived from the server. */
   emit(type: string, data: unknown) {
-    const event = { data: JSON.stringify(data) } as MessageEvent;
+    this.deliver(type, JSON.stringify(data));
+  }
+
+  /** Deliver a raw payload string (e.g. truncated or malformed JSON). */
+  emitRaw(type: string, raw: string) {
+    this.deliver(type, raw);
+  }
+
+  private deliver(type: string, raw: string) {
+    if (this.closed) return;
+    const event = { data: raw } as MessageEvent;
     for (const handler of this.handlers.get(type) ?? []) {
       handler(event);
     }
@@ -57,6 +69,7 @@ class MockEventSource {
 
   close() {
     this.readyState = 2;
+    this.closed = true;
   }
 }
 
@@ -331,5 +344,262 @@ describe('useStreamEvents', () => {
     // 1 initial + 20 reconnect attempts = 21 instances max.
     // After the 20th reconnect attempt, no more timers should fire.
     expect(MockEventSource.instanceCount).toBeLessThanOrEqual(21);
+  });
+
+  // ─── Reconnect timer cleanup (#1783) ──────────────────────────────────────
+
+  describe('reconnect timer cleanup (#1783)', () => {
+    it('schedules no timers until a connection error occurs', () => {
+      renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('clears the pending reconnect timer when the hook unmounts', () => {
+      const { unmount } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
+
+      act(() => { MockEventSource.instance?.triggerError(); });
+      expect(vi.getTimerCount()).toBe(1);
+
+      unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('never reconnects after unmounting while a reconnect is pending', () => {
+      // Stable identity so re-renders never trigger a reconnect of their own.
+      const streamIds = ['1'];
+      const { unmount } = renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true }),
+      );
+
+      const first = MockEventSource.instance;
+      act(() => { first?.triggerError(); });
+
+      unmount();
+      act(() => { vi.advanceTimersByTime(10 * 60 * 1000); });
+
+      // The stale backoff timer must not have produced a new connection.
+      expect(MockEventSource.instanceCount).toBe(1);
+      expect(MockEventSource.instance).toBe(first);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('closes the active connection on unmount and stops delivering events', () => {
+      const { result, unmount } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
+      );
+
+      const first = MockEventSource.instance;
+      act(() => {
+        first?.open();
+        first?.emit('stream.created', { streamId: 1 });
+      });
+      expect(result.current.events).toHaveLength(1);
+
+      unmount();
+
+      expect(first?.closed).toBe(true);
+
+      // Events emitted on the stale source after unmount are dropped.
+      act(() => { first?.emit('stream.created', { streamId: 2 }); });
+      expect(result.current.events).toHaveLength(1);
+    });
+
+    it('schedules exactly one reconnect timer across repeated error events', () => {
+      renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
+
+      const first = MockEventSource.instance;
+      act(() => {
+        // Several failures in the same tick (e.g. a flapping network).
+        first?.triggerError();
+        first?.triggerError();
+        first?.triggerError();
+      });
+
+      // Repeated failures must not stack timers on top of each other.
+      expect(vi.getTimerCount()).toBe(1);
+
+      // Like consecutive failures, a burst of errors grows the backoff:
+      // 1000 → 2000 → 4000, and only the last delay is actually scheduled.
+      act(() => { vi.advanceTimersByTime(3999); });
+      expect(MockEventSource.instanceCount).toBe(1);
+
+      act(() => { vi.advanceTimersByTime(1); });
+
+      // Exactly one reconnect attempt was made for the burst of errors.
+      expect(MockEventSource.instanceCount).toBe(2);
+      expect(MockEventSource.instance).not.toBe(first);
+    });
+
+    it('does not reconnect when unmounting just before the retry delay elapses', () => {
+      const streamIds = ['1'];
+      const { unmount } = renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true }),
+      );
+
+      act(() => { MockEventSource.instance?.triggerError(); });
+
+      // One tick before the 1000ms retry fires.
+      act(() => { vi.advanceTimersByTime(999); });
+      expect(MockEventSource.instanceCount).toBe(1);
+
+      unmount();
+      act(() => { vi.advanceTimersByTime(60_000); });
+
+      expect(MockEventSource.instanceCount).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('reports reconnecting=true while a retry is pending and cleans up on unmount', () => {
+      const { result, unmount } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
+
+      act(() => { MockEventSource.instance?.triggerError(); });
+
+      expect(result.current.connected).toBe(false);
+      expect(result.current.reconnecting).toBe(true);
+      expect(result.current.error).toBeInstanceOf(Error);
+
+      unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('leaves no timers behind once the reconnect-attempt cap is exhausted', () => {
+      renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
+
+      for (let i = 0; i < 25; i++) {
+        act(() => { MockEventSource.instance?.triggerError(); });
+        act(() => { vi.advanceTimersByTime(2000); });
+      }
+
+      // 1 initial connection + at most 20 reconnects; once the cap is hit,
+      // no further reconnect timers may remain scheduled.
+      expect(MockEventSource.instanceCount).toBeLessThanOrEqual(21);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  // ─── Malformed SSE event recovery (#1782) ──────────────────────────────────
+
+  describe('malformed SSE event recovery (#1782)', () => {
+    // The hook consumes complete EventSource messages and JSON.parses each
+    // payload. Frames the transport truncates arrive as incomplete text, so
+    // the contract is: unparsable payloads are silently ignored and must not
+    // affect the processing of subsequent valid events.
+    const renderSubscription = () => {
+      const streamIds = ['1'];
+      return renderHook(() => useStreamEvents({ streamIds, autoReconnect: false }));
+    };
+
+    it('ignores payloads that are not valid JSON without crashing', () => {
+      const { result } = renderSubscription();
+      const source = MockEventSource.instance;
+
+      act(() => {
+        source?.open();
+        source?.emitRaw('stream.created', '{"streamId":'); // truncated JSON
+        source?.emitRaw('stream.topped_up', 'not-json at all'); // plain text
+        source?.emitRaw('stream.withdrawn', ''); // empty payload
+      });
+
+      expect(result.current.events).toHaveLength(0);
+      expect(result.current.error).toBeNull();
+      expect(result.current.connected).toBe(true);
+    });
+
+    it('continues processing valid events delivered after malformed ones', () => {
+      const { result } = renderSubscription();
+      const source = MockEventSource.instance;
+
+      act(() => {
+        source?.open();
+        source?.emitRaw('stream.created', '{"broken":');
+        source?.emit('stream.created', { streamId: 42 });
+      });
+
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]?.type).toBe('created');
+      expect(result.current.events[0]?.data).toEqual({ streamId: 42 });
+    });
+
+    it('ignores event types the hook does not subscribe to', () => {
+      const { result } = renderSubscription();
+      const source = MockEventSource.instance;
+
+      act(() => {
+        source?.open();
+        // The EventSource transport only delivers subscribed event types, so
+        // unknown server events never reach the hook's handlers at all.
+        source?.emit('stream.exploded', { streamId: 1 });
+        source?.emit('message', { streamId: 1 });
+        source?.emit('stream.created', { streamId: 7 });
+      });
+
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]?.data).toEqual({ streamId: 7 });
+    });
+
+    it('treats partially delivered frames as malformed and recovers on the next event', () => {
+      const { result } = renderSubscription();
+      const source = MockEventSource.instance;
+
+      act(() => {
+        source?.open();
+        // A frame cut off mid-payload (missing closing brace).
+        source?.emitRaw('stream.topped_up', '{"amount":"100"');
+        source?.emit('stream.topped_up', { amount: '100' });
+      });
+
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]?.type).toBe('topped_up');
+      expect(result.current.events[0]?.data).toEqual({ amount: '100' });
+    });
+
+    it('does not corrupt the event list when malformed payloads interleave with valid ones', () => {
+      const { result } = renderSubscription();
+      const source = MockEventSource.instance;
+
+      act(() => {
+        source?.open();
+        source?.emit('stream.created', { streamId: 1 });
+        source?.emitRaw('stream.created', '%%garbage%%');
+        source?.emit('stream.cancelled', { streamId: 2 });
+      });
+
+      // Newest first: the malformed payload never entered the list.
+      expect(result.current.events).toHaveLength(2);
+      expect(result.current.events[0]?.type).toBe('cancelled');
+      expect(result.current.events[1]?.type).toBe('created');
+    });
+
+    it('keeps malformed payloads from triggering reconnect or error state', () => {
+      const { result } = renderSubscription();
+      const source = MockEventSource.instance;
+
+      act(() => {
+        source?.open();
+        for (let i = 0; i < 5; i++) {
+          source?.emitRaw('stream.created', '{oops');
+        }
+      });
+
+      // Malformed messages are not connection failures: no error state, no
+      // reconnect timers, and the connection stays reported as healthy.
+      expect(result.current.error).toBeNull();
+      expect(result.current.connected).toBe(true);
+      expect(result.current.reconnecting).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });
