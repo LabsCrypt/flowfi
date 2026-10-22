@@ -4,6 +4,9 @@ import {
   useSettings,
   STORAGE_KEYS,
   formatAmountWithPreference,
+  getDecimalPlaces,
+  getAmountFormat,
+  getDisplayCurrency,
   DEFAULT_SETTINGS,
   _resetSharedSettings
 } from './useSettings';
@@ -184,6 +187,136 @@ describe('useSettings and formatAmountWithPreference', () => {
       localStorage.setItem(STORAGE_KEYS.decimalPlaces, '4');
       // string representing 100.1234 * 10^7 = 1001234000
       expect(formatAmountWithPreference('1001234000')).toBe('100.1234');
+    });
+  });
+
+  // ─── Invalid decimal settings fallback (#1784) ─────────────────────────────
+  //
+  // Documented behavior: a missing/empty stored value falls back to the
+  // default of 7. Any other stored string is parsed with
+  // `parseInt(value, 10)`, which truncates to the leading integer (or yields
+  // NaN for values with no leading integer). `formatAmountWithPreference`
+  // then formats with however many decimal places that produces, clamped by
+  // the amount of fractional digits that actually exist — it must never
+  // throw, whatever was stored.
+
+  describe('invalid decimal settings fallback (#1784)', () => {
+    it('uses the documented default of 7 when the stored value is missing or empty', () => {
+      expect(getDecimalPlaces()).toBe(7);
+
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '');
+      expect(getDecimalPlaces()).toBe(7);
+      expect(formatAmountWithPreference(15678901n)).toBe('1.5678901');
+    });
+
+    it('accepts every supported decimal value (2, 4 and 7)', () => {
+      for (const value of [2, 4, 7] as const) {
+        localStorage.setItem(STORAGE_KEYS.decimalPlaces, String(value));
+        expect(getDecimalPlaces()).toBe(value);
+      }
+
+      // Boundary values format to exactly the requested precision.
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '2');
+      expect(formatAmountWithPreference(15678901n)).toBe('1.56');
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '7');
+      expect(formatAmountWithPreference(15678901n)).toBe('1.5678901');
+    });
+
+    it('truncates fractional stored values to their integer prefix', () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '4.9');
+      expect(getDecimalPlaces()).toBe(4);
+
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '2.7');
+      expect(getDecimalPlaces()).toBe(2);
+    });
+
+    it('ignores leading zeros and surrounding whitespace', () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '004');
+      expect(getDecimalPlaces()).toBe(4);
+
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, ' 7 ');
+      expect(getDecimalPlaces()).toBe(7);
+    });
+
+    it('keeps out-of-range values parseable but never formats beyond the token precision', () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '12');
+      expect(getDecimalPlaces()).toBe(12);
+      // Only 7 fractional digits exist on-chain, so extra digits are
+      // unreachable and formatting matches the maximum supported value.
+      expect(formatAmountWithPreference(15678901n)).toBe('1.5678901');
+
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '100');
+      expect(getDecimalPlaces()).toBe(100);
+      expect(formatAmountWithPreference(15678901n)).toBe('1.5678901');
+    });
+
+    it('does not throw for negative values (they trim fractional digits from the right)', () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '-2');
+      expect(getDecimalPlaces()).toBe(-2);
+      // slice(0, -2) on '5678901' keeps the first five digits.
+      expect(formatAmountWithPreference(15678901n)).toBe('1.56789');
+    });
+
+    it('falls back to integer-only formatting for malformed values without throwing', () => {
+      for (const malformed of ['abc', 'seven', 'NaN', '—']) {
+        localStorage.setItem(STORAGE_KEYS.decimalPlaces, malformed);
+
+        const decimals = getDecimalPlaces();
+        expect(Number.isNaN(decimals)).toBe(true);
+        expect(() => formatAmountWithPreference(15678901n)).not.toThrow();
+        // No fractional digits survive a NaN slice bound.
+        expect(formatAmountWithPreference(15678901n)).toBe('1');
+      }
+    });
+
+    it('hydrates the hook with malformed decimals without throwing', async () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, 'abc');
+
+      const { result } = renderHook(() => useSettings());
+
+      await waitFor(() => expect(result.current.isHydrated).toBe(true));
+
+      expect(Number.isNaN(result.current.decimalPlaces)).toBe(true);
+      // The remaining settings still hydrate with their documented defaults.
+      expect(result.current.displayCurrency).toBe(DEFAULT_SETTINGS.displayCurrency);
+      expect(result.current.amountFormat).toBe(DEFAULT_SETTINGS.amountFormat);
+    });
+
+    it('hydrates the hook with an out-of-range value as-is', async () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, '9');
+
+      const { result } = renderHook(() => useSettings());
+
+      await waitFor(() => expect(result.current.isHydrated).toBe(true));
+
+      expect(result.current.decimalPlaces).toBe(9);
+    });
+
+    it('applies a valid value written after invalid ones (recovery)', async () => {
+      localStorage.setItem(STORAGE_KEYS.decimalPlaces, 'garbage');
+
+      const { result } = renderHook(() => useSettings());
+      await waitFor(() => expect(result.current.isHydrated).toBe(true));
+      expect(Number.isNaN(result.current.decimalPlaces)).toBe(true);
+
+      act(() => {
+        result.current.setDecimalPlaces(4);
+      });
+
+      expect(result.current.decimalPlaces).toBe(4);
+      expect(getDecimalPlaces()).toBe(4);
+      expect(formatAmountWithPreference(15678901n)).toBe('1.5678');
+    });
+
+    it('falls back to defaults for empty currency and format values', () => {
+      expect(getDisplayCurrency()).toBe('USD');
+      expect(getAmountFormat()).toBe('full');
+
+      localStorage.setItem(STORAGE_KEYS.displayCurrency, '');
+      localStorage.setItem(STORAGE_KEYS.amountFormat, '');
+
+      expect(getDisplayCurrency()).toBe('USD');
+      expect(getAmountFormat()).toBe('full');
     });
   });
 });
