@@ -48,8 +48,16 @@ export interface UseStreamFormReturn {
   resetForm: () => void;
   /** Validate a single step (wizard-mode); returns true if valid */
   validateStep: (step: number) => boolean;
-  /** Validate the entire form at once; returns true if valid */
-  validateAll: () => boolean;
+  /**
+   * Validate the entire form at once.
+   *
+   * Returns the freshly computed field errors (an empty object means the
+   * form is valid) and stores them in state so the inline error messages are
+   * rendered. Callers must read the *returned* errors rather than the state:
+   * the state update is asynchronous, so reading it in the same tick would
+   * always yield the previous (usually empty) errors.
+   */
+  validateAll: () => StreamFormErrors;
   /** Current wallet balance for the selected token (display string) */
   walletBalance: string | null;
   /** Whether the balance is currently loading */
@@ -431,12 +439,12 @@ export function useStreamForm(
     [formData, walletBalance],
   );
 
-  const validateAll = useCallback((): boolean => {
+  const validateAll = useCallback((): StreamFormErrors => {
     const newErrors = validateStreamForm(formData, {
       walletBalance,
     });
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return newErrors;
   }, [formData, walletBalance]);
 
   const setMaxAmount = useCallback(() => {
