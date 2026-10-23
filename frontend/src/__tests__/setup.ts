@@ -1,6 +1,12 @@
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
+// Ensure the service worker script (public/sw.js) can be evaluated in tests
+// by providing minimal defaults for worker-scope globals when absent.
+if (typeof (globalThis as any).self === 'undefined') {
+  (globalThis as any).self = globalThis;
+}
+
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
   return {

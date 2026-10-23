@@ -1,4 +1,7 @@
-/* FlowFi push notification service worker. */
+/* FlowFi push notification service worker.
+ * Behavior is exercised by frontend/__tests__/sw.test.ts via a worker harness that
+ * evaluates this file against a mocked ServiceWorkerGlobalScope. Keep handlers
+ * registered via self.addEventListener and avoid module-level side effects. */
 
 self.addEventListener('install', () => self.skipWaiting());
 
