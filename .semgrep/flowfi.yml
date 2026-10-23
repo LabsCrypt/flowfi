@@ -1,0 +1,243 @@
+# FlowFi Semgrep rules.
+#
+# Rules in this file are *merge-blocking*: an `error`-level finding from a
+# `flowfi.*` rule fails the Security Gate and blocks the pull request (see the
+# "Evaluate FlowFi SAST gate" step in .github/workflows/security.yml).
+#
+# Because of that, every rule here is deliberately narrow and high precision.
+# A rule that fires on existing, reviewed code is a bug in the rule, not a
+# useful signal — widen it deliberately rather than silencing the gate.
+#
+# Broad, upstream coverage lives in Semgrep's `p/default` ruleset, which is
+# reported to the Security tab for triage but does not block merges.
+#
+# Run locally:
+#   semgrep scan --config .semgrep/flowfi.yml --metrics=off backend frontend contracts
+#
+# Test a change to this file without touching the gate:
+#   semgrep scan --config .semgrep/flowfi.yml --test .semgrep
+
+rules:
+  # -------------------------------------------------------------------
+  # Credentials
+  # -------------------------------------------------------------------
+  - id: flowfi.stellar-secret-key
+    message: >-
+      A Stellar secret key (the `S...` form) is committed. This is the key that
+      can sign transactions and move funds. Revoke it on the network, then purge
+      it from git history.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - '**/*.ts'
+        - '**/*.tsx'
+        - '**/*.js'
+        - '**/*.mjs'
+        - '**/*.rs'
+        - '**/*.json'
+        - '**/*.toml'
+        - '**/*.sh'
+        - '**/*.yml'
+        - '**/*.yaml'
+    # Stellar secret seeds are strkey-encoded: an `S` version byte followed by
+    # exactly 56 base32 characters (1 version + 32 payload + 2 CRC = 35 bytes =
+    # 280 bits / 5). The exact length is what keeps this from firing on
+    # ordinary uppercase identifiers, and it also naturally excludes the
+    # deliberately malformed key fixtures in the frontend validation tests —
+    # so test paths are scanned like any other, rather than allowlisted.
+    pattern-regex: '\bS[A-Z2-7]{56}\b'
+
+  - id: flowfi.private-key-material
+    message: >-
+      Private key material is committed. Remove it, rotate the key, and purge it
+      from git history. Load key material from the environment instead.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - '**/*.ts'
+        - '**/*.tsx'
+        - '**/*.js'
+        - '**/*.mjs'
+        - '**/*.rs'
+        - '**/*.json'
+        - '**/*.sh'
+        - '**/*.yml'
+        - '**/*.yaml'
+    pattern-regex: '-----BEGIN (RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'
+
+  - id: flowfi.provider-api-token
+    message: >-
+      A provider API token is hardcoded. Read it from the environment
+      (`process.env.*`) or the GitHub Actions secrets store, then rotate the
+      exposed token.
+    severity: ERROR
+    languages: [generic]
+    paths:
+      include:
+        - '**/*.ts'
+        - '**/*.tsx'
+        - '**/*.js'
+        - '**/*.mjs'
+        - '**/*.rs'
+        - '**/*.json'
+        - '**/*.sh'
+        - '**/*.yml'
+        - '**/*.yaml'
+    # Recognisable prefixes for tokens that are live credentials on their own.
+    # Deliberately matches prefixes rather than "any long string near the word
+    # secret" — entropy heuristics fire on every base64 blob in the tree.
+    patterns:
+      - pattern-regex: '\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|npm_[A-Za-z0-9]{30,}|sk_live_[A-Za-z0-9]{16,})\b'
+      - pattern-not-regex: '(?i)\b(example|placeholder|dummy|fake|sample|redacted|xxxx+|<[^>]+>|\$\{|\{\{)'
+
+  # -------------------------------------------------------------------
+  # Injection
+  # -------------------------------------------------------------------
+  - id: flowfi.prisma-raw-sql-interpolation
+    message: >-
+      `$queryRawUnsafe`/`$executeRawUnsafe` is being called with an interpolated
+      string. Build the query with positional placeholders (`$1`, `$2`, …) and
+      pass the values as separate arguments, or use `Prisma.sql`, so user input
+      can never become SQL syntax.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - 'backend/src/**'
+        - 'frontend/src/**'
+    # OR, not AND: a regex rule and structural rules under `patterns:` would be
+    # intersected, and no single call site can match both shapes.
+    pattern-either:
+      # A template literal passed to an *unsafe* Prisma call that contains a
+      # `${...}` hole. The reviewed calls in stream.controller.ts and
+      # withdraw.ts use a static template with `$1`/`$2`/`$3` placeholders and
+      # no interpolation — those are the pattern this rule steers people
+      # towards, so it must not match them. A regex is used rather than a
+      # structural pattern because the call and its template argument are
+      # routinely split across lines.
+      - pattern-regex: '(?s)\$(?:queryRawUnsafe|executeRawUnsafe)\(\s*`[^`]*\$\{'
+      # String concatenation is the same injection shape.
+      - pattern: $DB.$queryRawUnsafe('...' + $X)
+      - pattern: $DB.$executeRawUnsafe('...' + $X)
+
+  - id: flowfi.node-shell-injection
+    message: >-
+      A shell command is built from a non-literal argument. Pass an argument
+      vector with `execFile`/`spawn` (no shell) instead of interpolating values
+      into a shell string.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - 'backend/src/**'
+        - 'frontend/src/**'
+        - 'scripts/**'
+    # Anchored to an actual `child_process` import. A bare `$CP.exec(...)`
+    # pattern also matches `RegExp.prototype.exec`, which is everywhere.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              import { ..., exec, ... } from 'child_process'
+              ...
+              exec($CMD, ...)
+          - pattern: |
+              import { ..., execSync, ... } from 'child_process'
+              ...
+              execSync($CMD, ...)
+          - pattern: |
+              import * as $CP from 'child_process'
+              ...
+              $CP.exec($CMD, ...)
+          - pattern: |
+              import * as $CP from 'child_process'
+              ...
+              $CP.execSync($CMD, ...)
+          - pattern: |
+              const $CP = require('child_process')
+              ...
+              $CP.exec($CMD, ...)
+          - pattern: |
+              const $CP = require('child_process')
+              ...
+              $CP.execSync($CMD, ...)
+      # A fully literal command has nothing to inject.
+      - pattern-not: exec('...', ...)
+      - pattern-not: execSync('...', ...)
+      - pattern-not: exec(`...`, ...)
+      - pattern-not: execSync(`...`, ...)
+
+  - id: flowfi.javascript-eval
+    message: >-
+      `eval` executes its argument as code. Parse the value with `JSON.parse`,
+      or dispatch to an explicit set of allowed commands.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - 'backend/src/**'
+        - 'frontend/src/**'
+    pattern: eval(...)
+
+  - id: flowfi.jwt-none-algorithm
+    message: >-
+      A JWT is being verified with the `none` algorithm, which accepts
+      unsigned tokens and bypasses signature verification entirely.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - 'backend/src/**'
+        - 'frontend/src/**'
+    pattern-regex: '(?i)algorithms?\s*:\s*\[?\s*["'']none["'']'
+
+  # -------------------------------------------------------------------
+  # Cross-site scripting
+  # -------------------------------------------------------------------
+  - id: flowfi.react-unescaped-html
+    message: >-
+      `dangerouslySetInnerHTML` renders unescaped HTML and is a direct XSS sink.
+      Render text as children, or sanitise with a vetted library (e.g. DOMPurify)
+      before passing it in.
+    severity: ERROR
+    languages: [typescript]
+    paths:
+      include:
+        - 'frontend/src/**'
+    pattern: dangerouslySetInnerHTML
+
+  # -------------------------------------------------------------------
+  # Soroban contracts
+  # -------------------------------------------------------------------
+  - id: flowfi.contract-unsafe-block
+    message: >-
+      `unsafe` is not allowed in contract code. A memory-safety bug in a
+      contract that holds funds is unrecoverable, so keep the audited surface
+      free of unchecked pointer operations.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - 'contracts/**/src/**'
+    pattern: unsafe { ... }
+
+  - id: flowfi.contract-unwrap-in-production
+    message: >-
+      `unwrap()`/`expect()` panics on `None`/`Err` and will abort a contract
+      invocation. Use `?` with the contract's error type, or return a
+      contract-appropriate error.
+    severity: WARNING
+    languages: [rust]
+    paths:
+      include:
+        - 'contracts/**/src/**'
+      exclude:
+        # Tests and property tests are allowed to panic on assertion failure.
+        - 'contracts/**/src/test.rs'
+        - 'contracts/**/src/acceptance_tests.rs'
+        - 'contracts/**/src/property_tests.rs'
+        - 'contracts/**/tests/**'
+    pattern-either:
+      - pattern: $X.unwrap()
+      - pattern: $X.expect($MSG)

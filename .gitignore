@@ -17,3 +17,8 @@ issue*.md
 pr*.md
 ISSUE_*.md
 PR_*.md
+
+# Security scanner artifacts written into the workspace by the
+# Security Checks workflow (.github/workflows/security.yml)
+trufflehog-results.json
+semgrep.sarif

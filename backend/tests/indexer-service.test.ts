@@ -10,6 +10,9 @@ const hoisted = vi.hoisted(() => ({
   delete: vi.fn(),
   triggerPoll: vi.fn(),
   processEvent: vi.fn(),
+  // The worker serialises cursor writes through this mutex; the mock passes
+  // the callback straight through so the guarded work still executes.
+  runExclusive: vi.fn((fn: () => Promise<void> | void) => fn()),
   runExclusive: vi.fn(),
   sendDeadLetterAlert: vi.fn(),
 }));
@@ -39,6 +42,12 @@ vi.mock('../src/workers/soroban-event-worker.js', () => ({
   },
 }));
 
+vi.mock('../src/logger.js', async () => {
+  // indexerService reads `requestContext` off the logger module for replay
+  // correlation, so the mock has to expose it alongside the default logger.
+  const actual = await vi.importActual<typeof import('../src/logger.js')>('../src/logger.js');
+  return { ...actual, default: { info: vi.fn(), error: vi.fn(), warn: vi.fn() } };
+});
 vi.mock('../src/logger.js', () => ({
   default: {
     info: vi.fn(),
@@ -304,6 +313,8 @@ describe('Dead-letter payload serialisation', () => {
     expect(restored.transactionIndex).toBe(event.transactionIndex);
     expect(restored.operationIndex).toBe(event.operationIndex);
     expect(restored.inSuccessfulContractCall).toBe(true);
+    expect(String((restored.topic[0]! as xdr.ScValSymbol).sym)).toBe('stream_created');
+    expect(String((restored.topic[1]! as xdr.ScValU64).u64)).toBe('7');
     expect((restored.topic[0] as xdr.ScValSymbol).sym.toString()).toBe('stream_created');
     expect((restored.topic[1] as xdr.ScValU64).u64.toString()).toBe('7');
     expect(restored.value.toXDR()).toEqual(event.value.toXDR());
@@ -517,6 +528,7 @@ describe('replayDeadLetterEvent', () => {
     const replayed = mockedWorker.processEvent.mock.calls[0]![0];
     expect(replayed.id).toBe('event-0001');
     expect(replayed.ledger).toBe(482910);
+    expect(String((replayed.topic[0] as xdr.ScValSymbol).sym)).toBe('stream_created');
     expect((replayed.topic[0] as xdr.ScValSymbol).sym.toString()).toBe('stream_created');
   });
 
