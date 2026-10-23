@@ -31,11 +31,19 @@ export interface CreateStreamParams {
   recipient: string;
   tokenAddress: string;
   /** Gross amount in stroops. Must be > 0. */
-  amount: bigint;
+  amount?: bigint;
+  /** Alias for amount in stroops (#1659). Must be > 0. */
+  depositAmount?: bigint;
   /** Stream duration in seconds. Must be > 0. */
-  duration: number;
+  duration?: number;
   /** Optional vesting cliff in seconds (0 < cliff <= duration). */
   cliffDuration?: number;
+  /** Stream start timestamp in Unix epoch seconds (#1659). */
+  startTime?: number | bigint;
+  /** Stream stop/end timestamp in Unix epoch seconds (#1659). Must be > startTime. */
+  stopTime?: number | bigint;
+  /** Optional cliff timestamp in Unix epoch seconds (#1659). Must satisfy startTime <= cliffTime <= stopTime. */
+  cliffTime?: number | bigint;
 }
 
 /**

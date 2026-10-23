@@ -268,6 +268,31 @@ export const httpRequestDuration = new Histogram({
   registers: [registry],
 });
 
+// ─── Sentinel anomaly detection (Issue #1469) ────────────────────────────────
+
+/** Anomaly incidents raised by the drain sentinel, by rule and severity. */
+export const sentinelIncidentsTotal = new Counter({
+  name: 'flowfi_sentinel_incidents_total',
+  help: 'Anomaly incidents raised by the stream drain sentinel',
+  labelNames: ['ruleId', 'severity'] as const,
+  registers: [registry],
+});
+
+/** Outbound alert deliveries fanned out by the sentinel, by channel + outcome. */
+export const sentinelAlertsDispatchedTotal = new Counter({
+  name: 'flowfi_sentinel_alerts_dispatched_total',
+  help: 'Sentinel alert deliveries by channel and outcome',
+  labelNames: ['channel', 'outcome'] as const,
+  registers: [registry],
+});
+
+/** Aggregate threat score (0-100) derived from recently retained incidents. */
+export const sentinelThreatScore = new Gauge({
+  name: 'flowfi_sentinel_threat_score',
+  help: 'Aggregate anomaly threat score (0-100) over the retention window',
+  registers: [registry],
+});
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -311,6 +336,11 @@ export function setSseConnectionCounts(countsByTopic: Map<string, number>, total
 export function recordRpcRequest(method: string, seconds: number, outcome: string): void {
   rpcRequestDuration.observe({ method }, seconds);
   rpcRequestsTotal.inc({ method, outcome });
+}
+
+/** Publish the latest sentinel threat score for alerting dashboards. */
+export function setSentinelThreatScore(score: number): void {
+  sentinelThreatScore.set(score);
 }
 
 export function getMetricsRegistry(): Registry {

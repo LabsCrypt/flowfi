@@ -31,9 +31,9 @@ describe('pg-pool', () => {
     const { createPgPoolConfig } = await import('../src/lib/pg-pool.js');
     const config = createPgPoolConfig();
 
-    expect(config.max).toBe(10);
-    expect(config.idleTimeoutMillis).toBe(30_000);
-    expect(config.connectionTimeoutMillis).toBe(5_000);
+    expect(config.max).toBe(20);
+    expect(config.idleTimeoutMillis).toBe(10_000);
+    expect(config.connectionTimeoutMillis).toBe(2_000);
     expect(config.statement_timeout).toBe(30_000);
   });
 
@@ -61,9 +61,9 @@ describe('pg-pool', () => {
     const { createPgPoolConfig } = await import('../src/lib/pg-pool.js');
     const config = createPgPoolConfig();
 
-    expect(config.max).toBe(10);
-    expect(config.idleTimeoutMillis).toBe(30_000);
-    expect(config.connectionTimeoutMillis).toBe(5_000);
+    expect(config.max).toBe(20);
+    expect(config.idleTimeoutMillis).toBe(10_000);
+    expect(config.connectionTimeoutMillis).toBe(2_000);
     expect(config.statement_timeout).toBe(30_000);
   });
 
@@ -75,9 +75,9 @@ describe('pg-pool', () => {
 
     expect(poolCtorSpy).toHaveBeenCalledWith({
       connectionString: 'postgresql://test:test@localhost:5432/test_db',
-      max: 10,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 5_000,
+      max: 20,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 2_000,
       statement_timeout: 30_000,
     });
   });
@@ -90,8 +90,8 @@ describe('pg-pool', () => {
       expect.objectContaining({
         max: 5,
         statement_timeout: 5000,
-        idleTimeoutMillis: 30_000,
-        connectionTimeoutMillis: 5_000,
+        idleTimeoutMillis: 10_000,
+        connectionTimeoutMillis: 2_000,
       }),
     );
   });

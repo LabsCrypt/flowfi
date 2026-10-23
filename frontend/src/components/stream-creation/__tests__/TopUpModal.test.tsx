@@ -74,6 +74,19 @@ describe("TopUpModal", () => {
       expect(getAmountInput().value).toBe("1.1234567");
     });
 
+    it("accepts the maximum supported precision at the amount boundary", async () => {
+      const user = userEvent.setup();
+      render(<TopUpModal {...baseProps} />);
+      await user.type(getAmountInput(), "1.1234567");
+
+      fireEvent.click(getConfirmButton());
+
+      await waitFor(() => {
+        expect(baseProps.onConfirm).toHaveBeenCalledWith("stream-42", "1.1234567");
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
     it("submits a valid amount and shows a success toast", async () => {
       const user = userEvent.setup();
       render(<TopUpModal {...baseProps} />);

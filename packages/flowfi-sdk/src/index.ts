@@ -28,8 +28,20 @@ export {
   buildCloseXdr,
   simulateAndAssemble,
   applyFeeBuffer,
+  validateStreamParams,
+  StreamTransactionBuilder,
   DEFAULT_FEE_BUFFER_MULTIPLIER,
 } from './builder.js';
+export {
+  CONTRACT_ERRORS,
+  parseContractError,
+} from './errors.js';
+export type { ContractErrorDefinition } from './errors.js';
+export {
+  calculateRatePerSecond,
+  calculateAlignedDeposit,
+  calculateRequiredDeposit,
+} from './math.js';
 export type { Signer } from './signers/index.js';
 export { CustomSigner, KeypairSigner, FreighterSigner } from './signers/index.js';
 

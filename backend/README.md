@@ -26,6 +26,23 @@ API_BASE_URL=https://api.staging.flowfi.io
 
 - `API_BASE_URL`: Overrides the Swagger UI server URL for the deployed environment (e.g., staging or production). When set, Swagger UI targets `<API_BASE_URL>/v1` instead of the hardcoded defaults.
 
+## CORS
+
+The CORS policy is built in `src/config/cors.ts` when the app starts and depends on `NODE_ENV`:
+
+| | `NODE_ENV=production` | Any other value (or unset) |
+|---|---|---|
+| Allowed origins | `FRONTEND_URL` + `CORS_ALLOWED_ORIGINS`, exact match | Same, or `http://localhost:3000` if neither is set |
+| Allowed request headers | `Content-Type`, `Authorization`, `X-Request-ID` | Whatever the preflight requests |
+| Allowed methods | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` | `cors` defaults |
+| Preflight cache (`Access-Control-Max-Age`) | `CORS_MAX_AGE_SECONDS` (default `7200`) | Not set |
+| Credentials | Allowed | Allowed |
+
+- **`FRONTEND_URL` is required in production.** Set it to the frontend origin, e.g. `FRONTEND_URL=https://app.flowfi.xyz`. Comma-separate several origins (e.g. preview domains). Each entry is normalised to its origin, so `https://app.flowfi.xyz/` works too. If no valid origin is configured, or any entry is not an absolute `http(s)` URL (including `*`), the server throws at startup instead of running with an open policy.
+- **Set `NODE_ENV=production` in every deployed environment.** Otherwise the development policy applies (headers and methods unrestricted). The server logs a warning at startup when `NODE_ENV` is unset.
+- Browser requests from any other origin get `403 {"error": "CORS origin not allowed"}` and no `Access-Control-Allow-Origin` header. The rejected origin is logged at `warn` level.
+- Requests without an `Origin` header (health checks, webhooks, curl, server-to-server calls) are not affected.
+
 ## Prisma Database
 
 We use Prisma as our ORM to interact with PostgreSQL.

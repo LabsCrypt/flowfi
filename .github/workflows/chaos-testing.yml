@@ -1,0 +1,66 @@
+# Chaos Engineering / fault-injection verification (issue #1477).
+#
+# Runs the resilience suite against a Toxiproxy fault-injection stack:
+#   - nightly (catches drift regressions while nobody is merging),
+#   - on release-candidate branches,
+#   - and on pull requests that touch the backend.
+name: Chaos Testing
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - 'release/**'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/chaos-testing.yml'
+
+jobs:
+  chaos:
+    name: Resilience chaos suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TOXIPROXY_URL: http://127.0.0.1:8474
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Start chaos stack (Toxiproxy + deps)
+        run: docker compose -f backend/tests/chaos/docker-compose.chaos.yml up -d --wait
+
+      - name: Show stack state
+        run: docker compose -f backend/tests/chaos/docker-compose.chaos.yml ps
+
+      # Coverage is disabled here on purpose: this job runs a single spec, so the
+      # global 60% coverage thresholds from vitest.config.ts can never be met.
+      # The repository-wide coverage gate runs in ci.yml.
+      - name: Run chaos resilience tests
+        run: npx vitest run tests/chaos/resilience.chaos.test.ts --coverage.enabled=false
+        working-directory: backend
+
+      - name: Dump chaos stack logs on failure
+        if: failure()
+        run: docker compose -f backend/tests/chaos/docker-compose.chaos.yml logs --no-color
+
+      - name: Tear down chaos stack
+        if: always()
+        run: docker compose -f backend/tests/chaos/docker-compose.chaos.yml down -v

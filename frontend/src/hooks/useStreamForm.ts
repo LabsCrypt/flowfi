@@ -152,6 +152,7 @@ export const BUILT_IN_TEMPLATES: StreamTemplate[] = [
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 interface DraftPayload {
+  version?: 1;
   recipient: string;
   token: string;
   amount: string;
@@ -169,8 +170,15 @@ function loadDraft(key: string): DraftPayload | null {
     const parsed = JSON.parse(raw) as DraftPayload;
     if (
       parsed &&
+      (parsed.version === undefined || parsed.version === 1) &&
       typeof parsed.recipient === "string" &&
       typeof parsed.amount === "string" &&
+      typeof parsed.token === "string" &&
+      typeof parsed.duration === "string" &&
+      typeof parsed.savedAt === "number" &&
+      Number.isFinite(parsed.savedAt) &&
+      (parsed.durationUnit === undefined || ["seconds", "minutes", "hours", "days", "weeks", "months"].includes(parsed.durationUnit)) &&
+      (parsed.descriptionTag === undefined || typeof parsed.descriptionTag === "string") &&
       (parsed.recipient.trim() !== "" || parsed.amount.trim() !== "")
     ) {
       return parsed;
@@ -192,6 +200,7 @@ function saveDraft(key: string, data: StreamFormData): void {
       return;
     }
     const payload: DraftPayload = {
+      version: 1,
       recipient: data.recipient,
       token: data.token,
       amount: data.amount,

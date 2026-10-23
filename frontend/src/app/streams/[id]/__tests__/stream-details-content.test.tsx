@@ -63,6 +63,15 @@ vi.mock("@/lib/api/_shared", () => ({
   getApiBaseUrl: () => "http://localhost:4000",
 }));
 
+// The component reads the token price through react-query. This suite covers UI
+// behaviour, not the price feed, so stub the hook instead of wiring up a
+// QueryClientProvider (and a network layer) just to render.
+vi.mock("@/hooks/useTokenPrice", () => ({
+  useTokenPrice: () => ({ data: undefined }),
+  convertToFiat: () => 0,
+  formatFiatAmount: () => "$0.00",
+}));
+
 vi.mock("@/lib/logger", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
@@ -155,6 +164,14 @@ function createMockStream() {
 describe("StreamDetailsContent loading skeleton", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -210,6 +227,9 @@ describe("StreamDetailsContent loading skeleton", () => {
     // Skeleton should be gone
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
+    // Stream-specific content should be visible (the header and receipt rows
+    // both reference the stream id, so assert on all matches).
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThan(0);
     // Stream-specific content should be visible
     expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThanOrEqual(1);
   });
@@ -332,10 +352,57 @@ const mockWalletForRecipient = (session = {
   origUseWallet.mockReturnValue({ session, isHydrated: true } as ReturnType<typeof origUseWallet>);
 };
 
+describe("StreamDetailsContent action authorization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTracker.status = "idle";
+    global.fetch = createFetchMock();
+  });
+
+  it("shows only recipient actions to the stream recipient", async () => {
+    mockWalletForRecipient();
+    await renderLoaded();
+
+    expect(screen.getByRole("button", { name: /withdraw/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^top up$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pause$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows only sender actions to the stream sender", async () => {
+    origUseWallet.mockReturnValue({ session: mockSession, isHydrated: true } as ReturnType<typeof origUseWallet>);
+    await renderLoaded();
+
+    expect(screen.queryByRole("button", { name: /withdraw/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^top up$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^pause$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+  });
+
+  it("hides all stream actions from an unrelated wallet", async () => {
+    origUseWallet.mockReturnValue({
+      session: { ...mockSession, publicKey: "GUNRELATED" },
+      isHydrated: true,
+    } as ReturnType<typeof origUseWallet>);
+    await renderLoaded();
+
+    expect(screen.queryByRole("heading", { name: "Actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /withdraw|top up|pause|resume|cancel/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("StreamDetailsContent handleWithdraw", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
     mockWalletForRecipient();
   });
@@ -377,6 +444,20 @@ describe("StreamDetailsContent handleWithdraw", () => {
     const withdrawBtn = screen.getByRole("button", { name: /withdraw/i });
     expect(withdrawBtn).toBeDisabled();
   });
+
+  it("renders zero rate and zero balance without a non-finite claimable value", async () => {
+    mockUseStreamingAmount.mockReturnValue(0);
+    await renderLoaded({
+      depositedAmount: "0",
+      withdrawnAmount: "0",
+      ratePerSecond: "0",
+      endTime: Math.floor(Date.now() / 1000),
+    });
+
+    expect(screen.getByText("Claimable")).toBeInTheDocument();
+    expect(screen.getAllByText(/0(?:\.0+)? XLM/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
+  });
 });
 
 // ─── handleTopUp ──────────────────────────────────────────────────────────
@@ -385,6 +466,14 @@ describe("StreamDetailsContent handleTopUp", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
     // TopUp is only visible for the sender
     origUseWallet.mockReturnValue({
@@ -456,6 +545,14 @@ describe("StreamDetailsContent handlePause", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -498,6 +595,14 @@ describe("StreamDetailsContent handleResume", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -540,6 +645,14 @@ describe("StreamDetailsContent handleCancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -587,6 +700,14 @@ describe("StreamDetailsContent live-claimable interval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response)
+    );
     global.fetch = createFetchMock();
   });
 
@@ -696,7 +817,11 @@ describe("StreamDetailsContent claimable re-sync + pulse", () => {
     await renderStream();
 
     const firstPulse = screen.getByTestId("claimable-tick-pulse");
-    const pulse = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 1000);
+    const pulse = await waitFor(() => {
+      const registeredInterval = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 1000);
+      expect(registeredInterval).toBeTruthy();
+      return registeredInterval;
+    });
     expect(pulse).toBeTruthy();
 
     act(() => {

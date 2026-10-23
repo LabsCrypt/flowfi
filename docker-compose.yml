@@ -21,10 +21,46 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── PgBouncer ──────────────────────────────────────────────────────────────
+  # Transaction-pooling proxy in front of Postgres so the backend can hold many
+  # client connections without exhausting Postgres' own connection limit. The
+  # backend connects through this service (see DATABASE_URL below).
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    container_name: flowfi-pgbouncer
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: flowfi
+      DB_PASSWORD: flowfi_dev_password
+      DB_NAME: flowfi
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 20
+      MAX_DB_CONNECTIONS: 20
+      MAX_PREPARED_STATEMENTS: 100
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,statement_timeout
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "flowfi", "-d", "flowfi"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ── Redis ──────────────────────────────────────────────────────────────────
   # Used for SSE horizontal scaling (pub/sub fan-out across backend instances)
-  # and rate-limit state sharing. Required for the dev:mock sandbox.
-  # Pinned to Redis 7 (alpine) — same upgrade policy as postgres above.
+  # and rate-limit state sharing. Optional for single-instance dev, but required
+  # by the dev:mock sandbox. Start it standalone with:
+  #   docker compose up -d redis
+  # and point the backend at it with REDIS_URL=redis://localhost:6379
+  # (the value used by backend/.env.example). Pinned to Redis 7 (alpine) — same
+  # upgrade policy as postgres above.
   redis:
     image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     container_name: flowfi-redis
@@ -118,7 +154,8 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3001
-      DATABASE_URL: postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi
+      DATABASE_URL: postgresql://flowfi:flowfi_dev_password@pgbouncer:5432/flowfi?pgbouncer=true
+      DATABASE_READ_REPLICA_URL: ${DATABASE_READ_REPLICA_URL:-}
       CORS_ALLOWED_ORIGINS: http://localhost:3000
       REDIS_URL: redis://redis:6379
       # Mock Soroban RPC — points at the local stub, no testnet funding needed.
@@ -129,7 +166,7 @@ services:
     ports:
       - "3001:3001"
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -147,6 +184,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # NEXT_PUBLIC_* are inlined into the client bundle at build time. The
+        # browser talks to the backend over the published host port, so use
+        # localhost here rather than the in-network service name.
+        NEXT_PUBLIC_API_URL: http://localhost:3001/v1
+    container_name: flowfi-frontend
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
 volumes:

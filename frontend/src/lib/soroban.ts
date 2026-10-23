@@ -1,5 +1,9 @@
 import type { WalletSession } from "@/lib/wallet";
 import { getNetworkConfig, type NetworkId } from "@/lib/stellar-config";
+import {
+  assessMultisigRouting,
+  type MultisigRoutingResult,
+} from "@/lib/stellar-multisig";
 
 function activeNetworkConfig() {
   const stored = typeof window === "undefined" ? null : window.localStorage.getItem("flowfi.network");
@@ -59,10 +63,27 @@ export class SorobanCallError extends Error {
       | "WalletRejected"
       | "NetworkError"
       | "ContractNotFound"
+      | "MultisigRequired"
       | "Unknown",
   ) {
     super(message);
     this.name = "SorobanCallError";
+  }
+}
+
+/**
+ * Thrown when a signed envelope is below the account's required signing weight
+ * (issue #1471). Broadcasting it would surface a raw `tx_bad_auth` error, so the
+ * caller should hand the `signedXdr` to the multisig proposal flow instead.
+ */
+export class MultisigRequiredError extends SorobanCallError {
+  constructor(
+    message: string,
+    public readonly signedXdr: string,
+    public readonly routing: MultisigRoutingResult,
+  ) {
+    super(message, "MultisigRequired");
+    this.name = "MultisigRequiredError";
   }
 }
 
@@ -254,6 +275,23 @@ async function freighterCall(
       throw new SorobanCallError("Transaction was rejected in wallet.", "WalletRejected");
     }
     throw new SorobanCallError(msg, "Unknown");
+  }
+
+  // Issue #1471: if the wallet's single signature is below the account's high
+  // threshold, broadcasting here fails with a cryptic `tx_bad_auth`. Detect
+  // that up-front and route the partial envelope into the co-signing flow.
+  const routing = await assessMultisigRouting({
+    publicKey,
+    signedXdr: signedTxXdr,
+    networkPassphrase: config.passphrase,
+    networkId: config.id,
+  });
+  if (routing?.needsProposal) {
+    throw new MultisigRequiredError(
+      "This multisig account needs more signatures before the transaction can be broadcast.",
+      signedTxXdr,
+      routing,
+    );
   }
 
   const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.passphrase);

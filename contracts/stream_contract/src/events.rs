@@ -1,4 +1,6 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env, Symbol};
+use soroban_sdk::{contracttype, Address, BytesN, Env, String, Symbol};
+
+use crate::types::PositionRole;
 
 // ─── Wire Format ─────────────────────────────────────────────────────────────
 //
@@ -57,6 +59,27 @@ pub struct StreamToppedUpEvent {
     pub new_end_time: u64,
 }
 
+/// Emitted when a third-party funder extends an active stream via `top_up_from`.
+///
+/// Topic: `("stream_refueled", stream_id)`
+///
+/// Distinct from [`StreamToppedUpEvent`] (emitted by the stream creator via
+/// `top_up_stream`) so that indexers and UIs can attribute runway extensions
+/// to their correct actor — the external funder rather than the original sender.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamRefueledEvent {
+    pub stream_id: u64,
+    /// Address that supplied the tokens — the third-party funder, not the stream creator.
+    pub funder: Address,
+    /// Net amount credited to the stream after protocol fee deduction.
+    pub amount: i128,
+    /// Total deposited amount on the stream after this refuel.
+    pub new_deposited_amount: i128,
+    /// Projected ledger timestamp at which the stream will fully drain after this refuel.
+    pub new_end_time: u64,
+}
+
 /// Emitted when the recipient withdraws accrued tokens.
 ///
 /// Topic: `("tokens_withdrawn", stream_id)`
@@ -90,6 +113,18 @@ pub struct StreamCancelledEvent {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeCollectedEvent {
+    pub stream_id: u64,
+    pub treasury: Address,
+    pub fee_amount: i128,
+    pub token: Address,
+}
+
+/// Emitted when a protocol fee is collected with multi-recipient splits.
+///
+/// Topic: `("protocol_fee_collected", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolFeeCollectedEvent {
     pub stream_id: u64,
     pub treasury: Address,
     pub fee_amount: i128,
@@ -324,6 +359,16 @@ pub struct StreamClosedEvent {
     pub timestamp: u64,
 }
 
+/// Dedicated event emitted on protocol pause toggle (#1517).
+///
+/// Topics: `("FlowFi", "ProtocolPaused")`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolPausedEvent {
+    pub admin: Address,
+    pub is_paused: bool,
+}
+
 /// Emitted when a conditional milestone's condition verifies true (#1482).
 ///
 /// Topic: `("milestone_condition_unlocked", stream_id)`
@@ -491,6 +536,26 @@ pub fn emit_fee_collected(env: &Env, event: FeeCollectedEvent) {
         .publish((Symbol::new(env, "fee_collected"), event.stream_id), event);
 }
 
+/// Emit a `protocol_fee_collected` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("protocol_fee_collected", stream_id: u64)`.
+///
+/// # Emission trigger
+/// Protocol fee collection with multi-recipient splits during `create_stream`,
+/// `top_up_stream`, and batch creation entrypoints.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`ProtocolFeeCollectedEvent`] payload: stream_id, total fee
+///   amount, and token address.
+pub fn emit_protocol_fee_collected(env: &Env, event: ProtocolFeeCollectedEvent) {
+    env.events().publish(
+        (Symbol::new(env, "protocol_fee_collected"), event.stream_id),
+        event,
+    );
+}
+
 /// Emit an `initialized` event.
 ///
 /// # Event topic
@@ -601,6 +666,31 @@ pub fn emit_protocol_pause_status(env: &Env, event: ProtocolPauseStatusEvent) {
         .publish((Symbol::new(env, "protocol_pause_status"),), event);
 }
 
+/// Emits the dedicated ProtocolPaused event on pause toggle (#1517).
+///
+/// # Event topic
+/// `("FlowFi", "ProtocolPaused")`.
+///
+/// # Emission trigger
+/// `set_protocol_pause` / `set_emergency_pause`, whenever the circuit breaker flips state.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `admin` — caller address that triggered the pause change.
+/// - `is_paused` — the new pause state.
+pub fn emit_protocol_paused(env: &Env, admin: &Address, is_paused: bool) {
+    env.events().publish(
+        (
+            Symbol::new(env, "FlowFi"),
+            Symbol::new(env, "ProtocolPaused"),
+        ),
+        ProtocolPausedEvent {
+            admin: admin.clone(),
+            is_paused,
+        },
+    );
+}
+
 /// Emit an `emergency_guardian_updated` event.
 ///
 /// # Event topic
@@ -706,4 +796,146 @@ pub fn emit_contract_upgraded(env: &Env, event: ContractUpgradedEvent) {
 pub fn emit_state_migrated(env: &Env, event: StateMigratedEvent) {
     env.events()
         .publish((Symbol::new(env, "state_migrated"),), event);
+}
+
+/// Emitted when a cross-asset withdrawal is executed.
+///
+/// Topic: `("cross_asset_withdrawal_executed", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CrossAssetWithdrawalExecutedEvent {
+    pub stream_id: u64,
+    pub input_token: Address,
+    pub output_token: Address,
+    pub input_amount: i128,
+    pub output_amount: i128,
+    pub rate_per_second: i128,
+    pub deadline: u64,
+    pub slippage: i128,
+}
+
+/// Emits a `cross_asset_withdrawal_executed` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("cross_asset_withdrawal_executed", stream_id: u64)`.
+///
+/// # Emission trigger
+/// `withdraw_and_swap`, after the swap has been executed and tokens delivered.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`CrossAssetWithdrawalExecutedEvent`] payload: stream_id,
+///   input token, output token, input amount, output amount, rate, deadline,
+///   and slippage metrics.
+pub fn emit_cross_asset_withdrawal_executed(env: &Env, event: CrossAssetWithdrawalExecutedEvent) {
+    env.events().publish(
+        (
+            Symbol::new(env, "cross_asset_withdrawal_executed"),
+            event.stream_id,
+        ),
+        event,
+    );
+}
+
+/// Emitted when a stream position metadata is generated.
+///
+/// Topic: `("stream_position_created", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPositionCreatedEvent {
+    pub stream_id: u64,
+    pub role: PositionRole,
+    pub token_address: Address,
+    pub rate_per_second: i128,
+    pub start_time: u64,
+    pub end_time: u64,
+    pub is_transferable: bool,
+}
+
+/// Emitted when a stream position metadata is updated (e.g., on recipient transfer).
+///
+/// Topic: `("stream_position_updated", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPositionUpdatedEvent {
+    pub stream_id: u64,
+    pub role: PositionRole,
+    pub new_token_address: Address,
+    pub new_rate_per_second: i128,
+    pub new_start_time: u64,
+    pub new_end_time: u64,
+    pub new_is_transferable: bool,
+}
+
+/// Emitted when a stream position is settled or burned.
+///
+/// Topic: `("stream_position_settled", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamPositionSettledEvent {
+    pub stream_id: u64,
+    pub role: PositionRole,
+    pub status: String,
+    pub timestamp: u64,
+}
+
+/// Emits a `stream_position_created` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("stream_position_created", stream_id: u64)`.
+///
+/// # Emission trigger
+/// `create_stream`, `create_step_vesting_stream`, `create_hybrid_cliff_stream`,
+/// `create_conditional_stream`, and `transfer_recipient`, after the position
+/// metadata has been generated and persisted.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`StreamPositionCreatedEvent`] payload: stream_id, role,
+///   token_address, rate_per_second, start_time, end_time, and is_transferable.
+pub fn emit_stream_position_created(env: &Env, event: StreamPositionCreatedEvent) {
+    env.events().publish(
+        (Symbol::new(env, "stream_position_created"), event.stream_id),
+        event,
+    );
+}
+
+/// Emits a `stream_position_updated` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("stream_position_updated", stream_id: u64)`.
+///
+/// # Emission trigger
+/// `transfer_recipient`, after the position metadata has been updated for the
+/// new recipient.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`StreamPositionUpdatedEvent`] payload: stream_id, role,
+///   new token address, new rate, new start/end times, and new transferability.
+pub fn emit_stream_position_updated(env: &Env, event: StreamPositionUpdatedEvent) {
+    env.events().publish(
+        (Symbol::new(env, "stream_position_updated"), event.stream_id),
+        event,
+    );
+}
+
+/// Emits a `stream_position_settled` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("stream_position_settled", stream_id: u64)`.
+///
+/// # Emission trigger
+/// `cancel_stream` or when a stream reaches `StreamStatus::Completed`, after
+/// the position metadata status is updated to `Settled` or burned.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`StreamPositionSettledEvent`] payload: stream_id, role,
+///   status, and timestamp.
+pub fn emit_stream_position_settled(env: &Env, event: StreamPositionSettledEvent) {
+    env.events().publish(
+        (Symbol::new(env, "stream_position_settled"), event.stream_id),
+        event,
+    );
 }

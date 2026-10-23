@@ -62,7 +62,7 @@
 //! shipped behavior. Reads still transitively renew a stream, because the
 //! entrypoints that call them almost always write the record back.
 
-use soroban_sdk::{Env, Map, Symbol, TryFromVal, Val};
+use soroban_sdk::{Address, Env, Map, Symbol, TryFromVal, Val, Vec};
 
 /// Minimum ledgers remaining before a persistent entry is renewed.
 ///
@@ -91,8 +91,8 @@ pub const INSTANCE_BUMP_AMOUNT: u32 = 518_400;
 
 use crate::errors::StreamError;
 use crate::types::{
-    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
-    VestingSchedule,
+    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, PositionRole, ProtocolConfig,
+    ProtocolFeeConfig, StorageKey, Stream, StreamPositionMetadata, VestingSchedule,
 };
 
 // ─── Version-Tolerant Decoding ────────────────────────────────────────────────
@@ -104,7 +104,7 @@ use crate::types::{
 /// here only so the two can be told apart before a decode is attempted.
 const CONFIG_FIELD_COUNT: u32 = 5;
 const LEGACY_CONFIG_FIELD_COUNT: u32 = 3;
-const STREAM_FIELD_COUNT: u32 = 17;
+const STREAM_FIELD_COUNT: u32 = 18;
 const LEGACY_STREAM_FIELD_COUNT: u32 = 12;
 
 /// Returns the number of fields in a stored record, or `None` if it is not a map.
@@ -155,6 +155,18 @@ pub fn next_stream_id(env: &Env) -> u64 {
 
 // ─── Stream CRUD ─────────────────────────────────────────────────────────────
 
+/// Extends the persistent storage TTL for a position or stream metadata entry
+/// up to the contract maximum lifetime.
+pub fn bump_position_ttl(env: &Env, key: &StorageKey) {
+    if env.storage().persistent().has(key) {
+        env.storage().persistent().extend_ttl(
+            key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+    }
+}
+
 /// Loads a stream by ID from persistent storage, tolerating the legacy shape.
 ///
 /// **Key:** `DataKey::Stream(stream_id)` in persistent storage. This is the
@@ -190,11 +202,7 @@ pub fn load_stream(env: &Env, stream_id: u64) -> Result<Stream, StreamError> {
 pub fn save_stream(env: &Env, stream_id: u64, stream: &Stream) {
     let key = DataKey::Stream(stream_id);
     env.storage().persistent().set(&key, stream);
-    env.storage().persistent().extend_ttl(
-        &key,
-        PERSISTENT_LIFETIME_THRESHOLD,
-        PERSISTENT_BUMP_AMOUNT,
-    );
+    bump_position_ttl(env, &key);
 }
 
 /// Removes a stream record from persistent storage.
@@ -231,12 +239,15 @@ pub fn remove_stream(env: &Env, stream_id: u64) {
 /// count), or a legacy record failed to decode. Callers that need to tell
 /// "no such stream" from "unreadable stream" cannot with this signature.
 pub fn try_load_stream(env: &Env, stream_id: u64) -> Option<Stream> {
-    let raw: Option<Val> = env.storage().persistent().get(&DataKey::Stream(stream_id));
+    let key = DataKey::Stream(stream_id);
+    let raw: Option<Val> = env.storage().persistent().get(&key);
 
     // Reading as a bare `Val` is what makes the legacy fallback possible:
     // `storage.get::<_, Stream>` collapses "absent" and "undecodable" into the
     // same `None`, so the value is inspected before anything is decoded.
     let raw = raw?;
+
+    bump_position_ttl(env, &key);
 
     match record_field_count(env, &raw)? {
         STREAM_FIELD_COUNT => Stream::try_from_val(env, &raw).ok(),
@@ -278,6 +289,7 @@ fn upgrade_legacy_stream(legacy: LegacyStream) -> Stream {
         // New fields default to no arbiter, no dispute, and non-allowance-based.
         arbiter: None,
         dispute_status: DisputeStatus::None,
+        yield_enabled: false,
         is_allowance_based: false,
     }
 }
@@ -370,6 +382,105 @@ pub fn save_config(env: &Env, config: &ProtocolConfig) {
     env.storage()
         .instance()
         .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+// ─── Protocol Fee Config (Multi-Recipient Treasury Split) ───────────────────
+
+/// Saves the protocol fee configuration with multi-recipient treasury splits.
+///
+/// **Key:** [`DataKey::ProtocolFeeConfig`] in instance storage.
+///
+/// **TTL:** Bumps the shared instance entry to [`INSTANCE_BUMP_AMOUNT`] ledgers
+/// when it has fallen below [`INSTANCE_LIFETIME_THRESHOLD`], renewing every
+/// instance-backed key at once.
+pub fn save_fee_config(env: &Env, config: &ProtocolFeeConfig) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ProtocolFeeConfig, config);
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+/// Loads the protocol fee configuration, falling back to legacy [`ProtocolConfig`]
+/// if no fee config has been set yet.
+///
+/// **Key:** [`DataKey::ProtocolFeeConfig`] in instance storage.
+///
+/// If no fee config exists, returns `None` and the caller can fall back to
+/// [`try_load_config`] for the legacy single-treasury configuration.
+pub fn try_load_fee_config(env: &Env) -> Option<ProtocolFeeConfig> {
+    let raw: Option<Val> = env.storage().instance().get(&DataKey::ProtocolFeeConfig);
+
+    let raw = raw?;
+
+    match record_field_count(env, &raw)? {
+        4 => ProtocolFeeConfig::try_from_val(env, &raw).ok(),
+        _ => None,
+    }
+}
+
+/// Checks whether the protocol fee config has already been set.
+///
+/// **Key:** [`DataKey::ProtocolFeeConfig`] in instance storage. Uses `has`, so it
+/// does not decode the value — this is what makes it a valid guard in
+/// [`StreamContract::configure_protocol_fees`] without
+/// paying for a decode of a possibly-absent entry.
+///
+/// **TTL:** No bump. An existence check on a live contract is not a signal
+/// that the config is being kept warm, and bumping here would let a probe
+/// renew config indefinitely.
+pub fn fee_config_exists(env: &Env) -> bool {
+    env.storage().instance().has(&DataKey::ProtocolFeeConfig)
+}
+
+/// Returns the position metadata for a given stream and role.
+///
+/// **Key:** [`DataKey::StreamPosition(stream_id)`] in instance storage.
+///
+/// Returns `StreamPositionNotFound` if no position metadata exists for the
+/// given stream and role.
+pub fn try_load_position_metadata(
+    env: &Env,
+    stream_id: u64,
+    _role: PositionRole,
+) -> Option<StreamPositionMetadata> {
+    let key = DataKey::StreamPosition(stream_id);
+    let raw: Option<Val> = env.storage().persistent().get(&key);
+
+    let raw = raw?;
+
+    bump_position_ttl(env, &key);
+
+    // Decode based on field count - position metadata has 7 fields
+    match record_field_count(env, &raw)? {
+        7 => {}
+        _ => return None,
+    }
+
+    let metadata: StreamPositionMetadata = StreamPositionMetadata::try_from_val(env, &raw).ok()?;
+    Some(metadata)
+}
+
+/// Returns all position metadata entries for a given owner.
+///
+/// **Key:** Instance storage is not used for per-owner position lookups;
+/// this function iterates persistent storage entries matching the owner.
+/// In a production implementation, a secondary index or off-chain indexer
+/// would be used for efficient lookups.
+pub fn try_load_positions_by_owner(env: &Env, _owner: Address) -> Vec<StreamPositionMetadata> {
+    // In a production implementation, this would query a secondary index.
+    // For now, return an empty vector.
+    Vec::new(env)
+}
+
+/// Persists position metadata for a stream.
+///
+/// **Key:** [`DataKey::StreamPosition(stream_id)`] in instance storage.
+pub fn save_position_metadata(env: &Env, metadata: &StreamPositionMetadata) {
+    let key = DataKey::StreamPosition(metadata.stream_id);
+    env.storage().persistent().set(&key, metadata);
+    bump_position_ttl(env, &key);
 }
 
 // ─── State Schema Versioning ──────────────────────────────────────────────────

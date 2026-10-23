@@ -329,7 +329,7 @@ export function serializeDeadLetterPayload(event: rpc.Api.EventResponse): string
     ledgerClosedAt: event.ledgerClosedAt,
     transactionIndex: event.transactionIndex,
     operationIndex: event.operationIndex,
-    inSuccessfulContractCall: event.inSuccessfulContractCall,
+    inSuccessfulContractCall: event.inSuccessfulContractCall ?? false,
     topic: event.topic.map((scval) => Buffer.from(scval.toXDR()).toString('base64')),
     value: Buffer.from(event.value.toXDR()).toString('base64'),
   };

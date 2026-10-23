@@ -397,9 +397,9 @@ async function recomputeStreamState(
   let deposited = BigInt(stream.depositedAmount);
   let withdrawn = 0n;
   let isActive = stream.isActive;
-  let isPaused = stream.isPaused;
-  let pausedAt = stream.pausedAt;
-  let totalPausedDuration = stream.totalPausedDuration;
+  let isPaused = false;
+  let pausedAt: bigint | null = null;
+  let totalPausedDuration = 0;
   let lastUpdateTime = stream.lastUpdateTime;
   let endTime = stream.endTime;
   let sawRelevantEvent = false;
@@ -411,6 +411,9 @@ async function recomputeStreamState(
         sawRelevantEvent = true;
         if (event.amount) deposited = BigInt(event.amount);
         isActive = true;
+        isPaused = false;
+        pausedAt = null;
+        totalPausedDuration = 0;
         endTime = rate === 0n ? null : startTime + deposited / rate;
         lastUpdateTime = event.timestamp;
         break;
@@ -454,17 +457,24 @@ async function recomputeStreamState(
         const paused = metadata['pausedAt'];
         if (typeof paused === 'number') pausedAt = BigInt(paused);
         else if (typeof paused === 'string') pausedAt = BigInt(paused);
+        else if (typeof paused === 'bigint') pausedAt = paused;
+        else pausedAt = event.timestamp;
         lastUpdateTime = event.timestamp;
         break;
       }
       case 'RESUMED': {
         sawRelevantEvent = true;
         isPaused = false;
-        pausedAt = null;
         const total = metadata['totalPausedDuration'];
         if (typeof total === 'number') totalPausedDuration = total;
+        else if (typeof total === 'string') totalPausedDuration = parseInt(total, 10) || 0;
+        else if (pausedAt !== null) {
+          totalPausedDuration += Number(event.timestamp - pausedAt);
+        }
+        pausedAt = null;
         const newEndTime = metadata['newEndTime'];
         if (typeof newEndTime === 'string') endTime = BigInt(newEndTime);
+        else if (typeof newEndTime === 'number' || typeof newEndTime === 'bigint') endTime = BigInt(newEndTime);
         lastUpdateTime = event.timestamp;
         break;
       }

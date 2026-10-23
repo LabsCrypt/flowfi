@@ -32,6 +32,13 @@ sequenceDiagram
 | `GET /api/v1/analytics/historical?period=30d&interval=1d` | `7d/30d/90d/1y` × `1h/1d` chart series |
 | `GET /api/v1/analytics/defillama` | DefiLlama adapter payload |
 
+Historical `avgTvlStroops` values are decimal strings, preserving the full
+precision and fractional scale returned by PostgreSQL `NUMERIC` for both
+hourly and daily averages. No rounding or floating-point conversion is applied:
+an average of 1.5 stroops may be returned as `"1.5000000000000000"`, and an
+integer average as `"100.0000000000000000"`. Current TVL and velocity amounts
+remain integer strings.
+
 ## Degradation
 
 If the TimescaleDB extension or the hypertable is missing, `/tvl` falls back
