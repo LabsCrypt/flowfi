@@ -163,9 +163,11 @@ describe('RpcPool', () => {
         return new Promise<never>(() => undefined);
       });
 
+      const assertion = expect(resultPromise).rejects.toThrow('all-hang timed out after 2000ms');
+
       await vi.advanceTimersByTimeAsync(2000);
 
-      await expect(resultPromise).rejects.toThrow('all-hang timed out after 2000ms');
+      await assertion;
       expect(capturedSignal.aborted).toBe(true);
       expect(vi.getTimerCount()).toBe(0);
     });

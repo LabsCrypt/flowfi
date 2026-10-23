@@ -474,6 +474,7 @@ describe('Mounted AnalyticsPage against backend responses (Issue #1709)', () => 
   });
 
   it('mounts and renders active, paused, completed, and cancelled streams from backend response', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
     const backendData = {
       data: [
         {
@@ -484,11 +485,11 @@ describe('Mounted AnalyticsPage against backend responses (Issue #1709)', () => 
           tokenAddress: TOKEN_ADDRESSES.USDC,
           depositedAmount: '1000000000',
           withdrawnAmount: '250000000',
-          startTime: NOW_SECONDS - 86400 * 5,
-          endTime: NOW_SECONDS + 86400 * 10,
+          startTime: nowSeconds - 86400 * 5,
+          endTime: nowSeconds + 86400 * 10,
           isActive: true,
           isPaused: false,
-          createdAt: '2025-01-10T00:00:00Z',
+          createdAt: new Date((nowSeconds - 86400 * 5) * 1000).toISOString(),
         },
         {
           id: 'uuid-paused-2',
@@ -498,11 +499,11 @@ describe('Mounted AnalyticsPage against backend responses (Issue #1709)', () => 
           tokenAddress: TOKEN_ADDRESSES.XLM,
           depositedAmount: '500000000',
           withdrawnAmount: '100000000',
-          startTime: NOW_SECONDS - 86400 * 3,
-          endTime: NOW_SECONDS + 86400 * 7,
+          startTime: nowSeconds - 86400 * 3,
+          endTime: nowSeconds + 86400 * 7,
           isActive: true,
           isPaused: true,
-          createdAt: '2025-01-12T00:00:00Z',
+          createdAt: new Date((nowSeconds - 86400 * 3) * 1000).toISOString(),
         },
         {
           id: 'uuid-cancelled-3',
@@ -512,12 +513,12 @@ describe('Mounted AnalyticsPage against backend responses (Issue #1709)', () => 
           tokenAddress: TOKEN_ADDRESSES.EURC,
           depositedAmount: '300000000',
           withdrawnAmount: '50000000',
-          startTime: NOW_SECONDS - 86400 * 8,
-          endTime: NOW_SECONDS + 86400 * 2,
+          startTime: nowSeconds - 86400 * 8,
+          endTime: nowSeconds + 86400 * 2,
           isActive: false,
           isPaused: false,
           events: [{ eventType: 'CANCELLED' }],
-          createdAt: '2025-01-07T00:00:00Z',
+          createdAt: new Date((nowSeconds - 86400 * 8) * 1000).toISOString(),
         },
         {
           id: 'uuid-completed-4',
@@ -527,12 +528,12 @@ describe('Mounted AnalyticsPage against backend responses (Issue #1709)', () => 
           tokenAddress: TOKEN_ADDRESSES.USDC,
           depositedAmount: '200000000',
           withdrawnAmount: '200000000',
-          startTime: NOW_SECONDS - 86400 * 20,
-          endTime: NOW_SECONDS - 86400 * 2,
+          startTime: nowSeconds - 86400 * 20,
+          endTime: nowSeconds - 86400 * 2,
           isActive: false,
           isPaused: false,
           events: [{ eventType: 'COMPLETED' }],
-          createdAt: '2024-12-25T00:00:00Z',
+          createdAt: new Date((nowSeconds - 86400 * 20) * 1000).toISOString(),
         },
       ],
       total: 4,
