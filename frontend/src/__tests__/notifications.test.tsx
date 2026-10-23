@@ -196,6 +196,14 @@ describe('public/sw.js service worker', () => {
       await event.settle();
       expect(showNotification).toHaveBeenCalledTimes(1);
     });
+
+    it('handles a push event whose data has no json or text methods', async () => {
+      const event = makeEvent({ data: {} });
+      listeners.push(event);
+      expect(event.waitUntil).toHaveBeenCalledTimes(1);
+      await event.settle();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('notificationclick event', () => {
@@ -228,6 +236,17 @@ describe('public/sw.js service worker', () => {
       expect(event.waitUntil).toHaveBeenCalledTimes(1);
       await event.settle();
       expect(clients.openWindow).toHaveBeenCalledWith('/streams/2');
+    });
+
+    it('closes the notification and waits on the click handling promise', async () => {
+      clients.matchAll.mockResolvedValueOnce([]);
+      const event = makeEvent({
+        notification: { close: vi.fn(), data: { url: '/streams/3' } },
+      });
+      listeners.notificationclick(event);
+      expect(event.notification.close).toHaveBeenCalledTimes(1);
+      expect(event.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+      await event.settle();
     });
   });
 });
