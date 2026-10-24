@@ -1,5 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const { subscribeToPush, unsubscribeFromPush, getExistingSubscription } = vi.hoisted(() => ({
   subscribeToPush: vi.fn(async () => ({} as PushSubscription)),
@@ -34,6 +36,7 @@ describe('urlBase64ToUint8Array', () => {
     const bytes = urlBase64ToUint8Array('a-_w');
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(bytes.length).toBeGreaterThan(0);
+    expect(Array.from(urlBase64ToUint8Array('-_8'))).toEqual(Array.from(urlBase64ToUint8Array('+/8=')));
   });
 });
 
@@ -93,5 +96,158 @@ describe('PushNotificationToggle', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('push-toggle')).not.toBeInTheDocument(),
     );
+  });
+});
+
+describe('public/sw.js service worker', () => {
+  type Listener = (event: any) => void;
+
+  const source = readFileSync(resolve(__dirname, '../../public/sw.js'), 'utf8');
+
+  let listeners: Record<string, Listener>;
+  let self: any;
+  let clients: { matchAll: ReturnType<typeof vi.fn>; openWindow: ReturnType<typeof vi.fn> };
+  let showNotification: ReturnType<typeof vi.fn>;
+
+  // Runs the actual service-worker script inside a function scope whose
+  // `self`, `clients`, and `registration` globals are controlled by the test.
+  function loadWorker() {
+    listeners = {};
+    showNotification = vi.fn(async () => undefined);
+    clients = {
+      matchAll: vi.fn(async () => []),
+      openWindow: vi.fn(async () => undefined),
+    };
+    self = {
+      addEventListener: (type: string, fn: Listener) => {
+        listeners[type] = fn;
+      },
+      registration: { showNotification },
+      skipWaiting: vi.fn(),
+      clients,
+    };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function('self', 'clients', 'registration', source)(
+      self,
+      clients,
+      self.registration,
+    );
+  }
+
+  function makeEvent(init: Record<string, any> = {}) {
+    const pending: Promise<unknown>[] = [];
+    return {
+      ...init,
+      waitUntil: vi.fn((p: Promise<unknown>) => {
+        pending.push(p);
+      }),
+      settle: () => Promise.all(pending),
+    };
+  }
+
+  beforeEach(() => {
+    loadWorker();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('push event', () => {
+    it('registers a push listener', () => {
+      expect(listeners.push).toBeTypeOf('function');
+    });
+
+    it('shows a notification from valid JSON payload', async () => {
+      const event = makeEvent({
+        data: {
+          json: () => ({ title: 'Stream paid', body: 'You received 5 XLM' }),
+          text: () => '',
+        },
+      });
+      listeners.push(event);
+      expect(event.waitUntil).toHaveBeenCalledTimes(1);
+      await event.settle();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      const [title, options] = showNotification.mock.calls[0];
+      expect(title).toBe('Stream paid');
+      expect(options.body).toBe('You received 5 XLM');
+    });
+
+    it('falls back to text when payload is not valid JSON', async () => {
+      const event = makeEvent({
+        data: {
+          json: () => {
+            throw new SyntaxError('bad json');
+          },
+          text: () => 'plain text ping',
+        },
+      });
+      listeners.push(event);
+      await event.settle();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      const [, options] = showNotification.mock.calls[0];
+      expect(options.body).toBe('plain text ping');
+    });
+
+    it('shows a default notification when push has no payload', async () => {
+      const event = makeEvent({ data: null });
+      listeners.push(event);
+      expect(event.waitUntil).toHaveBeenCalledTimes(1);
+      await event.settle();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('handles a push event whose data has no json or text methods', async () => {
+      const event = makeEvent({ data: {} });
+      listeners.push(event);
+      expect(event.waitUntil).toHaveBeenCalledTimes(1);
+      await event.settle();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('notificationclick event', () => {
+    it('focuses and navigates an existing window instead of opening a new one', async () => {
+      const existing = {
+        url: 'https://app.test/dashboard',
+        focus: vi.fn(async () => existing),
+        navigate: vi.fn(async () => existing),
+      };
+      clients.matchAll.mockResolvedValueOnce([existing]);
+      const event = makeEvent({
+        notification: { close: vi.fn(), data: { url: '/streams/1' } },
+      });
+      listeners.notificationclick(event);
+      expect(event.notification.close).toHaveBeenCalled();
+      expect(event.waitUntil).toHaveBeenCalledTimes(1);
+      await event.settle();
+      expect(existing.focus).toHaveBeenCalled();
+      expect(existing.navigate).toHaveBeenCalledWith('/streams/1');
+      expect(clients.openWindow).not.toHaveBeenCalled();
+    });
+
+    it('opens a new window when no client window exists', async () => {
+      clients.matchAll.mockResolvedValueOnce([]);
+      const event = makeEvent({
+        notification: { close: vi.fn(), data: { url: '/streams/2' } },
+      });
+      listeners.notificationclick(event);
+      expect(event.notification.close).toHaveBeenCalled();
+      expect(event.waitUntil).toHaveBeenCalledTimes(1);
+      await event.settle();
+      expect(clients.openWindow).toHaveBeenCalledWith('/streams/2');
+    });
+
+    it('closes the notification and waits on the click handling promise', async () => {
+      clients.matchAll.mockResolvedValueOnce([]);
+      const event = makeEvent({
+        notification: { close: vi.fn(), data: { url: '/streams/3' } },
+      });
+      listeners.notificationclick(event);
+      expect(event.notification.close).toHaveBeenCalledTimes(1);
+      expect(event.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+      await event.settle();
+    });
   });
 });

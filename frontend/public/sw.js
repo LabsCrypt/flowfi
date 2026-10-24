@@ -1,4 +1,7 @@
-/* FlowFi push notification service worker. */
+/* FlowFi push notification service worker.
+ * Behavior is exercised by frontend/__tests__/sw.test.ts via a worker harness that
+ * evaluates this file against a mocked ServiceWorkerGlobalScope. Keep handlers
+ * registered via self.addEventListener and avoid module-level side effects. */
 
 self.addEventListener('install', () => self.skipWaiting());
 
@@ -10,9 +13,12 @@ self.addEventListener('push', (event) => {
   let payload = { title: 'FlowFi', body: 'You have a new stream update.', url: '/' };
   if (event.data) {
     try {
-      payload = { ...payload, ...event.data.json() };
+      const parsed = event.data.json();
+      if (parsed && typeof parsed === 'object') {
+        payload = { ...payload, ...parsed };
+      }
     } catch {
-      payload.body = event.data.text();
+      payload = { ...payload, body: event.data.text() };
     }
   }
 
@@ -30,7 +36,8 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || '/';
+  const data = event.notification.data || {};
+  const target = data.url || '/';
 
   event.waitUntil(
     self.clients
@@ -38,7 +45,7 @@ self.addEventListener('notificationclick', (event) => {
       .then((clients) => {
         for (const client of clients) {
           if ('focus' in client) {
-            client.navigate(target);
+            if (typeof client.navigate === 'function') client.navigate(target);
             return client.focus();
           }
         }
