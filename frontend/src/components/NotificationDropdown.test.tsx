@@ -87,4 +87,53 @@ describe('NotificationDropdown empty state', () => {
         expect(await screen.findByText('New stream #7 created')).toBeInTheDocument();
         expect(screen.queryByTestId('notifications-empty-state')).not.toBeInTheDocument();
     });
+
+    it('exposes accurate aria-expanded and aria-controls attributes on the bell trigger', async () => {
+        mockStream();
+        render(<NotificationDropdown publicKey={PUBLIC_KEY} />);
+
+        const bellButton = screen.getByRole('button', { name: /notifications/i });
+        expect(bellButton).toHaveAttribute('aria-expanded', 'false');
+        expect(bellButton).toHaveAttribute('aria-controls', 'notifications-dropdown-menu');
+
+        await userEvent.click(bellButton);
+        expect(bellButton).toHaveAttribute('aria-expanded', 'true');
+        expect(document.getElementById('notifications-dropdown-menu')).toBeInTheDocument();
+    });
+
+    it('closes the dropdown on Escape and returns keyboard focus to the bell trigger button', async () => {
+        mockStream();
+        render(<NotificationDropdown publicKey={PUBLIC_KEY} />);
+
+        const bellButton = screen.getByRole('button', { name: /notifications/i });
+        await userEvent.click(bellButton);
+        expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeInTheDocument();
+
+        // Move focus away from the bell button to a button inside the dialog
+        const closeButton = screen.getByRole('button', { name: 'Close notifications' });
+        closeButton.focus();
+        expect(closeButton).toHaveFocus();
+
+        await userEvent.keyboard('{Escape}');
+        expect(screen.queryByRole('dialog', { name: 'Notifications' })).not.toBeInTheDocument();
+        expect(bellButton).toHaveAttribute('aria-expanded', 'false');
+        expect(bellButton).toHaveFocus();
+    });
+
+    it('announces unread notification count via an aria-live polite region', async () => {
+        mockStream({
+            events: [
+                {
+                    type: 'created',
+                    data: { streamId: 42 },
+                    timestamp: 1_700_000_000_000,
+                },
+            ],
+        });
+        const { container } = render(<NotificationDropdown publicKey={PUBLIC_KEY} />);
+
+        const liveRegion = container.querySelector('[aria-live="polite"]');
+        expect(liveRegion).not.toBeNull();
+        expect(await screen.findByText('1 new notifications')).toBeInTheDocument();
+    });
 });
