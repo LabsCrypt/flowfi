@@ -12,13 +12,18 @@ vi.mock("@/lib/transaction-feedback", () => ({
 
 import toast from "react-hot-toast";
 import { transactionSuccessToast } from "@/lib/transaction-feedback";
-import { TopUpModal } from "../TopUpModal";
+import {
+  TopUpModal,
+  calculateRunwayPresetAmount,
+  calculateProjectedEndDate,
+} from "../TopUpModal";
 
 describe("TopUpModal", () => {
   const baseProps = {
     streamId: "stream-42",
     token: "USDC",
     currentDeposited: 500,
+    ratePerSecond: 0.01,
     onConfirm: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
   };
@@ -97,6 +102,53 @@ describe("TopUpModal", () => {
         expect(baseProps.onConfirm).toHaveBeenCalledWith("stream-42", "100.5");
       });
       expect(transactionSuccessToast).toHaveBeenCalledWith("Successfully added 100.5 USDC to stream");
+    });
+  });
+
+  describe("quick runway presets and projected end date", () => {
+    it("populates exact deposit amounts when clicking +7 Days, +30 Days, or +90 Days", () => {
+      // ratePerSecond = 0.01 => 864 tokens/day
+      render(<TopUpModal {...baseProps} ratePerSecond={0.01} />);
+
+      fireEvent.click(screen.getByRole("button", { name: /\+7 Days/i }));
+      expect(getAmountInput().value).toBe("6048");
+      expect(screen.getByText(/6548\.00 USDC/)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /\+30 Days/i }));
+      expect(getAmountInput().value).toBe("25920");
+      expect(screen.getByText(/26420\.00 USDC/)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /\+90 Days/i }));
+      expect(getAmountInput().value).toBe("77760");
+      expect(screen.getByText(/78260\.00 USDC/)).toBeInTheDocument();
+    });
+
+    it("displays the new projected end date below the input when an amount is entered", () => {
+      const fixedStart = new Date("2026-05-01T00:00:00.000Z");
+      render(
+        <TopUpModal
+          {...baseProps}
+          ratePerSecond={0.01}
+          currentEndTime={fixedStart}
+        />,
+      );
+
+      expect(screen.queryByTestId("projected-end-date")).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: /\+30 Days/i }));
+
+      const projected = screen.getByTestId("projected-end-date");
+      expect(projected).toBeInTheDocument();
+      expect(projected).toHaveTextContent("2026-05-31");
+      expect(projected).toHaveTextContent("May 31, 2026");
+    });
+
+    it("handles non-positive or invalid ratePerSecond and days safely in helpers", () => {
+      expect(calculateRunwayPresetAmount(0, 7)).toBe("0");
+      expect(calculateRunwayPresetAmount(-1, 7)).toBe("0");
+      expect(calculateRunwayPresetAmount(0.01, 0)).toBe("0");
+      expect(calculateProjectedEndDate(0, 0.01)).toBeNull();
+      expect(calculateProjectedEndDate(100, 0)).toBeNull();
     });
   });
 

@@ -1087,6 +1087,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           streamId={modal.stream.id}
           token={modal.stream.token}
           currentDeposited={modal.stream.deposited}
+          ratePerSecond={modal.stream.ratePerSecond}
           onConfirm={handleTopUpConfirm}
           onClose={() => setModal(null)}
         />

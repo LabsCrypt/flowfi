@@ -14,10 +14,69 @@ import { useModalDialog } from "@/hooks/useModalDialog";
 import toast from "react-hot-toast";
 import { transactionSuccessToast } from "@/lib/transaction-feedback";
 
+export const SECONDS_PER_DAY = 86_400;
+export const RUNWAY_PRESET_DAYS = [7, 30, 90] as const;
+
+export function calculateRunwayPresetAmount(
+  ratePerSecond: number,
+  days: number,
+  decimals = 7,
+): string {
+  if (
+    !Number.isFinite(ratePerSecond) ||
+    ratePerSecond <= 0 ||
+    !Number.isFinite(days) ||
+    days <= 0
+  ) {
+    return "0";
+  }
+  const raw = ratePerSecond * SECONDS_PER_DAY * days;
+  return raw.toFixed(decimals).replace(/\.?0+$/, "");
+}
+
+export function calculateProjectedEndDate(
+  topUpAmount: number,
+  ratePerSecond: number,
+  currentEndTime?: number | Date,
+  now: Date = new Date(),
+): Date | null {
+  if (
+    !Number.isFinite(topUpAmount) ||
+    topUpAmount <= 0 ||
+    !Number.isFinite(ratePerSecond) ||
+    ratePerSecond <= 0
+  ) {
+    return null;
+  }
+  let baseMs: number;
+  if (currentEndTime instanceof Date) {
+    baseMs = currentEndTime.getTime();
+  } else if (typeof currentEndTime === "number" && Number.isFinite(currentEndTime) && currentEndTime > 0) {
+    baseMs = currentEndTime < 1e12 ? currentEndTime * 1000 : currentEndTime;
+  } else {
+    baseMs = now.getTime();
+  }
+  const additionalMs = (topUpAmount / ratePerSecond) * 1000;
+  return new Date(baseMs + additionalMs);
+}
+
+export function formatProjectedEndDate(date: Date): string {
+  const isoDate = date.toISOString().split("T")[0] ?? "";
+  const readable = date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return `${readable} (${isoDate})`;
+}
+
 interface TopUpModalProps {
   streamId: string;
   token: string;
   currentDeposited: number;
+  ratePerSecond?: number;
+  currentEndTime?: number | Date;
   onConfirm: (streamId: string, amount: string) => Promise<void>;
   onClose: () => void;
 }
@@ -26,6 +85,8 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   streamId,
   token,
   currentDeposited,
+  ratePerSecond,
+  currentEndTime,
   onConfirm,
   onClose,
 }) => {
@@ -42,6 +103,22 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
 
   // Token decimals - using 7 as default (Stellar standard)
   const TOKEN_DECIMALS = 7;
+
+  const hasValidRate =
+    typeof ratePerSecond === "number" &&
+    Number.isFinite(ratePerSecond) &&
+    ratePerSecond > 0;
+
+  const handlePresetClick = (days: number) => {
+    if (!hasValidRate || ratePerSecond === undefined) return;
+    const presetAmount = calculateRunwayPresetAmount(
+      ratePerSecond,
+      days,
+      TOKEN_DECIMALS,
+    );
+    setAmount(presetAmount);
+    if (error) setError(null);
+  };
 
   const validate = (): boolean => {
     const validationError = validateAmountInput(amount, TOKEN_DECIMALS);
@@ -73,6 +150,10 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
   const newTotal = !isNaN(parsedAmount) && parsedAmount > 0
     ? currentDeposited + parsedAmount
     : null;
+  const projectedEndDate =
+    newTotal !== null && hasValidRate && ratePerSecond !== undefined
+      ? calculateProjectedEndDate(parsedAmount, ratePerSecond, currentEndTime)
+      : null;
 
   return (
     <div
@@ -154,6 +235,24 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
             </span>
           </div>
 
+          <div
+            className="mt-3 flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Quick runway presets"
+          >
+            {RUNWAY_PRESET_DAYS.map((days) => (
+              <button
+                key={days}
+                type="button"
+                disabled={isSubmitting || !hasValidRate}
+                onClick={() => handlePresetClick(days)}
+                className="px-3 py-1 rounded-full text-xs font-medium border border-glass-border bg-white/5 text-slate-300 hover:border-accent hover:text-accent hover:bg-accent/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                +{days} Days
+              </button>
+            ))}
+          </div>
+
           {error && (
             <p id="topup-error" className="mt-2 text-sm text-red-400 flex items-center gap-1" role="alert">
               <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -173,6 +272,17 @@ export const TopUpModal: React.FC<TopUpModalProps> = ({
                 {newTotal.toFixed(2)} {token}
               </strong>
             </p>
+            {projectedEndDate !== null && (
+              <p
+                className="text-slate-300 mt-1"
+                data-testid="projected-end-date"
+              >
+                Projected end date:{" "}
+                <strong className="text-accent">
+                  {formatProjectedEndDate(projectedEndDate)}
+                </strong>
+              </p>
+            )}
           </div>
         )}
 
