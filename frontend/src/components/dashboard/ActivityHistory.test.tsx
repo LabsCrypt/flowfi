@@ -141,3 +141,71 @@ describe("ActivityHistory malformed metadata", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("ActivityHistory event type filter pills", () => {
+  const sampleEvents = [
+    makeEvent({ id: "evt-created", streamId: 10, eventType: "CREATED" }),
+    makeEvent({
+      id: "evt-withdrawn",
+      streamId: 11,
+      eventType: "WITHDRAWN",
+      amount: "250000000",
+    }),
+    makeEvent({
+      id: "evt-topped",
+      streamId: 12,
+      eventType: "TOPPED_UP",
+      amount: "500000000",
+    }),
+    makeEvent({ id: "evt-paused", streamId: 13, eventType: "PAUSED" }),
+  ];
+
+  it("selects 'All' by default and displays all activity items", () => {
+    render(<ActivityHistory events={sampleEvents} />);
+
+    const allButton = screen.getByRole("button", { name: /^All$/i });
+    expect(allButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+  });
+
+  it("filters displayed items immediately when clicking Created, Withdrawn, Topped Up, or Paused", () => {
+    render(<ActivityHistory events={sampleEvents} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Withdrawn$/i }));
+    expect(screen.getByRole("button", { name: /^Withdrawn$/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: /^All$/i })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText(/Withdrew 25 tokens from Stream/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Topped Up$/i }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText(/Topped up Stream/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Paused$/i }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText(/was paused/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Created$/i }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+    expect(screen.getByText(/New stream created/i)).toBeInTheDocument();
+  });
+
+  it("shows empty state message when no events match the selected filter", () => {
+    render(<ActivityHistory events={sampleEvents} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancelled$/i }));
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(
+      screen.getByText("No activity found for this filter."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^All$/i }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+  });
+});

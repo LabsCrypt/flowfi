@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { BackendStreamEvent } from "@/lib/api-types";
@@ -12,6 +12,26 @@ import { Download, ExternalLink, Clock } from "lucide-react";
 import { Button } from "../ui/Button";
 
 const VIRTUALIZATION_THRESHOLD = 50;
+
+export type ActivityEventFilter =
+  | "ALL"
+  | "CREATED"
+  | "WITHDRAWN"
+  | "TOPPED_UP"
+  | "PAUSED"
+  | "CANCELLED";
+
+export const ACTIVITY_FILTER_OPTIONS: ReadonlyArray<{
+  id: ActivityEventFilter;
+  label: string;
+}> = [
+  { id: "ALL", label: "All" },
+  { id: "CREATED", label: "Created" },
+  { id: "WITHDRAWN", label: "Withdrawn" },
+  { id: "TOPPED_UP", label: "Topped Up" },
+  { id: "PAUSED", label: "Paused" },
+  { id: "CANCELLED", label: "Cancelled" },
+];
 
 /**
  * Safely parse a StreamEvent metadata JSON string. Malformed metadata
@@ -38,10 +58,20 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
   isLoading,
 }) => {
   const parentRef = useRef<HTMLDivElement>(null);
-  const shouldVirtualize = events.length > VIRTUALIZATION_THRESHOLD;
+  const [selectedFilter, setSelectedFilter] = useState<ActivityEventFilter>("ALL");
+
+  const filteredEvents = useMemo(
+    () =>
+      selectedFilter === "ALL"
+        ? events
+        : events.filter((event) => event.eventType === selectedFilter),
+    [events, selectedFilter],
+  );
+
+  const shouldVirtualize = filteredEvents.length > VIRTUALIZATION_THRESHOLD;
 
   const virtualizer = useVirtualizer({
-    count: events.length,
+    count: filteredEvents.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
     overscan: 5,
@@ -157,7 +187,32 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
         {exportStatus === "complete" && "Export complete."}
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          className="flex flex-wrap items-center gap-2"
+          role="group"
+          aria-label="Filter activity by event type"
+        >
+          {ACTIVITY_FILTER_OPTIONS.map((option) => {
+            const isSelected = selectedFilter === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={isSelected}
+                onClick={() => setSelectedFilter(option.id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  isSelected
+                    ? "bg-accent text-white border-accent"
+                    : "bg-white/5 text-slate-300 border-glass-border hover:border-accent/50 hover:text-white"
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+
         <Button
           onClick={exportToCSV}
           variant="outline"
@@ -182,7 +237,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
             className="relative w-full"
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {
-              const event = events[virtualRow.index];
+              const event = filteredEvents[virtualRow.index];
               if (!event) return null;
               return (
                 <div
@@ -248,7 +303,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
         </div>
       ) : (
         <div role="list" aria-label="Activity timeline" className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-700 before:to-transparent">
-          {events.map((event, index) => (
+          {filteredEvents.map((event, index) => (
             <div
               key={`${event.id}-${index}`}
               role="listitem"
@@ -301,7 +356,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
         </div>
       )}
 
-      {events.length === 0 && !isLoading && (
+      {filteredEvents.length === 0 && !isLoading && (
         <div className="text-center py-12 text-slate-400 bg-white/5 rounded-xl border border-dashed border-slate-700">
           No activity found for this filter.
         </div>
