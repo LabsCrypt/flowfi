@@ -102,6 +102,28 @@ describe("validateRecipient", () => {
   it("accepts a valid key padded with mixed whitespace", () => {
     expect(validateRecipient(`\n\t ${VALID_KEY} \t`)).toBeNull();
   });
+
+  it("rejects recipient identical to connected sender wallet address", () => {
+    expect(validateRecipient(VALID_KEY, VALID_KEY)).toBe(
+      "Recipient address cannot be the same as your connected sender wallet",
+    );
+  });
+
+  it("rejects recipient matching connected sender wallet case-insensitively and with surrounding whitespace", () => {
+    expect(validateRecipient(`  ${VALID_KEY.toLowerCase()}  `, ` ${VALID_KEY} `)).toBe(
+      "Recipient address cannot be the same as your connected sender wallet",
+    );
+  });
+
+  it("propagates senderAddress check through validateStreamForm on step 2", () => {
+    const errors = validateStreamForm(VALID_FORM, {
+      step: 2,
+      senderAddress: VALID_KEY,
+    });
+    expect(errors.recipient).toBe(
+      "Recipient address cannot be the same as your connected sender wallet",
+    );
+  });
 });
 
 // ─── validateToken ────────────────────────────────────────────────────────────

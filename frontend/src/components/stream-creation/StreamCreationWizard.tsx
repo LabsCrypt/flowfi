@@ -19,7 +19,10 @@ import {
   useStreamForm,
   type StreamFormData,
 } from "@/hooks/useStreamForm";
-import { validateAmount } from "@/lib/stream-validation";
+import {
+  SAME_SENDER_RECIPIENT_ERROR,
+  validateAmount,
+} from "@/lib/stream-validation";
 
 // Re-export StreamFormData so existing imports keep working
 export type { StreamFormData };
@@ -96,6 +99,15 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
   );
   const amountValid = amountError === null;
   const canSubmit = !isSubmitting && amountValid;
+
+  const isSelfRecipient =
+    Boolean(walletPublicKey?.trim()) &&
+    formData.recipient.trim().length > 0 &&
+    formData.recipient.trim().toLowerCase() ===
+      walletPublicKey!.trim().toLowerCase();
+  const recipientError =
+    errors.recipient ??
+    (isSelfRecipient ? SAME_SENDER_RECIPIENT_ERROR : undefined);
 
   const handleApplyTemplate = (templateId: string) => {
     const msg = applyTemplateHook(templateId);
@@ -260,7 +272,8 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
           <RecipientStep
             value={formData.recipient}
             onChange={(value) => updateFormData({ recipient: value })}
-            error={errors.recipient}
+            error={recipientError}
+            senderAddress={walletPublicKey}
           />
         );
       case 3:
@@ -469,7 +482,10 @@ export const StreamCreationWizard: React.FC<StreamCreationWizardProps> = ({
                   Cancel
                 </Button>
                 {currentStep < STEPS.length ? (
-                  <Button onClick={handleNext}>
+                  <Button
+                    onClick={handleNext}
+                    disabled={currentStep === 2 && Boolean(recipientError)}
+                  >
                     Next
                     <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
