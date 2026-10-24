@@ -36,6 +36,7 @@ describe('urlBase64ToUint8Array', () => {
     const bytes = urlBase64ToUint8Array('a-_w');
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(bytes.length).toBeGreaterThan(0);
+    expect(Array.from(urlBase64ToUint8Array('-_8'))).toEqual(Array.from(urlBase64ToUint8Array('+/8=')));
   });
 });
 

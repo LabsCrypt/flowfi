@@ -46,6 +46,14 @@ function createHarness() {
   };
 }
 
+function dispatch(harness: ReturnType<typeof createHarness>, type: string, event: any) {
+  const listener = harness.listeners[type];
+  if (!listener) {
+    throw new Error(`No listener registered for "${type}"`);
+  }
+  listener(event);
+}
+
 function makeWaitable() {
   const promises: Promise<unknown>[] = [];
   return {
@@ -83,7 +91,7 @@ describe('public/sw.js push handler', () => {
       waitUntil: w.waitUntil,
     };
 
-    harness.listeners.push(event);
+    dispatch(harness, 'push', event);
     expect(w.promises).toHaveLength(1);
     await Promise.all(w.promises);
 
@@ -112,7 +120,7 @@ describe('public/sw.js push handler', () => {
       waitUntil: w.waitUntil,
     };
 
-    harness.listeners.push(event);
+    dispatch(harness, 'push', event);
     await Promise.all(w.promises);
 
     const [title, options] = harness.showNotification.mock.calls[0] as any[];
@@ -127,7 +135,7 @@ describe('public/sw.js push handler', () => {
     const w = makeWaitable();
     const event = { data: null, waitUntil: w.waitUntil };
 
-    harness.listeners.push(event);
+    dispatch(harness, 'push', event);
     await Promise.all(w.promises);
 
     const [title, options] = harness.showNotification.mock.calls[0] as any[];

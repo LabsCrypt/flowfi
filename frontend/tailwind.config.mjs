@@ -8,8 +8,8 @@ export default {
   ],
   plugins: [
     plugin(function ({ addVariant }) {
-      addVariant("motion-reduce", [ "& where (prefers-reduced-motion: reduce)" ]);
-      addVariant("motion-safe", [ "& where (prefers-reduced-motion: safe)" ]);
+      addVariant("motion-reduce", ["@media (prefers-reduced-motion: reduce)"]);
+      addVariant("motion-safe", ["@media (prefers-reduced-motion: no-preference)"]);
     }),
   ],
 };
