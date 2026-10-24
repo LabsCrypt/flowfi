@@ -192,4 +192,129 @@ describe('fetchIncomingStreams', () => {
 
     vi.useRealTimers();
   });
+
+  describe('pagination normalization', () => {
+    it('requests a single capped page with explicit sort metadata', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [] }),
+      });
+
+      await fetchIncomingStreams(recipientPublicKey);
+
+      const [requestUrl] = fetchMock.mock.calls[0]!;
+      const params = new URL(requestUrl as string).searchParams;
+      expect(params.get('recipient')).toBe(recipientPublicKey);
+      expect(params.get('sort')).toBe('lastUpdateTime');
+      expect(params.get('order')).toBe('desc');
+      expect(params.get('limit')).toBe('100');
+    });
+
+    it('normalizes an empty data page to an empty list', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [] }),
+      });
+
+      const result = await fetchIncomingStreams(recipientPublicKey);
+
+      expect(result).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('normalizes a bare empty array page to an empty list', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [],
+      });
+
+      const result = await fetchIncomingStreams(recipientPublicKey);
+
+      expect(result).toEqual([]);
+    });
+
+    it('normalizes a payload without a data key to an empty list', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ meta: { total: 0, page: 1, limit: 100 } }),
+      });
+
+      const result = await fetchIncomingStreams(recipientPublicKey);
+
+      expect(result).toEqual([]);
+    });
+
+    it('ignores pagination metadata sitting next to the records', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [mockStream],
+          meta: { total: 1, page: 1, limit: 100, totalPages: 1 },
+        }),
+      });
+
+      const result = await fetchIncomingStreams(recipientPublicKey);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]!.id).toBe('db-id-1');
+      expect(result[0]!.status).toBe('Active');
+    });
+
+    it('defaults missing optional pause fields on malformed records', async () => {
+      const recordWithoutPauseFields = {
+        id: 'db-id-4',
+        streamId: 4,
+        sender: 'GBXHQYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYZZZZ',
+        recipient: 'GBXHQ...',
+        tokenAddress: TOKEN_ADDRESSES.USDC,
+        ratePerSecond: '10000000',
+        depositedAmount: '100000000',
+        withdrawnAmount: '50000000',
+        startTime: 1000,
+        lastUpdateTime: 2000,
+        isActive: false,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+      } as BackendStream;
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [recordWithoutPauseFields] }),
+      });
+
+      const result = await fetchIncomingStreams(recipientPublicKey);
+
+      expect(result[0]!.isPaused).toBe(false);
+      expect(result[0]!.pausedAt).toBeNull();
+      expect(result[0]!.totalPausedDuration).toBe(0);
+      expect(result[0]!.status).toBe('Completed');
+    });
+
+    it('maps zero-valued stroop amounts at the lower boundary', async () => {
+      const zeroedStream = {
+        ...mockStream,
+        ratePerSecond: '0',
+        depositedAmount: '0',
+        withdrawnAmount: '0',
+      };
+
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => [zeroedStream],
+      });
+
+      const result = await fetchIncomingStreams(recipientPublicKey);
+
+      expect(result[0]!.ratePerSecond).toBe(0);
+      expect(result[0]!.deposited).toBe(0);
+      expect(result[0]!.withdrawn).toBe(0);
+    });
+  });
 });
