@@ -1,0 +1,22 @@
+# cargo-audit configuration — read from `./.cargo/audit.toml` when
+# `cargo audit` runs in this directory (see .github/workflows/security.yml).
+
+[advisories]
+# RUSTSEC-2026-0387 — crypto-bigint 0.5.5: multiple timing variability issues
+# in operations intended to be constant-time.
+#
+# Why it cannot be upgraded in this dependency tree:
+#   soroban-env-host -> ecdsa ^0.16 / k256 ^0.13 / elliptic-curve ^0.13
+#     -> crypto-bigint ^0.5
+#   The 0.5.x line ends at 0.5.5 (vulnerable); the fix exists only in
+#   >=0.7.6, which is an API-incompatible major version. Even the latest
+#   soroban-env-host (30.0.0) still pins elliptic-curve ^0.13, so no
+#   soroban-sdk upgrade resolves it either.
+#
+# Exposure: crypto-bigint is reachable only via soroban-env-host, which is
+# linked on host targets (unit tests, local runs). The deployed WASM contract
+# links soroban-env-guest, which has no crypto-bigint dependency.
+#
+# Action: remove this entry once soroban-env-host resolves
+# elliptic-curve >=0.14 / crypto-bigint >=0.7.6.
+ignore = ["RUSTSEC-2026-0387"]
