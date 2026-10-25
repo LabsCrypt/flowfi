@@ -1,14 +1,13 @@
 import { StrKey } from "@stellar/stellar-sdk/base";
-import type { NetworkId } from "@/lib/stellar-config";
+import type { NetworkId } from "./stellar-config";
 
 /**
  * Validate a Stellar Ed25519 public key (\"G...\") using the full StrKey
  * checksum, rather than only prefix/length heuristics.
  *
  * `StrKey.isValidEd25519PublicKey` verifies the CRC16-XModem checksum and
- * rejects malformed keys as well as muxed (M...), contract (C...),
- * secret (S...) and other StrKey types that the stream contract does not
- * accept. Surrounding whitespace is trimmed before validation.
+ * rejects malformed keys as well as muxed (M...), contract (C...), secret (S...)
+ * and other StrKey types that the stream contract does not accept. Surrounding whitespace is trimmed before validation.
  */
 export function isValidStellarPublicKey(value: string): boolean {
   const normalized = value.trim();
@@ -99,7 +98,7 @@ export function getHorizonUrl(value: string): string {
     sandbox: { horizonUrl: "http://localhost:8000" },
   };
 
-  return networkConfigs[result.id]?.horizonUrl ?? "http://localhost:8000";
+  return networkConfigs[result.id].horizonUrl;
 }
 
 /**
@@ -121,7 +120,5 @@ export function getNetworkPassphrase(value: string): string {
     sandbox: "Standalone Network ; February 2017",
   };
 
-  return networkPassphrases[result.id] ?? "Test SDF Network ; September 2015";
+  return networkPassphrases[result.id];
 }
-
-export type { NetworkId };

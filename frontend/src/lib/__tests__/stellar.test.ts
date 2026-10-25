@@ -1,19 +1,13 @@
 import { describe, it, expect } from "vitest";
-import {
-  validateNetworkId,
-  isNetworkSupported,
-  getHorizonUrl,
-  getNetworkPassphrase,
-  isValidStellarPublicKey,
-} from "../stellar";
-
-const MUXED_KEY = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK";
-const SHORT_KEY = "GABC123";
-const WRONG_PREFIX_KEY = "SABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA";
+import { validateNetworkId, isNetworkSupported, getHorizonUrl, getNetworkPassphrase, isValidStellarPublicKey } from "../stellar";
+import type { NetworkId } from "../stellar-config";
 
 describe("isValidStellarPublicKey", () => {
   const VALID_KEY = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7";
   const INVALID_CHECKSUM = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR8";
+  const MUXED_KEY = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK";
+  const SHORT_KEY = "GABC123";
+  const WRONG_PREFIX_KEY = "SABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA";
 
   it("accepts a valid G-prefixed Ed25519 public key", () => {
     expect(isValidStellarPublicKey(VALID_KEY)).toBe(true);
@@ -46,61 +40,96 @@ describe("isValidStellarPublicKey", () => {
 });
 
 describe("validateNetworkId", () => {
-  const validNetwork = (value: string, expectedId: string) =>
-    expect(validateNetworkId(value)).toEqual({ valid: true, id: expectedId });
-
   it("accepts testnet short ID", () => {
-    validNetwork("testnet", "testnet");
+    const result = validateNetworkId("testnet");
+    // Type assertion to narrow the union type for access to `result.id`.
+    // TypeScript's control flow doesn't narrow the union type based on
+    // `expect(result.valid).toBe(true)` because `expect` is a library call.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("testnet");
   });
 
   it("accepts mainnet short ID", () => {
-    validNetwork("mainnet", "mainnet");
+    const result = validateNetworkId("mainnet");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("mainnet");
   });
 
   it("accepts futurenet short ID", () => {
-    validNetwork("futurenet", "futurenet");
+    const result = validateNetworkId("futurenet");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("futurenet");
   });
 
   it("accepts sandbox short ID", () => {
-    validNetwork("sandbox", "sandbox");
+    const result = validateNetworkId("sandbox");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("sandbox");
   });
 
   it("accepts full testnet passphrase", () => {
-    validNetwork("Test SDF Network ; September 2015", "testnet");
+    const result = validateNetworkId("Test SDF Network ; September 2015");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("testnet");
   });
 
   it("accepts full mainnet passphrase", () => {
-    validNetwork("Public Global Stellar Network ; September 2015", "mainnet");
+    const result = validateNetworkId("Public Global Stellar Network ; September 2015");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("mainnet");
   });
 
   it("accepts full futurenet passphrase", () => {
-    validNetwork("Test SDF Future Network ; October 2022", "futurenet");
+    const result = validateNetworkId("Test SDF Future Network ; October 2022");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("futurenet");
   });
 
   it("accepts full sandbox passphrase", () => {
-    validNetwork("Standalone Network ; February 2017", "sandbox");
+    const result = validateNetworkId("Standalone Network ; February 2017");
+    // Type assertion to narrow the union type for access to `result.id`.
+    const connected = result as { valid: true; id: NetworkId };
+    expect(connected.valid).toBe(true);
+    expect(connected.id).toBe("sandbox");
   });
 
   it("rejects empty string", () => {
-    expect(validateNetworkId("")).toEqual({
-      valid: false,
-      error: "Network identifier is required",
-    });
+    const result = validateNetworkId("");
+    expect(result.valid).toBe(false);
+    // The `valid` check above narrows the union type, but TypeScript's control
+    // flow analysis requires an explicit type assertion to access the `error`
+    // property on the `{ valid: false; error: string }` branch.
+    const failureResult = (result as { valid: false; error: string });
+    expect(failureResult.error).toBe("Network identifier is required");
   });
 
   it("rejects unsupported network", () => {
     const result = validateNetworkId("unknown-network");
-    if (result.valid) {
-      throw new Error("expected 'unknown-network' network to be rejected");
-    }
-    expect(result.error).toContain("Unsupported network");
+    expect(result.valid).toBe(false);
+    // Type assertion to narrow the union type
+    const failureResult = result as { valid: false; error: string };
+    expect(failureResult.error).toContain("Unsupported network");
   });
 
   it("rejects whitespace-only string", () => {
-    expect(validateNetworkId("   ")).toEqual({
-      valid: false,
-      error: "Network identifier is required",
-    });
+    const result = validateNetworkId("   ");
+    expect(result.valid).toBe(false);
+    // Type assertion to narrow the union type
+    const failureResult = result as { valid: false; error: string };
+    expect(failureResult.error).toBe("Network identifier is required");
   });
 });
 
