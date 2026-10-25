@@ -1,4 +1,5 @@
 import { StrKey } from "@stellar/stellar-sdk/base";
+import type { NetworkId } from "@/lib/stellar-config";
 
 /**
  * Validate a Stellar Ed25519 public key (\"G...\") using the full StrKey
@@ -98,7 +99,7 @@ export function getHorizonUrl(value: string): string {
     sandbox: { horizonUrl: "http://localhost:8000" },
   };
 
-  return networkConfigs[result.id].horizonUrl;
+  return networkConfigs[result.id]?.horizonUrl ?? "http://localhost:8000";
 }
 
 /**
@@ -120,7 +121,7 @@ export function getNetworkPassphrase(value: string): string {
     sandbox: "Standalone Network ; February 2017",
   };
 
-  return networkPassphrases[result.id];
+  return networkPassphrases[result.id] ?? "Test SDF Network ; September 2015";
 }
 
-export type { NetworkId } from "@/lib/stellar-config";
+export type { NetworkId };

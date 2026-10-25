@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   validateNetworkId,
   isNetworkSupported,
@@ -7,13 +7,6 @@ import {
   isValidStellarPublicKey,
 } from "../stellar";
 
-const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
-const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";
-const FUTURENET_PASSPHRASE = "Test SDF Future Network ; October 2022";
-const SANDBOX_PASSPHRASE = "Standalone Network ; February 2017";
-
-const VALID_KEY = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7";
-const INVALID_CHECKSUM_KEY = "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR8";
 const MUXED_KEY = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK";
 const SHORT_KEY = "GABC123";
 const WRONG_PREFIX_KEY = "SABC123XYZ456DEF789GHI012JKL345MNO678PQR901STU234VWX567YZA";
@@ -53,70 +46,61 @@ describe("isValidStellarPublicKey", () => {
 });
 
 describe("validateNetworkId", () => {
+  const validNetwork = (value: string, expectedId: string) =>
+    expect(validateNetworkId(value)).toEqual({ valid: true, id: expectedId });
+
   it("accepts testnet short ID", () => {
-    const result = validateNetworkId("testnet");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("testnet");
+    validNetwork("testnet", "testnet");
   });
 
   it("accepts mainnet short ID", () => {
-    const result = validateNetworkId("mainnet");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("mainnet");
+    validNetwork("mainnet", "mainnet");
   });
 
   it("accepts futurenet short ID", () => {
-    const result = validateNetworkId("futurenet");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("futurenet");
+    validNetwork("futurenet", "futurenet");
   });
 
   it("accepts sandbox short ID", () => {
-    const result = validateNetworkId("sandbox");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("sandbox");
+    validNetwork("sandbox", "sandbox");
   });
 
   it("accepts full testnet passphrase", () => {
-    const result = validateNetworkId("Test SDF Network ; September 2015");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("testnet");
+    validNetwork("Test SDF Network ; September 2015", "testnet");
   });
 
   it("accepts full mainnet passphrase", () => {
-    const result = validateNetworkId("Public Global Stellar Network ; September 2015");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("mainnet");
+    validNetwork("Public Global Stellar Network ; September 2015", "mainnet");
   });
 
   it("accepts full futurenet passphrase", () => {
-    const result = validateNetworkId("Test SDF Future Network ; October 2022");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("futurenet");
+    validNetwork("Test SDF Future Network ; October 2022", "futurenet");
   });
 
   it("accepts full sandbox passphrase", () => {
-    const result = validateNetworkId("Standalone Network ; February 2017");
-    expect(result.valid).toBe(true);
-    expect(result.id).toBe("sandbox");
+    validNetwork("Standalone Network ; February 2017", "sandbox");
   });
 
   it("rejects empty string", () => {
-    const result = validateNetworkId("");
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe("Network identifier is required");
+    expect(validateNetworkId("")).toEqual({
+      valid: false,
+      error: "Network identifier is required",
+    });
   });
 
   it("rejects unsupported network", () => {
     const result = validateNetworkId("unknown-network");
-    expect(result.valid).toBe(false);
+    if (result.valid) {
+      throw new Error("expected 'unknown-network' network to be rejected");
+    }
     expect(result.error).toContain("Unsupported network");
   });
 
   it("rejects whitespace-only string", () => {
-    const result = validateNetworkId("   ");
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe("Network identifier is required");
+    expect(validateNetworkId("   ")).toEqual({
+      valid: false,
+      error: "Network identifier is required",
+    });
   });
 });
 
