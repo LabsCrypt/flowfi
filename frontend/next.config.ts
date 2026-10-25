@@ -1,4 +1,3 @@
-import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -11,7 +10,7 @@ const nextConfig: NextConfig = {
   // prevents Turbopack from inferring a wrong root when stray package-lock
   // files exist outside the repo (e.g. ~/package-lock.json).
   turbopack: {
-    root: path.join(path.dirname(new URL(import.meta.url).pathname), ".."),
+    // On Windows, Turbopack can have issues with path canonicalization.\r\n    // Use an absolute path to the project root.\r\n    root: process.cwd() + "\\..",
   },
   // Enable tree-shaking for icon/utility libraries to reduce per-route
   // bundle sizes (Issue #1254).
