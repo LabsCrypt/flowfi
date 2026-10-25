@@ -22,7 +22,9 @@ function safeParseMetadata(raw: string | null | undefined): Record<string, unkno
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : null;
   } catch {
     return null;
   }
@@ -109,7 +111,12 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
       }
       case "FEE_CONFIG_UPDATED": {
         const metadata = safeParseMetadata(event.metadata);
-        if (!metadata) {
+        const hasFeeRate = metadata &&
+          ["old_fee_rate_bps", "new_fee_rate_bps"].some((key) => {
+            const rate = metadata[key];
+            return rate !== undefined && rate !== null && Number.isFinite(Number(rate));
+          });
+        if (!hasFeeRate) {
           return <>Fee configuration updated</>;
         }
         const oldRate = Number(metadata.old_fee_rate_bps ?? 0) / 100;
