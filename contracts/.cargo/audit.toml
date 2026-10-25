@@ -1,0 +1,27 @@
+# cargo-audit configuration for the contracts workspace (read by
+# `cargo audit`, which the "Security Checks" workflow runs in this
+# directory).
+
+[advisories]
+# RUSTSEC-2026-0387 - crypto-bigint 0.5.5: timing variability in
+# operations intended to be constant-time (advisory published
+# 2026-10-23; official solution: upgrade to >= 0.7.6).
+#
+# Why it cannot be fixed within the current dependency ranges:
+#
+#   stream_contract
+#     -> soroban-sdk 22.0.9            (workspace dep is pinned to "22.0.0")
+#       -> soroban-env-host 22.1.x     (22.1.4, the newest 22.x, still pins)
+#         -> k256/p256 0.13 + elliptic-curve ^0.13.5
+#           -> crypto-bigint ^0.5      (0.5.5 is the last 0.5.x; unpatched)
+#
+# crypto-bigint only ships the fix on its >= 0.7.6 line, which is
+# reachable only through elliptic-curve 0.14+. No elliptic-curve 0.13.x,
+# k256 0.13.x, or soroban-env-host 22.x release accepts that jump, and
+# crypto-bigint has no patched 0.5.x/0.6.x release.
+#
+# The only real upgrade path is a soroban-sdk major-version migration
+# (22 -> 29), which is a separate, large change to the contract code.
+# This waiver documents the interim state; remove it as soon as the
+# soroban-sdk upgrade lands.
+ignore = ["RUSTSEC-2026-0387"]
