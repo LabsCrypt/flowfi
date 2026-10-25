@@ -318,13 +318,12 @@ describe("proposal store", () => {
 });
 
 describe("fetchMultisigAccount", () => {
-  const master = Keypair.random();
-
-  beforeEach(() => {
+  const master = Keypair.random();beforeEach(() => {
     clearMultisigAccountCache();
-    localStorage.clear();
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.clear();
+    }
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -364,13 +363,12 @@ describe("fetchMultisigAccount", () => {
 
 describe("assessMultisigRouting", () => {
   const master = Keypair.random();
-  const coSigner = Keypair.random();
-
-  beforeEach(() => {
+  const coSigner = Keypair.random();beforeEach(() => {
     clearMultisigAccountCache();
-    localStorage.clear();
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.clear();
+    }
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
