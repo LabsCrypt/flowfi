@@ -1,0 +1,21 @@
+# cargo-audit configuration — read from the scanned project's `.cargo/`
+# directory by both `cargo audit` steps in .github/workflows/security.yml
+# (both run with working-directory: contracts).
+#
+# Docs: https://github.com/rustsec/rustsec/blob/main/cargo-audit/audit.toml.example
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0387 (crypto-bigint 0.5.5): timing variability in
+    # operations intended to be constant-time. No fixed release is reachable
+    # from this dependency tree: the fix exists only in crypto-bigint >=0.7.6,
+    # but elliptic-curve 0.13.8 is the last 0.13.x release and requires
+    # crypto-bigint ^0.5, while soroban-env-host (22.1.3 here; still pinned to
+    # k256 ^0.13.3 / p256 ^0.13.2 / elliptic-curve ^0.13.5 as of v30.0.0) can
+    # only resolve elliptic-curve 0.13 -> crypto-bigint 0.5.x. The affected
+    # code is used by the Soroban host's secp256k1/secp256r1 host functions
+    # (test/local host tooling), not by the deployed contract Wasm, so the
+    # practical risk is limited to timing side channels in local/CI tooling.
+    # TODO: remove this entry once soroban-env-host moves to
+    # elliptic-curve >=0.14 (k256/p256 0.14, crypto-bigint >=0.7.6).
+    "RUSTSEC-2026-0387",
+]
