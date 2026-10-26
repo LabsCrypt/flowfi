@@ -341,12 +341,9 @@ it("creates, saves, updates and deletes a proposal", () => {
   });
 
 describe("fetchMultisigAccount", () => {
-  const master = Keypair.random();
-
-  beforeEach(() => {
+  const master = Keypair.random();beforeEach(() => {
     clearMultisigAccountCache();
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -386,12 +383,9 @@ describe("fetchMultisigAccount", () => {
 
 describe("assessMultisigRouting", () => {
   const master = Keypair.random();
-  const coSigner = Keypair.random();
-
-  beforeEach(() => {
+  const coSigner = Keypair.random();beforeEach(() => {
     clearMultisigAccountCache();
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -465,4 +459,4 @@ describe("MultisigError", () => {
     expect(error.code).toBe("NetworkError");
     expect(error.name).toBe("MultisigError");
   });
-});
+});
