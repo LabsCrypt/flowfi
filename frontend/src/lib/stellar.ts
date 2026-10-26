@@ -2,7 +2,7 @@ import { StrKey } from "@stellar/stellar-sdk/base";
 import type { NetworkId } from "./stellar-config";
 
 /**
- * Validate a Stellar Ed25519 public key (\"G...\") using the full StrKey
+ * Validate a Stellar Ed25519 public key ("G...") using the full StrKey
  * checksum, rather than only prefix/length heuristics.
  *
  * `StrKey.isValidEd25519PublicKey` verifies the CRC16-XModem checksum and
