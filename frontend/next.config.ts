@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
   // prevents Turbopack from inferring a wrong root when stray package-lock
   // files exist outside the repo (e.g. ~/package-lock.json).
   turbopack: {
-    root: path.join(path.dirname(new URL(import.meta.url).pathname), ".."),
+    root: path.join(__dirname, ".."),
   },
   // Enable tree-shaking for icon/utility libraries to reduce per-route
   // bundle sizes (Issue #1254).

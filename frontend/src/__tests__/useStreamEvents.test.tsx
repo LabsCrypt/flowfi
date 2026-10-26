@@ -59,6 +59,14 @@ class MockEventSource {
     }
   }
 
+  /** Fire a named event with a raw (non-JSON) string payload. */
+  emitRaw(type: string, rawPayload: string) {
+    const event = { data: rawPayload } as MessageEvent;
+    for (const handler of this.handlers.get(type) ?? []) {
+      handler(event);
+    }
+  }
+
   /** Simulate a successful connection. */
   open() {
     this.readyState = 1;
@@ -458,6 +466,36 @@ describe('useStreamEvents', () => {
       expect(result.current.connected).toBe(false);
       expect(result.current.error).toBeInstanceOf(Error);
       expect(result.current.error?.message).toBe('SSE connection failed');
+    });
+
+    it('logs a parse error when SSE payload is malformed', () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
+      );
+
+      act(() => { MockEventSource.instance?.open(); });
+
+      // Emit a malformed (non-JSON) payload
+      act(() => {
+        MockEventSource.instance?.emitRaw('stream.created', 'not-valid-json{{');
+      });
+
+      // logger.error calls console.error — verify it was called with the
+      // parse-failure label and the raw payload for debugging.
+      expect(consoleSpy).toHaveBeenCalled();
+      const firstCall = consoleSpy.mock.calls[0] ?? [];
+      expect(String(firstCall[0])).toContain('SSE payload parse failure');
+
+      // The raw payload should appear somewhere in the logged arguments
+      const loggedRaw = JSON.stringify(firstCall);
+      expect(loggedRaw).toContain('not-valid-json{{');
+
+      // The malformed event should NOT appear in the events array
+      expect(result.current.events).toHaveLength(0);
+
+      consoleSpy.mockRestore();
     });
   });
 
