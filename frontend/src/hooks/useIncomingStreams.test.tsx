@@ -1,4 +1,4 @@
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import React from "react";
@@ -97,6 +97,31 @@ describe("useIncomingStreams hooks", () => {
       expect(vi.mocked(fetchIncomingStreams).mock.calls.length).toBeGreaterThan(1);
       vi.useRealTimers();
     });
+
+    it("does not expose a stale response after switching wallets", async () => {
+      let resolveFirst!: (streams: IncomingStreamRecord[]) => void;
+      vi.mocked(fetchIncomingStreams)
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+        .mockResolvedValueOnce([{ id: "new-wallet-stream" } as IncomingStreamRecord]);
+
+      const { result, rerender } = renderHook(
+        ({ publicKey }: { publicKey: string }) => useIncomingStreams(publicKey),
+        { wrapper, initialProps: { publicKey: "old-wallet" } },
+      );
+
+      await waitFor(() => expect(resolveFirst).toBeTypeOf("function"));
+      rerender({ publicKey: "new-wallet" });
+      await waitFor(() => {
+        expect(result.current.data?.[0]?.id).toBe("new-wallet-stream");
+      });
+
+      await act(async () => {
+        resolveFirst([{ id: "old-wallet-stream" } as IncomingStreamRecord]);
+        await Promise.resolve();
+      });
+
+      expect(result.current.data?.[0]?.id).toBe("new-wallet-stream");
+    });
   });
 
   describe("useWithdrawIncomingStream", () => {
@@ -190,6 +215,44 @@ describe("useIncomingStreams hooks", () => {
       expect(vi.mocked(fetchIncomingStreams).mock.calls.length).toBe(
         callsBeforeUnmount,
       );
+    });
+
+    it("aborts polling when the wallet changes mid-backoff", async () => {
+      vi.useFakeTimers();
+      vi.mocked(withdrawFromStream).mockResolvedValue({ success: true, txHash: "tx-hash" });
+      vi.mocked(fetchIncomingStreams).mockResolvedValue([]);
+
+      const { result, rerender } = renderHook(
+        ({ publicKey }: { publicKey: string }) =>
+          useWithdrawIncomingStream({} as unknown as WalletSession, publicKey),
+        { wrapper, initialProps: { publicKey: "old-wallet" } },
+      );
+
+      await act(async () => {
+        await result.current.mutateAsync({
+          id: "1",
+          streamId: 1,
+          withdrawn: 0,
+          deposited: 100,
+          ratePerSecond: 1,
+          isPaused: false,
+          lastUpdateTime: Date.now() / 1000,
+        } as unknown as IncomingStreamRecord);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      const callsBeforeWalletChange = vi.mocked(fetchIncomingStreams).mock.calls.length;
+
+      rerender({ publicKey: "new-wallet" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(63_000);
+      });
+
+      expect(vi.mocked(fetchIncomingStreams).mock.calls.length).toBe(callsBeforeWalletChange);
+      expect(queryClient.getQueryData(incomingStreamsQueryKey("new-wallet"))).toBeUndefined();
+      vi.useRealTimers();
     });
   });
 });

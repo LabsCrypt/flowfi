@@ -310,6 +310,133 @@ describe('rollbackAboveLedger', () => {
     expect(tx.stream.delete).not.toHaveBeenCalled();
     expect(result.streamsDeleted).toBe(0);
   });
+
+  it('restores pause state to unpaused when a PAUSED event is rolled back and only CREATED survives', async () => {
+    tx.streamEvent.findMany
+      .mockResolvedValueOnce([{ streamId: 42n, ledgerSequence: 1003 }])
+      .mockResolvedValueOnce([
+        streamEventRow({
+          ledgerSequence: 1000,
+          eventType: 'CREATED',
+          amount: '1000',
+          timestamp: 1_700_000_000n,
+        }),
+      ]);
+    tx.streamEvent.deleteMany.mockResolvedValue({ count: 1 });
+    // Reverted DB row reflects the reverted fork where it was paused
+    tx.stream.findUnique.mockResolvedValue(
+      streamRow({
+        isPaused: true,
+        pausedAt: 1_700_000_020n,
+        totalPausedDuration: 0,
+      }),
+    );
+    tx.stream.update.mockResolvedValue({});
+    tx.ledgerCheckpoint.updateMany.mockResolvedValue({ count: 1 });
+    tx.indexerState.upsert.mockResolvedValue({});
+
+    await checkpoint.rollbackAboveLedger(1002);
+
+    expect(tx.stream.update).toHaveBeenCalledTimes(1);
+    const update = tx.stream.update.mock.calls[0]![0];
+    expect(update.where).toEqual({ streamId: 42n });
+    expect(update.data.isPaused).toBe(false);
+    expect(update.data.pausedAt).toBeNull();
+    expect(update.data.totalPausedDuration).toBe(0);
+  });
+
+  it('restores stream to paused state and previous pausedAt when RESUMED is rolled back', async () => {
+    tx.streamEvent.findMany
+      .mockResolvedValueOnce([{ streamId: 42n, ledgerSequence: 1004 }])
+      .mockResolvedValueOnce([
+        streamEventRow({
+          ledgerSequence: 1000,
+          eventType: 'CREATED',
+          amount: '1000',
+          timestamp: 1_700_000_000n,
+        }),
+        streamEventRow({
+          ledgerSequence: 1002,
+          eventType: 'PAUSED',
+          timestamp: 1_700_000_020n,
+          metadata: JSON.stringify({ pausedAt: '1700000020' }),
+        }),
+      ]);
+    tx.streamEvent.deleteMany.mockResolvedValue({ count: 1 });
+    // Current DB row was updated by reverted RESUMED
+    tx.stream.findUnique.mockResolvedValue(
+      streamRow({
+        isPaused: false,
+        pausedAt: null,
+        totalPausedDuration: 30,
+      }),
+    );
+    tx.stream.update.mockResolvedValue({});
+    tx.ledgerCheckpoint.updateMany.mockResolvedValue({ count: 1 });
+    tx.indexerState.upsert.mockResolvedValue({});
+
+    await checkpoint.rollbackAboveLedger(1003);
+
+    expect(tx.stream.update).toHaveBeenCalledTimes(1);
+    const update = tx.stream.update.mock.calls[0]![0];
+    expect(update.where).toEqual({ streamId: 42n });
+    expect(update.data.isPaused).toBe(true);
+    expect(update.data.pausedAt).toBe(1_700_000_020n);
+    expect(update.data.totalPausedDuration).toBe(0);
+  });
+
+  it('restores pause state and totalPausedDuration through repeated pause cycles when later cycles are rolled back', async () => {
+    tx.streamEvent.findMany
+      .mockResolvedValueOnce([
+        { streamId: 42n, ledgerSequence: 1004 },
+        { streamId: 42n, ledgerSequence: 1005 },
+      ])
+      .mockResolvedValueOnce([
+        streamEventRow({
+          ledgerSequence: 1000,
+          eventType: 'CREATED',
+          amount: '1000',
+          timestamp: 1_700_000_000n,
+        }),
+        streamEventRow({
+          ledgerSequence: 1001,
+          eventType: 'PAUSED',
+          timestamp: 1_700_000_010n,
+          metadata: JSON.stringify({ pausedAt: '1700000010' }),
+        }),
+        streamEventRow({
+          ledgerSequence: 1002,
+          eventType: 'RESUMED',
+          timestamp: 1_700_000_025n,
+          metadata: JSON.stringify({
+            pausedDuration: 15,
+            totalPausedDuration: 15,
+            newEndTime: '1700000115',
+          }),
+        }),
+      ]);
+    tx.streamEvent.deleteMany.mockResolvedValue({ count: 2 });
+    // Current DB row has cycle 2 reverted values
+    tx.stream.findUnique.mockResolvedValue(
+      streamRow({
+        isPaused: false,
+        pausedAt: null,
+        totalPausedDuration: 45,
+      }),
+    );
+    tx.stream.update.mockResolvedValue({});
+    tx.ledgerCheckpoint.updateMany.mockResolvedValue({ count: 2 });
+    tx.indexerState.upsert.mockResolvedValue({});
+
+    await checkpoint.rollbackAboveLedger(1003);
+
+    expect(tx.stream.update).toHaveBeenCalledTimes(1);
+    const update = tx.stream.update.mock.calls[0]![0];
+    expect(update.where).toEqual({ streamId: 42n });
+    expect(update.data.isPaused).toBe(false);
+    expect(update.data.pausedAt).toBeNull();
+    expect(update.data.totalPausedDuration).toBe(15);
+  });
 });
 
 describe('verifyAndRecover', () => {

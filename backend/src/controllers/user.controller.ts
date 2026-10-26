@@ -297,6 +297,18 @@ export const exportTransactions = async (
       return sendApiError(res, 400, "INVALID_DIRECTION", "Invalid direction. Must be incoming, outgoing, or all");
     }
 
+    // Validate the complete range before calling either streaming exporter:
+    // they write headers and a response prefix before querying the database.
+    if (startDate && Number.isNaN(startDate.getTime())) {
+      return sendApiError(res, 400, "INVALID_START_DATE", "startDate must be a valid date");
+    }
+    if (endDate && Number.isNaN(endDate.getTime())) {
+      return sendApiError(res, 400, "INVALID_END_DATE", "endDate must be a valid date");
+    }
+    if (startDate && endDate && startDate.getTime() > endDate.getTime()) {
+      return sendApiError(res, 400, "INVALID_DATE_RANGE", "startDate must be earlier than or equal to endDate");
+    }
+
     const options: exportService.ExportOptions = {
       format: format as "csv" | "json",
       direction,

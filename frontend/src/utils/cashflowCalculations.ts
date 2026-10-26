@@ -19,16 +19,30 @@ export function projectCashflow(streams: ProjectionStream[], horizonDays: number
   const start = new Date(now); start.setHours(0, 0, 0, 0);
   let balance = streams.filter((stream) => stream.direction === "outgoing").reduce((sum, stream) => sum + Math.max(0, stream.deposited - stream.withdrawn), 0);
   let cumulative = streams.filter((stream) => stream.direction === "incoming").reduce((sum, stream) => sum + stream.withdrawn, 0);
+  const remaining = streams.map((stream) => Math.max(0, stream.deposited - stream.withdrawn));
+
   return Array.from({ length: horizonDays + 1 }, (_, index) => {
     const date = new Date(start); date.setDate(start.getDate() + index);
     // The series starts at the beginning of today, so the first point has not
     // had a full day to accrue yet. Crediting it one day of flow would shift the
     // whole projection a day into the future.
-    const day = index === 0 ? 0 : streams.reduce((total, stream) => {
-      if (!stream.isActive || stream.isPaused || (stream.startTime && stream.startTime * 1000 > date.getTime())) return total;
-      const amount = stream.ratePerSecond * 86400;
-      return total + (stream.direction === "incoming" ? amount : -amount);
-    }, 0);
+    let day = 0;
+    if (index > 0) {
+      for (let i = 0; i < streams.length; i++) {
+        const stream = streams[i]!;
+        if (!stream.isActive || stream.isPaused || (stream.startTime && stream.startTime * 1000 > date.getTime())) {
+          continue;
+        }
+        const unvested = remaining[i]!;
+        if (unvested <= 0) continue;
+
+        const fullDayAmount = stream.ratePerSecond * 86400;
+        const amount = Math.min(fullDayAmount, unvested);
+        remaining[i] = unvested - amount;
+
+        day += stream.direction === "incoming" ? amount : -amount;
+      }
+    }
     cumulative += Math.max(0, day);
     balance = Math.max(0, balance + Math.min(0, day));
     return { date, actual: index === 0 ? cumulative : 0, projected: cumulative, balance, dailyRate: day };

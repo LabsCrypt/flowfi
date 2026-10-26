@@ -146,6 +146,25 @@ describe('RecipientStep', () => {
     fireEvent.blur(screen.getByRole('textbox'));
     expect(onChange).toHaveBeenCalledWith(VALID_KEY);
   });
+
+  it('shows validation feedback after a malformed value is edited', () => {
+    const RecipientHarness = () => {
+      const [value, setValue] = React.useState("");
+      return <RecipientStep value={value} onChange={setValue} />;
+    };
+    render(<RecipientHarness />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'not-a-key' } });
+    expect(screen.getByRole('alert')).toHaveTextContent(/invalid stellar public key/i);
+  });
+
+  it('preserves the current input when a paste contains only whitespace', () => {
+    const onChange = vi.fn();
+    render(<RecipientStep value="GABC" onChange={onChange} />);
+    fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: { getData: () => '   ' },
+    });
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 // ─── AmountStep ──────────────────────────────────────────────────────────────

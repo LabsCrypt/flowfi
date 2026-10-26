@@ -1,4 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] || null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = value.toString();
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    key: vi.fn((index: number) => Object.keys(store)[index] || null),
+    length: 0,
+  };
+})();
+
+vi.stubGlobal('localStorage', localStorageMock);
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'localStorage', {
+    value: localStorageMock,
+    configurable: true,
+    writable: true,
+  });
+}
+
 import {
   Account,
   Asset,
@@ -178,6 +206,7 @@ describe("requiredWeightForLevel / needsCoSigners", () => {
       }),
       { ...HORIZON_CONTEXT, publicKey: "GMASTER" },
     ),
+
   };
 
   it("reads the requested threshold category", () => {
@@ -276,12 +305,7 @@ describe("SEP-0007 URIs", () => {
   });
 });
 
-describe("proposal store", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  it("creates, saves, updates and deletes a proposal", () => {
+it("creates, saves, updates and deletes a proposal", () => {
     const proposal = createProposal({
       account: "GABC",
       xdr: "AAAA",
@@ -315,16 +339,11 @@ describe("proposal store", () => {
   it("returns null when updating a missing proposal", () => {
     expect(updateProposal("missing", { status: "failed" })).toBeNull();
   });
-});
 
 describe("fetchMultisigAccount", () => {
-  const master = Keypair.random();
-
-  beforeEach(() => {
+  const master = Keypair.random();beforeEach(() => {
     clearMultisigAccountCache();
-    localStorage.clear();
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -364,13 +383,9 @@ describe("fetchMultisigAccount", () => {
 
 describe("assessMultisigRouting", () => {
   const master = Keypair.random();
-  const coSigner = Keypair.random();
-
-  beforeEach(() => {
+  const coSigner = Keypair.random();beforeEach(() => {
     clearMultisigAccountCache();
-    localStorage.clear();
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });

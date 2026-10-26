@@ -240,12 +240,6 @@ export async function deliverWebhook(
   const retryEnabled = options.retries !== false;
   const maxAttempts = retryEnabled ? MAX_RETRY_ATTEMPTS : 1;
   const payloadJson = JSON.stringify(payload);
-  const timestamp = Math.floor(Date.now() / 1000);
-  const signature = generateWebhookSignature(
-    payloadJson,
-    subscription.secretKey,
-    timestamp,
-  );
 
   const deliveryId = crypto.randomUUID();
 
@@ -270,6 +264,14 @@ export async function deliverWebhook(
           setTimeout(resolve, RETRY_DELAYS_MS[attempt]),
         );
       }
+
+      // Sign at dispatch time so retries stay within the receiver's replay window.
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = generateWebhookSignature(
+        payloadJson,
+        subscription.secretKey,
+        timestamp,
+      );
 
       const response = await fetch(subscription.targetUrl, {
         method: "POST",
@@ -346,6 +348,13 @@ async function checkConsecutiveFailures(subscriptionId: string): Promise<void> {
   const recentDeliveries = await prisma.webhookDelivery.findMany({
     where: {
       subscriptionId,
+      eventType: { not: "webhook.test" },
+      // Keep successes to reset the streak, but ignore rows still awaiting
+      // their final retry. Apply these filters before taking the latest 50.
+      OR: [
+        { deliveredAt: { not: null } },
+        { attempts: { gte: MAX_RETRY_ATTEMPTS }, error: { not: null } },
+      ],
     },
     orderBy: {
       createdAt: "desc",

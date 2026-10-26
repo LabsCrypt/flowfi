@@ -8,6 +8,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import express from "express";
+import request from "supertest";
 
 const queryMock = vi.fn();
 
@@ -27,12 +29,16 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { prisma } from "../src/lib/prisma.js";
+import analyticsRoutes from "../src/routes/v1/analytics.routes.js";
 import {
   getDefiLlamaAdapter,
   getHistoricalAnalytics,
   getProtocolTvl,
   resetTimescaleCacheForTests,
 } from "../src/services/analytics.service.js";
+
+const app = express();
+app.use("/v1/analytics", analyticsRoutes);
 
 describe("analytics service (#1480)", () => {
   beforeEach(() => {
@@ -150,4 +156,39 @@ describe("analytics service (#1480)", () => {
     expect(series.points[0]?.peakStreams).toBe(9);
     expect(queryMock.mock.calls.at(-1)![0]).toContain("daily_protocol_metrics");
   });
+
+  it.each(["1h", "1d"] as const)(
+    "preserves PostgreSQL NUMERIC averages in %s historical responses (#1696)",
+    async (interval) => {
+      const averages = [
+        "100.0000000000000000",
+        "1.5000000000000000",
+        "170141183460469231731687303715884105726.1234567890123456",
+      ];
+      queryMock.mockResolvedValueOnce({ rows: [{ hypertable: "stream_flow_snapshots" }] });
+      queryMock.mockResolvedValueOnce({
+        rows: averages.map((avg_tvl, index) => ({
+          bucket: new Date("2026-09-28T00:00:00Z"),
+          token_address: `TOKEN_${index}`,
+          avg_tvl,
+          aggregate_velocity: "4",
+          peak_streams: 9,
+        })),
+      });
+
+      const response = await request(app)
+        .get("/v1/analytics/historical")
+        .query({ period: "30d", interval });
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.interval).toBe(interval);
+      expect(response.body.data.points.map((point: { avgTvlStroops: string }) => point.avgTvlStroops))
+        .toEqual(averages);
+      expect(response.body.data.points[0].velocityStroopsPerSecond).toBe("4");
+      expect(queryMock.mock.calls.at(-1)![0]).toContain(
+        interval === "1d" ? "daily_protocol_metrics" : "hourly_protocol_metrics",
+      );
+    },
+  );
 });
