@@ -51,17 +51,9 @@ class MockEventSource {
     this.emitRaw(type, JSON.stringify(data));
   }
 
-  /** Fire a named event with an already-serialized (possibly invalid) payload. */
+  /** Fire a named event with a raw (possibly invalid) payload. */
   emitRaw(type: string, raw: string) {
     const event = { data: raw } as MessageEvent;
-    for (const handler of this.handlers.get(type) ?? []) {
-      handler(event);
-    }
-  }
-
-  /** Fire a named event with a raw (non-JSON) string payload. */
-  emitRaw(type: string, rawPayload: string) {
-    const event = { data: rawPayload } as MessageEvent;
     for (const handler of this.handlers.get(type) ?? []) {
       handler(event);
     }
