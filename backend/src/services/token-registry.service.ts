@@ -14,7 +14,17 @@ function networkPassphrase(): string { return process.env.STELLAR_NETWORK === 'm
 function cacheKey(address: string): string { return `${CACHE_PREFIX}:${process.env.STELLAR_NETWORK ?? 'testnet'}:${address}`; }
 async function redisGet(address: string): Promise<TokenMetadata | null> {
   const redis = getPublisher(); if (!redis) return null;
-  try { const value = await redis.get(cacheKey(address)); return value ? JSON.parse(value) as TokenMetadata : null; } catch { return null; }
+  try {
+    const value = await redis.get(cacheKey(address));
+    if (!value) return null;
+    const cached = JSON.parse(value) as Omit<TokenMetadata, 'createdAt' | 'updatedAt'> & { createdAt: string; updatedAt: string };
+    const createdAt = new Date(cached.createdAt);
+    const updatedAt = new Date(cached.updatedAt);
+    if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) return null;
+    return { ...cached, createdAt, updatedAt };
+  } catch {
+    return null;
+  }
 }
 async function redisSet(metadata: TokenMetadata): Promise<void> {
   const redis = getPublisher(); if (!redis) return;
