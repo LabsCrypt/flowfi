@@ -1,5 +1,6 @@
 import type { ExportFormat, Stream } from '@/types/analytics';
 import { toDecimalString } from '@/utils/stream-metrics';
+import { getDefaultTokenDecimals } from '@/utils/amount';
 
 export interface ExportColumn {
   key: string;
@@ -50,7 +51,9 @@ function toIsoDate(value: string): string {
 
 function decimalsOf(stream: Stream): number {
   const decimals = stream.token?.decimals;
-  return Number.isFinite(decimals) ? Number(decimals) : 18;
+  return Number.isFinite(decimals)
+    ? Number(decimals)
+    : getDefaultTokenDecimals(stream.token?.symbol ?? '');
 }
 
 export function buildAccountingRow(stream: Stream): AccountingRow {
