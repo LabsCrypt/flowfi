@@ -16,6 +16,7 @@ class MockEventSource {
   onmessage: EventHandler | null = null;
   onerror: ErrorHandler | null = null;
   readyState = 0;
+  closed = false;
 
   private handlers: Map<string, EventHandler[]> = new Map();
 
@@ -35,17 +36,24 @@ class MockEventSource {
     this.handlers.set(type, list.filter((h) => h !== handler));
   }
 
-  /** Fire a named event as if it arrived from the server. */
-  emit(type: string, data: unknown) {
-    const event = { data: JSON.stringify(data) } as MessageEvent;
-    for (const handler of this.handlers.get(type) ?? []) {
-      handler(event);
-    }
+  listenerCount(type: string) {
+    return this.handlers.get(type)?.length ?? 0;
   }
 
-  /** Fire a named event with a raw (non-JSON) string payload. */
-  emitRaw(type: string, rawPayload: string) {
-    const event = { data: rawPayload } as MessageEvent;
+  totalListenerCount() {
+    let total = 0;
+    for (const handlers of this.handlers.values()) total += handlers.length;
+    return total;
+  }
+
+  /** Fire a named event as if it arrived from the server. */
+  emit(type: string, data: unknown) {
+    this.emitRaw(type, JSON.stringify(data));
+  }
+
+  /** Fire a named event with a raw (possibly invalid) payload. */
+  emitRaw(type: string, raw: string) {
+    const event = { data: raw } as MessageEvent;
     for (const handler of this.handlers.get(type) ?? []) {
       handler(event);
     }
@@ -64,6 +72,7 @@ class MockEventSource {
   }
 
   close() {
+    this.closed = true;
     this.readyState = 2;
   }
 }
@@ -341,33 +350,263 @@ describe('useStreamEvents', () => {
     expect(MockEventSource.instanceCount).toBeLessThanOrEqual(21);
   });
 
-  it('logs a parse error when SSE payload is malformed', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  // ─── #1782: malformed and partial SSE frames ────────────────────────────────
+  describe('malformed and partial SSE frames', () => {
+    it('silently ignores malformed JSON without failing the connection', () => {
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
 
-    const { result } = renderHook(() =>
-      useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
-    );
+      act(() => {
+        MockEventSource.instance?.open();
+        MockEventSource.instance?.emitRaw('stream.created', '{not valid json');
+      });
 
-    act(() => { MockEventSource.instance?.open(); });
-
-    // Emit a malformed (non-JSON) payload
-    act(() => {
-      MockEventSource.instance?.emitRaw('stream.created', 'not-valid-json{{');
+      // Documented contract: malformed event payloads are swallowed, not
+      // surfaced as a connection error.
+      expect(result.current.events).toHaveLength(0);
+      expect(result.current.connected).toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(result.current.reconnecting).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(MockEventSource.instanceCount).toBe(1);
     });
 
-    // logger.error calls console.error — verify it was called with the
-    // parse-failure label and the raw payload for debugging.
-    expect(consoleSpy).toHaveBeenCalled();
-    const firstCall = consoleSpy.mock.calls[0] ?? [];
-    expect(String(firstCall[0])).toContain('SSE payload parse failure');
+    it('ignores unknown and unregistered event types', () => {
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
+      );
 
-    // The raw payload should appear somewhere in the logged arguments
-    const loggedRaw = JSON.stringify(firstCall);
-    expect(loggedRaw).toContain('not-valid-json{{');
+      act(() => {
+        MockEventSource.instance?.open();
+        MockEventSource.instance?.emit('stream.unknown', { id: 1 });
+        MockEventSource.instance?.emit('message', { id: 2 });
+        MockEventSource.instance?.emit('stream.created', { id: 3 });
+      });
 
-    // The malformed event should NOT appear in the events array
-    expect(result.current.events).toHaveLength(0);
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]?.type).toBe('created');
+      expect(result.current.events[0]?.data).toEqual({ id: 3 });
+      expect(MockEventSource.instance?.listenerCount('stream.unknown')).toBe(0);
+    });
 
-    consoleSpy.mockRestore();
+    it('processes valid events that arrive after partial and malformed frames', () => {
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true }),
+      );
+
+      act(() => {
+        const source = MockEventSource.instance;
+        source?.open();
+        // Truncated frame, then a frame with trailing garbage, an empty frame,
+        // and whitespace only.
+        source?.emitRaw('stream.created', '{"streamId": 42');
+        source?.emitRaw('stream.created', '{"streamId": 42}}');
+        source?.emitRaw('stream.created', '');
+        source?.emitRaw('stream.created', '   ');
+
+        // A valid frame still gets processed normally afterwards.
+        source?.emit('stream.withdrawn', { amount: '10' });
+        source?.emit('stream.paused', { reason: 'user' });
+      });
+
+      expect(result.current.events).toHaveLength(2);
+      expect(result.current.events.map((e) => e.type)).toEqual(['paused', 'withdrawn']);
+      expect(result.current.events[0]?.data).toEqual({ reason: 'user' });
+      expect(result.current.events[1]?.data).toEqual({ amount: '10' });
+      expect(result.current.connected).toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('recovers after a burst of malformed frames without reconnecting', () => {
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: true, maxRetryDelay: 500 }),
+      );
+
+      const first = MockEventSource.instance;
+
+      act(() => {
+        first?.open();
+        for (let i = 0; i < 10; i++) {
+          first?.emitRaw('stream.topped_up', '{"amount":');
+        }
+        first?.emit('stream.topped_up', { amount: '25' });
+      });
+
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]?.data).toEqual({ amount: '25' });
+      expect(result.current.connected).toBe(true);
+      expect(MockEventSource.instance).toBe(first);
+      expect(MockEventSource.instanceCount).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('still reports connection failures as errors after malformed frames', () => {
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
+      );
+
+      act(() => {
+        const source = MockEventSource.instance;
+        source?.open();
+        source?.emitRaw('stream.created', 'not-json');
+        source?.triggerError();
+      });
+
+      expect(result.current.events).toHaveLength(0);
+      expect(result.current.connected).toBe(false);
+      expect(result.current.error).toBeInstanceOf(Error);
+      expect(result.current.error?.message).toBe('SSE connection failed');
+    });
+
+    it('logs a parse error when SSE payload is malformed', () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const { result } = renderHook(() =>
+        useStreamEvents({ streamIds: ['1'], autoReconnect: false }),
+      );
+
+      act(() => { MockEventSource.instance?.open(); });
+
+      // Emit a malformed (non-JSON) payload
+      act(() => {
+        MockEventSource.instance?.emitRaw('stream.created', 'not-valid-json{{');
+      });
+
+      // logger.error calls console.error — verify it was called with the
+      // parse-failure label and the raw payload for debugging.
+      expect(consoleSpy).toHaveBeenCalled();
+      const firstCall = consoleSpy.mock.calls[0] ?? [];
+      expect(String(firstCall[0])).toContain('SSE payload parse failure');
+
+      // The raw payload should appear somewhere in the logged arguments
+      const loggedRaw = JSON.stringify(firstCall);
+      expect(loggedRaw).toContain('not-valid-json{{');
+
+      // The malformed event should NOT appear in the events array
+      expect(result.current.events).toHaveLength(0);
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  // ─── #1783: reconnect timer and listener cleanup ────────────────────────────
+  describe('reconnect cleanup', () => {
+    it('clears a pending reconnect timer on unmount and never reconnects', () => {
+      const streamIds = ['1'];
+      const { unmount } = renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+      );
+
+      const first = MockEventSource.instance!;
+      act(() => { first.triggerError(); });
+
+      expect(first.closed).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+
+      unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
+
+      act(() => { vi.advanceTimersByTime(60_000); });
+
+      expect(MockEventSource.instanceCount).toBe(1);
+      expect(MockEventSource.instance).toBe(first);
+    });
+
+    it('does not reconnect when unmounted mid-attempt after the timer fires', () => {
+      const streamIds = ['1'];
+      const { unmount } = renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+      );
+
+      act(() => { MockEventSource.instance?.triggerError(); });
+      act(() => { vi.advanceTimersByTime(1000); });
+
+      const second = MockEventSource.instance!;
+      expect(MockEventSource.instanceCount).toBe(2);
+      expect(second.closed).toBe(false);
+
+      unmount();
+
+      expect(second.closed).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(MockEventSource.instanceCount).toBe(2);
+    });
+
+    it('coalesces repeated error events into a single reconnect timer', () => {
+      const streamIds = ['1'];
+      renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+      );
+
+      const first = MockEventSource.instance!;
+      act(() => {
+        first.open();
+        first.triggerError();
+        first.triggerError();
+      });
+
+      // Only one timer survives; the second error replaced the first backoff
+      // timer with the next (doubled) delay instead of stacking timers.
+      expect(vi.getTimerCount()).toBe(1);
+
+      act(() => { vi.advanceTimersByTime(1999); });
+      expect(MockEventSource.instanceCount).toBe(1);
+
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(MockEventSource.instanceCount).toBe(2);
+      expect(MockEventSource.instance).not.toBe(first);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('registers exactly one listener per event type on a reconnected source', () => {
+      const streamIds = ['1'];
+      renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+      );
+
+      act(() => { MockEventSource.instance?.triggerError(); });
+      act(() => { vi.advanceTimersByTime(1000); });
+
+      const second = MockEventSource.instance!;
+      expect(MockEventSource.instanceCount).toBe(2);
+
+      for (const type of [
+        'stream.created',
+        'stream.topped_up',
+        'stream.withdrawn',
+        'stream.cancelled',
+        'stream.completed',
+        'stream.paused',
+        'stream.resumed',
+      ]) {
+        expect(second.listenerCount(type)).toBe(1);
+      }
+      expect(second.totalListenerCount()).toBe(7);
+    });
+
+    it('leaves no timers behind after repeated errors and unmount', () => {
+      const streamIds = ['1'];
+      const { unmount } = renderHook(() =>
+        useStreamEvents({ streamIds, autoReconnect: true, maxRetryDelay: 30000 }),
+      );
+
+      for (let i = 0; i < 5; i++) {
+        act(() => { MockEventSource.instance?.triggerError(); });
+      }
+
+      expect(vi.getTimerCount()).toBe(1);
+
+      unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
+      act(() => { vi.advanceTimersByTime(60_000); });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(MockEventSource.instanceCount).toBe(1);
+    });
   });
 });

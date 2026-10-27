@@ -39,10 +39,15 @@ export function useStreamingAmount({
 
   useEffect(() => {
     let rafId: number | null = null;
+    // Guard against malformed rates so they never leak NaN into the rendered
+    // claimable amount.
+    const effectiveRate = Number.isFinite(ratePerSecond) && ratePerSecond > 0
+      ? ratePerSecond
+      : 0;
     const isStreaming =
       isActive &&
       !isPaused &&
-      ratePerSecond > 0 &&
+      effectiveRate > 0 &&
       maxClaimable > 0;
     const reduceMotion =
       typeof window !== "undefined" &&
@@ -61,7 +66,7 @@ export function useStreamingAmount({
         elapsedSinceStart - (startTime ? totalPausedDuration : 0) - currentPauseDuration,
       );
 
-      return clamp(effectiveElapsed * ratePerSecond, 0, maxClaimable);
+      return clamp(effectiveElapsed * effectiveRate, 0, maxClaimable);
     };
 
     claimableRef.current = computeClaimable();
@@ -80,7 +85,7 @@ export function useStreamingAmount({
       lastFrameTime = frameTime;
 
       const nextClaimable = isStreaming
-        ? clamp(claimableRef.current + ratePerSecond * deltaSeconds, 0, maxClaimable)
+        ? clamp(claimableRef.current + effectiveRate * deltaSeconds, 0, maxClaimable)
         : 0;
 
       claimableRef.current = nextClaimable;
