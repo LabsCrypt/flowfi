@@ -60,6 +60,7 @@ vi.mock('../src/logger.js', async (importOriginal) => {
 
 import { SorobanEventWorker, getEventLedgerTimestamp } from '../src/workers/soroban-event-worker.js';
 import { prisma } from '../src/lib/prisma.js';
+import { sseService } from '../src/services/sse.service.js';
 import logger from '../src/logger.js';
 
 // ─── ScVal v17 mock helpers (property-based, not method-based) ──────────────
@@ -969,5 +970,223 @@ describe('SorobanEventWorker', () => {
 describe('getEventLedgerTimestamp', () => {
   it('uses the event ledger close time instead of the indexer processing time', () => {
     expect(getEventLedgerTimestamp({ ledgerClosedAt: '1735689599' })).toBe(1735689599);
+  });
+});
+
+describe('SorobanEventWorker - Indexed Fee Event Accounting (#1764)', () => {
+  let worker: SorobanEventWorker;
+
+  const mockContractAddrWithByte = (fillByte: number) =>
+    ({
+      address: {
+        type: 'scAddressTypeContract',
+        contractId: { value: Buffer.alloc(32, fillByte) },
+      },
+    }) as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    worker = new SorobanEventWorker();
+  });
+
+  it('decodes FeeCollected with 128-bit hi/lo fee_amount, persists treasury/token metadata, and broadcasts to admin SSE', async () => {
+    // hi = 2, lo = 500 -> (2n << 64n) | 500n = 36893488147419103732
+    const expectedLargeFee = ((2n << 64n) | 500n).toString();
+
+    (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    (prisma.streamEvent.upsert as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 'fee-128bit-row',
+    });
+
+    const event: rpc.Api.EventResponse = {
+      id: 'fee-evt-128bit',
+      type: 'contract',
+      ledger: 2048,
+      ledgerClosedAt: '2025-01-01T00:00:00Z',
+      txHash: 'tx-fee-128bit',
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('fee_collected'), mockU64(42)],
+      value: {
+        type: 'scvMap',
+        map: [
+          mockMapEntry('treasury', mockAccountAddr()),
+          mockMapEntry('fee_amount', mockI128(2, 500)),
+          mockMapEntry('token', mockContractAddrWithByte(0x11)),
+        ],
+      } as any,
+    };
+
+    await worker.processEvent(event);
+
+    expect(prisma.streamEvent.upsert).toHaveBeenCalledTimes(1);
+    const upsertArg = (prisma.streamEvent.upsert as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(upsertArg.where).toEqual({
+      transactionHash_eventType: {
+        transactionHash: 'tx-fee-128bit',
+        eventType: 'FEE_COLLECTED',
+      },
+    });
+    expect(upsertArg.create).toMatchObject({
+      streamId: 42n,
+      eventType: 'FEE_COLLECTED',
+      amount: expectedLargeFee,
+      transactionHash: 'tx-fee-128bit',
+      ledgerSequence: 2048,
+    });
+    const metadata = JSON.parse(upsertArg.create.metadata) as { treasury: string; token: string };
+    expect(metadata.treasury).toMatch(/^G/);
+    expect(metadata.token).toMatch(/^C/);
+
+    expect(sseService.broadcastToAdmin).toHaveBeenCalledWith(
+      'stream.fee_collected',
+      expect.objectContaining({
+        streamId: 42n,
+        treasury: metadata.treasury,
+        feeAmount: expectedLargeFee,
+        token: metadata.token,
+        transactionHash: 'tx-fee-128bit',
+        ledger: 2048,
+      }),
+    );
+  });
+
+  it('tracks per-token fee totals across multiple streams and prevents double-counting on duplicate txHash replay', async () => {
+    const persistedFeeEvents: Array<{
+      streamId: bigint;
+      eventType: string;
+      amount: string;
+      transactionHash: string;
+      metadata: string;
+    }> = [];
+
+    (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockImplementation(
+      async ({
+        where,
+      }: {
+        where: { transactionHash_eventType: { transactionHash: string; eventType: string } };
+      }) =>
+        persistedFeeEvents.find(
+          (row) =>
+            row.transactionHash === where.transactionHash_eventType.transactionHash &&
+            row.eventType === where.transactionHash_eventType.eventType,
+        )
+          ? { id: 'existing-id' }
+          : null,
+    );
+    (prisma.streamEvent.upsert as ReturnType<typeof vi.fn>).mockImplementation(
+      async ({ create }: { create: (typeof persistedFeeEvents)[number] }) => {
+        persistedFeeEvents.push(create);
+        return { id: `row-${persistedFeeEvents.length}`, ...create };
+      },
+    );
+
+    const makeFeeEvent = (
+      streamId: number,
+      txHash: string,
+      feeLo: number,
+      tokenByte: number,
+    ): rpc.Api.EventResponse => ({
+      id: `evt-${txHash}`,
+      type: 'contract',
+      ledger: 3000 + streamId,
+      ledgerClosedAt: '2025-01-01T00:00:00Z',
+      txHash,
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('fee_collected'), mockU64(streamId)],
+      value: {
+        type: 'scvMap',
+        map: [
+          mockMapEntry('treasury', mockAccountAddr()),
+          mockMapEntry('fee_amount', mockI128(0, feeLo)),
+          mockMapEntry('token', mockContractAddrWithByte(tokenByte)),
+        ],
+      } as any,
+    });
+
+    // 1. Stream #1 collects 1_500 token-A fee
+    await worker.processEvent(makeFeeEvent(1, 'tx-fee-tokenA-1', 1500, 0xaa));
+    // 2. Stream #2 collects 2_500 token-A fee
+    await worker.processEvent(makeFeeEvent(2, 'tx-fee-tokenA-2', 2500, 0xaa));
+    // 3. Stream #3 collects 9_000 token-B fee
+    await worker.processEvent(makeFeeEvent(3, 'tx-fee-tokenB-1', 9000, 0xbb));
+    // 4. Replay of Stream #1 token-A fee event (same txHash 'tx-fee-tokenA-1') — must be skipped!
+    await worker.processEvent(makeFeeEvent(1, 'tx-fee-tokenA-1', 1500, 0xaa));
+
+    expect(persistedFeeEvents).toHaveLength(3);
+
+    // Aggregate per-token fee totals from indexed FEE_COLLECTED events
+    const totalsByToken = new Map<string, bigint>();
+    for (const row of persistedFeeEvents) {
+      const parsed = JSON.parse(row.metadata) as { treasury: string; token: string };
+      totalsByToken.set(
+        parsed.token,
+        (totalsByToken.get(parsed.token) ?? 0n) + BigInt(row.amount),
+      );
+    }
+
+    const tokenAmounts = [...totalsByToken.values()].sort((a, b) => (a < b ? -1 : 1));
+    expect(tokenAmounts).toEqual([4000n, 9000n]);
+  });
+
+  it('rejects malformed FeeCollected events missing required fields and does not broadcast when DB write fails', async () => {
+    const missingTokenEvent: rpc.Api.EventResponse = {
+      id: 'fee-missing-token',
+      type: 'contract',
+      ledger: 4001,
+      ledgerClosedAt: '2025-01-01T00:00:00Z',
+      txHash: 'tx-fee-missing-token',
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('fee_collected'), mockU64(77)],
+      value: {
+        type: 'scvMap',
+        map: [
+          mockMapEntry('treasury', mockAccountAddr()),
+          mockMapEntry('fee_amount', mockI128(0, 100)),
+        ],
+      } as any,
+    };
+
+    await expect(worker.processEvent(missingTokenEvent)).rejects.toThrow(
+      'FeeCollected #77: missing body fields',
+    );
+    expect(prisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(sseService.broadcastToAdmin).not.toHaveBeenCalled();
+
+    // Valid payload but Prisma upsert fails -> must propagate error and not broadcast SSE
+    (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
+    (prisma.streamEvent.upsert as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('DB connection interrupted during fee accounting'),
+    );
+
+    const validFeeEvent: rpc.Api.EventResponse = {
+      id: 'fee-db-error',
+      type: 'contract',
+      ledger: 4002,
+      ledgerClosedAt: '2025-01-01T00:00:00Z',
+      txHash: 'tx-fee-db-error',
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('fee_collected'), mockU64(78)],
+      value: {
+        type: 'scvMap',
+        map: [
+          mockMapEntry('treasury', mockAccountAddr()),
+          mockMapEntry('fee_amount', mockI128(0, 350)),
+          mockMapEntry('token', mockContractAddrWithByte(0xcc)),
+        ],
+      } as any,
+    };
+
+    await expect(worker.processEvent(validFeeEvent)).rejects.toThrow(
+      'DB connection interrupted during fee accounting',
+    );
+    expect(sseService.broadcastToAdmin).not.toHaveBeenCalled();
   });
 });
