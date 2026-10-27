@@ -60,6 +60,7 @@ vi.mock('../src/logger.js', async (importOriginal) => {
 
 import { SorobanEventWorker, getEventLedgerTimestamp } from '../src/workers/soroban-event-worker.js';
 import { prisma } from '../src/lib/prisma.js';
+import { sseService } from '../src/services/sse.service.js';
 import logger from '../src/logger.js';
 
 // ─── ScVal v17 mock helpers (property-based, not method-based) ──────────────
@@ -969,5 +970,247 @@ describe('SorobanEventWorker', () => {
 describe('getEventLedgerTimestamp', () => {
   it('uses the event ledger close time instead of the indexer processing time', () => {
     expect(getEventLedgerTimestamp({ ledgerClosedAt: '1735689599' })).toBe(1735689599);
+  });
+});
+
+describe('SorobanEventWorker - Stream Completion Event Replay (#1763)', () => {
+  let worker: SorobanEventWorker;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    worker = new SorobanEventWorker();
+  });
+
+  it('reconciles stream state and emits stream.completed when stream_completed arrives after final tokens_withdrawn', async () => {
+    const streamId = 77n;
+    const txHash = 'tx-final-withdraw-and-complete-77';
+    const ledger = 4200;
+    const ledgerClosedAt = '1736942400';
+    const expectedTimestamp = 1736942400;
+
+    const withdrawEvent: rpc.Api.EventResponse = {
+      id: 'evt-withdraw-77',
+      type: 'contract',
+      ledger,
+      ledgerClosedAt,
+      txHash,
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('tokens_withdrawn'), mockU64(streamId)],
+      value: mockMapValue([
+        mockMapEntry('recipient', mockAccountAddr()),
+        mockMapEntry('amount', mockI128(0, 4000)),
+        mockMapEntry('timestamp', mockU64(expectedTimestamp)),
+      ]),
+    };
+
+    const completedEvent: rpc.Api.EventResponse = {
+      id: 'evt-completed-77',
+      type: 'contract',
+      ledger,
+      ledgerClosedAt,
+      txHash,
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('stream_completed'), mockU64(streamId)],
+      value: mockMapValue([
+        mockMapEntry('recipient', mockAccountAddr()),
+        mockMapEntry('total_withdrawn', mockI128(0, 10000)),
+      ]),
+    };
+
+    let currentWithdrawn = '6000';
+    let currentIsActive = true;
+
+    const mockTx = {
+      stream: {
+        findUniqueOrThrow: vi.fn().mockImplementation(async () => ({
+          withdrawnAmount: currentWithdrawn,
+          depositedAmount: '10000',
+          tokenAddress: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+        })),
+        update: vi.fn().mockImplementation(async ({ data }: any) => {
+          if (data.withdrawnAmount !== undefined) currentWithdrawn = data.withdrawnAmount;
+          if (data.isActive !== undefined) currentIsActive = data.isActive;
+          return { streamId, withdrawnAmount: currentWithdrawn, isActive: currentIsActive };
+        }),
+      },
+      streamEvent: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        upsert: vi.fn().mockResolvedValue({ id: 'evt-row' }),
+      },
+    };
+
+    (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+    await worker.processEvent(withdrawEvent);
+    expect(currentWithdrawn).toBe('10000');
+    expect(currentIsActive).toBe(true);
+
+    await worker.processEvent(completedEvent);
+    expect(currentIsActive).toBe(false);
+    expect(currentWithdrawn).toBe('10000');
+
+    expect(mockTx.stream.update).toHaveBeenLastCalledWith({
+      where: { streamId },
+      data: {
+        isActive: false,
+        withdrawnAmount: '10000',
+        lastUpdateTime: expectedTimestamp,
+      },
+    });
+
+    expect(mockTx.streamEvent.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: txHash,
+            eventType: 'COMPLETED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId,
+          eventType: 'COMPLETED',
+          amount: '10000',
+          transactionHash: txHash,
+          ledgerSequence: ledger,
+          timestamp: expectedTimestamp,
+        }),
+      }),
+    );
+
+    expect(sseService.broadcastToStream).toHaveBeenCalledWith(
+      String(streamId),
+      'stream.completed',
+      expect.objectContaining({
+        streamId,
+        totalWithdrawn: '10000',
+        transactionHash: txHash,
+        ledger,
+        timestamp: expectedTimestamp,
+      }),
+    );
+  });
+
+  it('maintains idempotent final state when stream_completed arrives before tokens_withdrawn and both are replayed', async () => {
+    const streamId = 88n;
+    const txHash = 'tx-out-of-order-complete-88';
+    const ledger = 4300;
+    const ledgerClosedAt = '1736942700';
+    const expectedTimestamp = 1736942700;
+
+    const completedEvent: rpc.Api.EventResponse = {
+      id: 'evt-completed-88',
+      type: 'contract',
+      ledger,
+      ledgerClosedAt,
+      txHash,
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('stream_completed'), mockU64(streamId)],
+      value: mockMapValue([
+        mockMapEntry('recipient', mockAccountAddr()),
+        mockMapEntry('total_withdrawn', mockI128(0, 10000)),
+      ]),
+    };
+
+    const withdrawEvent: rpc.Api.EventResponse = {
+      id: 'evt-withdraw-88',
+      type: 'contract',
+      ledger,
+      ledgerClosedAt,
+      txHash,
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('tokens_withdrawn'), mockU64(streamId)],
+      value: mockMapValue([
+        mockMapEntry('recipient', mockAccountAddr()),
+        mockMapEntry('amount', mockI128(0, 4000)),
+        mockMapEntry('timestamp', mockU64(expectedTimestamp)),
+      ]),
+    };
+
+    const indexedEvents = new Set<string>();
+    let currentWithdrawn = '6000';
+    let currentIsActive = true;
+
+    const mockTx = {
+      stream: {
+        findUniqueOrThrow: vi.fn().mockImplementation(async () => ({
+          withdrawnAmount: currentWithdrawn,
+          depositedAmount: '10000',
+          tokenAddress: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+        })),
+        update: vi.fn().mockImplementation(async ({ data }: any) => {
+          if (data.withdrawnAmount !== undefined) currentWithdrawn = data.withdrawnAmount;
+          if (data.isActive !== undefined) currentIsActive = data.isActive;
+          return { streamId, withdrawnAmount: currentWithdrawn, isActive: currentIsActive };
+        }),
+      },
+      streamEvent: {
+        findUnique: vi.fn().mockImplementation(async ({ where }: any) => {
+          const key = `${where.transactionHash_eventType.transactionHash}:${where.transactionHash_eventType.eventType}`;
+          return indexedEvents.has(key) ? { id: key } : null;
+        }),
+        upsert: vi.fn().mockImplementation(async ({ where }: any) => {
+          const key = `${where.transactionHash_eventType.transactionHash}:${where.transactionHash_eventType.eventType}`;
+          indexedEvents.add(key);
+          return { id: key };
+        }),
+      },
+    };
+
+    (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+    // 1. Out-of-order: stream_completed arrives first, setting authoritative total_withdrawn=10000 and isActive=false
+    await worker.processEvent(completedEvent);
+    expect(currentIsActive).toBe(false);
+    expect(currentWithdrawn).toBe('10000');
+    expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+
+    // 2. Replay of stream_completed skips duplicate StreamEvent upsert and logs warning
+    await worker.processEvent(completedEvent);
+    expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${txHash} type=COMPLETED`,
+    );
+
+    // 3. If tokens_withdrawn was already indexed and is replayed after stream_completed, it does not double-increment withdrawnAmount
+    indexedEvents.add(`${txHash}:WITHDRAWN`);
+    await worker.processEvent(withdrawEvent);
+    expect(currentWithdrawn).toBe('10000');
+    expect(currentIsActive).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${txHash} type=WITHDRAWN`,
+    );
+  });
+
+  it('rejects malformed stream_completed payloads and does not broadcast false completion SSE events on error', async () => {
+    const streamId = 99n;
+    const malformedEvent: rpc.Api.EventResponse = {
+      id: 'evt-completed-malformed-99',
+      type: 'contract',
+      ledger: 4400,
+      ledgerClosedAt: '2025-01-15T12:10:00Z',
+      txHash: 'tx-malformed-complete-99',
+      transactionIndex: 0,
+      operationIndex: 0,
+      inSuccessfulContractCall: true,
+      topic: [mockSym('stream_completed'), mockU64(streamId)],
+      value: mockMapValue([
+        mockMapEntry('recipient', mockAccountAddr()),
+        // total_withdrawn intentionally omitted
+      ]),
+    };
+
+    await expect(worker.processEvent(malformedEvent)).rejects.toThrow(
+      `StreamCompleted #${streamId}: missing body fields`,
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(sseService.broadcastToStream).not.toHaveBeenCalled();
   });
 });
