@@ -17,7 +17,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node init && tsc -p tsconfig.json",
     "test": "vitest run",
     "codegen": "../../scripts/generate-sdk.sh"
   },

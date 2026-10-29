@@ -1,21 +1,15 @@
 "use client";
 
-import { DashboardView } from "@/components/dashboard/dashboard-view";
+import DashboardView from "@/components/dashboard/dashboard-view";
 import { WalletModal } from "@/components/wallet/WalletModal";
 import { useWallet } from "@/context/wallet-context";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 export function WalletEntry() {
   const { status, session, isHydrated, disconnect } = useWallet();
-  const [showModal, setShowModal] = useState(false);
+  const [dismissedModal, setDismissedModal] = useState(false);
 
-  useEffect(() => {
-    if (!isHydrated) return;
-    
-    // Update modal visibility based on connection status
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setShowModal(status !== "connected");
-  }, [isHydrated, status]);
+  const showModal = isHydrated && status !== "connected" && !dismissedModal;
 
   if (!isHydrated) {
     return (
@@ -36,6 +30,6 @@ export function WalletEntry() {
   }
 
   return showModal ? (
-    <WalletModal onClose={() => setShowModal(false)} />
+    <WalletModal onClose={() => setDismissedModal(true)} />
   ) : null;
 }

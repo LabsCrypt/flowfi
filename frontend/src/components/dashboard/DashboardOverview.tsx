@@ -87,29 +87,23 @@ function renderRecentActivity(
 
 interface DashboardOverviewProps {
   snapshot: DashboardSnapshot | null;
-  isSnapshotLoading: boolean;
-  snapshotError: string | null;
-  session: WalletSession;
-  onDisconnect: () => void;
   setShowWizard: () => void;
   queryClient: QueryClient;
+  session: WalletSession;
 }
 
 export function DashboardOverview({
   snapshot,
-  isSnapshotLoading,
-  snapshotError,
-  session,
-  onDisconnect,
   setShowWizard,
   queryClient,
+  session,
 }: DashboardOverviewProps) {
   React.useEffect(() => {
     fetchDashboardData(session.publicKey)
       .then((next: DashboardSnapshot) => {
         queryClient.setQueryData(dashboardQueryKey(session.publicKey), next);
       })
-      .catch((err) => {
+      .catch(() => {
         queryClient.setQueryData(dashboardQueryKey(session.publicKey), null);
       });
   }, [session.publicKey, queryClient]);

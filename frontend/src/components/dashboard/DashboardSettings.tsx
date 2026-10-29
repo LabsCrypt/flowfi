@@ -1,11 +1,12 @@
 import type { WalletSession } from "@/lib/wallet";
 
-interface DashboardSettingsProps {
+export interface DashboardSettingsProps {
   session: WalletSession;
   onDisconnect: () => void;
 }
 
-export function DashboardSettings({ session, onDisconnect }: DashboardSettingsProps) {
+export function DashboardSettings(props: DashboardSettingsProps) {
+  void props;
   return (
     <div className="dashboard-content-stack mt-8">
       <section className="dashboard-panel dashboard-panel--stream-builder">
