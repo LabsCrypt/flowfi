@@ -27,6 +27,9 @@ interface Stream {
 
 const API_BASE_URL = `${getApiBaseUrl()}/v1`;
 
+// Keep the reference to the data-loading helpers in scope for CI / tests
+export const __calendarPageInternals = { API_BASE_URL };
+
 export default function DashboardCalendarPage() {
   const { session, isHydrated } = useWallet();
   const [streams, setStreams] = useState<Stream[]>([]);
@@ -38,16 +41,18 @@ export default function DashboardCalendarPage() {
   const [direction, setDirection] = useState<"all" | "incoming" | "outgoing">("all");
   const [projectionDays, setProjectionDays] = useState<7 | 30 | 90>(30);
 
+  const publicKey = session?.publicKey;
+
   // Load streams on mount / wallet change
   useEffect(() => {
-    if (!isHydrated || !session?.publicKey) return;
+    if (!isHydrated || !publicKey) return;
 
     const controller = new AbortController();
 
     void (async () => {
       try {
         const response = await fetch(
-          `${API_BASE_URL}/streams?user=${session!.publicKey}`,
+          `${API_BASE_URL}/streams?user=${publicKey}`,
           { signal: controller.signal }
         );
 
@@ -87,7 +92,7 @@ export default function DashboardCalendarPage() {
     })();
 
     return () => controller.abort();
-  }, [isHydrated, session?.publicKey]);
+  }, [isHydrated, publicKey]);
 
   // Get unique tokens from streams
   const uniqueTokens = React.useMemo(() => {
@@ -204,13 +209,13 @@ export default function DashboardCalendarPage() {
           streams={streams}
           selectedToken={selectedToken}
           direction={direction}
-          userPublicKey={session?.publicKey}
+          userPublicKey={publicKey}
         />
 
         {/* Cashflow Chart */}
         <CashflowChart
           streams={streams}
-          userPublicKey={session?.publicKey}
+          userPublicKey={publicKey}
           days={projectionDays}
           onDaysChange={setProjectionDays}
           tokenFilter={selectedToken}

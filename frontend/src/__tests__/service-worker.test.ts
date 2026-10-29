@@ -5,7 +5,7 @@ import path from 'node:path';
 // Load the real service-worker script and execute it in a sandboxed scope
 // with minimal fake service-worker globals, so the actual handlers run.
 
-type Listener = (event: any) => void;
+type Listener = (event: unknown) => void;
 
 const swSource = fs.readFileSync(
   path.resolve(__dirname, '../../public/sw.js'),
@@ -16,9 +16,9 @@ function createHarness() {
   const listeners: Record<string, Listener> = {};
   const showNotification = vi.fn(async () => undefined);
   const openWindow = vi.fn(async () => null);
-  let clientList: any[] = [];
+  let clientList: unknown[] = [];
 
-  const self: any = {
+  const self: Record<string, unknown> = {
     addEventListener: (type: string, fn: Listener) => {
       listeners[type] = fn;
     },
@@ -39,11 +39,19 @@ function createHarness() {
     listeners,
     showNotification,
     openWindow,
-    setClients: (list: any[]) => {
+    setClients: (list: unknown[]) => {
       clientList = list;
     },
     self,
   };
+}
+
+function dispatch(harness: ReturnType<typeof createHarness>, type: string, event: unknown) {
+  const listener = harness.listeners[type];
+  if (!listener) {
+    throw new Error(`No listener registered for "${type}"`);
+  }
+  listener(event);
 }
 
 function makeWaitable() {
@@ -83,12 +91,12 @@ describe('public/sw.js push handler', () => {
       waitUntil: w.waitUntil,
     };
 
-    harness.listeners.push(event);
+    dispatch(harness, 'push', event);
     expect(w.promises).toHaveLength(1);
     await Promise.all(w.promises);
 
     expect(harness.showNotification).toHaveBeenCalledTimes(1);
-    const [title, options] = harness.showNotification.mock.calls[0] as any[];
+    const [title, options] = harness.showNotification.mock.calls[0] as unknown[];
     expect(title).toBe('Stream ending');
     expect(options).toMatchObject({
       body: 'Runway low',
@@ -112,28 +120,28 @@ describe('public/sw.js push handler', () => {
       waitUntil: w.waitUntil,
     };
 
-    harness.listeners.push(event);
+    dispatch(harness, 'push', event);
     await Promise.all(w.promises);
 
-    const [title, options] = harness.showNotification.mock.calls[0] as any[];
+    const [title, options] = harness.showNotification.mock.calls[0] as unknown[];
     expect(title).toBe('FlowFi');
-    expect(options.body).toBe('plain message');
-    expect(options.tag).toBe('flowfi-stream');
-    expect(options.requireInteraction).toBe(false);
-    expect(options.data).toEqual({ url: '/' });
+    expect((options as { body: string }).body).toBe('plain message');
+    expect((options as { tag: string }).tag).toBe('flowfi-stream');
+    expect((options as { requireInteraction: boolean }).requireInteraction).toBe(false);
+    expect((options as { data: unknown }).data).toEqual({ url: '/' });
   });
 
   it('uses default notification when push has no data', async () => {
     const w = makeWaitable();
     const event = { data: null, waitUntil: w.waitUntil };
 
-    harness.listeners.push(event);
+    dispatch(harness, 'push', event);
     await Promise.all(w.promises);
 
-    const [title, options] = harness.showNotification.mock.calls[0] as any[];
+    const [title, options] = harness.showNotification.mock.calls[0] as unknown[];
     expect(title).toBe('FlowFi');
-    expect(options.body).toBe('You have a new stream update.');
-    expect(options.data).toEqual({ url: '/' });
+    expect((options as { body: string }).body).toBe('You have a new stream update.');
+    expect((options as { data: unknown }).data).toEqual({ url: '/' });
     expect(w.promises).toHaveLength(1);
   });
 });

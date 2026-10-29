@@ -84,6 +84,7 @@ export function TokenAvatar({
   // the URL after hydration to replay lost errors, doubling failed requests.
   if (url !== null && !hasFailed) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element -- arbitrary third-party logo hosts; next/image would re-request failed URLs
       <img
         key={url}
         ref={detectEarlyFailure}

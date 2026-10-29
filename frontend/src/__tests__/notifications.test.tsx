@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const { subscribeToPush, unsubscribeFromPush, getExistingSubscription } = vi.hoisted(() => ({
-  subscribeToPush: vi.fn(async () => ({} as PushSubscription)),
+  subscribeToPush: vi.fn(async () => ({}) as PushSubscription),
   unsubscribeFromPush: vi.fn(async () => undefined),
   getExistingSubscription: vi.fn(async () => null as PushSubscription | null),
 }));
@@ -36,6 +36,7 @@ describe('urlBase64ToUint8Array', () => {
     const bytes = urlBase64ToUint8Array('a-_w');
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(bytes.length).toBeGreaterThan(0);
+    expect(Array.from(urlBase64ToUint8Array('-_8'))).toEqual(Array.from(urlBase64ToUint8Array('+/8=')));
   });
 });
 
@@ -99,12 +100,32 @@ describe('PushNotificationToggle', () => {
 });
 
 describe('public/sw.js service worker', () => {
-  type Listener = (event: any) => void;
+  type Listener = (event: unknown) => void;
+  type PushEventLike = {
+    data?: { json?: () => unknown; text?: () => string } | null;
+    waitUntil: ReturnType<typeof vi.fn>;
+    settle: () => Promise<unknown>;
+  };
+  type NotificationClickEventLike = {
+    notification: { close: ReturnType<typeof vi.fn>; data: { url: string } };
+    waitUntil: ReturnType<typeof vi.fn>;
+    settle: () => Promise<unknown>;
+  };
+  type ClientLike = {
+    url?: string;
+    focus: ReturnType<typeof vi.fn>;
+    navigate: ReturnType<typeof vi.fn>;
+  };
 
   const source = readFileSync(resolve(__dirname, '../../public/sw.js'), 'utf8');
 
   let listeners: Record<string, Listener>;
-  let self: any;
+  let self: {
+    addEventListener: (type: string, fn: Listener) => void;
+    registration: { showNotification: ReturnType<typeof vi.fn> };
+    skipWaiting: ReturnType<typeof vi.fn>;
+    clients: unknown;
+  };
   let clients: { matchAll: ReturnType<typeof vi.fn>; openWindow: ReturnType<typeof vi.fn> };
   let showNotification: ReturnType<typeof vi.fn>;
 
@@ -125,7 +146,6 @@ describe('public/sw.js service worker', () => {
       skipWaiting: vi.fn(),
       clients,
     };
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
     new Function('self', 'clients', 'registration', source)(
       self,
       clients,
@@ -133,7 +153,7 @@ describe('public/sw.js service worker', () => {
     );
   }
 
-  function makeEvent(init: Record<string, any> = {}) {
+  function makeEvent<T extends Record<string, unknown>>(init: T) {
     const pending: Promise<unknown>[] = [];
     return {
       ...init,
@@ -158,7 +178,7 @@ describe('public/sw.js service worker', () => {
     });
 
     it('shows a notification from valid JSON payload', async () => {
-      const event = makeEvent({
+      const event: PushEventLike = makeEvent({
         data: {
           json: () => ({ title: 'Stream paid', body: 'You received 5 XLM' }),
           text: () => '',
@@ -174,7 +194,7 @@ describe('public/sw.js service worker', () => {
     });
 
     it('falls back to text when payload is not valid JSON', async () => {
-      const event = makeEvent({
+      const event: PushEventLike = makeEvent({
         data: {
           json: () => {
             throw new SyntaxError('bad json');
@@ -190,7 +210,7 @@ describe('public/sw.js service worker', () => {
     });
 
     it('shows a default notification when push has no payload', async () => {
-      const event = makeEvent({ data: null });
+      const event: PushEventLike = makeEvent({ data: null });
       listeners.push(event);
       expect(event.waitUntil).toHaveBeenCalledTimes(1);
       await event.settle();
@@ -198,7 +218,7 @@ describe('public/sw.js service worker', () => {
     });
 
     it('handles a push event whose data has no json or text methods', async () => {
-      const event = makeEvent({ data: {} });
+      const event: PushEventLike = makeEvent({ data: {} });
       listeners.push(event);
       expect(event.waitUntil).toHaveBeenCalledTimes(1);
       await event.settle();
@@ -208,13 +228,13 @@ describe('public/sw.js service worker', () => {
 
   describe('notificationclick event', () => {
     it('focuses and navigates an existing window instead of opening a new one', async () => {
-      const existing = {
+      const existing: ClientLike = {
         url: 'https://app.test/dashboard',
         focus: vi.fn(async () => existing),
         navigate: vi.fn(async () => existing),
       };
       clients.matchAll.mockResolvedValueOnce([existing]);
-      const event = makeEvent({
+      const event: NotificationClickEventLike = makeEvent({
         notification: { close: vi.fn(), data: { url: '/streams/1' } },
       });
       listeners.notificationclick(event);
@@ -228,7 +248,7 @@ describe('public/sw.js service worker', () => {
 
     it('opens a new window when no client window exists', async () => {
       clients.matchAll.mockResolvedValueOnce([]);
-      const event = makeEvent({
+      const event: NotificationClickEventLike = makeEvent({
         notification: { close: vi.fn(), data: { url: '/streams/2' } },
       });
       listeners.notificationclick(event);
@@ -240,7 +260,7 @@ describe('public/sw.js service worker', () => {
 
     it('closes the notification and waits on the click handling promise', async () => {
       clients.matchAll.mockResolvedValueOnce([]);
-      const event = makeEvent({
+      const event: NotificationClickEventLike = makeEvent({
         notification: { close: vi.fn(), data: { url: '/streams/3' } },
       });
       listeners.notificationclick(event);
