@@ -70,7 +70,7 @@ vi.mock("@/components/wallet/DisconnectConfirmModal", () => ({
     // Auto-confirm immediately so tests can assert the downstream flow.
     React.useEffect(() => {
       onConfirm();
-    }, []);
+    }, [onConfirm]);
     return null;
   },
 }));

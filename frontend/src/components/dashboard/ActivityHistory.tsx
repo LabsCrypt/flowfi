@@ -40,6 +40,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
   const parentRef = useRef<HTMLDivElement>(null);
   const shouldVirtualize = events.length > VIRTUALIZATION_THRESHOLD;
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Virtual returns non-memoizable functions; compiler skip is intentional
   const virtualizer = useVirtualizer({
     count: events.length,
     getScrollElement: () => parentRef.current,
@@ -298,12 +299,6 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {events.length === 0 && !isLoading && (
-        <div className="text-center py-12 text-slate-400 bg-white/5 rounded-xl border border-dashed border-slate-700">
-          No activity found for this filter.
         </div>
       )}
     </div>
