@@ -14,7 +14,7 @@ import {
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
-import { createStreamSchema } from "../validators/stream.validator.js";
+import { createStreamSchema, parsePagination } from "../validators/stream.validator.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
@@ -205,8 +205,6 @@ export const listStreams = async (req: Request, res: Response) => {
       token,
       sort = "createdAt",
       order = "desc",
-      limit = "20",
-      offset = "0",
     } = req.query;
 
     // Validate status parameter
@@ -236,14 +234,16 @@ export const listStreams = async (req: Request, res: Response) => {
           | "endTime")
       : "createdAt";
 
-    // Validate and parse pagination parameters
-    const parsedLimit = Math.min(
-      typeof limit === "string"
-        ? Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE
-        : DEFAULT_STREAM_PAGE_SIZE,
-      MAX_STREAM_PAGE_SIZE,
-    );
-    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
+    // Validate and parse pagination parameters (issue #1644): non-numeric,
+    // negative or zero values are a 400 rather than a silent default.
+    const pagination = parsePagination(req.query as Record<string, unknown>, {
+      defaultLimit: DEFAULT_STREAM_PAGE_SIZE,
+      maxLimit: MAX_STREAM_PAGE_SIZE,
+    });
+    if (!pagination.ok) {
+      return sendApiError(res, 400, "INVALID_PAGINATION", pagination.message);
+    }
+    const { limit: parsedLimit, offset: parsedOffset } = pagination;
 
     const params: import("../repositories/stream.repository.js").FindStreamsParams = {
       limit: parsedLimit,
@@ -336,9 +336,6 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       return sendApiError(res, 400, "INVALID_STREAM_ID", "Invalid streamId parameter");
     }
 
-    const rawLimit = req.query["limit"];
-    const rawOffset = req.query["offset"];
-    const rawPage = req.query["page"];
     const cursor =
       typeof req.query["cursor"] === "string" ? req.query["cursor"] : undefined;
     const order =
@@ -348,20 +345,15 @@ export const getStreamEvents = async (req: Request, res: Response) => {
         ? req.query["eventType"]
         : undefined;
 
-    const limit = Math.min(
-      rawLimit && typeof rawLimit === "string"
-        ? Number.parseInt(rawLimit, 10) || DEFAULT_EVENTS_PAGE_SIZE
-        : DEFAULT_EVENTS_PAGE_SIZE,
-      MAX_EVENTS_PAGE_SIZE,
-    );
-
-    let offset = 0;
-    if (rawOffset && typeof rawOffset === 'string') {
-      offset = Math.max(0, Number.parseInt(rawOffset, 10) || 0);
-    } else if (rawPage && typeof rawPage === 'string' && !cursor) {
-      const page = Number.parseInt(rawPage, 10) || 1;
-      offset = Math.max(0, (page - 1) * limit);
+    const pagination = parsePagination(req.query as Record<string, unknown>, {
+      defaultLimit: DEFAULT_EVENTS_PAGE_SIZE,
+      maxLimit: MAX_EVENTS_PAGE_SIZE,
+    });
+    if (!pagination.ok) {
+      return sendApiError(res, 400, "INVALID_PAGINATION", pagination.message);
     }
+    const limit = pagination.limit;
+    const offset = pagination.offset;
 
     const whereClause: Prisma.StreamEventWhereInput = {
       streamId: parsedStreamId,

@@ -165,6 +165,41 @@ describe("CreateStreamContent sessionStorage draft persistence", () => {
     expect(getDurationInput().value).toBe("30");
   });
 
+  it("ignores malformed JSON and drafts from an unsupported version", () => {
+    sessionStorageMock.getItem.mockReturnValue("not-json");
+    const { unmount } = render(<CreateStreamContent />);
+    expect(getRecipientInput().value).toBe("");
+    unmount();
+
+    sessionStorageMock.getItem.mockReturnValue(JSON.stringify({
+      version: 2,
+      recipient: "GOLD_DRAFT",
+      token: "XLM",
+      amount: "10",
+      duration: "30",
+      savedAt: Date.now(),
+    }));
+    render(<CreateStreamContent />);
+    expect(getRecipientInput().value).toBe("");
+    expect(screen.queryByText(/resumed a saved draft/i)).not.toBeInTheDocument();
+  });
+
+  it("restores valid partial legacy drafts with defaults for omitted optional fields", async () => {
+    sessionStorageMock.getItem.mockReturnValue(JSON.stringify({
+      recipient: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
+      token: "USDC",
+      amount: "25",
+      duration: "14",
+      savedAt: Date.now(),
+    }));
+
+    render(<CreateStreamContent />);
+    await waitFor(() => expect(getRecipientInput().value).toMatch(/^G/));
+    expect(getAmountInput().value).toBe("25");
+    expect(getDurationInput().value).toBe("14");
+    expect(screen.getByText(/resumed a saved draft/i)).toBeInTheDocument();
+  });
+
   it("restores draft from sessionStorage on mount", async () => {
     const draft = {
       recipient: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",

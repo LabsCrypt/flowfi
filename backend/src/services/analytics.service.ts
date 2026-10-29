@@ -46,6 +46,7 @@ export interface TvlSnapshot {
 export interface HistoricalPoint {
   bucket: string;
   tokenAddress: string;
+  /** PostgreSQL NUMERIC text, preserving its full fractional scale without rounding. */
   avgTvlStroops: string;
   velocityStroopsPerSecond: string;
   peakStreams: number;
@@ -241,7 +242,7 @@ export async function getHistoricalAnalytics(
     points: seriesRows.map((row) => ({
       bucket: new Date(row.bucket).toISOString(),
       tokenAddress: row.token_address,
-      avgTvlStroops: BigInt(row.avg_tvl).toString(),
+      avgTvlStroops: row.avg_tvl,
       velocityStroopsPerSecond: BigInt(row.aggregate_velocity).toString(),
       peakStreams: row.peak_streams,
     })),

@@ -46,7 +46,7 @@ const CSV_HEADERS = [
  * Format amount from stroops (i128) to human-readable decimal
  * Assumes 7 decimals for Stellar tokens
  */
-function formatAmount(stroops: string, decimals = 7): string {
+export function formatAmount(stroops: string, decimals = 7): string {
   const amount = BigInt(stroops);
   const divisor = BigInt(10 ** decimals);
   const wholePart = amount / divisor;
@@ -56,22 +56,47 @@ function formatAmount(stroops: string, decimals = 7): string {
 }
 
 /**
- * Calculate protocol fee (simplified - adjust based on actual fee structure)
+ * Extract protocol fee for an event from indexed events or metadata.
+ * Fees are charged on create/top-up and indexed via FEE_COLLECTED events.
+ * No arbitrary withdrawal fees are fabricated.
  */
-function calculateProtocolFee(amount: string, eventType: string): string {
-  // Example: 0.5% fee on withdrawals
-  if (eventType === "WITHDRAWN") {
-    const amt = BigInt(amount);
-    const fee = (amt * 5n) / 1000n; // 0.5%
-    return fee.toString();
+export function getProtocolFeeForEvent(event: any, stream: any): string {
+  // If the event itself is FEE_COLLECTED
+  if (event.eventType === "FEE_COLLECTED") {
+    return event.amount || "0";
   }
+
+  // Check if there is an indexed FEE_COLLECTED event associated with this transaction
+  if (stream?.events && Array.isArray(stream.events)) {
+    const feeEvent = stream.events.find(
+      (e: any) =>
+        e.eventType === "FEE_COLLECTED" &&
+        e.transactionHash === event.transactionHash,
+    );
+    if (feeEvent && feeEvent.amount) {
+      return feeEvent.amount;
+    }
+  }
+
+  // Check event metadata for embedded fee information if present
+  if (event.metadata) {
+    try {
+      const meta = typeof event.metadata === "string" ? JSON.parse(event.metadata) : event.metadata;
+      if (meta?.feeAmount || meta?.fee_amount || meta?.protocolFee) {
+        return (meta.feeAmount || meta.fee_amount || meta.protocolFee).toString();
+      }
+    } catch {
+      // ignore metadata parse error
+    }
+  }
+
   return "0";
 }
 
 /**
  * Convert database records to transaction export format
  */
-function mapEventToTransaction(
+export function mapEventToTransaction(
   event: any,
   stream: any,
   userAddress: string,
@@ -81,8 +106,19 @@ function mapEventToTransaction(
   const counterparty = isOutgoing ? stream.recipient : stream.sender;
 
   const grossAmount = event.amount || "0";
-  const protocolFee = calculateProtocolFee(grossAmount, event.eventType);
-  const netAmount = (BigInt(grossAmount) - BigInt(protocolFee)).toString();
+  const protocolFee = getProtocolFeeForEvent(event, stream);
+  
+  // Calculate net amount:
+  // For outgoing create/top-up or fee-bearing transactions, gross is input and fee is deducted.
+  // For incoming/withdrawals without fee, netAmount equals grossAmount.
+  let netAmountVal = BigInt(grossAmount);
+  const feeVal = BigInt(protocolFee);
+  if (netAmountVal >= feeVal) {
+    netAmountVal -= feeVal;
+  } else {
+    netAmountVal = 0n;
+  }
+  const netAmount = netAmountVal.toString();
 
   return {
     timestamp: new Date(Number(event.timestamp) * 1000).toISOString(),
@@ -102,7 +138,7 @@ function mapEventToTransaction(
 /**
  * Convert transaction record to CSV row
  */
-function transactionToCSVRow(record: TransactionRecord): string {
+export function transactionToCSVRow(record: TransactionRecord): string {
   const escapeCSV = (value: string): string => {
     if (value.includes(",") || value.includes('"') || value.includes("\n")) {
       return `"${value.replace(/"/g, '""')}"`;
@@ -222,6 +258,12 @@ export async function streamTransactionCSV(
     logger.error("[Export] CSV streaming error:", error);
     if (!res.headersSent) {
       res.status(500).json({ error: "Export failed" });
+    } else {
+      if (typeof res.destroy === "function") {
+        res.destroy(error as Error);
+      } else {
+        res.end();
+      }
     }
   }
 }
@@ -332,6 +374,12 @@ export async function streamTransactionJSON(
     logger.error("[Export] JSON streaming error:", error);
     if (!res.headersSent) {
       res.status(500).json({ error: "Export failed" });
+    } else {
+      if (typeof res.destroy === "function") {
+        res.destroy(error as Error);
+      } else {
+        res.end();
+      }
     }
   }
 }

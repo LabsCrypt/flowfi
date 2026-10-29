@@ -7,67 +7,211 @@ use soroban_sdk::contracterror;
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum StreamError {
-    /// Amount is zero, negative, or otherwise out of range.
-    InvalidAmount = 1,
-    /// No stream exists for the supplied ID.
-    StreamNotFound = 2,
-    /// Caller is not authorised to perform this action on the stream.
-    Unauthorized = 3,
-    /// Operation requires an active stream, but the stream is inactive.
-    StreamInactive = 4,
-    /// `initialize` has already been called; cannot re-initialize.
-    AlreadyInitialized = 5,
-    /// Caller is not the protocol admin.
-    NotAdmin = 6,
-    /// Supplied fee rate exceeds the platform maximum (1 000 bps).
-    InvalidFeeRate = 7,
-    /// Protocol config has not been initialized yet.
-    NotInitialized = 8,
-    /// Duration supplied to `create_stream` is zero.
-    InvalidDuration = 9,
-    /// Supplied token address is not a valid token contract.
-    InvalidTokenAddress = 10,
-    /// `amount / duration` rounds to zero — the stream would lock tokens but never accrue.
-    InvalidRate = 11,
-    /// Operation requires an active stream, but the stream is currently paused.
-    StreamPaused = 12,
-    /// `resume_stream` was called on a stream that is active but not paused.
-    StreamNotPaused = 13,
-    /// `pause_stream` was called on a stream that is already paused.
-    StreamAlreadyPaused = 14,
-    /// The protocol circuit breaker is engaged; token-in operations are halted.
-    ProtocolPaused = 15,
-    /// A step-tranche schedule declared no steps.
-    EmptyVestingSchedule = 16,
-    /// A step-tranche schedule declares more than `MAX_VESTING_STEPS` steps.
-    TooManyVestingSteps = 17,
-    /// Step unlock times are not strictly monotonically increasing.
-    NonMonotonicVestingSteps = 18,
-    /// A step's `unlock_amount` is zero or negative.
-    InvalidVestingStepAmount = 19,
-    /// Step amounts do not sum to the stream's deposited amount.
-    VestingStepTotalMismatch = 20,
-    /// A vesting step unlocks at or before the stream's start time.
-    VestingStepBeforeStart = 21,
-    /// Cliff time is not strictly after the stream start, or the cliff amount
-    /// leaves no room for the linear tail.
-    InvalidCliffParameters = 22,
-    /// `batch_withdraw` received more than `MAX_BATCH_WITHDRAW` stream IDs.
-    BatchTooLarge = 23,
-    /// Caller is not the protocol admin and not the emergency guardian, and
-    /// only the admin may perform this action.
-    NotGuardian = 24,
-    /// `migrate` was asked to move to a version this contract cannot reach.
-    UnsupportedMigration = 25,
-    /// The on-chain state is already at a version newer than this contract.
-    StateVersionTooNew = 26,
-    /// `top_up_stream` was called on a step-tranche stream.
+    /// `amount` supplied to a stream-creation or top-up entrypoint is ≤ 0,
+    /// or `withdraw` was called when nothing is claimable yet (fully vested
+    /// tokens have already been withdrawn).
     ///
-    /// A step schedule must sum to exactly the deposited amount, so extra
-    /// tokens have nowhere to go: appending them to the final step would lock
-    /// the top-up until the last milestone, and ignoring them would strand them
-    /// as unclaimable residue. Rejecting is the only option that never lies to
-    /// the recipient about when funds become available.
+    /// Returned by: `create_stream`, `create_step_vesting_stream`,
+    /// `create_hybrid_cliff_stream`, `top_up_stream`, `withdraw`.
+    InvalidAmount = 1,
+
+    /// No stream record exists for the supplied `stream_id`.
+    ///
+    /// Returned by: every entrypoint that accepts a `stream_id`
+    /// (`withdraw`, `cancel_stream`, `pause_stream`, `resume_stream`,
+    /// `top_up_stream`, `close_stream`, `batch_withdraw`, `modify_rate`,
+    /// `request_dispute`, `resolve_dispute`) via `load_stream` in storage.
+    StreamNotFound = 2,
+
+    /// The caller is not authorised to act on this stream.
+    /// For sender-only operations (cancel, pause, top-up, modify-rate,
+    /// request-dispute) the caller must equal `stream.sender`; for `withdraw`
+    /// and `batch_withdraw` the caller must equal `stream.recipient`; for
+    /// `close_stream` the caller must be the sender, recipient, or protocol
+    /// admin.
+    ///
+    /// Returned by: `withdraw`, `cancel_stream`, `close_stream`,
+    /// `pause_stream`, `resume_stream`, `top_up_stream`, `batch_withdraw`,
+    /// `modify_rate`, `request_dispute`.
+    Unauthorized = 3,
+
+    /// The stream has already been cancelled or fully drained
+    /// (`is_active == false`) and can no longer accept state-changing
+    /// operations.
+    ///
+    /// Returned by: `top_up_stream`, `cancel_stream`, `pause_stream`,
+    /// `request_dispute` (via `validate_stream_active`).
+    StreamInactive = 4,
+
+    /// `initialize` has already been called; the protocol config already exists
+    /// and cannot be overwritten.
+    ///
+    /// Returned by: `initialize`.
+    AlreadyInitialized = 5,
+
+    /// The caller is not the protocol admin stored in `ProtocolConfig::admin`.
+    ///
+    /// Returned by: `update_fee_config`, `transfer_admin`,
+    /// `set_emergency_guardian`, `upgrade`, `migrate`, and the unpause path of
+    /// `set_protocol_pause` (only the admin may clear the circuit breaker).
+    NotAdmin = 6,
+
+    /// `fee_rate_bps` exceeds `MAX_FEE_RATE_BPS` (1 000 bps = 10%).
+    ///
+    /// Returned by: `initialize`, `update_fee_config`.
+    InvalidFeeRate = 7,
+
+    /// The protocol has not been initialized yet (`DataKey::Config` is absent
+    /// from storage).
+    ///
+    /// Returned by every admin entrypoint that calls `load_config`: `upgrade`,
+    /// `migrate`, `update_fee_config`, `transfer_admin`,
+    /// `set_emergency_guardian`, `set_protocol_pause`.
+    NotInitialized = 8,
+
+    /// `duration` passed to the stream-creation entrypoint is 0. A zero-length
+    /// stream would be immediately expired and could never accrue.
+    ///
+    /// Returned by: `create_stream`, `create_allowance_stream`.
+    InvalidDuration = 9,
+
+    /// The supplied token address does not implement the Soroban token interface
+    /// (calling `decimals()` on it failed or reverted).
+    ///
+    /// Returned by: `create_stream`, `create_step_vesting_stream`,
+    /// `create_hybrid_cliff_stream`, `create_allowance_stream`
+    /// (via `validate_token_contract`).
+    InvalidTokenAddress = 10,
+
+    /// `net_amount / duration` rounds down to zero under integer division —
+    /// the stream would lock the sender's tokens in the contract while never
+    /// accruing anything to the recipient. Almost always caused by wrong token
+    /// decimals or an excessively long duration.
+    ///
+    /// Returned by: `create_stream`.
+    InvalidRate = 11,
+
+    /// `withdraw` was called on a stream that is currently paused by its
+    /// sender. Call `resume_stream` first, then retry the withdrawal.
+    ///
+    /// Returned by: `withdraw`.
+    StreamPaused = 12,
+
+    /// `resume_stream` was called on a stream that is active but **not**
+    /// currently paused (i.e., `stream.paused == false`).
+    ///
+    /// Returned by: `resume_stream`.
+    StreamNotPaused = 13,
+
+    /// `pause_stream` was called on a stream that is already paused
+    /// (`stream.paused == true`).
+    ///
+    /// Returned by: `pause_stream`.
+    StreamAlreadyPaused = 14,
+
+    /// The protocol circuit breaker is engaged (`is_protocol_paused == true`).
+    /// All token-in entrypoints are blocked while the breaker is tripped;
+    /// token-out entrypoints (`withdraw`, `batch_withdraw`, `cancel_stream`)
+    /// remain open so that already-vested funds are never trapped.
+    ///
+    /// Returned by: `create_stream`, `create_step_vesting_stream`,
+    /// `create_hybrid_cliff_stream`, `top_up_stream`,
+    /// `create_allowance_stream` (via `require_not_protocol_paused`).
+    ProtocolPaused = 15,
+
+    /// A step-tranche schedule was submitted with an empty `steps` vector.
+    /// At least one unlock step is required.
+    ///
+    /// Returned by: `create_step_vesting_stream`.
+    EmptyVestingSchedule = 16,
+
+    /// The `steps` vector contains more entries than `MAX_VESTING_STEPS`.
+    ///
+    /// Returned by: `create_step_vesting_stream`.
+    TooManyVestingSteps = 17,
+
+    /// Two consecutive steps share the same `unlock_time`, or a step's
+    /// `unlock_time` is earlier than the previous step's. The schedule must be
+    /// strictly monotonically increasing so that
+    /// `sum(steps where unlock_time <= T)` is unambiguous at every boundary.
+    ///
+    /// Returned by: `create_step_vesting_stream`
+    /// (via `validate_step_schedule`).
+    NonMonotonicVestingSteps = 18,
+
+    /// A step's `unlock_amount` is ≤ 0. Every tranche must unlock a strictly
+    /// positive number of tokens.
+    ///
+    /// Returned by: `create_step_vesting_stream`
+    /// (via `validate_step_schedule`).
+    InvalidVestingStepAmount = 19,
+
+    /// The sum of all step `unlock_amount` values does not equal the post-fee
+    /// net deposited amount. Every token deposited must be assigned to exactly
+    /// one unlock milestone.
+    ///
+    /// Returned by: `create_step_vesting_stream`
+    /// (via `validate_step_schedule`).
+    VestingStepTotalMismatch = 20,
+
+    /// A step's `unlock_time` is ≤ the stream's `start_time`. Every unlock
+    /// must occur strictly after the stream begins so that no tokens are
+    /// instantly claimable at creation.
+    ///
+    /// Returned by: `create_step_vesting_stream`
+    /// (via `validate_step_schedule`).
+    VestingStepBeforeStart = 21,
+
+    /// One or more hybrid-cliff parameters are invalid. The exact conditions:
+    /// - `linear_duration == 0` (no linear tail);
+    /// - `cliff_time <= start_time` (cliff must be strictly in the future);
+    /// - `cliff_unlock_amount <= 0` or `>= net_amount` (must leave a non-zero
+    ///   linear portion);
+    /// - `(net_amount - cliff_unlock_amount) / linear_duration == 0` (the
+    ///   post-cliff rate rounds to zero under integer division).
+    ///
+    /// Returned by: `create_hybrid_cliff_stream`.
+    InvalidCliffParameters = 22,
+
+    /// `batch_withdraw` was given more stream IDs than `MAX_BATCH_WITHDRAW`
+    /// allows in a single transaction.
+    ///
+    /// Returned by: `batch_withdraw`.
+    BatchTooLarge = 23,
+
+    /// The caller attempted to trip the circuit breaker but is neither the
+    /// protocol admin nor the configured emergency guardian.
+    ///
+    /// Note: the *unpause* path returns `NotAdmin` instead, because only the
+    /// admin may clear the breaker — a compromised guardian must only ever be
+    /// able to *increase* restrictions, never lift them.
+    ///
+    /// Returned by: `set_protocol_pause` (pause path only).
+    NotGuardian = 24,
+
+    /// `migrate` was called with a `target_version` that this contract binary
+    /// cannot write (greater than `CURRENT_DATA_VERSION`) or that would be a
+    /// downgrade (less than the current on-chain version).
+    ///
+    /// Returned by: `migrate`.
+    UnsupportedMigration = 25,
+
+    /// The on-chain `DataKey::ContractVersion` is already newer than
+    /// `CURRENT_DATA_VERSION`, meaning a newer binary previously wrote the
+    /// state and this binary cannot safely interpret or overwrite it.
+    ///
+    /// Returned by: `migrate`.
+    StateVersionTooNew = 26,
+
+    /// `top_up_stream` was called on a step-tranche stream
+    /// (`VestingSchedule::StepTranches`). A step schedule must sum to exactly
+    /// the deposited amount, so additional tokens have nowhere to go: appending
+    /// them to the final step would silently defer the top-up to the last
+    /// milestone, and ignoring them would strand them as unclaimable residue.
+    /// Rejecting is the only option that never misrepresents when the recipient
+    /// receives their funds.
+    ///
+    /// Returned by: `top_up_stream`.
     TopUpUnsupported = 27,
     /// A checked arithmetic operation overflowed the `i128` or `u64` range.
     ///
@@ -82,15 +226,39 @@ pub enum StreamError {
     StreamStillActive = 36,
     /// Rate modification attempted on unsupported schedule type.
     RateModificationUnsupported = 28,
-    /// New rate is invalid (e.g., zero or too small).
+
+    /// `new_rate_per_second` supplied to `modify_rate` is ≤ 0. A non-positive
+    /// rate would make the stream's projected end-time undefined or infinite.
+    ///
+    /// Returned by: `modify_rate`.
     InvalidNewRate = 29,
-    /// Dispute operation attempted on non-disputable stream.
+
+    /// A dispute operation was attempted on a stream that has no arbiter
+    /// configured (`stream.arbiter == None`). An arbiter must be set at stream
+    /// creation for dispute resolution to be available.
+    ///
+    /// Returned by: `request_dispute`, `resolve_dispute`.
     DisputeNotSupported = 30,
-    /// Stream does not have an active dispute.
+
+    /// `resolve_dispute` was called but the stream's `dispute_status` is not
+    /// `DisputeStatus::Requested` — either no dispute was ever filed, or it
+    /// has already been resolved.
+    ///
+    /// Returned by: `resolve_dispute`.
     NoActiveDispute = 31,
-    /// Caller is not the arbiter for this stream's dispute.
+
+    /// The caller of `resolve_dispute` does not match the arbiter address
+    /// stored in `stream.arbiter`.
+    ///
+    /// Returned by: `resolve_dispute`.
     NotArbiter = 32,
-    /// Allowance-based stream operation failed.
+
+    /// `create_allowance_stream` detected that the sender has not granted the
+    /// contract a positive token allowance, or the allowance query itself
+    /// failed. The sender must pre-approve the contract on the token contract
+    /// before calling this entrypoint.
+    ///
+    /// Returned by: `create_allowance_stream`.
     AllowanceLocked = 33,
     /// A conditional milestone id is duplicated within one stream, is
     /// referenced that does not exist, or the milestone list is empty.
@@ -122,10 +290,78 @@ pub enum StreamError {
     InsufficientOutput = 48,
 }
 
+/// Type alias mapping `ContractError` to `StreamError` for off-chain testing and SDK callers.
+pub type ContractError = StreamError;
+
 impl StreamError {
     /// Alias for `InvalidDuration` representing an invalid time range (e.g. end_time <= start_time or zero duration).
     #[allow(non_upper_case_globals)]
     pub const InvalidTimeRange: StreamError = StreamError::InvalidDuration;
+
+    /// Returns the unique numeric `u32` code associated with this error variant.
+    #[inline]
+    pub const fn code(self) -> u32 {
+        self as u32
+    }
+}
+
+impl TryFrom<u32> for StreamError {
+    type Error = ();
+
+    #[inline]
+    fn try_from(code: u32) -> Result<Self, Self::Error> {
+        match code {
+            1 => Ok(StreamError::InvalidAmount),
+            2 => Ok(StreamError::StreamNotFound),
+            3 => Ok(StreamError::Unauthorized),
+            4 => Ok(StreamError::StreamInactive),
+            5 => Ok(StreamError::AlreadyInitialized),
+            6 => Ok(StreamError::NotAdmin),
+            7 => Ok(StreamError::InvalidFeeRate),
+            8 => Ok(StreamError::NotInitialized),
+            9 => Ok(StreamError::InvalidDuration),
+            10 => Ok(StreamError::InvalidTokenAddress),
+            11 => Ok(StreamError::InvalidRate),
+            12 => Ok(StreamError::StreamPaused),
+            13 => Ok(StreamError::StreamNotPaused),
+            14 => Ok(StreamError::StreamAlreadyPaused),
+            15 => Ok(StreamError::ProtocolPaused),
+            16 => Ok(StreamError::EmptyVestingSchedule),
+            17 => Ok(StreamError::TooManyVestingSteps),
+            18 => Ok(StreamError::NonMonotonicVestingSteps),
+            19 => Ok(StreamError::InvalidVestingStepAmount),
+            20 => Ok(StreamError::VestingStepTotalMismatch),
+            21 => Ok(StreamError::VestingStepBeforeStart),
+            22 => Ok(StreamError::InvalidCliffParameters),
+            23 => Ok(StreamError::BatchTooLarge),
+            24 => Ok(StreamError::NotGuardian),
+            25 => Ok(StreamError::UnsupportedMigration),
+            26 => Ok(StreamError::StateVersionTooNew),
+            27 => Ok(StreamError::TopUpUnsupported),
+            28 => Ok(StreamError::RateModificationUnsupported),
+            29 => Ok(StreamError::InvalidNewRate),
+            30 => Ok(StreamError::DisputeNotSupported),
+            31 => Ok(StreamError::NoActiveDispute),
+            32 => Ok(StreamError::NotArbiter),
+            33 => Ok(StreamError::AllowanceLocked),
+            34 => Ok(StreamError::ArithmeticOverflow),
+            35 => Ok(StreamError::StreamNotActive),
+            36 => Ok(StreamError::StreamStillActive),
+            37 => Ok(StreamError::InvalidMilestone),
+            38 => Ok(StreamError::OraclePriceUnavailable),
+            39 => Ok(StreamError::OraclePriceStale),
+            40 => Ok(StreamError::ConditionNotMet),
+            41 => Ok(StreamError::MilestoneAlreadyUnlocked),
+            42 => Ok(StreamError::InvalidAttestation),
+            43 => Ok(StreamError::MilestoneCallerUnauthorized),
+            44 => Ok(StreamError::TooManyMilestones),
+            45 => Ok(StreamError::FeeExceedsMaximum),
+            46 => Ok(StreamError::InvalidFeeSplit),
+            47 => Ok(StreamError::DeadlineExpired),
+            48 => Ok(StreamError::InsufficientOutput),
+            _ => Err(()),
+        }
+    }
 }
 
 // ─── Test diagnostics (compiled only under `cfg(test)`) ───────────────────
@@ -142,7 +378,7 @@ impl StreamError {
 pub(crate) mod test_diagnostics {
     extern crate std;
 
-    use super::StreamError;
+    use super::{ContractError, StreamError};
     use core::fmt;
 
     impl StreamError {
@@ -268,7 +504,7 @@ pub(crate) mod test_diagnostics {
         use std::string::ToString;
 
         /// (variant, identifier, documented numeric code) for every variant.
-        const ALL_VARIANTS: [(StreamError, &str, u32); 33] = [
+        const ALL_VARIANTS: [(StreamError, &str, u32); 48] = [
             (StreamError::InvalidAmount, "InvalidAmount", 1),
             (StreamError::StreamNotFound, "StreamNotFound", 2),
             (StreamError::Unauthorized, "Unauthorized", 3),
@@ -330,6 +566,33 @@ pub(crate) mod test_diagnostics {
                 28,
             ),
             (StreamError::InvalidNewRate, "InvalidNewRate", 29),
+            (StreamError::DisputeNotSupported, "DisputeNotSupported", 30),
+            (StreamError::NoActiveDispute, "NoActiveDispute", 31),
+            (StreamError::NotArbiter, "NotArbiter", 32),
+            (StreamError::AllowanceLocked, "AllowanceLocked", 33),
+            (StreamError::ArithmeticOverflow, "ArithmeticOverflow", 34),
+            (StreamError::StreamNotActive, "StreamNotActive", 35),
+            (StreamError::StreamStillActive, "StreamStillActive", 36),
+            (StreamError::InvalidMilestone, "InvalidMilestone", 37),
+            (
+                StreamError::OraclePriceUnavailable,
+                "OraclePriceUnavailable",
+                38,
+            ),
+            (StreamError::OraclePriceStale, "OraclePriceStale", 39),
+            (StreamError::ConditionNotMet, "ConditionNotMet", 40),
+            (
+                StreamError::MilestoneAlreadyUnlocked,
+                "MilestoneAlreadyUnlocked",
+                41,
+            ),
+            (StreamError::InvalidAttestation, "InvalidAttestation", 42),
+            (
+                StreamError::MilestoneCallerUnauthorized,
+                "MilestoneCallerUnauthorized",
+                43,
+            ),
+            (StreamError::TooManyMilestones, "TooManyMilestones", 44),
             (StreamError::FeeExceedsMaximum, "FeeExceedsMaximum", 45),
             (StreamError::InvalidFeeSplit, "InvalidFeeSplit", 46),
             (StreamError::DeadlineExpired, "DeadlineExpired", 47),
@@ -348,6 +611,27 @@ pub(crate) mod test_diagnostics {
             for (variant, _, code) in ALL_VARIANTS {
                 assert_eq!(variant as u32, code);
             }
+        }
+
+        #[test]
+        fn test_contract_error_round_trip_and_code() {
+            for (variant, _, code) in ALL_VARIANTS {
+                // Verify .code() returns the documented discriminant
+                assert_eq!(variant.code(), code);
+
+                // Verify ContractError::try_from(u32) returns Ok(variant)
+                let from_code = ContractError::try_from(code);
+                assert_eq!(from_code, Ok(variant));
+
+                // Verify round trip: try_from(variant.code()) == Ok(variant)
+                assert_eq!(ContractError::try_from(variant.code()), Ok(variant));
+            }
+
+            // Unknown error codes must return Err(())
+            assert_eq!(ContractError::try_from(0), Err(()));
+            assert_eq!(ContractError::try_from(49), Err(()));
+            assert_eq!(ContractError::try_from(100), Err(()));
+            assert_eq!(ContractError::try_from(u32::MAX), Err(()));
         }
 
         #[test]

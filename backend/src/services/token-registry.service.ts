@@ -6,7 +6,7 @@ import { ApiError } from '../types/api-error.js';
 
 const CACHE_TTL_SECONDS = 24 * 60 * 60;
 const CACHE_PREFIX = 'token-registry:v1';
-type TokenMetadata = {
+export type TokenMetadata = {
   id: string; contractAddress: string; symbol: string; name: string; decimals: number;
   iconUrl: string | null; issuerAddress: string | null; isVerified: boolean; createdAt: Date; updatedAt: Date;
 };
@@ -57,8 +57,19 @@ export async function listVerifiedTokens(): Promise<TokenMetadata[]> {
 }
 export async function getTokenMetadata(address: string): Promise<TokenMetadata> {
   if (!StrKey.isValidContract(address)) throw new ApiError(400, 'invalid_token_address', 'A valid Soroban contract address is required');
-  const cached = await redisGet(address); if (cached) return cached;
-  const existing = await prisma.tokenRegistry.findUnique({ where: { contractAddress: address } });
+  // PostgreSQL is authoritative for entries in the registry. Checking it
+  // before Redis prevents a stale metadata cache from disagreeing with the
+  // verified list after an administrative insert or update.
+  let existing: TokenMetadata | null;
+  try {
+    existing = await prisma.tokenRegistry.findUnique({ where: { contractAddress: address } });
+  } catch {
+    // Redis remains a short-lived fallback during database outages, but never
+    // overrides a successful database lookup or a known registry deletion.
+    const cached = await redisGet(address);
+    if (cached) return cached;
+    throw new ApiError(503, 'token_registry_unavailable', 'Token registry is temporarily unavailable');
+  }
   if (existing) { await redisSet(existing); return existing; }
   try {
     const [symbolValue, decimalsValue] = await Promise.all([invoke(address, 'symbol'), invoke(address, 'decimals')]);

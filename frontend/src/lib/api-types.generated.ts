@@ -2101,8 +2101,10 @@ export interface paths {
          *
          *     **Sandbox Mode:**
          *     - Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`
-         *     - Sandbox events are clearly marked with `_sandbox` metadata
-         *     - Sandbox events are isolated from production events
+         *     - The `connected` frame and every event delivered to a sandbox
+         *       connection are tagged with `_sandbox: true`
+         *     - Sandbox mode labels/tags events; it does not route to a separate
+         *       datastore or otherwise isolate stored data
          */
         get: {
             parameters: {
@@ -2569,6 +2571,197 @@ export interface paths {
                 };
             };
         };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analytics/tvl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current protocol TVL partitioned by token asset
+         * @description Read-only protocol statistics. No authentication is required because
+         *     every payload here is public (the same numbers a block explorer
+         *     would show). Subject to the API's global rate limiter.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description TVL snapshot */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example true */
+                            success: boolean;
+                            /** @description Current TVL snapshot partitioned by token asset */
+                            data: Record<string, never>;
+                        };
+                    };
+                };
+                /** @description Too many requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description TVL snapshot unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analytics/historical": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pre-aggregated time-series points for frontend charts
+         * @description Historical TVL and volume series at a fixed interval. No
+         *     authentication is required; subject to the API's global rate limiter.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Lookback window */
+                    period?: "7d" | "30d" | "90d" | "1y";
+                    /** @description Granularity of each point */
+                    interval?: "1h" | "1d";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Time-series points */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example true */
+                            success: boolean;
+                            /** @description Aggregated time-series points for the requested period and interval */
+                            data: unknown[];
+                        };
+                    };
+                };
+                /** @description Invalid period or interval */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Too many requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Historical analytics unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analytics/defillama": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * DefiLlama adapter payload
+         * @description TVL and activity numbers in the shape DefiLlama's adapter format
+         *     expects, so the protocol can be listed without a separate adapter.
+         *     No authentication is required; subject to the global rate limiter.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description DefiLlama adapter payload */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @example true */
+                            success: boolean;
+                            /** @description DefiLlama-shaped adapter payload */
+                            data: Record<string, never>;
+                        };
+                    };
+                };
+                /** @description Too many requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description DefiLlama adapter unavailable */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;

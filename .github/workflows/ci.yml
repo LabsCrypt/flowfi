@@ -120,7 +120,7 @@ jobs:
       - name: Setup Database
         run: |
           npx prisma generate --schema=prisma/schema.prisma
-          npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
+          npx prisma migrate deploy --schema=prisma/schema.prisma
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
@@ -193,7 +193,7 @@ jobs:
           # `prisma generate` (and rejects the old `--skip-generate` flag), so
           # only the schema push runs and nothing writes into the root-owned
           # node_modules tree.
-          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx -y prisma db push --accept-data-loss
+          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx prisma migrate deploy
           docker compose up -d backend
           # Poll /health instead of a fixed sleep so cold-boot / Prisma-warmup
           # latency does not flake the Backend Docker Image CI.

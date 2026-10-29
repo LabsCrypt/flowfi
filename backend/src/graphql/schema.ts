@@ -144,7 +144,7 @@ const Query = queryType({
   definition(t) {
     t.field("stream", {
       type: "Stream",
-      args: { streamId: nonNull(intArg()) },
+      args: { streamId: nonNull(stringArg()) },
       resolve: (_source: any, args: any, ctx: any) =>
         resolveStream(asContext(ctx), args.streamId),
     });
@@ -167,7 +167,7 @@ const Subscription = subscriptionType({
   definition(t) {
     t.field("streamUpdated", {
       type: "Stream",
-      args: { streamId: nonNull(intArg()) },
+      args: { streamId: nonNull(stringArg()) },
       subscribe: () => {
         throw new Error("Subscriptions are delivered over the SSE gateway, not HTTP POST.");
       },

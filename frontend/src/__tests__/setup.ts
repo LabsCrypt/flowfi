@@ -19,7 +19,14 @@ const localStorageMock = (() => {
   };
 })();
 
-vi.stubGlobal('localStorage', localStorageMock);
+// Installed as a direct global assignment (not vi.stubGlobal) so that
+// per-file `vi.unstubAllGlobals()` calls (used to restore e.g. `fetch`)
+// cannot strip localStorage and break later tests in the same file.
+Object.defineProperty(globalThis, 'localStorage', {
+  value: localStorageMock,
+  configurable: true,
+  writable: true,
+});
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'localStorage', {
     value: localStorageMock,

@@ -1,0 +1,92 @@
+# Chaos-engineering test stack (issue #1477).
+#
+# Boots FlowFi's dependencies behind a Toxiproxy fault-injection proxy:
+#
+#   host :8474   Toxiproxy control API
+#   host :18000  -> mock-soroban-rpc:8000
+#   host :16379  -> redis:6379
+#   host :15432  -> postgres:5432
+#
+# Usage:
+#   docker compose -f backend/tests/chaos/docker-compose.chaos.yml up -d --wait
+#   cd backend && TOXIPROXY_URL=http://127.0.0.1:8474 \
+#     npx vitest run tests/chaos/resilience.chaos.test.ts
+#   docker compose -f backend/tests/chaos/docker-compose.chaos.yml down -v
+name: flowfi-chaos
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowfi
+      POSTGRES_PASSWORD: flowfi_dev_password
+      POSTGRES_DB: flowfi
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowfi -d flowfi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mock-soroban-rpc:
+    image: node:20-alpine
+    working_dir: /app
+    command:
+      - node
+      - "-e"
+      - |
+        const http = require('http');
+        const server = http.createServer((req, res) => {
+          let body = '';
+          req.on('data', c => { body += c; });
+          req.on('end', () => {
+            let id = null, method = '';
+            try { const j = JSON.parse(body); id = j.id; method = j.method || ''; } catch (_) {}
+            res.setHeader('Content-Type', 'application/json');
+            let result = { status: 'healthy' };
+            if (method === 'getLatestLedger') result = { id: 0, paging_token: '0-0', sequence: 1000000 };
+            else if (method === 'getEvents') result = { events: [], latestLedger: 1000000 };
+            else if (method === 'getTransaction') result = { status: 'NOT_FOUND' };
+            res.writeHead(200);
+            res.end(JSON.stringify({ jsonrpc: '2.0', id, result }));
+          });
+        });
+        server.listen(8000, '0.0.0.0', () => console.log('mock soroban rpc on 8000'));
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - "-e"
+        - |
+          const http=require('http');
+          const r=http.request({host:'127.0.0.1',port:8000,method:'POST',headers:{'Content-Type':'application/json'}},(res)=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>process.exit(res.statusCode===200?0:1));});
+          r.on('error',()=>process.exit(1));
+          r.end(JSON.stringify({jsonrpc:'2.0',id:1,method:'getLatestLedger',params:{}}));
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    command: ["-host", "0.0.0.0", "-config", "/config/toxiproxy.json"]
+    volumes:
+      - ./toxiproxy.json:/config/toxiproxy.json:ro
+    ports:
+      - "8474:8474"
+      - "18000:18000"
+      - "16379:16379"
+      - "15432:15432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mock-soroban-rpc:
+        condition: service_healthy

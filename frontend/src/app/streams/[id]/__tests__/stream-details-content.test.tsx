@@ -352,6 +352,45 @@ const mockWalletForRecipient = (session = {
   origUseWallet.mockReturnValue({ session, isHydrated: true } as ReturnType<typeof origUseWallet>);
 };
 
+describe("StreamDetailsContent action authorization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTracker.status = "idle";
+    global.fetch = createFetchMock();
+  });
+
+  it("shows only recipient actions to the stream recipient", async () => {
+    mockWalletForRecipient();
+    await renderLoaded();
+
+    expect(screen.getByRole("button", { name: /withdraw/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^top up$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pause$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows only sender actions to the stream sender", async () => {
+    origUseWallet.mockReturnValue({ session: mockSession, isHydrated: true } as ReturnType<typeof origUseWallet>);
+    await renderLoaded();
+
+    expect(screen.queryByRole("button", { name: /withdraw/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^top up$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^pause$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+  });
+
+  it("hides all stream actions from an unrelated wallet", async () => {
+    origUseWallet.mockReturnValue({
+      session: { ...mockSession, publicKey: "GUNRELATED" },
+      isHydrated: true,
+    } as ReturnType<typeof origUseWallet>);
+    await renderLoaded();
+
+    expect(screen.queryByRole("heading", { name: "Actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /withdraw|top up|pause|resume|cancel/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("StreamDetailsContent handleWithdraw", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -404,6 +443,20 @@ describe("StreamDetailsContent handleWithdraw", () => {
 
     const withdrawBtn = screen.getByRole("button", { name: /withdraw/i });
     expect(withdrawBtn).toBeDisabled();
+  });
+
+  it("renders zero rate and zero balance without a non-finite claimable value", async () => {
+    mockUseStreamingAmount.mockReturnValue(0);
+    await renderLoaded({
+      depositedAmount: "0",
+      withdrawnAmount: "0",
+      ratePerSecond: "0",
+      endTime: Math.floor(Date.now() / 1000),
+    });
+
+    expect(screen.getByText("Claimable")).toBeInTheDocument();
+    expect(screen.getAllByText(/0(?:\.0+)? XLM/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
   });
 });
 
@@ -764,7 +817,11 @@ describe("StreamDetailsContent claimable re-sync + pulse", () => {
     await renderStream();
 
     const firstPulse = screen.getByTestId("claimable-tick-pulse");
-    const pulse = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 1000);
+    const pulse = await waitFor(() => {
+      const registeredInterval = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 1000);
+      expect(registeredInterval).toBeTruthy();
+      return registeredInterval;
+    });
     expect(pulse).toBeTruthy();
 
     act(() => {

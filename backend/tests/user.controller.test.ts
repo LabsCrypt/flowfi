@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { registerUser, getUser, getUserEvents, getCurrentUser } from '../src/controllers/user.controller.js';
+import { registerUser, getUser, getUserEvents, getCurrentUser, exportTransactions } from '../src/controllers/user.controller.js';
+import * as exportService from '../src/services/export.service.js';
 import { prisma } from '../src/lib/prisma.js';
 import type { Request, Response } from 'express';
 
@@ -287,6 +288,49 @@ describe('User Controller', () => {
         publicKey: 'GME',
         inMemory: true
       }));
+    });
+  });
+
+  describe('exportTransactions date range validation', () => {
+    const address = 'GD2XP6FNWL6IWULVMPNA2RV2T7GLCJHK3RH75GBCY7TSVIWDITJN4FXJ';
+
+    beforeEach(() => {
+      vi.spyOn(exportService, 'streamTransactionCSV').mockResolvedValue();
+      vi.spyOn(exportService, 'streamTransactionJSON').mockResolvedValue();
+      req.params = { address };
+    });
+
+    it.each(['csv', 'json'])('allows omitted dates for %s exports', async (format) => {
+      req.query = { format };
+      await exportTransactions(req as Request, res as Response, next);
+      expect(res.status).not.toHaveBeenCalledWith(400);
+      expect(format === 'csv' ? exportService.streamTransactionCSV : exportService.streamTransactionJSON)
+        .toHaveBeenCalled();
+    });
+
+    it.each(['csv', 'json'])('rejects malformed and reversed ranges before starting %s exports', async (format) => {
+      req.query = { format, startDate: 'not-a-date', endDate: '2026-01-01' };
+      await exportTransactions(req as Request, res as Response, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(exportService.streamTransactionCSV).not.toHaveBeenCalled();
+      expect(exportService.streamTransactionJSON).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      req.query = { format, startDate: '2026-02-01', endDate: '2026-01-01' };
+      await exportTransactions(req as Request, res as Response, next);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(exportService.streamTransactionCSV).not.toHaveBeenCalled();
+      expect(exportService.streamTransactionJSON).not.toHaveBeenCalled();
+    });
+
+    it.each(['csv', 'json'])('passes a valid inclusive date range to the %s exporter', async (format) => {
+      req.query = { format, startDate: '2026-01-01', endDate: '2026-01-31' };
+      await exportTransactions(req as Request, res as Response, next);
+      const exporter = format === 'csv' ? exportService.streamTransactionCSV : exportService.streamTransactionJSON;
+      expect(exporter).toHaveBeenCalledWith(address, expect.objectContaining({
+        startDate: new Date('2026-01-01'),
+        endDate: new Date('2026-01-31'),
+      }), res);
     });
   });
 });

@@ -1,3 +1,5 @@
+DROP TABLE IF EXISTS "IndexerDeadLetterEvent" CASCADE;
+
 -- CreateTable
 CREATE TABLE "IndexerDeadLetterEvent" (
     "id" TEXT NOT NULL,

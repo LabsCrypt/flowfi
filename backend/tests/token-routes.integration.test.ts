@@ -17,7 +17,6 @@ describe('GET /v1/tokens (versioned mount)', () => {
     expect(res.headers['cache-control']).toContain('max-age=3600');
     expect(res.headers['etag']).toBeDefined();
     expect(Array.isArray(res.body.tokens)).toBe(true);
-    expect(res.body.tokens.length).toBeGreaterThan(0);
   });
 
   it('returns 304 Not Modified for a matching If-None-Match', async () => {

@@ -2,16 +2,14 @@ import { randomUUID } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import logger, { requestContext } from '../logger.js';
 
-const MAX_REQUEST_ID_LENGTH = 128;
-
-// Only alphanumeric characters and hyphens are allowed. This prevents log
-// injection via newlines or other control characters in a client-supplied
-// X-Request-ID header, since the value is echoed back in responses and
-// written into every log line for the request.
-const SAFE_REQUEST_ID_PATTERN = /^[a-zA-Z0-9-]+$/;
+// Accepts alphanumeric characters, dots, underscores, and hyphens, capped at
+// 64 characters. This prevents log injection via newlines or other control
+// characters in a client-supplied X-Request-ID header, since the value is
+// echoed back in responses and written into every log line for the request.
+const SAFE_REQUEST_ID_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
 
 function isValidRequestId(value: string): boolean {
-  return value.length > 0 && value.length <= MAX_REQUEST_ID_LENGTH && SAFE_REQUEST_ID_PATTERN.test(value);
+  return SAFE_REQUEST_ID_PATTERN.test(value);
 }
 
 export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {

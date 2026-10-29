@@ -62,8 +62,8 @@ use events::{
     RecipientTransferredEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
     StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
     StreamPausedEvent, StreamPositionCreatedEvent, StreamPositionSettledEvent,
-    StreamPositionUpdatedEvent, StreamRateModifiedEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    StreamPositionUpdatedEvent, StreamRateModifiedEvent, StreamRefueledEvent, StreamResumedEvent,
+    StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use storage::{
     bump_position_ttl, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
@@ -538,7 +538,7 @@ impl StreamContract {
     /// - `InvalidAmount`       — the batch is empty, or an entry's `amount` ≤ 0.
     /// - `BatchTooLarge`       — the batch exceeds `MAX_BATCH_CREATE` entries.
     /// - `InvalidDuration`     — an entry's `duration` is 0, or its
-    ///   `cliff_duration` is 0 or later than `duration`.
+    ///   `cliff_duration` is later than `duration`.
     /// - `InvalidTokenAddress` — an entry's `token_address` is not a token contract.
     /// - `InvalidRate`         — an entry's post-fee `amount / duration` rounds to zero.
     pub fn batch_create_streams(
@@ -567,7 +567,7 @@ impl StreamContract {
                 return Err(StreamError::InvalidDuration);
             }
             if let Some(cliff) = input.cliff_duration {
-                if cliff == 0 || cliff > input.duration {
+                if cliff > input.duration {
                     return Err(StreamError::InvalidDuration);
                 }
             }
@@ -671,7 +671,7 @@ impl StreamContract {
     /// # Errors
     /// - `ProtocolPaused`      — the circuit breaker is engaged.
     /// - `InvalidAmount`       — `amount` ≤ 0.
-    /// - `InvalidDuration`     — `duration` is 0, or `cliff_duration` is 0 or
+    /// - `InvalidDuration`     — `duration` is 0, or `cliff_duration` is
     ///   later than `duration`.
     /// - `InvalidTokenAddress` — `token_address` is not a token contract.
     /// - `InvalidRate`         — the post-fee `amount / duration` rounds to zero.
@@ -690,7 +690,7 @@ impl StreamContract {
         if amount <= 0 {
             return Err(StreamError::InvalidAmount);
         }
-        if duration == 0 || cliff_duration == 0 || cliff_duration > duration {
+        if duration == 0 || cliff_duration > duration {
             return Err(StreamError::InvalidDuration);
         }
         Self::validate_token_contract(&env, &token_address)?;
@@ -1671,6 +1671,107 @@ impl StreamContract {
         Ok(())
     }
 
+    /// Top up an active stream with tokens from a third-party funder.
+    ///
+    /// Unlike [`top_up_stream`], this entrypoint does **not** require the caller
+    /// to be the original stream creator. Any address — a keeper bot, a DAO
+    /// multisig, a grant sponsor, or a subsidiary wallet — may extend a stream's
+    /// runway by depositing additional collateral.
+    ///
+    /// # Authorization & Accounting
+    /// - `funder.require_auth()` is enforced; the funder must sign the transaction.
+    /// - The protocol fee (if configured) is deducted from `amount` before the
+    ///   net is credited to `stream.deposited_amount`.
+    /// - `last_update_time` is intentionally left untouched: it is the accrual
+    ///   anchor for `calculate_claimable`, and advancing it to `now` would
+    ///   discard already-vested, unwithdrawn tokens.
+    ///
+    /// # Cancellation Refund Equity
+    /// Third-party top-ups are **irrevocable donations** to the stream principal.
+    /// If the stream is later cancelled, the unvested balance is refunded to the
+    /// **original `stream.sender`**, not to past funders. Funders should treat
+    /// this call as a one-way contribution (grant match, payroll emergency
+    /// deposit) with no expectation of recovery.
+    ///
+    /// # Schedule Restrictions
+    /// Rejected for [`VestingSchedule::StepTranches`] with `TopUpUnsupported`
+    /// — a step schedule must sum to exactly the deposited amount, so extra
+    /// tokens have nowhere to go without either stranding them as unclaimable
+    /// residue or silently deferring them to the final milestone.
+    ///
+    /// # Errors
+    /// - `ProtocolPaused`     — the circuit breaker is engaged.
+    /// - `InvalidAmount`      — `amount` ≤ 0.
+    /// - `StreamNotFound`     — no stream exists with `stream_id`.
+    /// - `StreamInactive`     — stream has been cancelled or fully withdrawn.
+    /// - `TopUpUnsupported`   — the stream uses a step-tranche schedule.
+    /// - `ArithmeticOverflow` — `deposited_amount + net_amount` overflows `i128`.
+    pub fn top_up_from(
+        env: Env,
+        funder: Address,
+        stream_id: u64,
+        amount: i128,
+    ) -> Result<(), StreamError> {
+        funder.require_auth();
+        Self::require_not_protocol_paused(&env)?;
+
+        if amount <= 0 {
+            return Err(StreamError::InvalidAmount);
+        }
+
+        let mut stream = load_stream(&env, stream_id)?;
+
+        // Active check — same guard as top_up_stream, without the ownership
+        // check. Any authenticated funder may extend an active stream.
+        Self::validate_stream_active(&stream)?;
+
+        if matches!(stream.schedule, VestingSchedule::StepTranches(_)) {
+            return Err(StreamError::TopUpUnsupported);
+        }
+
+        // Transfer gross amount from funder to contract.
+        let token_client = token::Client::new(&env, &stream.token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&funder, &contract_address, &amount);
+
+        // Deduct protocol fee; returns net amount (== amount when fee_rate_bps == 0).
+        let (net_amount, _total_fee, recipients) =
+            Self::collect_fee(&env, &stream.token_address, amount)?;
+
+        // Extend deposited balance. `last_update_time` is intentionally left
+        // untouched: advancing it to `now` would silently discard already-vested
+        // but unwithdrawn tokens.
+        stream.deposited_amount = stream
+            .deposited_amount
+            .checked_add(net_amount)
+            .ok_or(StreamError::ArithmeticOverflow)?;
+
+        let now = env.ledger().timestamp();
+        let claimable = Self::calculate_claimable(&stream, now);
+        let remaining = stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount)
+            .saturating_sub(claimable);
+        let new_end_time = Self::project_end_time(now, remaining, stream.rate_per_second)?;
+
+        save_stream(&env, stream_id, &stream);
+
+        Self::transfer_fee(&env, &stream.token_address, stream_id, recipients);
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_refueled"), stream_id),
+            StreamRefueledEvent {
+                stream_id,
+                funder,
+                amount: net_amount,
+                new_deposited_amount: stream.deposited_amount,
+                new_end_time,
+            },
+        );
+
+        Ok(())
+    }
+
     // ─── Internal Helpers ─────────────────────────────────────────────────────
 
     /// Ensures the supplied token address implements the Soroban token interface.
@@ -1948,7 +2049,7 @@ impl StreamContract {
         // Apply withdrawal: updates state, persists to storage, then transfers (CEI)
         Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
 
-        let completed = stream.status == StreamStatus::Completed;
+        let completed = stream.is_completed();
 
         emit_tokens_withdrawn(
             &env,
@@ -2185,7 +2286,7 @@ impl StreamContract {
         if stream.is_active {
             return Err(StreamError::StreamStillActive);
         }
-        if stream.status != StreamStatus::Completed && stream.status != StreamStatus::Cancelled {
+        if !stream.is_completed() && !stream.is_cancelled() {
             return Err(StreamError::StreamStillActive);
         }
 
@@ -2193,7 +2294,7 @@ impl StreamContract {
         // (`deposited == withdrawn`, hence claimable == 0). Cancelled streams
         // settled all funds at cancel time (payout + refund), so they are
         // immediately prunable.
-        if stream.status == StreamStatus::Completed {
+        if stream.is_completed() {
             if stream.deposited_amount != stream.withdrawn_amount {
                 return Err(StreamError::StreamStillActive);
             }
@@ -2409,7 +2510,7 @@ impl StreamContract {
             // reverting the batch.
             Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
 
-            let completed = stream.status == StreamStatus::Completed;
+            let completed = stream.is_completed();
 
             emit_tokens_withdrawn(
                 &env,
@@ -2555,7 +2656,7 @@ impl StreamContract {
     /// Returns `true` if the stream exists and has status `Completed`.
     pub fn is_stream_completed(env: Env, stream_id: u64) -> bool {
         try_load_stream(&env, stream_id)
-            .map(|s| s.status == StreamStatus::Completed)
+            .map(|s| s.is_completed())
             .unwrap_or(false)
     }
 
@@ -2573,6 +2674,25 @@ impl StreamContract {
             let now = env.ledger().timestamp();
             Self::calculate_claimable(&stream, now)
         })
+    }
+
+    /// Returns the unwithdrawn remaining token balance of a stream (`deposited_amount - withdrawn_amount`).
+    ///
+    /// Returns `0` if the stream is already cancelled or completed.
+    ///
+    /// # Errors
+    /// - `StreamNotFound` — no stream exists with `stream_id`.
+    pub fn get_remaining_balance(env: Env, stream_id: u64) -> Result<i128, StreamError> {
+        let stream = try_load_stream(&env, stream_id).ok_or(StreamError::StreamNotFound)?;
+        if stream.status == StreamStatus::Cancelled
+            || stream.status == StreamStatus::Completed
+            || !stream.is_active
+        {
+            return Ok(0);
+        }
+        Ok(stream
+            .deposited_amount
+            .saturating_sub(stream.withdrawn_amount))
     }
 
     /// Returns the unlock curve governing a stream, or `None` if it is unknown.

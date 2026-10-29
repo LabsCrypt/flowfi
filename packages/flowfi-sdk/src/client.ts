@@ -31,6 +31,7 @@ import {
   buildTopUpXdr,
   buildWithdrawXdr,
   simulateAndAssemble,
+  validateStreamParams,
   DEFAULT_FEE_BUFFER_MULTIPLIER,
 } from './builder.js';
 import { validateNetworkPassphrase } from './networks.js';
@@ -245,11 +246,5 @@ export class FlowFiClient {
 }
 
 function validateCreateParams(params: CreateStreamParams): void {
-  if (params.amount <= 0n) throw new Error('createStream: amount must be > 0');
-  if (params.duration <= 0) throw new Error('createStream: duration must be > 0');
-  if (params.cliffDuration !== undefined) {
-    if (params.cliffDuration <= 0 || params.cliffDuration > params.duration) {
-      throw new Error('createStream: cliffDuration must satisfy 0 < cliff <= duration');
-    }
-  }
+  validateStreamParams(params);
 }

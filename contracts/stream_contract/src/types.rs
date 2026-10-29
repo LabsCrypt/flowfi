@@ -295,7 +295,7 @@ pub struct Stream {
     pub start_time: u64,
     /// Ledger timestamp of the last state mutation, in Unix epoch seconds.
     pub last_update_time: u64,
-    /// Optional timestamp before which no tokens are claimable.
+    /// Ledger timestamp before which tokens cannot be withdrawn (`None` if no cliff), in Unix epoch seconds.
     pub cliff_time: Option<u64>,
     /// `false` once fully withdrawn or cancelled. Always set.
     pub is_active: bool,
@@ -317,6 +317,32 @@ pub struct Stream {
     pub yield_enabled: bool,
     /// Whether this stream uses allowance-based funding (for #1318).
     pub is_allowance_based: bool,
+}
+
+impl Stream {
+    /// Returns `true` if the stream has `StreamStatus::Active`.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.status == StreamStatus::Active
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Paused`.
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.status == StreamStatus::Paused
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Cancelled`.
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        self.status == StreamStatus::Cancelled
+    }
+
+    /// Returns `true` if the stream has `StreamStatus::Completed`.
+    #[inline]
+    pub fn is_completed(&self) -> bool {
+        self.status == StreamStatus::Completed
+    }
 }
 
 /// Alias for DataKey representing storage keys in the contract.

@@ -4,6 +4,7 @@ import { sseService } from '../services/sse.service.js';
 import { prisma } from '../lib/prisma.js';
 import { requestContext } from '../logger.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import { isSandboxRequest } from '../middleware/sandbox.middleware.js';
 import { z } from 'zod';
 
 const subscribeSchema = z.object({
@@ -102,9 +103,16 @@ export const subscribe = async (req: Request, res: Response) => {
     });
 
     const requestId = requestContext.getStore()?.requestId;
-    res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
+    const sandbox = isSandboxRequest(req);
+    const connectedData = {
+      type: 'connected',
+      clientId,
+      requestId,
+      ...(sandbox && { _sandbox: true }),
+    };
+    res.write(`data: ${JSON.stringify(connectedData)}\n\n`);
 
-    sseService.addClient(clientId, res, subscriptions, sourceIp, publicKey);
+    sseService.addClient(clientId, res, subscriptions, sourceIp, publicKey, sandbox);
     return;
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {

@@ -47,8 +47,8 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 function loadSavedSettings(): Settings {
-  if (typeof window === "undefined") return DEFAULT_SETTINGS;
-  const savedDecimals = localStorage.getItem(STORAGE_KEYS.decimalPlaces);
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") return DEFAULT_SETTINGS;
+  const savedDecimals = window.localStorage.getItem(STORAGE_KEYS.decimalPlaces);
   return {
     theme:
       (localStorage.getItem(STORAGE_KEYS.theme) as Settings["theme"]) ||
@@ -77,6 +77,7 @@ function applyThemeClass(theme: Settings["theme"]): void {
 }
 
 function persistSettings(settings: Settings): void {
+  if (typeof window === "undefined" || typeof window.localStorage === "undefined") return;
   localStorage.setItem(STORAGE_KEYS.theme, settings.theme);
   localStorage.setItem(STORAGE_KEYS.displayCurrency, settings.displayCurrency);
   localStorage.setItem(STORAGE_KEYS.amountFormat, settings.amountFormat);

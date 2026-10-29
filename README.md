@@ -16,6 +16,8 @@ FlowFi allows users to create continuous payment streams and recurring subscript
 - **Recurring Subscriptions**: Automate monthly or weekly payments.
 - **Soroban Powered**: Secure and efficient execution on Stellar's smart contract platform.
 
+
+
 ## Project Structure
 
 ```
