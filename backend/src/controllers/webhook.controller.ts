@@ -88,6 +88,49 @@ export async function deleteWebhook(
   }
 }
 
+export async function updateWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { userAddress } = req.query;
+    if (!id || typeof userAddress !== "string") {
+      res.status(400).json({ error: "id and userAddress are required" });
+      return;
+    }
+    const subscription = await webhookService.updateWebhookSubscription(id, userAddress, req.body);
+    res.json(subscription);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || "Failed to update webhook" });
+  }
+}
+
+export async function listDeliveries(req: Request, res: Response): Promise<void> {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { userAddress, page = "1", limit = "20" } = req.query;
+    if (!id || typeof userAddress !== "string") {
+      res.status(400).json({ error: "id and userAddress are required" });
+      return;
+    }
+    res.json(await webhookService.listWebhookDeliveries(id, userAddress, Number(page), Number(limit)));
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || "Failed to list webhook deliveries" });
+  }
+}
+
+export async function regenerateSecret(req: Request, res: Response): Promise<void> {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { userAddress } = req.body;
+    if (!id || !userAddress) {
+      res.status(400).json({ error: "id and userAddress are required" });
+      return;
+    }
+    res.json({ secretKey: await webhookService.regenerateWebhookSecret(id, userAddress) });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message || "Failed to regenerate webhook secret" });
+  }
+}
+
 export async function testWebhook(req: Request, res: Response): Promise<void> {
   try {
     const idParam = req.params.id;

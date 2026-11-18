@@ -336,12 +336,20 @@ describe('getDefaultTokenDecimals', () => {
 // ─── isValidStellarPublicKey ──────────────────────────────────────────────────
 
 describe('isValidStellarPublicKey (recipient validation)', () => {
+  const VALID_KEY = 'GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7';
+  const INVALID_CHECKSUM = 'GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR8';
 
   it('accepts a valid G-prefixed Ed25519 public key', () => {
-    // Use a real randomly-generated testnet key
-    const key = 'GDQERNIEDLE6SCKEAPO3ULKK5QQKFM3UIJMJQNBMKXPQR6HDYQTM2WO';
-    // StrKey validation requires the correct checksum — test with known valid keys
-    expect(typeof isValidStellarPublicKey(key)).toBe('boolean');
+    // StrKey verifies the CRC16-XModem checksum, not just prefix/length
+    expect(isValidStellarPublicKey(VALID_KEY)).toBe(true);
+  });
+
+  it('rejects a key with a tampered checksum', () => {
+    expect(isValidStellarPublicKey(INVALID_CHECKSUM)).toBe(false);
+  });
+
+  it('rejects a muxed account address (M...)', () => {
+    expect(isValidStellarPublicKey('MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK')).toBe(false);
   });
 
   it('rejects an empty string', () => {
@@ -357,7 +365,7 @@ describe('isValidStellarPublicKey (recipient validation)', () => {
   });
 
   it('trims surrounding whitespace before validating', () => {
-    // isValidStellarPublicKey normalises the input
+    expect(isValidStellarPublicKey(`  ${VALID_KEY}  `)).toBe(true);
     expect(isValidStellarPublicKey('  ')).toBe(false);
   });
 });

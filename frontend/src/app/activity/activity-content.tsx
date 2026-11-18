@@ -28,6 +28,7 @@ export default function ActivityContent() {
   const [events, setEvents] = useState<BackendStreamEvent[]>([]);
   const [activeTab, setActiveTab] = useState("ALL");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
@@ -35,6 +36,7 @@ export default function ActivityContent() {
     async (pageNum: number, tab: string, append: boolean = false, signal?: AbortSignal) => {
       if (!session?.publicKey) return;
       setLoading(true);
+      setError(null);
 
       try {
         const typeFilter = tab === "PAUSED" ? "PAUSED,RESUMED" : tab;
@@ -65,6 +67,7 @@ export default function ActivityContent() {
         logger.error("Failed to fetch activity:", error);
         if (!append) setEvents([]);
         setHasMore(false);
+        setError("Failed to fetch activity. Please try again.");
       } finally {
         setLoading(false);
       }
@@ -153,6 +156,22 @@ export default function ActivityContent() {
       </div>
 
       <ActivityHistory events={events} isLoading={loading && events.length === 0} />
+
+      {error && (
+        <div role="alert" className="mt-6 text-center">
+          <p className="text-slate-400">{error}</p>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setPage(1);
+              void fetchActivity(1, activeTab);
+            }}
+            disabled={loading}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
 
       {hasMore && (
         <div className="mt-12 flex justify-center">

@@ -1,5 +1,7 @@
 "use client";
 import React from "react";
+import { TOKEN_ADDRESSES } from "@/lib/soroban";
+import { TokenAvatar } from "../TokenAvatar";
 
 interface TokenStepProps {
   value: string;
@@ -7,7 +9,12 @@ interface TokenStepProps {
   error?: string;
 }
 
-const TOKENS = [
+const TOKENS: {
+  id: keyof typeof TOKEN_ADDRESSES;
+  name: string;
+  symbol: string;
+  description: string;
+}[] = [
   { id: "USDC", name: "USDC", symbol: "USDC", description: "USD Coin" },
   { id: "XLM", name: "Stellar Lumens", symbol: "XLM", description: "Native Stellar token" },
   { id: "EURC", name: "EURC", symbol: "EURC", description: "Euro Coin" },
@@ -49,7 +56,15 @@ export const TokenStep: React.FC<TokenStepProps> = ({
               }`}
             >
               <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold text-lg">{token.symbol}</span>
+                <span className="flex items-center gap-2">
+                  <TokenAvatar
+                    symbol={token.symbol}
+                    address={TOKEN_ADDRESSES[token.id]}
+                    size={28}
+                    decorative
+                  />
+                  <span className="font-semibold text-lg">{token.symbol}</span>
+                </span>
                 {isSelected && (
                   <svg
                     className="w-5 h-5 text-accent"

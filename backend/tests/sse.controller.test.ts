@@ -71,6 +71,25 @@ describe('SSE Controller', () => {
     expect(sseService.addClient).toHaveBeenCalled();
   });
 
+  it('generates clientId with a CSPRNG instead of Math.random (#1534)', async () => {
+    (sseService.isShuttingDown as any).mockReturnValue(false);
+    (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
+    (req as any).user = { publicKey: 'GUSER1' };
+    (prisma.stream.findMany as any).mockResolvedValue([]);
+
+    await subscribe(req as Request, res as Response);
+
+    const clientId = (sseService.addClient as any).mock.calls[0][0] as string;
+    expect(clientId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const connectedPayload = JSON.parse(
+      ((res.write as any).mock.calls[0][0] as string).replace(/^data: /, '').trim(),
+    );
+    expect(connectedPayload.clientId).toBe(clientId);
+  });
+
   it('should include user subscriptions when users query params are provided', async () => {
     (sseService.isShuttingDown as any).mockReturnValue(false);
     (sseService.checkCapacity as any).mockReturnValue({ allowed: true });

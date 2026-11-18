@@ -150,7 +150,10 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(response.status).toBe(403);
-    expect(response.body.error).toBe('Forbidden');
+    expect(response.body.error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only the stream recipient can withdraw from the stream',
+    });
   });
 
   it('returns 404 if stream not found', async () => {
@@ -164,7 +167,10 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(response.status).toBe(404);
-    expect(response.body.error).toBe('Stream not found');
+    expect(response.body.error).toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'Stream not found',
+    });
   });
 
   it('returns 409 if no claimable balance available', async () => {
@@ -192,7 +198,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(response.status).toBe(409);
-    expect(response.body.message).toBe('No claimable balance is currently available');
+    expect(response.body.error.message).toBe('No claimable balance is currently available');
   });
 
   it('does not double-count withdrawnAmount when the same claim window is withdrawn twice in a row', async () => {
@@ -291,7 +297,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       // lastUpdateTime, so the second call correctly finds nothing left to
       // claim in this window and is rejected.
       expect(second.status).toBe(409);
-      expect(second.body.message).toBe('No claimable balance is currently available');
+      expect(second.body.error.message).toBe('No claimable balance is currently available');
     }
 
     // The critical assertion: withdrawnAmount reflects only the ONE

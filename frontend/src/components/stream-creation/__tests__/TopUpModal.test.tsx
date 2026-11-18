@@ -6,7 +6,12 @@ vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
 }));
 
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: vi.fn(),
+}));
+
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { TopUpModal } from "../TopUpModal";
 
 describe("TopUpModal", () => {
@@ -69,6 +74,19 @@ describe("TopUpModal", () => {
       expect(getAmountInput().value).toBe("1.1234567");
     });
 
+    it("accepts the maximum supported precision at the amount boundary", async () => {
+      const user = userEvent.setup();
+      render(<TopUpModal {...baseProps} />);
+      await user.type(getAmountInput(), "1.1234567");
+
+      fireEvent.click(getConfirmButton());
+
+      await waitFor(() => {
+        expect(baseProps.onConfirm).toHaveBeenCalledWith("stream-42", "1.1234567");
+      });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
     it("submits a valid amount and shows a success toast", async () => {
       const user = userEvent.setup();
       render(<TopUpModal {...baseProps} />);
@@ -78,7 +96,7 @@ describe("TopUpModal", () => {
       await waitFor(() => {
         expect(baseProps.onConfirm).toHaveBeenCalledWith("stream-42", "100.5");
       });
-      expect(toast.success).toHaveBeenCalledWith("Successfully added 100.5 USDC to stream");
+      expect(transactionSuccessToast).toHaveBeenCalledWith("Successfully added 100.5 USDC to stream");
     });
   });
 
@@ -93,7 +111,7 @@ describe("TopUpModal", () => {
         expect(toast.error).toHaveBeenCalledWith("Failed to top up stream. Please try again.");
       });
       expect(getConfirmButton()).toBeEnabled();
-      expect(toast.success).not.toHaveBeenCalled();
+      expect(transactionSuccessToast).not.toHaveBeenCalled();
     });
   });
 

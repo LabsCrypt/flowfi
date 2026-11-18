@@ -15,17 +15,22 @@ The API implements caching for frequently accessed endpoints, such as claimable 
 
 ## Sandbox Mode
 
-FlowFi API supports sandbox mode for testing without affecting production data.
+FlowFi API supports sandbox mode for labelling test traffic.
 
 **Enable Sandbox Mode:**
 - Header: \`X-Sandbox-Mode: true\`
 - Query Parameter: \`?sandbox=true\`
 
+Sandbox mode is only available when the server is started with
+\`SANDBOX_MODE_ENABLED=true\`.
+
 **Sandbox Features:**
-- Isolated database (separate from production)
-- All responses include \`_sandbox\` metadata
-- Response headers include \`X-Sandbox-Mode: true\`
-- Safe for testing and development
+- Event payloads returned to sandbox clients are tagged with \`_sandbox: true\`
+  so test data is distinguishable from production records.
+- Response headers include \`X-Sandbox-Mode: true\` and \`X-Environment: sandbox\`.
+
+**Note:** Sandbox mode currently labels requests/responses and tags events; it
+does not route traffic to a separate datastore.
 
 See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       contact: {
@@ -67,6 +72,19 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       {
         name: 'Admin',
         description: 'Administrative and monitoring endpoints',
+      },
+      {
+        name: 'Observability',
+        description: 'Prometheus metrics scrape endpoint',
+      },
+      {
+        name: 'Compliance',
+        description:
+          'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
+      },
+      {
+        name: 'Analytics',
+        description: 'Public protocol statistics (TVL, history, DefiLlama)',
       },
     ],
     components: {
@@ -436,12 +454,58 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
+        SentinelIncident: {
+          type: 'object',
+          required: ['id', 'ruleId', 'severity', 'title', 'description', 'detectedAt', 'threatScore'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            ruleId: {
+              type: 'string',
+              enum: [
+                'VELOCITY_SPIKE',
+                'MULTI_STREAM_DRAIN',
+                'HIGH_VALUE_DRAIN',
+                'TOKEN_VELOCITY_SPIKE',
+                'ZERO_RUNWAY_FLOOD',
+                'STREAM_CREATION_SPIKE',
+              ],
+            },
+            severity: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            address: { type: 'string', nullable: true, description: 'Stellar public key involved' },
+            token: { type: 'string', nullable: true },
+            streamId: { type: 'string', nullable: true },
+            ledger: { type: 'integer', nullable: true },
+            detectedAt: { type: 'string', format: 'date-time' },
+            threatScore: { type: 'integer', description: 'Per-incident severity weight (10-90)' },
+            evidence: { type: 'object', additionalProperties: true },
+            circuitBreaker: {
+              type: 'object',
+              nullable: true,
+              description: 'HMAC-signed emergency pause proposal (CRITICAL incidents only)',
+              additionalProperties: true,
+            },
+            acknowledged: { type: 'boolean' },
+          },
+        },
         HealthResponse: {
           type: 'object',
           required: ['status', 'db', 'indexerEnabled', 'uptime', 'checks'],
           properties: {
-            status: { type: 'string', enum: ['ok', 'degraded'], example: 'ok' },
+            status: {
+              type: 'string',
+              enum: ['ok', 'degraded'],
+              example: 'ok',
+              description: '`degraded` with HTTP 503 when a liveness check fails; `degraded` with HTTP 200 when only Redis is unavailable or timed out',
+            },
             db: { type: 'string', enum: ['connected', 'disconnected'], example: 'connected' },
+            redis: {
+              type: 'string',
+              enum: ['ok', 'unavailable', 'timeout', 'not_configured'],
+              example: 'ok',
+              description: 'Same as checks.redis.status',
+            },
             indexerEnabled: { type: 'boolean', description: 'Whether the event indexer is configured' },
             indexerLag: { type: 'integer', nullable: true, description: 'Seconds since last indexer update, or null when no state row exists yet' },
             eventsProcessed: { type: 'integer', description: 'Lifetime count of successfully processed indexer events' },
@@ -455,7 +519,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               properties: {
                 database: {
                   type: 'object',
-                  properties: { status: { type: 'string', enum: ['ok', 'down'] } },
+                  properties: { status: { type: 'string', enum: ['ok', 'down', 'timeout'] } },
                 },
                 indexer: {
                   type: 'object',
@@ -467,7 +531,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                 },
                 redis: {
                   type: 'object',
-                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'not_configured'] } },
+                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'timeout', 'not_configured'] } },
                 },
                 sorobanRpc: {
                   type: 'object',
@@ -481,27 +545,20 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
           type: 'object',
           properties: {
             error: {
-              type: 'string',
-              description: 'Error message',
-              example: 'Resource not found',
-            },
-            code: {
-              type: 'string',
-              description: 'Error code',
-              example: 'NOT_FOUND',
-            },
-            message: {
-              type: 'string',
-              nullable: true,
-              description: 'Human-readable detail (present on many error responses)',
-            },
-            details: {
-              type: 'array',
-              nullable: true,
-              description: 'Structured validation issues (zod) when the error is a 400',
-              items: { type: 'object' },
+              type: 'object',
+              required: ['code', 'message'],
+              properties: {
+                code: { type: 'string', example: 'NOT_FOUND' },
+                message: { type: 'string', example: 'Resource not found' },
+                details: {
+                  type: 'array',
+                  description: 'Structured validation issues when applicable',
+                  items: { type: 'object' },
+                },
+              },
             },
           },
+          required: ['error'],
         },
       },
     },

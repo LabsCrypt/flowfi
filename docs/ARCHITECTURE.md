@@ -205,21 +205,19 @@ Dashboard / NotificationDropdown  re-render with live data
 
 ### Indexer Ownership & Naming
 
-Three files with overlapping names live next to each other, but only one of them is the indexer that writes stream state. This section documents which is the source of truth and which is legacy so contributors know where to start when debugging indexing.
+Two files share the `indexer` name, but only one of them is the indexer that writes stream state. This section documents which is the source of truth so contributors know where to start when debugging indexing.
 
 | File | Role | Status |
 |------|------|--------|
 | `backend/src/workers/soroban-event-worker.ts` (`SorobanEventWorker`) | **Source-of-truth indexer.** Polls Soroban RPC, decodes XDR, persists `Stream` / `StreamEvent`, advances the `IndexerState` cursor, and broadcasts SSE. | Active / source of truth. Started by `backend/src/workers/index.ts` |
-| `backend/src/services/soroban-indexer.service.ts` (`SorobanIndexerService`) | **Legacy indexer being phased out.** A simpler duplicate poller that writes to the same rows and races with the worker. | **Legacy — do not extend.** Removal tracked with the functional consolidation (issue #801). Started directly from `backend/src/index.ts` |
-| `backend/src/services/indexerService.ts` | **Not an indexer at all.** Admin control-plane helpers (`getIndexerStatus`, `resetIndexer`, `replayFromLedger`) that read/reset `IndexerState` and trigger the worker's poll loop. | Active. The name is misleading; it was kept alongside the legacy indexer above |
+| `backend/src/services/indexerService.ts` | **Not an indexer at all.** Admin control-plane helpers (`getIndexerStatus`, `resetIndexer`, `replayFromLedger`) that read/reset `IndexerState` and trigger the worker's poll loop. | Active. The name is misleading. |
 
 Key points:
 
 1. **When debugging indexing, read `backend/src/workers/soroban-event-worker.ts` first.** It is the only file that persists canonical stream state.
-2. **Do not add new behavior to `soroban-indexer.service.ts`.** It exists only for backwards compatibility while the double-indexer race (issue #801) is consolidated.
-3. **`indexerService.ts` is control-plane only** — it never reads the chain; it manages the shared cursor and triggers replays.
+2. **`indexerService.ts` is control-plane only** — it never reads the chain; it manages the shared cursor and triggers replays.
 
-**Naming convention plan:** the team convention is kebab-case with a `.service.ts` suffix (e.g. `soroban-indexer.service.ts`, `claimable.service.ts`, `sse.service.ts`). The helper file `indexerService.ts` breaks that convention and is also a misleading name. Once the functional consolidation (issue #801) lands, `indexerService.ts` is expected to be renamed to `indexer.service.ts`.
+**Naming convention plan:** the team convention is kebab-case with a `.service.ts` suffix (e.g. `claimable.service.ts`, `sse.service.ts`). The helper file `indexerService.ts` breaks that convention and is also a misleading name. It is expected to be renamed to `indexer.service.ts`.
 
 ### Deduplication
 
@@ -254,12 +252,18 @@ FlowFi actions split into two categories based on who holds the signing key:
 
 | Action | Signer | How |
 |---|---|---|
-| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. |
+| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. This is the only action signed with a key the backend holds. |
+| **Cancel** | Sender wallet (non-custodial) | `backend/src/controllers/stream/cancel.ts` submits the on-chain cancel server-side, but signs it with the sender's secret supplied in the request body (`senderSecret`) — never `KEEPER_SECRET_KEY`. Returns `400` if `senderSecret` is missing. |
 | **Withdraw** | Wallet (non-custodial) | Frontend builds and signs the transaction via the connected wallet (Freighter). The backend currently only simulates server-side; the real transaction is signed and submitted by the frontend. |
 | **Pause / Resume** | Wallet (non-custodial) | Same as withdraw — frontend-signed. The backend simulate endpoints exist for fee estimation but do not submit. |
 | **Create stream** | Wallet (non-custodial) | Frontend signs via wallet and submits directly to the RPC. |
 
-> **Important for contributors:** Do not wire pause/resume/withdraw to a server-side submit path. Only `top-up` is intentionally custodial. All other mutating actions must be wallet-signed by the user.
+> **Important for contributors:** `top-up` is the only action the backend can sign with a key it holds (`KEEPER_SECRET_KEY`). Every other mutating action must be authorized by the user's own key: pause/resume/withdraw/create are signed in the mounted wallet, and cancel is signed server-side with the caller-supplied `senderSecret`. Do not add new server-side submit paths that sign with the keeper key, and do not wire pause/resume/withdraw to a server-side submit path.
+
+Signing custody across `backend/src/controllers/stream/*.ts` and `backend/src/services/sorobanService.ts` (verified by grepping for `KEEPER_SECRET_KEY`):
+
+- `topUpStream()` in `backend/src/services/sorobanService.ts` is the **only** caller of the keeper secret. If `KEEPER_SECRET_KEY` is unset it throws and the request returns `500`.
+- `cancelStream()` takes a `senderSecret` argument; `backend/src/controllers/stream/cancel.ts` reads it from `req.body.senderSecret`, so cancel is not custodial.
 
 ---
 

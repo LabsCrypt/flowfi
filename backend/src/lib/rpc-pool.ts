@@ -70,13 +70,16 @@ export class RpcPool {
     for (const endpoint of this.availableEndpoints()) {
       const controller = new AbortController();
       const started = Date.now();
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
         const result = await Promise.race([
           operation(endpoint.server, controller.signal),
-          new Promise<never>((_, reject) => setTimeout(() => {
-            controller.abort();
-            reject(new Error(`${label} timed out after ${this.timeoutMs}ms`));
-          }, this.timeoutMs)),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+              controller.abort();
+              reject(new Error(`${label} timed out after ${this.timeoutMs}ms`));
+            }, this.timeoutMs);
+          }),
         ]);
         this.recordSuccess(endpoint, Date.now() - started);
         return result;
@@ -84,6 +87,10 @@ export class RpcPool {
         lastError = error;
         this.recordFailure(endpoint, error, Date.now() - started);
         logger.warn(`[RpcPool] ${label} failed on ${endpoint.url}; failing over`, { error });
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
       }
     }
     throw lastError instanceof Error ? lastError : new Error(`${label} failed on all RPC endpoints`);
@@ -125,15 +132,22 @@ export class RpcPool {
 
   private async probeAll(): Promise<void> {
     await Promise.all(this.endpoints.map(async (endpoint) => {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       try {
         const started = Date.now();
         await Promise.race([
           Promise.all([endpoint.server.getHealth(), endpoint.server.getLatestLedger()]),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('health probe timeout')), this.timeoutMs)),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new Error('health probe timeout')), this.timeoutMs);
+          }),
         ]);
         this.recordSuccess(endpoint, Date.now() - started);
       } catch (error) {
         this.recordFailure(endpoint, error, this.timeoutMs);
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
       }
     }));
   }

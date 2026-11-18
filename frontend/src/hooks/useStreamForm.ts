@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   validateStreamForm,
+  getSpendableBalance,
   type StreamFormData,
   type StreamFormErrors,
 } from "@/lib/stream-validation";
@@ -47,8 +48,16 @@ export interface UseStreamFormReturn {
   resetForm: () => void;
   /** Validate a single step (wizard-mode); returns true if valid */
   validateStep: (step: number) => boolean;
-  /** Validate the entire form at once; returns true if valid */
-  validateAll: () => boolean;
+  /**
+   * Validate the entire form at once.
+   *
+   * Returns the freshly computed field errors (an empty object means the
+   * form is valid) and stores them in state so the inline error messages are
+   * rendered. Callers must read the *returned* errors rather than the state:
+   * the state update is asynchronous, so reading it in the same tick would
+   * always yield the previous (usually empty) errors.
+   */
+  validateAll: () => StreamFormErrors;
   /** Current wallet balance for the selected token (display string) */
   walletBalance: string | null;
   /** Whether the balance is currently loading */
@@ -151,6 +160,7 @@ export const BUILT_IN_TEMPLATES: StreamTemplate[] = [
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 interface DraftPayload {
+  version?: 1;
   recipient: string;
   token: string;
   amount: string;
@@ -168,8 +178,15 @@ function loadDraft(key: string): DraftPayload | null {
     const parsed = JSON.parse(raw) as DraftPayload;
     if (
       parsed &&
+      (parsed.version === undefined || parsed.version === 1) &&
       typeof parsed.recipient === "string" &&
       typeof parsed.amount === "string" &&
+      typeof parsed.token === "string" &&
+      typeof parsed.duration === "string" &&
+      typeof parsed.savedAt === "number" &&
+      Number.isFinite(parsed.savedAt) &&
+      (parsed.durationUnit === undefined || ["seconds", "minutes", "hours", "days", "weeks", "months"].includes(parsed.durationUnit)) &&
+      (parsed.descriptionTag === undefined || typeof parsed.descriptionTag === "string") &&
       (parsed.recipient.trim() !== "" || parsed.amount.trim() !== "")
     ) {
       return parsed;
@@ -191,6 +208,7 @@ function saveDraft(key: string, data: StreamFormData): void {
       return;
     }
     const payload: DraftPayload = {
+      version: 1,
       recipient: data.recipient,
       token: data.token,
       amount: data.amount,
@@ -248,6 +266,17 @@ function persistCustomTemplates(key: string, items: StreamTemplate[]): void {
   } catch {
     // ignore
   }
+}
+
+/**
+ * Format a spendable balance as an amount string using Stellar's 7-decimal
+ * precision. The value is floored (never rounded up) so the resulting "Max"
+ * can never exceed the wallet's actual spendable balance.
+ */
+function toSpendableAmountString(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const floored = Math.floor(value * 1e7 + 1e-3) / 1e7;
+  return floored.toFixed(7).replace(/\.?0+$/, "");
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
@@ -419,18 +448,21 @@ export function useStreamForm(
     [formData, walletBalance],
   );
 
-  const validateAll = useCallback((): boolean => {
+  const validateAll = useCallback((): StreamFormErrors => {
     const newErrors = validateStreamForm(formData, {
       walletBalance,
     });
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return newErrors;
   }, [formData, walletBalance]);
 
   const setMaxAmount = useCallback(() => {
-    if (!walletBalance) return;
-    updateFormData({ amount: walletBalance });
-  }, [walletBalance, updateFormData]);
+    const spendable = getSpendableBalance(walletBalance, formData.token);
+    if (spendable === null) return;
+    const amount = toSpendableAmountString(spendable);
+    if (!amount) return;
+    updateFormData({ amount });
+  }, [walletBalance, formData.token, updateFormData]);
 
   // ── Template helpers ────────────────────────────────────────────────────
 

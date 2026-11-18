@@ -7,7 +7,12 @@ vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: vi.fn(),
+}));
+
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import TransactionTracker, { renderChanges, checkConfirmation } from "./TransactionTracker";
 
 // Base stream builder so each test only overrides the fields it cares about.
@@ -176,7 +181,7 @@ describe("TransactionTracker polling effect", () => {
       await Promise.resolve();
     });
 
-    expect(toast.success).toHaveBeenCalledWith("Stream created successfully!");
+    expect(transactionSuccessToast).toHaveBeenCalledWith("Stream created successfully!");
     // Capture fetch + first poll; any further polls would add more calls.
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -211,10 +216,60 @@ describe("TransactionTracker polling effect", () => {
     expect(toast.error).toHaveBeenCalledWith(
       "Confirmation timeout - please check explorer for status",
     );
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
 
     // MAX_POLL_ATTEMPTS data fetches + the single initial capture fetch. The
     // final run that hits the attempt cap returns before fetching.
     expect(fetchMock).toHaveBeenCalledTimes(MAX_POLL_ATTEMPTS + 1);
+  });
+});
+describe("delayed withdrawal confirmation (#1206)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not report success until the indexer shows the withdrawal", async () => {
+    // Indexer is stalled for the first polls (well past 1.5s), then catches up.
+    let calls = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      calls += 1;
+      const withdrawnAmount = calls >= 4 ? "5000000" : "1000000";
+      return { ok: true, json: async () => makeStream({ withdrawnAmount }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onConfirmed = vi.fn();
+
+    render(
+      <TransactionTracker
+        status="confirming"
+        action="withdraw"
+        streamId="7"
+        expectedChanges={{ withdrawnAmountAbove: "1000000" }}
+        onConfirmed={onConfirmed}
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6_000);
+    });
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+    expect(transactionSuccessToast).toHaveBeenCalledWith("Withdrawn successfully!");
+  });
+
+  it("checkConfirmation requires withdrawnAmount to exceed the baseline", () => {
+    expect(checkConfirmation(makeStream({ withdrawnAmount: "10" }), { withdrawnAmountAbove: "10" })).toBe(false);
+    expect(checkConfirmation(makeStream({ withdrawnAmount: "11" }), { withdrawnAmountAbove: "10" })).toBe(true);
   });
 });

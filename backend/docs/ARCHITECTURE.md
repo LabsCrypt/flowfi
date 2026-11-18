@@ -141,6 +141,7 @@ for the transaction.
 | Action | Signer | Mechanism |
 |--------|--------|-----------|
 | **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. |
+| **Cancel** | Sender wallet (non-custodial) | `src/controllers/stream/cancel.ts` submits the cancel server-side, but signs with the caller-supplied `senderSecret` from the request body. It does not use `KEEPER_SECRET_KEY`. |
 | **Withdraw** | Wallet (non-custodial) | Frontend builds and signs the transaction via the connected wallet (Freighter). The backend simulate endpoint exists for fee estimation only. |
 | **Pause / Resume** | Wallet (non-custodial) | Same as withdraw — frontend-signed. Backend simulate endpoints exist for fee estimation but do not submit. |
 | **Create stream** | Wallet (non-custodial) | Frontend signs via wallet and submits directly to the Soroban RPC. |
@@ -155,15 +156,16 @@ for the transaction.
   Soroban RPC.
 - If `KEEPER_SECRET_KEY` is not configured, `topUpStream` throws
   `'KEEPER_SECRET_KEY not configured'` and the request returns HTTP 500.
-- The cancel endpoint (`src/controllers/stream/cancel.ts`) also reads
-  `KEEPER_SECRET_KEY` but only to check whether the server wallet is configured;
-  the actual cancel transaction is wallet-signed by the sender.
+- The cancel endpoint (`src/controllers/stream/cancel.ts`) does **not** read
+  `KEEPER_SECRET_KEY`. It requires `senderSecret` in the request body and signs
+  the cancel transaction with the sender's own key.
 
 ### Security Boundary
 
 > **Do not wire pause/resume/withdraw to a server-side submit path.** Only
-> `top-up` is intentionally custodial. All other mutating actions must be
-> wallet-signed by the user to preserve the non-custodial security model.
+> `top-up` is intentionally custodial. All other mutating actions — including
+> cancel — must be authorized by the user's own key to preserve the
+> non-custodial security model.
 
 The keeper key is a server-side secret and is never exposed to the frontend.
 It lives exclusively in the backend's environment configuration.

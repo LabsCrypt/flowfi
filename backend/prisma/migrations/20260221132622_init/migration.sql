@@ -3,7 +3,8 @@ CREATE TABLE "User" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "publicKey" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "User_publicKey_key" UNIQUE ("publicKey")
 );
 
 -- CreateTable
@@ -21,6 +22,7 @@ CREATE TABLE "Stream" (
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "Stream_streamId_key" UNIQUE ("streamId"),
     CONSTRAINT "Stream_sender_fkey" FOREIGN KEY ("sender") REFERENCES "User" ("publicKey") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "Stream_recipient_fkey" FOREIGN KEY ("recipient") REFERENCES "User" ("publicKey") ON DELETE RESTRICT ON UPDATE CASCADE
 );
@@ -40,13 +42,13 @@ CREATE TABLE "StreamEvent" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "User_publicKey_key" ON "User"("publicKey");
+CREATE UNIQUE INDEX IF NOT EXISTS "User_publicKey_key" ON "User"("publicKey");
 
 -- CreateIndex
 CREATE INDEX "User_publicKey_idx" ON "User"("publicKey");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Stream_streamId_key" ON "Stream"("streamId");
+CREATE UNIQUE INDEX IF NOT EXISTS "Stream_streamId_key" ON "Stream"("streamId");
 
 -- CreateIndex
 CREATE INDEX "Stream_sender_idx" ON "Stream"("sender");

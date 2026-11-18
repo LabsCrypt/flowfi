@@ -5,7 +5,12 @@ vi.mock("react-hot-toast", () => ({
   default: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
 }));
 
+vi.mock("@/lib/transaction-feedback", () => ({
+  transactionSuccessToast: vi.fn(),
+}));
+
 import toast from "react-hot-toast";
+import { transactionSuccessToast } from "@/lib/transaction-feedback";
 import { CancelConfirmModal } from "../CancelConfirmModal";
 
 describe("CancelConfirmModal submission and validation", () => {
@@ -37,7 +42,7 @@ describe("CancelConfirmModal submission and validation", () => {
     await waitFor(() => {
       expect(baseProps.onConfirm).toHaveBeenCalledWith("stream-42");
     });
-    expect(toast.success).toHaveBeenCalledWith("Stream stream-42 cancelled successfully");
+    expect(transactionSuccessToast).toHaveBeenCalledWith("Stream stream-42 cancelled successfully");
   });
 
   it("shows toast.error and re-enables the confirm button when onConfirm rejects", async () => {
@@ -48,7 +53,7 @@ describe("CancelConfirmModal submission and validation", () => {
       expect(toast.error).toHaveBeenCalledWith("Failed to cancel stream. Please try again.");
     });
     expect(getCancelButton()).toBeEnabled();
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
   });
 
   it("blocks close button, keep stream, backdrop click, and Escape while submitting", async () => {

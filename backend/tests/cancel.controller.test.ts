@@ -20,6 +20,7 @@ vi.mock('../src/services/sorobanService.js', () => ({
 
 vi.mock('../src/repositories/stream.repository.js', () => ({
   updateStatus: vi.fn(),
+  markCancelledProvisionally: vi.fn(),
 }));
 
 vi.mock('../src/logger.js', () => ({
@@ -36,10 +37,10 @@ describe('Cancel Stream Controller', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.KEEPER_SECRET_KEY = 'SABC123';
     req = {
       params: { streamId: '123' },
       user: { publicKey: 'GSENDER1' } as any,
+      body: { senderSecret: 'SABC123' },
     };
     res = {
       status: vi.fn().mockReturnThis(),
@@ -53,6 +54,7 @@ describe('Cancel Stream Controller', () => {
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(404);
+    expect(res.json).toHaveBeenCalledWith({ error: { code: 'NOT_FOUND', message: 'Stream not found' } });
   });
 
   it('should return 403 if caller is not sender', async () => {
@@ -78,18 +80,19 @@ describe('Cancel Stream Controller', () => {
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
     expect(sorobanService.cancelStream).toHaveBeenCalledWith(123n, 'SABC123');
-    expect(streamRepository.updateStatus).toHaveBeenCalledWith(123n, 'CANCELLED');
+    expect(streamRepository.markCancelledProvisionally).toHaveBeenCalledWith(123n, 'tx_hash_123');
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED', txHash: 'tx_hash_123' }));
   });
 
-  it('should return 500 if KEEPER_SECRET_KEY is missing', async () => {
-    delete process.env.KEEPER_SECRET_KEY;
+  it('should return 400 if senderSecret is missing from the request body', async () => {
+    req.body = {};
     (prisma.stream.findUnique as any).mockResolvedValue({ sender: 'GSENDER1', isActive: true });
 
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
-    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(sorobanService.cancelStream).not.toHaveBeenCalled();
   });
 
   it('leaves DB unchanged and does not update status when cancelStream fails on-chain', async () => {
@@ -101,7 +104,7 @@ describe('Cancel Stream Controller', () => {
     await cancelStreamHandler(req as AuthenticatedRequest, res as Response);
 
     expect(sorobanService.cancelStream).toHaveBeenCalledWith(123n, 'SABC123');
-    expect(streamRepository.updateStatus).not.toHaveBeenCalled();
+    expect(streamRepository.markCancelledProvisionally).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(500);
   });
 });

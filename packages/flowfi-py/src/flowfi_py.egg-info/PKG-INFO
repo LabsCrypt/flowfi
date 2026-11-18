@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: flowfi-py
+Version: 0.1.0
+Summary: FlowFi Python SDK for Soroban payment streaming
+Requires-Python: >=3.10
+Requires-Dist: stellar-sdk
+Requires-Dist: pydantic>=2.7

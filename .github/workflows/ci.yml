@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -29,11 +30,16 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
-              - 'package-lock.json'
+            frontend:
+              - 'frontend/**'
 
   frontend:
     name: Frontend CI
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.frontend == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -41,7 +47,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '22'
           cache: "npm"
           cache-dependency-path: package-lock.json
 
@@ -52,16 +58,27 @@ jobs:
         run: npm run lint
         working-directory: frontend
 
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
-        working-directory: frontend
-
       - name: Run Frontend Tests
         run: npm run test:coverage
         working-directory: frontend
 
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: frontend/coverage/lcov.info
+          flags: frontend
+          name: frontend-coverage
+          fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Build
         run: npm run build
+        working-directory: frontend
+
+      - name: Check frontend bundle size
+        run: bash ./scripts/check-bundle-size.sh
         working-directory: frontend
 
   backend:
@@ -93,7 +110,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '22'
           cache: "npm"
           cache-dependency-path: package-lock.json
 
@@ -103,7 +120,7 @@ jobs:
       - name: Setup Database
         run: |
           npx prisma generate --schema=prisma/schema.prisma
-          npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
+          npx prisma migrate deploy --schema=prisma/schema.prisma
         working-directory: backend
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
@@ -120,9 +137,6 @@ jobs:
           npm run codegen:api-types
           cd ..
           git diff --exit-code -- backend/swagger/flowfi.openapi.json frontend/src/lib/api-types.generated.ts
-
-      - name: Install Rollup Native Binding
-        run: npm install @rollup/rollup-linux-x64-gnu --no-save
 
       - name: Run Backend Tests
         run: |
@@ -173,7 +187,13 @@ jobs:
         run: |
           docker compose up -d postgres
           sleep 10
-          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx -y prisma db push --accept-data-loss
+          # The production image runs as the non-root `node` user and already
+          # ships the generated Prisma client (built in the builder stage and
+          # copied to dist/generated). Since Prisma 7, `db push` no longer runs
+          # `prisma generate` (and rejects the old `--skip-generate` flag), so
+          # only the schema push runs and nothing writes into the root-owned
+          # node_modules tree.
+          docker compose run --rm -e DATABASE_URL=postgresql://flowfi:flowfi_dev_password@postgres:5432/flowfi backend npx prisma migrate deploy
           docker compose up -d backend
           # Poll /health instead of a fixed sleep so cold-boot / Prisma-warmup
           # latency does not flake the Backend Docker Image CI.
@@ -205,7 +225,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspace: "contracts -> target"
+          workspaces: "contracts -> target"
 
       - name: Check Formatting
         run: cargo fmt --all -- --check
@@ -222,6 +242,11 @@ jobs:
       - name: Run Contract Tests
         run: cargo test
         working-directory: contracts
+
+      - name: Run Contract Benchmarks
+        run: cargo test --release --test '*' -- --nocapture --test-threads=1
+        working-directory: contracts
+        continue-on-error: true
 
       - name: Cache cargo-tarpaulin
         id: tarpaulin-cache
@@ -251,31 +276,58 @@ jobs:
 
       - name: Install Stellar CLI
         run: |
-          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
-          echo "$HOME/.stellar-cli/bin" >> $GITHUB_PATH
+          set -euo pipefail
+          # Authenticate the release lookup through the runner's token. The
+          # upstream installer queries the unauthenticated GitHub API and can
+          # fail on shared-runner rate limits.
+          mkdir -p "$RUNNER_TEMP/stellar-cli"
+          stellar_cli_tag=$(gh release view --repo stellar/stellar-cli --json tagName --jq .tagName)
+          gh release download "$stellar_cli_tag" \
+            --repo stellar/stellar-cli \
+            --pattern 'stellar-cli-*-x86_64-unknown-linux-gnu.tar.gz' \
+            --dir "$RUNNER_TEMP/stellar-cli" \
+            --clobber
+          tar -xzf "$RUNNER_TEMP/stellar-cli/stellar-cli-"*.tar.gz \
+            -C "$RUNNER_TEMP/stellar-cli"
+          mkdir -p "$HOME/.stellar-cli/bin"
+          mv "$RUNNER_TEMP/stellar-cli/stellar" "$HOME/.stellar-cli/bin/stellar"
+          chmod +x "$HOME/.stellar-cli/bin/stellar"
+          echo "$HOME/.stellar-cli/bin" >> "$GITHUB_PATH"
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Optimize WASM files
+        # `stellar contract build` must run inside the cargo workspace, and
+        # recent CLI releases build for wasm32v1-none (optimized by default)
+        # rather than wasm32-unknown-unknown, so locate the output instead of
+        # assuming a directory.
+        working-directory: contracts
         run: |
           set -euo pipefail
 
-          # Target the precise release build directory
-          RELEASE_DIR="contracts/target/wasm32-unknown-unknown/release"
+          rustup target add wasm32v1-none
+          stellar contract build --optimize
 
-          # Use your strict selection logic to target un-optimized raw binaries only
-          WASMS=$(find "$RELEASE_DIR" -maxdepth 1 -type f -name "*.wasm" ! -name "*.optimized.wasm")
+          RELEASE_DIR="target/wasm32-unknown-unknown/release"
+          mkdir -p "$RELEASE_DIR"
 
-          if [ -z "$WASMS" ]; then
-            echo "Error: No raw WASM files found in $RELEASE_DIR"
+          src=""
+          for dir in target/wasm32v1-none/release target/wasm32-unknown-unknown/release; do
+            if [ -f "$dir/stream_contract.wasm" ]; then
+              src="$dir/stream_contract.wasm"
+              break
+            fi
+          done
+
+          if [ -z "$src" ]; then
+            echo "Error: stream_contract.wasm not found after stellar contract build"
             exit 1
           fi
 
-          for w in $WASMS; do
-            filename=$(basename "$w")
-            out="$RELEASE_DIR/${filename%.wasm}.optimized.wasm"
-            echo "Optimizing $filename -> $(basename "$out")"
-            stellar contract optimize --wasm "$w" --wasm-out "$out"
-          done
+          out="$RELEASE_DIR/stream_contract.optimized.wasm"
+          echo "Optimized $src -> $out"
+          cp "$src" "$out"
         shell: bash
 
       - name: Check WASM size budget

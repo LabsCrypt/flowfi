@@ -21,7 +21,7 @@ export const DEFAULT_VERSION: ApiVersion = 'v1';
 
 /**
  * Middleware to extract API version from URL path
- * Expects routes like /v1/streams, /v2/streams, etc.
+ * Accepts /v1/streams and /api/v1/streams style versioned routes.
  */
 export function apiVersionMiddleware(
   req: VersionedRequest,
@@ -30,7 +30,8 @@ export function apiVersionMiddleware(
 ): void {
   // Extract version from path (e.g., /v1/streams -> v1)
   const pathParts = req.path.split('/').filter(Boolean);
-  const versionMatch = pathParts[0]?.match(/^v(\d+)$/);
+  const versionIndex = pathParts[0] === 'api' ? 1 : 0;
+  const versionMatch = pathParts[versionIndex]?.match(/^v(\d+)$/);
 
   if (versionMatch) {
     const versionString = `v${versionMatch[1]}`;
@@ -41,7 +42,7 @@ export function apiVersionMiddleware(
       req.apiVersion = version;
       // Remove version from path for route matching
       const queryString = req.url.includes('?') ? req.url.split('?')[1] : '';
-      const newPath = '/' + pathParts.slice(1).join('/');
+      const newPath = '/' + pathParts.slice(versionIndex + 1).join('/');
       req.url = newPath + (queryString ? '?' + queryString : '');
       // Note: req.path is read-only, but req.url modification affects routing
     } else {

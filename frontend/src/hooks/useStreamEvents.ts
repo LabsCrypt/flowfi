@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { logger } from '@/lib/logger';
 
 interface StreamEvent {
   type: 'created' | 'topped_up' | 'withdrawn' | 'cancelled' | 'completed' | 'paused' | 'resumed';
@@ -21,6 +22,8 @@ interface UseStreamEventsReturn {
   error: Error | null;
   reconnecting: boolean;
   clearEvents: () => void;
+  /** Force an immediate reconnect attempt, bypassing the current backoff. */
+  retryNow: () => void;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 20;
@@ -70,6 +73,24 @@ export function useStreamEvents(
     // subscriptionKey captures all subscription parameters as a stable string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subscriptionKey]);
+  /**
+   * Force an immediate reconnect (issue #1508).
+   *
+   * Cancels any pending backoff timer, resets the delay and attempt
+   * counters, and calls connect() synchronously. Used by the
+   * SSEStatusIndicator's "Retry Now" button so a user doesn't have to
+   * wait out the current exponential-backoff window when they know
+   * their network is back.
+   */
+  const retryNow = useCallback(() => {
+    if (reconnectTimeoutRef.current !== null) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    retryDelayRef.current = 1000;
+    reconnectAttemptsRef.current = 0;
+    connectRef.current();
+  }, []);
 
   const clearEvents = useCallback(() => {
     setEvents([]);
@@ -100,8 +121,12 @@ export function useStreamEvents(
           { type, data, timestamp: Date.now() },
           ...prev.slice(0, 99),
         ]);
-      } catch {
-        // Silently ignore malformed event messages
+      } catch (err) {
+        logger.error('SSE payload parse failure:', {
+          type,
+          raw: e.data,
+          error: err,
+        });
       }
     };
 
@@ -167,5 +192,6 @@ export function useStreamEvents(
     error,
     reconnecting,
     clearEvents,
+    retryNow,
   };
 }

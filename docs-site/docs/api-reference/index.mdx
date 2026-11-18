@@ -1,0 +1,39 @@
+---
+title: API Reference
+---
+
+# API Reference
+
+The full OpenAPI specification is served by the backend at
+[`/api-docs`](https://github.com/LabsCrypt/flowfi/tree/main/backend/swagger)
+and mirrored below with a **Try-it-out** console.
+
+import OpenApiConsole from '@site/src/components/OpenApiConsole';
+
+<OpenApiConsole specUrl="https://api.flowfi.xyz/api-docs/swagger.json" />
+
+## Conventions
+
+- **Versioned base path** — everything lives under `/api/v1/`.
+- **Auth** — wallet JWTs (`Authorization: Bearer …`) for user-scoped routes;
+  admin routes additionally require the admin role claim.
+- **Errors** — JSON `{ "success": false, "error": { "code", "message" } }`
+  with meaningful HTTP status codes; validation failures are `400`.
+- **Amounts** — all amounts are integer **stroops** (`1 XLM = 10^7` stroops)
+  as strings or numbers; never floats.
+
+## Core endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/streams` | Create a stream |
+| GET | `/api/v1/streams` | List the caller's streams |
+| GET | `/api/v1/streams/:id` | Fetch one stream |
+| GET | `/api/v1/streams/:id/claimable` | Live claimable amount |
+| POST | `/api/v1/streams/:id/withdraw` | Withdraw accrued |
+| POST | `/api/v1/streams/:id/top-up` | Extend a linear stream |
+| POST | `/api/v1/streams/:id/pause` / `resume` / `cancel` | Lifecycle |
+| GET | `/api/v1/events/stream` | SSE event feed |
+| GET | `/api/v1/analytics/tvl` | Protocol TVL (#1480) |
+| GET | `/api/v1/analytics/historical` | Chart series (#1480) |
+| GET | `/api/v1/analytics/defillama` | DefiLlama adapter (#1480) |

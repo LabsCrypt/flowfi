@@ -1,6 +1,74 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+.receipt-print {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: letter;
+    margin: 16mm;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .receipt-print,
+  .receipt-print * {
+    visibility: visible !important;
+  }
+
+  .receipt-print {
+    display: block !important;
+    position: fixed;
+    inset: 0;
+    overflow: visible;
+    width: 100%;
+    padding: 8mm;
+    color: #111827 !important;
+    background: #fff !important;
+    font: 11pt/1.5 Arial, sans-serif;
+  }
+
+  .receipt-print h1 {
+    margin: 0;
+    color: #312e81;
+    font-size: 24pt;
+  }
+
+  .receipt-print h2 {
+    margin-top: 20pt;
+    font-size: 16pt;
+  }
+
+  .receipt-print dl > div {
+    display: grid;
+    grid-template-columns: 34mm 1fr;
+    gap: 6mm;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8pt 0;
+  }
+
+  .receipt-print dt {
+    color: #4b5563;
+    font-weight: 600;
+  }
+
+  .receipt-print dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, monospace;
+  }
+
+  .receipt-print .receipt-disclaimer {
+    margin-top: 20pt;
+    color: #4b5563;
+    font-size: 9pt;
+  }
+}
+
 /*
  * #1198 — Visible keyboard focus indicator (WCAG 2.1 AA 2.4.7).
  * Every interactive element must show a clear focus ring when reached via
@@ -153,6 +221,22 @@
   100% {
     transform: translateX(100%);
   }
+}
+
+@keyframes claimable-tick-flash {
+  0% {
+    background-color: rgba(16, 185, 129, 0.22);
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4);
+  }
+
+  100% {
+    background-color: rgba(16, 185, 129, 0);
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0);
+  }
+}
+
+.claimable-tick-flash {
+  animation: claimable-tick-flash 650ms ease-out;
 }
 
 *,
@@ -1632,7 +1716,8 @@ body {
   .animate-shimmer,
   .animate-bounce,
   .animate-pulse,
-  .animate-spin {
+  .animate-spin,
+  .claimable-tick-flash {
     animation: none !important;
   }
 }

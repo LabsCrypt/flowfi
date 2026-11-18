@@ -1,0 +1,2 @@
+[console_scripts]
+flowfi = flowfi.client:main
