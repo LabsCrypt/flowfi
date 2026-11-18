@@ -248,6 +248,11 @@ export function CalendarView({
               >
                 {day.date.getDate()}
               </span>
+              {day.isToday && (
+                <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                  Today
+                </span>
+              )}
               {day.streams.length > 0 && (
                 <span className="text-xs text-slate-500">
                   {day.streams.length}

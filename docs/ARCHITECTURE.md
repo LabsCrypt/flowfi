@@ -252,12 +252,18 @@ FlowFi actions split into two categories based on who holds the signing key:
 
 | Action | Signer | How |
 |---|---|---|
-| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. |
+| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. This is the only action signed with a key the backend holds. |
+| **Cancel** | Sender wallet (non-custodial) | `backend/src/controllers/stream/cancel.ts` submits the on-chain cancel server-side, but signs it with the sender's secret supplied in the request body (`senderSecret`) — never `KEEPER_SECRET_KEY`. Returns `400` if `senderSecret` is missing. |
 | **Withdraw** | Wallet (non-custodial) | Frontend builds and signs the transaction via the connected wallet (Freighter). The backend currently only simulates server-side; the real transaction is signed and submitted by the frontend. |
 | **Pause / Resume** | Wallet (non-custodial) | Same as withdraw — frontend-signed. The backend simulate endpoints exist for fee estimation but do not submit. |
 | **Create stream** | Wallet (non-custodial) | Frontend signs via wallet and submits directly to the RPC. |
 
-> **Important for contributors:** Do not wire pause/resume/withdraw to a server-side submit path. Only `top-up` is intentionally custodial. All other mutating actions must be wallet-signed by the user.
+> **Important for contributors:** `top-up` is the only action the backend can sign with a key it holds (`KEEPER_SECRET_KEY`). Every other mutating action must be authorized by the user's own key: pause/resume/withdraw/create are signed in the mounted wallet, and cancel is signed server-side with the caller-supplied `senderSecret`. Do not add new server-side submit paths that sign with the keeper key, and do not wire pause/resume/withdraw to a server-side submit path.
+
+Signing custody across `backend/src/controllers/stream/*.ts` and `backend/src/services/sorobanService.ts` (verified by grepping for `KEEPER_SECRET_KEY`):
+
+- `topUpStream()` in `backend/src/services/sorobanService.ts` is the **only** caller of the keeper secret. If `KEEPER_SECRET_KEY` is unset it throws and the request returns `500`.
+- `cancelStream()` takes a `senderSecret` argument; `backend/src/controllers/stream/cancel.ts` reads it from `req.body.senderSecret`, so cancel is not custodial.
 
 ---
 

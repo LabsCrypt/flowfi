@@ -149,13 +149,16 @@ echo ""
 
 # Step 3: Deploy contract
 echo -e "${BLUE}Step 3: Deploying contract to $NETWORK...${NC}"
-DEPLOY_OUTPUT=$(stellar contract deploy \
+# NOTE: The command substitution is used directly as the `if` condition rather
+# than assigned first and checked with `$?`. Under `set -e`, a failing command
+# substitution in a *plain* assignment (`VAR=$(cmd)`) aborts the script
+# immediately, so a following `if [[ $? -ne 0 ]]` would be dead code and the
+# custom diagnostic below would never print.
+if ! DEPLOY_OUTPUT=$(stellar contract deploy \
   --wasm "$OPTIMIZED_WASM_PATH" \
   --source "$DEPLOYER_SECRET" \
   --network "$NETWORK" \
-  --network-passphrase "$NETWORK_PASSPHRASE" 2>&1)
-
-if [[ $? -ne 0 ]]; then
+  --network-passphrase "$NETWORK_PASSPHRASE" 2>&1); then
   echo -e "${RED}Error: Deployment failed${NC}"
   echo "$DEPLOY_OUTPUT"
   exit 1
@@ -174,7 +177,9 @@ echo ""
 
 # Step 4: Initialize contract
 echo -e "${BLUE}Step 4: Initializing contract...${NC}"
-INIT_OUTPUT=$(stellar contract invoke \
+# Same errexit-safe pattern as the deploy step above: the assignment is the
+# `if` condition, so a failure is caught here instead of aborting the script.
+if ! INIT_OUTPUT=$(stellar contract invoke \
   --id "$CONTRACT_ID" \
   --source "$DEPLOYER_SECRET" \
   --network "$NETWORK" \
@@ -182,9 +187,7 @@ INIT_OUTPUT=$(stellar contract invoke \
   initialize \
   --admin "$ADMIN_ADDRESS" \
   --treasury "$TREASURY_ADDRESS" \
-  --fee_rate_bps "$FEE_RATE_BPS" 2>&1)
-
-if [[ $? -ne 0 ]]; then
+  --fee_rate_bps "$FEE_RATE_BPS" 2>&1); then
   echo -e "${RED}Error: Contract initialization failed${NC}"
   echo "$INIT_OUTPUT"
   exit 1

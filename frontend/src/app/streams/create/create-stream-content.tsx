@@ -71,9 +71,12 @@ export default function CreateStreamContent() {
     }
 
     // Use the shared validation (checks recipient format, amount, precision, balance)
-    if (!validateAll()) {
-      // Show the first error as a toast for flat-form UX
-      const firstError = Object.values(errors)[0];
+    const validationErrors = validateAll();
+    if (Object.keys(validationErrors).length > 0) {
+      // Show the first error as a toast for flat-form UX. The errors are read
+      // from the validation result, not from the hook state, because the
+      // state update has not been applied yet at this point.
+      const firstError = Object.values(validationErrors)[0];
       if (firstError) toast.error(firstError);
       return;
     }

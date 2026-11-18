@@ -210,6 +210,20 @@ describe("Stream Controller", () => {
       );
     });
 
+    it('should return 400 when depositedAmount exceeds i128 max (#1532)', async () => {
+      req.body.depositedAmount = '170141183460469231731687303715884105728';
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(prisma.stream.findUnique).not.toHaveBeenCalled();
+      expect(prisma.stream.upsert).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ message: expect.stringContaining('depositedAmount') }),
+        })
+      );
+    });
+
     it('should return 400, not 500, when depositedAmount is missing', async () => {
       delete req.body.depositedAmount;
       await createStream(req as Request, res as Response);

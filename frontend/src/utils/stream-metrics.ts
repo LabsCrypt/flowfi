@@ -5,6 +5,7 @@ import type {
   StreamMetrics,
   TokenOutflow,
 } from '@/types/analytics';
+import { getDefaultTokenDecimals } from './amount';
 
 export const SECONDS_PER_HOUR = 3_600;
 export const SECONDS_PER_DAY = 86_400;
@@ -60,7 +61,7 @@ export function toDecimalString(
 }
 
 export function computeStreamMetrics(stream: Stream, nowMs: number = Date.now()): StreamMetrics {
-  const decimals = stream.token?.decimals ?? 18;
+  const decimals = stream.token?.decimals ?? getDefaultTokenDecimals(stream.token?.symbol ?? '');
   const deposited = formatUnits(stream.depositedAmount, decimals);
   const withdrawn = formatUnits(stream.withdrawnAmount, decimals);
   const remaining = formatUnits(stream.remainingBalance, decimals);
@@ -247,7 +248,7 @@ export function buildTokenVolumeSeries(
       const bucket = bucketKey !== undefined ? buckets.get(bucketKey) : undefined;
       if (bucket) {
         const symbol = stream.token?.symbol ?? 'UNKNOWN';
-        const decimals = stream.token?.decimals ?? 18;
+        const decimals = stream.token?.decimals ?? getDefaultTokenDecimals(symbol);
         const amount = formatUnits(stream.depositedAmount, decimals);
         const rate = stream.usdRate ?? 0;
 

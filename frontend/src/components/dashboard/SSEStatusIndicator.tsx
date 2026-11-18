@@ -7,14 +7,28 @@ interface SSEStatusIndicatorProps {
   connected: boolean;
   reconnecting: boolean;
   error: Error | null;
+  /** Timestamp (ms since epoch) of the last received SSE event. */
+  lastEventAt?: number | null;
   /** Optional handler for the "Retry Now" button (issue #1508). */
   onRetry?: () => void;
+}
+
+/** Returns a human-readable relative time string, e.g. "2 minutes ago". */
+function formatRelativeTime(timestampMs: number): string {
+  const diffSeconds = Math.floor((Date.now() - timestampMs) / 1000);
+  if (diffSeconds < 5) return "just now";
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  return `${diffHours}h ago`;
 }
 
 export function SSEStatusIndicator({
   connected,
   reconnecting,
   error,
+  lastEventAt,
   onRetry,
 }: SSEStatusIndicatorProps) {
   // Show disconnect banner when error occurs
@@ -26,11 +40,28 @@ export function SSEStatusIndicator({
   const isReconnecting = reconnecting;
   const isDisconnected = !connected || error;
 
+  const statusLabel = isLive
+    ? "Connected"
+    : isReconnecting
+      ? "Reconnecting"
+      : "Offline";
+
+  const lastSyncText = lastEventAt
+    ? `Last sync: ${formatRelativeTime(lastEventAt)}`
+    : "No events received yet";
+
+  const tooltipText = `${statusLabel} — ${lastSyncText}`;
+
   return (
     <>
       {/* Status Indicator Dot + Text */}
       <div className="flex items-center gap-2">
-        <div className="relative inline-flex">
+        <div
+          className="relative inline-flex"
+          role="status"
+          aria-label={tooltipText}
+          title={tooltipText}
+        >
           <span
             className={`inline-block w-2.5 h-2.5 rounded-full ${
               isLive

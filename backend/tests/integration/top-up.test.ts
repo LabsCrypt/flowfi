@@ -80,6 +80,7 @@ vi.mock('../../src/middleware/auth.js', async (importOriginal) => {
 // App import after mocks
 import app from '../../src/app.js';
 import { topUpStream } from '../../src/services/sorobanService.js';
+import { swaggerSpec } from '../../src/config/swagger.js';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -100,6 +101,25 @@ describe('POST /v1/streams/:streamId/top-up', () => {
     expect(res.body.txHash).toBe('abc123txhash');
     expect(res.body.streamId).toBe(42);
     expect(topUpStream).toHaveBeenCalledWith(42n, 1000n, SENDER);
+  });
+
+  it('documented TopUpResponse schema matches the actual controller response keys (issue #1536)', async () => {
+    const res = await request(app)
+      .post('/v1/streams/42/top-up')
+      .set('Authorization', 'Bearer dummy')
+      .send({ amount: '1000' });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['depositedAmount', 'streamId', 'txHash']);
+    // The handler never returns `newDepositedAmount`; the OpenAPI schema must not either.
+    expect(res.body).not.toHaveProperty('newDepositedAmount');
+
+    const schema = (swaggerSpec as any)?.components?.schemas?.TopUpResponse;
+    expect(schema).toBeDefined();
+    expect(Object.keys(schema.properties).sort()).toEqual(
+      Object.keys(res.body).sort(),
+    );
+    expect(schema.required.sort()).toEqual(Object.keys(res.body).sort());
   });
 
   it('returns 400 when amount is missing', async () => {

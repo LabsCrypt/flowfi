@@ -2,6 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+const registry = vi.hoisted(() => ({ tokens: [] as Array<Record<string, unknown>> }));
+vi.mock('../src/services/token-registry.service.js', () => ({
+  listVerifiedTokens: vi.fn(async () => registry.tokens),
+  getTokenMetadata: vi.fn(async (address: string) => {
+    const token = registry.tokens.find((entry) => entry.contractAddress === address);
+    if (!token) throw Object.assign(new Error('not found'), { statusCode: 404 });
+    return token;
+  }),
+}));
+
 vi.mock('../src/logger.js', () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
@@ -22,6 +32,11 @@ function mountTokensApp(): express.Express {
 describe('GET /v1/tokens', () => {
   beforeEach(() => {
     resetTokenMetadata();
+    registry.tokens = [
+      { id: '3', contractAddress: 'CCWAMYJME4YOIUNAKVYEBYOG5I65QMKEX2NMN4OJAPXRPIF24ONPSHY', symbol: 'EURC', name: 'Euro Coin', decimals: 7, iconUrl: null, issuerAddress: 'GISSUER2', isVerified: true, createdAt: new Date(0), updatedAt: new Date('2026-01-01') },
+      { id: '2', contractAddress: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA', symbol: 'USDC', name: 'USD Coin', decimals: 7, iconUrl: 'https://example.test/usdc.svg', issuerAddress: 'GISSUER', isVerified: true, createdAt: new Date(0), updatedAt: new Date('2026-01-01') },
+      { id: '1', contractAddress: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN', symbol: 'XLM', name: 'Stellar Lumens', decimals: 7, iconUrl: null, issuerAddress: null, isVerified: true, createdAt: new Date(0), updatedAt: new Date('2026-01-01') },
+    ];
   });
 
   it('returns verified token metadata', async () => {
@@ -99,14 +114,7 @@ describe('GET /v1/tokens', () => {
     const first = await request(mountTokensApp()).get('/v1/tokens');
     const oldEtag = String(first.headers['etag']);
 
-    upsertTokenMetadata({
-      symbol: 'USDC',
-      name: 'USD Coin (updated)',
-      decimals: 7,
-      contractAddress: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
-      type: 'credit_alphanum4',
-      verified: true,
-    });
+    registry.tokens[1] = { ...registry.tokens[1]!, name: 'USD Coin (updated)', updatedAt: new Date('2026-01-02') };
 
     const afterUpdate = await request(mountTokensApp()).get('/v1/tokens');
     expect(afterUpdate.headers['etag']).not.toBe(oldEtag);
@@ -120,6 +128,15 @@ describe('GET /v1/tokens', () => {
       (t: { symbol: string }) => t.symbol === 'USDC',
     );
     expect(usdc.name).toBe('USD Coin (updated)');
+  });
+
+  it('returns the same persisted token metadata and verification status from list and detail', async () => {
+    const listed = await request(mountTokensApp()).get('/v1/tokens');
+    const detail = await request(mountTokensApp()).get('/v1/tokens/CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA');
+    const item = listed.body.tokens.find((token: { symbol: string }) => token.symbol === 'USDC');
+    expect(detail.status).toBe(200);
+    expect(detail.body.token).toEqual(item);
+    expect(item).toMatchObject({ symbol: 'USDC', verified: true, name: 'USD Coin' });
   });
 });
 

@@ -1,0 +1,16 @@
+[project]
+name = "flowfi-py"
+version = "0.1.0"
+description = "FlowFi Python SDK for Soroban payment streaming"
+requires-python = ">=3.10"
+dependencies = [
+    "stellar-sdk",
+    "pydantic>=2.7",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+flowfi = "flowfi.client:main"

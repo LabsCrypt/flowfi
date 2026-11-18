@@ -10,7 +10,7 @@ export type {
 export { formatUnits, computeClaimable } from './utils/math';
 
 // Hooks
-export { useStream } from './hooks/useStream';
+export { useStream, mapBackendStreamToFlowFiStream } from './hooks/useStream';
 export { useClaimableBalance } from './hooks/useClaimableBalance';
 export { useCreateStream } from './hooks/useCreateStream';
 export { useBatchWithdraw } from './hooks/useBatchWithdraw';

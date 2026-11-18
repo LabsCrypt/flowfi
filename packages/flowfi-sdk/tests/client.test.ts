@@ -82,6 +82,8 @@ import {
   buildTopUpXdr,
   buildWithdrawXdr,
   simulateAndAssemble,
+  StreamTransactionBuilder,
+  validateStreamParams,
 } from '../src/builder.js';
 import { CustomSigner, KeypairSigner, FreighterSigner } from '../src/signers/index.js';
 
@@ -299,3 +301,138 @@ describe('FlowFiClient', () => {
     ).not.toThrow();
   });
 });
+
+describe('StreamTransactionBuilder & validateStreamParams (#1659)', () => {
+  const base = {
+    sourceAccount: 'GSOURCE',
+    contractId: CONFIG.contractId,
+    networkPassphrase: CONFIG.networkPassphrase,
+  };
+
+  it('builds transaction using static StreamTransactionBuilder.createStream with timestamps', async () => {
+    const xdr = await StreamTransactionBuilder.createStream(
+      {
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: 1000n,
+        startTime: 1000,
+        stopTime: 2000,
+      },
+      base,
+    );
+    expect(xdr).toContain('create_stream');
+  });
+
+  it('builds cliff transaction using StreamTransactionBuilder instance', async () => {
+    const builder = new StreamTransactionBuilder(base);
+    const xdr = await builder.createStream({
+      sender: 'GS',
+      recipient: 'GR',
+      tokenAddress: 'CT',
+      depositAmount: 1000n,
+      startTime: 1000,
+      stopTime: 2000,
+      cliffTime: 1200,
+    });
+    expect(xdr).toContain('create_stream_with_cliff');
+  });
+
+  it('throws when depositAmount <= 0n', () => {
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: 0n,
+        startTime: 100,
+        stopTime: 200,
+      }),
+    ).toThrow(/depositAmount must be greater than 0/);
+
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: -50n,
+        startTime: 100,
+        stopTime: 200,
+      }),
+    ).toThrow(/depositAmount must be greater than 0/);
+  });
+
+  it('throws when stopTime <= startTime', () => {
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: 100n,
+        startTime: 200,
+        stopTime: 100,
+      }),
+    ).toThrow(/stopTime must be greater than startTime/);
+
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: 100n,
+        startTime: 100,
+        stopTime: 100,
+      }),
+    ).toThrow(/stopTime must be greater than startTime/);
+  });
+
+  it('throws when cliffTime is before startTime or after stopTime', () => {
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: 100n,
+        startTime: 100,
+        stopTime: 200,
+        cliffTime: 50,
+      }),
+    ).toThrow(/cliffTime cannot be before startTime/);
+
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        depositAmount: 100n,
+        startTime: 100,
+        stopTime: 200,
+        cliffTime: 250,
+      }),
+    ).toThrow(/cliffTime cannot be after stopTime/);
+  });
+
+  it('validates duration and cliffDuration when used', () => {
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        amount: 100n,
+        duration: 0,
+      }),
+    ).toThrow(/duration must be > 0/);
+
+    expect(() =>
+      validateStreamParams({
+        sender: 'GS',
+        recipient: 'GR',
+        tokenAddress: 'CT',
+        amount: 100n,
+        duration: 100,
+        cliffDuration: 150,
+      }),
+    ).toThrow(/cliffDuration must satisfy/);
+  });
+});
+

@@ -89,8 +89,10 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
 
     const txHash = await sorobanService.cancelStream(parsedStreamId, senderSecret);
 
-    // 5. Update DB record status using repository helper
-    await streamRepository.updateStatus(parsedStreamId, 'CANCELLED');
+    // 5. Update DB record status and write a provisional CANCELLED StreamEvent
+    // atomically (issue #1219) so the stream shows up under the "cancelled"
+    // filter before the indexer has processed the on-chain event.
+    await streamRepository.markCancelledProvisionally(parsedStreamId, txHash);
 
     logger.info(`[CancelStream] Stream ${parsedStreamId} cancelled by ${callerAddress}. Tx: ${txHash}`);
 

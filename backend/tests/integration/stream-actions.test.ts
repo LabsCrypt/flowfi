@@ -6,11 +6,13 @@ const {
   mockPauseStream,
   mockResumeStream,
   mockWithdraw,
+  mockGetClaimableAmount,
   mockPrisma,
 } = vi.hoisted(() => ({
   mockPauseStream: vi.fn(),
   mockResumeStream: vi.fn(),
   mockWithdraw: vi.fn(),
+  mockGetClaimableAmount: vi.fn(),
   mockPrisma: {
     stream: {
       findUnique: vi.fn(),
@@ -43,6 +45,11 @@ vi.mock('../../src/services/sorobanService.js', () => ({
   pauseStream: mockPauseStream,
   resumeStream: mockResumeStream,
   withdraw: mockWithdraw,
+}));
+
+vi.mock('../../src/services/claimable.service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/services/claimable.service.js')>()),
+  claimableAmountService: { getClaimableAmount: mockGetClaimableAmount },
 }));
 
 import app from '../../src/app.js';
@@ -199,6 +206,10 @@ describe('stream action routes', () => {
       updatedAt: new Date(),
     });
     mockWithdraw.mockResolvedValue({ txHash: 'withdraw-tx-hash' });
+    mockGetClaimableAmount.mockReturnValue({
+      claimableAmount: '100',
+      actionable: true,
+    });
     mockPrisma.stream.update.mockResolvedValue({
       streamId: 11,
       withdrawnAmount: '600',

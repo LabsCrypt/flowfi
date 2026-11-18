@@ -43,7 +43,7 @@ export const RecipientStep: React.FC<RecipientStepProps> = ({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const pasted = e.clipboardData.getData("text");
-    if (!pasted) return;
+    if (!pasted.trim()) return;
 
     // Replace the current selection with the trimmed clipboard text so
     // whitespace-padded keys copied from wallets/explorers just work.

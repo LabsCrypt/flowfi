@@ -4,6 +4,7 @@ import "./lib/otel.js";
 
 import dotenv from "dotenv";
 import app from "./app.js";
+import { loadEnv } from "./config/env.js";
 import logger from "./logger.js";
 import { startWorkers, stopWorkers } from "./workers/index.js";
 import { sseService } from "./services/sse.service.js";
@@ -11,6 +12,10 @@ import { connectRedis, disconnectRedis } from "./lib/redis.js";
 import { rpcPool } from "./lib/rpc-pool.js";
 
 dotenv.config();
+
+// Fail fast on missing/invalid DATABASE_URL, PORT, NODE_ENV, SOROBAN_RPC_URL
+// before any connection is attempted (issue #1646).
+const env = loadEnv();
 
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -25,7 +30,7 @@ const startServer = async () => {
     await connectRedis();
     await sseService.initRedisSubscription();
 
-    const port = process.env.PORT || 3001;
+    const port = env.port;
     const server = app.listen(port, () => {
       logger.info(`Server started on port ${port}`);
       logger.info(

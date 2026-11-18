@@ -15,17 +15,22 @@ The API implements caching for frequently accessed endpoints, such as claimable 
 
 ## Sandbox Mode
 
-FlowFi API supports sandbox mode for testing without affecting production data.
+FlowFi API supports sandbox mode for labelling test traffic.
 
 **Enable Sandbox Mode:**
 - Header: \`X-Sandbox-Mode: true\`
 - Query Parameter: \`?sandbox=true\`
 
+Sandbox mode is only available when the server is started with
+\`SANDBOX_MODE_ENABLED=true\`.
+
 **Sandbox Features:**
-- Isolated database (separate from production)
-- All responses include \`_sandbox\` metadata
-- Response headers include \`X-Sandbox-Mode: true\`
-- Safe for testing and development
+- Event payloads returned to sandbox clients are tagged with \`_sandbox: true\`
+  so test data is distinguishable from production records.
+- Response headers include \`X-Sandbox-Mode: true\` and \`X-Environment: sandbox\`.
+
+**Note:** Sandbox mode currently labels requests/responses and tags events; it
+does not route traffic to a separate datastore.
 
 See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       contact: {
@@ -76,6 +81,10 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         name: 'Compliance',
         description:
           'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
+      },
+      {
+        name: 'Analytics',
+        description: 'Public protocol statistics (TVL, history, DefiLlama)',
       },
     ],
     components: {

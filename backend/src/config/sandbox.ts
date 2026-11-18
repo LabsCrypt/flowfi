@@ -1,13 +1,17 @@
 /**
  * Sandbox Mode Configuration
- * 
- * Sandbox mode allows test wallets to interact with a fake or mirrored environment
- * without affecting production data.
+ *
+ * Sandbox mode lets a client flag a request as test traffic. When enabled,
+ * sandbox requests/responses are labelled (`X-Sandbox-Mode` / `X-Environment`
+ * headers) and events returned to sandbox clients are tagged with
+ * `_sandbox: true` metadata so they can be told apart from production data.
+ *
+ * It does NOT route requests to a separate datastore or perform any other
+ * data isolation — see the corrected docs in `docs/SANDBOX_MODE.md`.
  */
 
 export interface SandboxConfig {
   enabled: boolean;
-  databaseUrl?: string;
   allowHeader: boolean;
   allowQueryParam: boolean;
   headerName: string;
@@ -50,21 +54,14 @@ function parseBooleanEnv(varName: string, value: string | undefined, defaultValu
  */
 export function getSandboxConfig(): SandboxConfig {
   const enabled = parseBooleanEnv('SANDBOX_MODE_ENABLED', process.env.SANDBOX_MODE_ENABLED, false);
-  const databaseUrl = process.env.SANDBOX_DATABASE_URL;
 
-  const config: SandboxConfig = {
+  return {
     enabled,
     allowHeader: parseBooleanEnv('SANDBOX_ALLOW_HEADER', process.env.SANDBOX_ALLOW_HEADER, true),
     allowQueryParam: parseBooleanEnv('SANDBOX_ALLOW_QUERY_PARAM', process.env.SANDBOX_ALLOW_QUERY_PARAM, true),
     headerName: process.env.SANDBOX_HEADER_NAME || 'X-Sandbox-Mode',
     queryParamName: process.env.SANDBOX_QUERY_PARAM_NAME || 'sandbox',
   };
-
-  if (databaseUrl) {
-    config.databaseUrl = databaseUrl;
-  }
-
-  return config;
 }
 
 /**

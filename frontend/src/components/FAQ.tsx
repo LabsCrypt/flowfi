@@ -4,7 +4,7 @@ import { Card } from './ui/Card';
 const faqs = [
     {
         q: 'How safe are the smart contracts?',
-        a: 'FlowFi uses battle-tested, non-upgradable smart contracts. We have been audited by top-tier firms including OpenZeppelin and ConsenSys Diligence.',
+        a: 'FlowFi uses non-upgradable Soroban smart contracts on Stellar. The contracts have not yet been independently audited; a third-party security audit is planned before mainnet launch.',
     },
     {
         q: 'Which chains do you support?',

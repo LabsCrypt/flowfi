@@ -1,7 +1,4 @@
--- An earlier, superseded migration (20260830000000) created a table of the
--- same name with a different shape. Drop it first so this migration is
--- idempotent whether or not that older table exists.
-DROP TABLE IF EXISTS "IndexerDeadLetterEvent";
+DROP TABLE IF EXISTS "IndexerDeadLetterEvent" CASCADE;
 
 -- CreateTable
 CREATE TABLE "IndexerDeadLetterEvent" (

@@ -1,11 +1,8 @@
 import { Router, type Request, type Response } from 'express';
-import { getToken } from '../../controllers/token.controller.js';
+import { getToken, toPublicTokenMetadata } from '../../controllers/token.controller.js';
 import { createHash } from 'node:crypto';
-import {
-  getTokenMetadataUpdatedAt,
-  listVerifiedTokens,
-  type TokenMetadataList,
-} from '../../lib/token-metadata.js';
+import { listVerifiedTokens } from '../../services/token-registry.service.js';
+import { sendApiError } from '../../types/api-error.js';
 
 const router = Router();
 
@@ -17,13 +14,6 @@ const router = Router();
  */
 export const TOKEN_CACHE_CONTROL =
   'public, max-age=3600, stale-while-revalidate=86400';
-
-function buildPayload(): TokenMetadataList {
-  return {
-    tokens: listVerifiedTokens(),
-    updatedAt: getTokenMetadataUpdatedAt(),
-  };
-}
 
 /**
  * Strong ETag derived from the serialized payload. Anything that changes the
@@ -86,21 +76,27 @@ export function etagMatches(ifNoneMatch: string | undefined, etag: string): bool
  *       304:
  *         description: Not Modified - the caller's cached copy is still current
  */
-router.get('/', (req: Request, res: Response) => {
-  const body = JSON.stringify(buildPayload());
-  const etag = computeTokensEtag(body);
+router.get('/', async (req: Request, res: Response) => {
+  try {
+    // Reuse the same persisted verified registry as detail lookups. The
+    // registry rows carry updatedAt, which makes the ETag change on writes.
+    const registryTokens = await listVerifiedTokens();
+    const tokens = registryTokens.map(toPublicTokenMetadata);
+    const updatedAt = registryTokens.reduce<Date>((latest, token) =>
+      token.updatedAt > latest ? token.updatedAt : latest, new Date(0));
+    const body = JSON.stringify({ tokens, updatedAt: updatedAt.toISOString() });
+    const etag = computeTokensEtag(body);
 
-  res.setHeader('Cache-Control', TOKEN_CACHE_CONTROL);
-  res.setHeader('ETag', etag);
-
-  if (etagMatches(req.headers['if-none-match'], etag)) {
-    // 304 must not carry a body. Repeated headers are required so an
-    // intermediary does not strip the cache metadata from the 304.
-    res.status(304).end();
-    return;
+    res.setHeader('Cache-Control', TOKEN_CACHE_CONTROL);
+    res.setHeader('ETag', etag);
+    if (etagMatches(req.headers['if-none-match'], etag)) {
+      res.status(304).end();
+      return;
+    }
+    res.status(200).type('application/json').send(body);
+  } catch {
+    sendApiError(res, 500, 'token_list_failed', 'Unable to load verified tokens');
   }
-
-  res.status(200).type('application/json').send(body);
 });
 
 router.get('/:address', getToken);

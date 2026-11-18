@@ -21,10 +21,10 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Redis ──────────────────────────────────────────────────────────────────
-  # Used for SSE horizontal scaling (pub/sub fan-out across backend instances)
-  # and rate-limit state sharing. Required for the dev:mock sandbox.
-  # Pinned to Redis 7 (alpine) — same upgrade policy as postgres above.
+  # ── PgBouncer ──────────────────────────────────────────────────────────────
+  # Transaction-pooling proxy in front of Postgres so the backend can hold many
+  # client connections without exhausting Postgres' own connection limit. The
+  # backend connects through this service (see DATABASE_URL below).
   pgbouncer:
     image: edoburu/pgbouncer:v1.24.1-p1
     container_name: flowfi-pgbouncer
@@ -52,6 +52,15 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  # Used for SSE horizontal scaling (pub/sub fan-out across backend instances)
+  # and rate-limit state sharing. Optional for single-instance dev, but required
+  # by the dev:mock sandbox. Start it standalone with:
+  #   docker compose up -d redis
+  # and point the backend at it with REDIS_URL=redis://localhost:6379
+  # (the value used by backend/.env.example). Pinned to Redis 7 (alpine) — same
+  # upgrade policy as postgres above.
   redis:
     image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
     container_name: flowfi-redis

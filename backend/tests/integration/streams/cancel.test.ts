@@ -29,7 +29,9 @@ vi.mock('../../../src/lib/prisma.js', () => {
     },
     streamEvent: {
       create: vi.fn(),
+      upsert: vi.fn(),
     },
+    $transaction: vi.fn(async (fn: any) => fn(mockPrisma)),
   };
   return {
     prisma: mockPrisma,
@@ -91,6 +93,23 @@ describe('POST /v1/streams/:streamId/cancel', () => {
       where: { streamId: BigInt(streamId) },
       data: { isActive: false },
     });
+    // Issue #1219: a provisional CANCELLED StreamEvent is written atomically
+    // so the stream immediately matches the "cancelled" status filter.
+    expect(prisma.streamEvent.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: 'tx_hash_123',
+            eventType: 'CANCELLED',
+          },
+        },
+        create: expect.objectContaining({
+          streamId: BigInt(streamId),
+          eventType: 'CANCELLED',
+          transactionHash: 'tx_hash_123',
+        }),
+      }),
+    );
   });
 
   it('returns 400 if senderSecret is not provided in the request body', async () => {

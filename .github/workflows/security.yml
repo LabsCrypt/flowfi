@@ -56,7 +56,15 @@ jobs:
       run: cargo install cargo-audit --locked
 
     - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
+      # RUSTSEC-2026-0387 (crypto-bigint 0.5.5) is not fixable in-tree: it is
+      # a transitive dep of soroban-env-host via elliptic-curve 0.13 (crypto-bigint
+      # ^0.5 pin), and no released soroban-env-host — including 30.0.0 — uses
+      # anything newer, so the advisory's fix (>= 0.7.6) cannot be selected anywhere
+      # in the Soroban dependency graph. crypto-bigint is never compiled into the
+      # contract WASM (it lives in the native host/test runtime only).
+      # Revisit and remove this ignore once Stellar ships env-host on
+      # elliptic-curve >= 0.14 / crypto-bigint >= 0.7.6.
+      run: cargo audit --ignore RUSTSEC-2026-0387
       working-directory: contracts
 
     - name: Verify security setup
@@ -76,7 +84,9 @@ jobs:
       run: cargo install cargo-audit
 
     - name: Run cargo audit on contracts
-      run: cargo audit
+      # RUSTSEC-2026-0387: see the reasoning on the "Check for known
+      # vulnerabilities in smart contracts (cargo audit)" step above.
+      run: cargo audit --ignore RUSTSEC-2026-0387
       working-directory: contracts
 
   codeql-analysis:
