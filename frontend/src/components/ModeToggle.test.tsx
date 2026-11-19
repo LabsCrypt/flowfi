@@ -22,21 +22,22 @@ describe("ModeToggle", () => {
     const user = userEvent.setup();
     renderModeToggle();
 
-    const toggle = await screen.findByRole("button", { name: "Switch to dark mode" });
-    expect(toggle.querySelector("svg.text-yellow-500")).toBeInTheDocument();
-    expect(toggle.querySelector("svg.text-blue-400")).toBeInTheDocument();
+    const darkRadio = await screen.findByRole("radio", { name: "Dark" });
+    const lightRadio = screen.getByRole("radio", { name: "Light" });
 
-    await user.click(toggle);
+    expect(lightRadio).toHaveAttribute("aria-checked", "true");
+
+    await user.click(darkRadio);
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Switch to light mode" })).toBeInTheDocument();
+      expect(darkRadio).toHaveAttribute("aria-checked", "true");
       expect(localStorage.getItem("theme")).toBe("dark");
       expect(document.documentElement).toHaveClass("dark");
     });
 
-    await user.click(screen.getByRole("button", { name: "Switch to light mode" }));
+    await user.click(lightRadio);
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeInTheDocument();
+      expect(lightRadio).toHaveAttribute("aria-checked", "true");
       expect(localStorage.getItem("theme")).toBe("light");
       expect(document.documentElement).not.toHaveClass("dark");
     });
@@ -46,14 +47,14 @@ describe("ModeToggle", () => {
     const user = userEvent.setup();
     renderModeToggle();
 
-    const toggle = await screen.findByRole("button", { name: "Switch to dark mode" });
-    await user.tab();
-    expect(toggle).toHaveFocus();
+    const darkRadio = await screen.findByRole("radio", { name: "Dark" });
+    darkRadio.focus();
+    expect(darkRadio).toHaveFocus();
 
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Switch to light mode" })).toBeInTheDocument();
+      expect(darkRadio).toHaveAttribute("aria-checked", "true");
       expect(localStorage.getItem("theme")).toBe("dark");
     });
   });

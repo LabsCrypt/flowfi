@@ -50,6 +50,8 @@
     "deepmerge-ts": "^8.0.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
-    "mysql2": ">=3.22.0"
+    "mysql2": ">=3.22.0",
+    "follow-redirects": ">=1.16.2",
+    "systeminformation": ">=5.33.23"
   }
 }
