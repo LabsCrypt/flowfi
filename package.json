@@ -52,6 +52,7 @@
     "react-dom": "19.2.7",
     "mysql2": ">=3.22.0",
     "follow-redirects": ">=1.16.2",
-    "systeminformation": ">=5.33.23"
+    "systeminformation": ">=5.33.23",
+    "effect": "^3.22.5"
   }
 }
