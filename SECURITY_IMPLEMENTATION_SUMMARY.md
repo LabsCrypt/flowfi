@@ -6,7 +6,7 @@ This document is a **maintenance and onboarding guide** for repository administr
 
 ### 1. Core Security Policy
 - **SECURITY.md**: Comprehensive security policy with reporting guidelines, supported versions, and response timelines
-- **Contact Methods**: Multiple reporting channels including GitHub Security Advisories and email
+- **Contact Methods**: Reporting via GitHub Security Advisories, with community Telegram or GitHub Discussions as private-contact fallbacks (no email address is configured)
 - **Disclosure Policy**: Clear responsible disclosure guidelines
 
 ### 2. Documentation Updates
@@ -55,8 +55,7 @@ This document is a **maintenance and onboarding guide** for repository administr
 ### Optional Enhancements
 
 1. **Set up Security Email**
-   - Configure `security@flowfi.dev` or similar
-   - Update SECURITY.md with actual contact information
+   - Email is not currently a reporting channel. If one is configured (e.g. `security@flowfi.dev`), add it to SECURITY.md and update the Contact Methods line above
 
 2. **Bug Bounty Program**
    - Consider implementing a formal bug bounty program

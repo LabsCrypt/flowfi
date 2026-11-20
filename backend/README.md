@@ -10,17 +10,18 @@ This is the Node.js / Express backend for FlowFi. It provides the REST API for t
   > **Note:** nodemon watches only the `src/` directory for changes. Tests live in the `tests/` directory (outside the watch scope), so they never trigger server reloads. If tests were ever colocated inside `src/` in the future, add ignore patterns (e.g. `src/**/*.test.ts`) to nodemon.json to prevent unwanted restarts.
 - `npm run build`: Compiles TypeScript to JavaScript.
 - `npm start`: Runs the compiled server.
-- `npm run db:push`: Pushes Prisma schema changes to the database.
+- `npm run prisma:generate`: Generates the Prisma client.
+- `npm run prisma:migrate`: Creates and applies a migration in development (`prisma migrate dev`).
+- `npm run prisma:deploy`: Applies pending migrations in deployed environments (`prisma migrate deploy`).
 
 ## Environment Variables
 
-Create a `.env` file with the following variables:
+Copy `.env.example` to `.env` and adjust the values. The minimum configuration is:
 
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5433/flowfi?schema=public
 PORT=3001
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 API_BASE_URL=https://api.staging.flowfi.io
 ```
 

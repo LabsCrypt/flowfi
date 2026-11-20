@@ -565,6 +565,16 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     () => (snapshot?.outgoingStreams ?? []).filter(matchesSearch),
     [snapshot, matchesSearch],
   );
+  const projectionStreams = React.useMemo(
+    () =>
+      snapshot
+        ? [
+            ...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })),
+            ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token })),
+          ]
+        : [],
+    [snapshot],
+  );
   const filteredSnapshot = React.useMemo<DashboardSnapshot | null>(
     () => (snapshot ? { ...snapshot, outgoingStreams: filteredOutgoing } : null),
     [snapshot, filteredOutgoing],
@@ -888,7 +898,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
-          <CashflowProjectionChart streams={[...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })), ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token }))]} />
+          <CashflowProjectionChart streams={projectionStreams} />
           <StreamsTable
             snapshot={filteredSnapshot}
             onTopUp={handleTopUp}
