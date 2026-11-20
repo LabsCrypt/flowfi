@@ -27,10 +27,10 @@ COPY package.json package-lock.json ./
 COPY frontend/package.json ./frontend/
 COPY backend/package.json ./backend/
 
-# `npm ci` is the reproducible path; fall back to `npm install` when the
-# committed lockfile and package.json are out of sync so the image still
-# builds (dependency drift is tracked separately from this issue).
-RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+# `npm ci` only: a lockfile/package.json desync must fail the build visibly
+# rather than silently resolving different versions. Drift is also checked
+# separately in CI (see the "Verify lockfile is in sync" step in ci.yml).
+RUN npm ci --no-audit --no-fund
 
 COPY frontend ./frontend
 

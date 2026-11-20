@@ -16,7 +16,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 
-RUN npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json ./
 COPY prisma.config.ts ./
@@ -41,7 +41,7 @@ ENV NODE_ENV=production
 # below), so the runner never needs the schema to install dependencies.
 # The npm cache is purged in the same layer so it never ships in the image.
 COPY package*.json ./
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
  && npm cache clean --force
 
 # `--ignore-scripts` also skips the @prisma/engines postinstall, so the

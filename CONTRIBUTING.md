@@ -222,7 +222,7 @@ Frontend runs on: `http://localhost:3000`
 - `npm run lint` - Run ESLint
 
 **Environment Variables:**
-Copy [`frontend/.env.example`](../frontend/.env.example) to `frontend/.env.local` and adjust as needed. The `.env.example` file documents every `NEXT_PUBLIC_*` variable the application reads, with sensible testnet defaults.
+Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` and adjust as needed. The `.env.example` file documents every `NEXT_PUBLIC_*` variable the application reads, with sensible testnet defaults.
 
 ---
 

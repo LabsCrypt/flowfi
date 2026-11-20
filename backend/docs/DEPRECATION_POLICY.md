@@ -253,4 +253,4 @@ For questions about deprecations or migrations:
 
 - Open an issue on GitHub
 - Check the [API Versioning Guide](./API_VERSIONING.md)
-- Review the [CHANGELOG.md](../../CHANGELOG.md)
+- Review the project release notes on the GitHub Releases page

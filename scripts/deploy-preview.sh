@@ -101,7 +101,15 @@ deploy_backend() {
   echo "==> Deploying backend preview ${APP_NAME} (${SHA})"
   if [[ -n "${FLY_API_TOKEN:-}" ]]; then
     if ! command -v flyctl > /dev/null 2>&1; then
-      curl -L https://fly.io/install.sh | sh
+      # Pinned release + checksum verification instead of piping a remote script to a shell.
+      FLYCTL_VERSION="0.5.14"
+      FLYCTL_SHA256="0ff9abeae51ef2efe5eec13e260c2090a533f8250b1bed7094acdbc7b8e5a9a5"
+      FLYCTL_TMP="$(mktemp -d)"
+      curl -fsSL -o "${FLYCTL_TMP}/flyctl.tar.gz" "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+      echo "${FLYCTL_SHA256}  ${FLYCTL_TMP}/flyctl.tar.gz" | sha256sum -c -
+      mkdir -p "$HOME/.fly/bin"
+      tar -xzf "${FLYCTL_TMP}/flyctl.tar.gz" -C "$HOME/.fly/bin" flyctl
+      rm -rf "${FLYCTL_TMP}"
       export PATH="$HOME/.fly/bin:$PATH"
     fi
     echo "${FLY_API_TOKEN}" | flyctl auth docker || true
