@@ -40,6 +40,9 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       needs.changes.outputs.frontend == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -52,7 +55,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm ci --include=optional
+        run: npm install --include=optional
 
       - name: Lint
         run: npm run lint
@@ -61,6 +64,19 @@ jobs:
       - name: Run Frontend Tests
         run: npm run test:coverage
         working-directory: frontend
+
+      - name: Post frontend coverage summary on PR
+        if: github.event_name == 'pull_request' && !cancelled()
+        # Fork PRs get a read-only token; never fail the build over the comment.
+        continue-on-error: true
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          working-directory: frontend
+          name: Frontend coverage
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
+          file-coverage-mode: changes
+          vite-config-path: vitest.config.ts
 
       - name: Upload frontend coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -88,6 +104,9 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       needs.changes.outputs.backend == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
     services:
       postgres:
         image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
@@ -115,7 +134,7 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm ci --include=optional
+        run: npm install --include=optional
 
       - name: Setup Database
         run: |
@@ -146,6 +165,18 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_test
           NODE_ENV: test
+
+      - name: Post backend coverage summary on PR
+        if: github.event_name == 'pull_request' && !cancelled()
+        continue-on-error: true
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          working-directory: backend
+          name: Backend coverage
+          json-summary-path: coverage/coverage-summary.json
+          json-final-path: coverage/coverage-final.json
+          file-coverage-mode: changes
+          vite-config-path: vitest.config.ts
 
       - name: Upload backend coverage to Codecov
         uses: codecov/codecov-action@v5

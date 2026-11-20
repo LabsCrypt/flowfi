@@ -34,6 +34,8 @@ pub mod storage;
 pub mod types;
 pub mod yield_strategy;
 
+// acceptance_tests.rs describes proposed contract entrypoints that have not
+// been implemented yet; including it makes the current contract fail to compile.
 // #[cfg(test)]
 // mod acceptance_tests;
 #[cfg(test)]
@@ -2825,6 +2827,7 @@ impl StreamContract {
         let start_time = env.ledger().timestamp();
 
         // Check allowance: just verify it's callable, don't lock it yet
+        // Try to get allowance to validate approval was made
         let token_client = token::Client::new(&env, &token_address);
         // Use the generated client: avoids manual Val conversion for try_invoke.
         let allowance = token_client.allowance(&sender, &env.current_contract_address());

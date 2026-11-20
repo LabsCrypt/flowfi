@@ -63,6 +63,7 @@ export function publishPoolMetrics(pool: pg.Pool): void {
   dbPoolMaxConnections.set(pool.options?.max ?? 0);
 }
 
+
 /**
  * Reduce a SQL statement to a low-cardinality operation label.
  *

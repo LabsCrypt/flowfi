@@ -16,6 +16,8 @@ if (!globalForPrisma.pool) {
   globalForPrisma.pool = createPgPool();
 }
 
+// Standalone backend installs can resolve a second @types/pg copy under the
+// adapter. Both declarations describe the same runtime Pool instance.
 const log =
   process.env.NODE_ENV === 'development'
     ? ['query', 'error', 'warn'] as const

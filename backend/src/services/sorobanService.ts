@@ -356,6 +356,13 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 }
 
 /**
+ * Poll a submitted transaction until it reaches a final on-chain state.
+ *
+ * `sendTransaction` only queues the transaction; without this wait a caller
+ * could immediately read chain state and see a pre-transaction view. Returns
+ * the final successful transaction response, or throws when the transaction
+ * fails on-chain or the confirmation window lapses.
+ *
  * Poll Soroban RPC getTransaction until the transaction reaches a terminal
  * status (SUCCESS or FAILED) or until the bounded timeout expires.
  */
@@ -898,25 +905,27 @@ function decodeSimulatedReturn(result: rpc.Api.SimulateTransactionSuccessRespons
   if (!retval) return '';
 
   try {
+    // SDK 17 models ScVal as a discriminated union keyed on `type`; each
+    // variant exposes its arm payload via the `value` getter.
     switch (retval.type) {
       case 'scvI128':
         return decodeI128(retval);
       case 'scvU64':
-        return retval.u64.toString();
+        return retval.value.toString();
       case 'scvU32':
-        return retval.u32.toString();
+        return retval.value.toString();
       case 'scvI64':
-        return retval.i64.toString();
+        return retval.value.toString();
       case 'scvU128': {
-        const parts = retval.u128;
-        const hi = BigInt.asUintN(64, parts.hi);
-        const lo = BigInt.asUintN(64, parts.lo);
+        const parts = retval.value;
+        const hi = BigInt.asUintN(64, BigInt(parts.hi.toString()));
+        const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
         return ((hi << 64n) | lo).toString();
       }
       default:
         // Non-numeric returns (addresses, maps, void markers) are surfaced as
         // base64 XDR so the client can decode them with the SDK if it needs to.
-        return Buffer.from(retval.toXDR()).toString('base64');
+        return Buffer.from(retval.toXdr()).toString('base64');
     }
   } catch {
     return '';

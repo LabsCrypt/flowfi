@@ -9,16 +9,25 @@ export default defineConfig({
     setupFiles: ['./src/__tests__/setup.ts'],
     include: ['src/__tests__/**/*.{test,spec}.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
-      reporter: ['text', 'json', 'html'],
+      provider: 'v8',
+      reportsDirectory: './coverage',
+      // lcov feeds Codecov; json + json-summary feed the PR coverage table.
+      reporter: ['text', 'json', 'json-summary', 'html', 'lcov'],
       include: ['src/**'],
       exclude: [
         'src/**/*.{test,spec}.{ts,tsx}',
         'src/**/__tests__/**',
       ],
       all: true,
+      // CI gate (#1333). Long-term target is 80/75/80/80; the floors below
+      // are the measured baseline and only ever ratchet upwards, so a PR that
+      // drops coverage below them fails. Codecov additionally blocks any PR
+      // that lowers project coverage by more than 1% (see .github/codecov.yml).
       thresholds: {
-        functions: 20,
-        lines: 20,
+        statements: 50,
+        branches: 75,
+        functions: 65,
+        lines: 50,
       },
     },
   },

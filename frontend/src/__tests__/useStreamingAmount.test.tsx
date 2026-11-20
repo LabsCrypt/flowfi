@@ -82,9 +82,15 @@ describe("useStreamingAmount", () => {
     // Claimable should accrue from 0 since lastUpdateTime (elapsed = 1,000,015 - 1,000,010 = 5s, rate = 1/sec)
     expect(result.current).toBeCloseTo(5, 1);
 
-    // Advance time past the remaining cap (cap = 1000 - 110 = 890)
+    // Test cap by increasing the rate so it hits the cap within 1 second
+    const cappedParams = {
+      ...updatedParams,
+      ratePerSecond: 1000, // Huge rate to hit the 890 cap instantly
+    };
+    rerender(cappedParams);
+
     act(() => {
-      vi.advanceTimersByTime(1000 * 1000);
+      vi.advanceTimersByTime(1000);
     });
     // Claimable must be capped at 890
     expect(result.current).toBe(890);
