@@ -9,7 +9,7 @@ flowchart LR
     C["Soroban Stream Contract\nEvent Emission"] --> W["Event Worker / Indexer\nbackend/src/workers"]
     W --> P["Prisma ORM"]
     P --> D[("PostgreSQL")]
-    D --> API["Express API\nREST + SSE"]
+    D --> API["Express API\nREST + SSE + GraphQL (read-only)"]
     API --> SSE["SSE Service\nConnection Registry"]
     SSE --> FE["Next.js Frontend\nDashboard + Profile"]
 
@@ -22,7 +22,7 @@ flowchart LR
 1. Soroban contract: source of truth for stream state and events.
 1. Event worker/indexer: reads events from Stellar/Soroban, normalizes payloads, and persists stream state + stream events.
 1. PostgreSQL + Prisma: query layer for fast read APIs.
-1. Express API: serves versioned REST endpoints and long-lived SSE subscriptions.
+1. Express API: serves versioned REST endpoints, long-lived SSE subscriptions, and an unversioned read-only GraphQL endpoint at `/graphql` (see [docs/api/README.md](api/README.md#graphql-api)).
 1. Frontend: consumes REST for initial state and SSE for real-time deltas.
 
 ## Event Type Data Flows

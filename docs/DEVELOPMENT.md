@@ -19,7 +19,7 @@ npm run dev:mock
 That one command:
 
 1. **Starts infrastructure** — Postgres, Redis, and a mock Soroban RPC stub via Docker Compose.
-2. **Syncs the database schema** — runs `prisma db push` against the fresh local DB (the committed init migration doesn't apply cleanly to an empty database, so the sandbox pushes the schema directly instead of replaying migration history).
+2. **Syncs the database schema** — pushes the schema directly with `prisma db push` for the throwaway mock stack (a fast shortcut for disposable demo data). The supported bootstrap path for every other database is `npm run prisma:generate && npm run prisma:deploy`, which CI exercises on a fresh database.
 3. **Seeds 20 demo streams** across 5 mock users, with event histories spanning the last 30 days:
    - 7 Active streams (USDC, EURC, XLM)
    - 3 Paused streams (pending milestone review)
@@ -155,7 +155,7 @@ Run database setup:
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate
+npm run prisma:deploy   # apply committed migrations to a fresh database
 ```
 
 These commands read their paths and connection string from `backend/prisma.config.ts`, which configures the Prisma CLI separately from the data model in `backend/prisma/schema.prisma`. See [Prisma Database](../backend/README.md#prismaconfigts-vs-prismaschemaprisma) in the backend README for what each file owns and what to check when a `generate`/`migrate` command misbehaves.

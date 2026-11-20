@@ -82,12 +82,8 @@ migrate_and_seed() {
   export DATABASE_URL="${PREVIEW_DATABASE_URL:-${DATABASE_URL%/*}/${DB_NAME}}"
   cd "${ROOT}/backend"
   npx prisma generate --schema=prisma/schema.prisma
-  # Try `migrate deploy` first per spec; fall back to `db push` (Backend CI
-  # path) because the committed init migration fails on fresh databases.
-  if ! npx prisma migrate deploy --schema=prisma/schema.prisma; then
-    echo "migrate deploy failed — falling back to prisma db push for ephemeral preview."
-    npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
-  fi
+  # Documented bootstrap path (same as CONTRIBUTING.md and CI); no silent fallback.
+  npx prisma migrate deploy --schema=prisma/schema.prisma
   if npm run | grep -q "prisma:seed"; then
     npm run prisma:seed
   else
