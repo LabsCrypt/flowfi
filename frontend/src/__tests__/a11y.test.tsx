@@ -14,6 +14,11 @@ vi.mock("@/context/wallet-context", () => ({
   }),
 }));
 
+vi.mock("@/lib/api/webhooks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/webhooks")>()),
+  listWebhookDeliveries: vi.fn().mockResolvedValue({ deliveries: [], total: 0, page: 1, limit: 20 }),
+}));
+
 vi.mock("@stellar/freighter-api", () => ({
   isConnected: () => Promise.resolve({ isConnected: false }),
 }));
@@ -31,6 +36,11 @@ import { IncomingStreamCard } from "@/components/streams/IncomingStreamCard";
 import { StreamDetailsModal } from "@/components/dashboard/StreamDetailsModal";
 import { TopUpModal } from "@/components/stream-creation/TopUpModal";
 import { WalletModal } from "@/components/wallet/WalletModal";
+import { KeyboardShortcutsModal } from "@/components/dashboard/KeyboardShortcutsModal";
+import { BatchClaimDrawer } from "@/components/dashboard/BatchClaimDrawer";
+import { WebhookModal } from "@/components/webhooks/WebhookModal";
+import { WebhookDeliveryModal } from "@/components/webhooks/WebhookDeliveryModal";
+import type { WebhookSubscription } from "@/lib/api/webhooks";
 import type { IncomingStreamRecord } from "@/lib/api/streams";
 import type { Stream } from "@/lib/dashboard";
 
@@ -135,5 +145,65 @@ describe("Accessibility (axe-core) — critical & serious violations", () => {
   it("WalletModal is accessible", async () => {
     const { container } = render(<WalletModal onClose={() => {}} />);
     await assertNoCriticalOrSerious(container);
+  });
+
+  describe("overlays routed through useModalDialog (#1887)", () => {
+    const webhook: WebhookSubscription = {
+      id: "sub-1",
+      userAddress: "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+      targetUrl: "https://example.com/hook",
+      eventTypes: ["STREAM_CREATED"],
+      isActive: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    function expectNamedModalDialog(container: HTMLElement, name: string) {
+      const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
+      expect(dialog).not.toBeNull();
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(dialog).toHaveAccessibleName(name);
+    }
+
+    it("KeyboardShortcutsModal is accessible", async () => {
+      const { container } = render(<KeyboardShortcutsModal open onClose={() => {}} />);
+      expectNamedModalDialog(container, "Keyboard shortcuts");
+      await assertNoCriticalOrSerious(container);
+    });
+
+    it("BatchClaimDrawer is accessible", async () => {
+      const { container } = render(
+        <BatchClaimDrawer
+          streams={[{ ...mockStream, lastUpdateTime: Math.floor(Date.now() / 1000) - 60 }]}
+          onClose={() => {}}
+          onSuccess={() => {}}
+        />,
+      );
+      expectNamedModalDialog(container, "Batch claim");
+      await assertNoCriticalOrSerious(container);
+    });
+
+    it("WebhookModal is accessible", async () => {
+      const { container } = render(
+        <WebhookModal
+          userAddress={webhook.userAddress}
+          onClose={() => {}}
+          onSave={() => Promise.resolve()}
+        />,
+      );
+      expectNamedModalDialog(container, "Register webhook");
+      await assertNoCriticalOrSerious(container);
+    });
+
+    it("WebhookDeliveryModal is accessible", async () => {
+      const { container } = render(
+        <WebhookDeliveryModal
+          subscription={webhook}
+          userAddress={webhook.userAddress}
+          onClose={() => {}}
+        />,
+      );
+      expectNamedModalDialog(container, "Delivery logs");
+      await assertNoCriticalOrSerious(container);
+    });
   });
 });
