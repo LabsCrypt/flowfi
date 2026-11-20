@@ -98,7 +98,7 @@ Required:
 - npm
 - PostgreSQL 16 (matches the version pinned in `docker-compose.yml` and CI)
 - Docker & Docker Compose (recommended for local infra)
-- Stellar CLI / Soroban CLI (https://github.com/stellar/stellar-cli)
+- Stellar CLI — `cargo install --locked stellar-cli`, provides the `stellar` binary (https://github.com/stellar/stellar-cli). The legacy `soroban-cli` crate / `soroban` binary is superseded and not used by this repo.
 
 Optional:
 

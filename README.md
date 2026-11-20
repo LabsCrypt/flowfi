@@ -68,10 +68,30 @@ The fastest way to run the full stack locally:
 docker compose up --build
 ```
 
-This starts:
+This starts six services:
 
-- **Postgres** database on port `5433`
-- **Backend** API on port `3001`
+| Service | Host port | Purpose |
+| --- | --- | --- |
+| `postgres` | `5433` | PostgreSQL 16 database |
+| `pgbouncer` | `6432` | Transaction-pooling proxy in front of Postgres; the backend connects through it |
+| `redis` | `6379` | SSE pub/sub fan-out and shared rate-limit state |
+| `mock-soroban-rpc` | `8000` | Local JSON-RPC stub returning well-formed Soroban responses, so the indexer and simulation endpoints work without a live testnet |
+| `backend` | `3001` | Backend API (runs with `SANDBOX_MODE_ENABLED=true` against the mock RPC) |
+| `frontend` | `3000` | Next.js frontend, built and run in production mode |
+
+Make sure these host ports are free before starting, or remap them in `docker-compose.yml`.
+
+**Minimal invocation** — if you only need the API (for example, you run the frontend with `npm run dev`), start just the backend. Compose also starts the services it depends on (`postgres`, `pgbouncer`, `redis`, `mock-soroban-rpc`), but skips the frontend:
+
+```bash
+docker compose up --build backend
+```
+
+For a database only (e.g. running the backend directly on your machine):
+
+```bash
+docker compose up -d postgres
+```
 
 To run in detached mode:
 

@@ -25,6 +25,6 @@ For S3, download the selected object to a protected temporary location with `aws
 
 ## Weekly disaster-recovery verification
 
-`.github/workflows/dr-test.yml` runs every Monday at 06:00 UTC and can also be started with **Actions Ã¢â€ â€™ Weekly disaster recovery verification Ã¢â€ â€™ Run workflow**. It starts an isolated, empty PostgreSQL 16 service, downloads the latest backup, decrypts and restores it, compares all public table counts, validates the Prisma schema, and checks migration status. A missing backup, invalid key/tag, restore error, count mismatch, or Prisma failure makes the workflow fail.
+`.github/workflows/dr-test.yml` runs every Monday at 06:00 UTC and can also be started with **Actions → Weekly disaster recovery verification → Run workflow**. It starts an isolated, empty PostgreSQL 16 service, downloads the latest backup, decrypts and restores it, compares all public table counts, validates the Prisma schema, and checks migration status. A missing backup, invalid key/tag, restore error, count mismatch, or Prisma failure makes the workflow fail.
 
 Review the workflow run after each scheduled execution. A successful restore drill demonstrates that the current backup and recovery credentials work; production recovery should still follow the same steps against a separately provisioned database and an authorized operator.
