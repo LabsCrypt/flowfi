@@ -33,6 +33,32 @@ jobs:
             frontend:
               - 'frontend/**'
 
+  docs-encoding:
+    name: Docs encoding check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Reject invalid UTF-8 and mojibake in markdown
+        env:
+          LC_ALL: C.UTF-8
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            if ! iconv -f UTF-8 -t UTF-8 "$f" > /dev/null 2>&1; then
+              echo "::error file=$f::File is not valid UTF-8"
+              status=1
+            fi
+          done < <(git ls-files -z '*.md')
+          # Typical double-encoded UTF-8 (UTF-8 bytes mis-decoded as cp1252/latin-1),
+          # e.g. a curly quote or arrow turned into "A-tilde"/"a-circumflex + euro" runs.
+          if git ls-files -z '*.md' | xargs -0 grep -nP '\x{00C3}[\x{0080}-\x{00BF}\x{00A2}]|\x{00E2}\x{20AC}|\x{00C2}[\x{00A0}-\x{00BF}]'; then
+            echo "::error::Mojibake (double-encoded UTF-8) found in the markdown lines above"
+            status=1
+          fi
+          exit $status
+
   frontend:
     name: Frontend CI
     runs-on: ubuntu-latest

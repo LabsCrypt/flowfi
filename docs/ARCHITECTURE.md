@@ -194,7 +194,7 @@ SorobanEventWorker  (backend/src/workers/soroban-event-worker.ts)
 PostgreSQL  (via Prisma)
     │  StreamEvent table / Stream table updated
     ▼
-SSE broadcast  (backend/src/services/sseService.ts)
+SSE broadcast  (backend/src/services/sse.service.ts)
     │  pushes typed event to sse:stream:<id> and sse:user:<address> channels
     ▼
 Frontend useStreamEvents hook  (frontend/src/hooks/useStreamEvents.ts)
