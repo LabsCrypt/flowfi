@@ -31,6 +31,7 @@ import { formatAmount, streamProgressPercent, validateAmountInput } from "@/util
 import { shortenPublicKey } from "@/lib/wallet";
 import { LiquidStreamVisualizer } from "@/components/LiquidStreamVisualizer";
 import { TokenAvatar } from "@/components/TokenAvatar";
+import { resolveTokenSymbol } from "@/lib/tokens";
 
 interface StreamDetail {
   id: string;
@@ -55,12 +56,6 @@ interface StreamDetail {
 
 const API_BASE_URL = `${getApiBaseUrl()}/v1`;
 const EVENTS_PER_PAGE = 10;
-
-const TOKEN_SYMBOLS: Record<string, string> = {
-  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN": "XLM",
-  "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA": "USDC",
-  "CCWAMYJME4YOIUNAKVYEBYOG5I65QMKEX2NMN4OJAPXRPIF24ONPSHY": "EURC",
-};
 
 const EVENT_STYLES: Record<string, { color: string; icon: string; label: string }> = {
   CREATED: { color: "#22c55e", icon: "✓", label: "Created" },
@@ -224,7 +219,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
 
   const tokenSymbol = useMemo(() => {
     if (!stream) return "??";
-    return (stream.tokenAddress && TOKEN_SYMBOLS[stream.tokenAddress]) || stream.tokenAddress?.slice(0, 4) || "??";
+    return resolveTokenSymbol(stream.tokenAddress) || stream.tokenAddress?.slice(0, 4) || "??";
   }, [stream]);
 
   const { data: tokenPrice } = useTokenPrice({ tokenSymbol, enabled: Boolean(stream) });

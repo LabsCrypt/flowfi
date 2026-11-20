@@ -22,6 +22,9 @@
     "prisma:studio": "prisma studio",
     "codegen:openapi": "tsx scripts/export-openapi.mts"
   },
+  "engines": {
+    "node": "^22.22.1"
+  },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },

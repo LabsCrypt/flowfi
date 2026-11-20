@@ -86,7 +86,7 @@ cd flowfi
 
 Make sure you have the following installed:
 
-- Node.js (LTS recommended)
+- Node.js 22 (`^22.22.1`) — the version is pinned in `.nvmrc` and enforced via `engines` + `engine-strict`; run `nvm use` in the repo root
 - npm
 - Rust & Cargo
 - Docker & Docker Compose

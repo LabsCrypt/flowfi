@@ -99,5 +99,5 @@ Most authorization errors (#3, #6, #24, #32, #43) mean you're calling from the w
 :::
 
 :::note
-For detailed error handling examples, see the [SDK Integration Guide](../sdk/overview.md) and [Testing Patterns](../development/testing.md).
+For detailed error handling examples, see the [TypeScript SDK guide](../sdks/typescript.md) and [Running Tests](https://github.com/LabsCrypt/flowfi/blob/main/docs/DEVELOPMENT.md#running-tests).
 :::

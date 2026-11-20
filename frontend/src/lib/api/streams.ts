@@ -1,5 +1,5 @@
 import type { BackendStream } from "@/lib/api-types";
-import { TOKEN_ADDRESSES } from "@/lib/soroban";
+import { resolveTokenLabel } from "@/lib/tokens";
 import { shortenPublicKey } from "@/lib/wallet";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
@@ -31,14 +31,6 @@ export interface IncomingStreamRecord {
 
 interface StreamListResponse {
   data?: BackendStream[];
-}
-
-function resolveTokenLabel(tokenAddress: string): string {
-  const entry = Object.entries(TOKEN_ADDRESSES).find(
-    ([, address]) => address === tokenAddress,
-  );
-
-  return entry?.[0] ?? `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-4)}`;
 }
 
 function toIncomingStreamStatus(stream: BackendStream): IncomingStreamStatus {
