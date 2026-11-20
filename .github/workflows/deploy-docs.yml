@@ -24,7 +24,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: '.nvmrc'
 
       # No lockfile is committed for the portal yet; once one lands, add
       # `cache: npm` + `cache-dependency-path: docs-site/package-lock.json`
