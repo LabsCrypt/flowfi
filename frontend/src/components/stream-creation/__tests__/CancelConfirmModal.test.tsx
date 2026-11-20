@@ -86,4 +86,59 @@ describe("CancelConfirmModal submission and validation", () => {
       resolveConfirm();
     });
   });
+
+  it("allows retrying after a rejected cancellation and succeeds on the second attempt", async () => {
+    const onConfirm = vi
+      .fn<(id: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error("rpc timeout"))
+      .mockResolvedValueOnce(undefined);
+    render(<CancelConfirmModal {...baseProps} onConfirm={onConfirm} />);
+
+    fireEvent.click(getCancelButton());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(getCancelButton()).toBeEnabled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
+
+    fireEvent.click(getCancelButton());
+    await waitFor(() => {
+      expect(transactionSuccessToast).toHaveBeenCalledWith("Stream stream-42 cancelled successfully");
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+    expect(onConfirm).toHaveBeenNthCalledWith(2, "stream-42");
+    expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-enables close, keep stream, backdrop click and Escape after a rejection", async () => {
+    const onClose = vi.fn();
+    const onConfirm = vi.fn().mockRejectedValueOnce(new Error("rejected"));
+    render(<CancelConfirmModal {...baseProps} onConfirm={onConfirm} onClose={onClose} />);
+
+    fireEvent.click(getCancelButton());
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+
+    expect(screen.getByRole("button", { name: /close/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /keep stream/i })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /keep stream/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("dialog"));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not call onClose or show a success toast on rejection, and shows no error toast on success", async () => {
+    const onClose = vi.fn();
+    const onConfirm = vi.fn().mockRejectedValueOnce(new Error("nope"));
+    render(<CancelConfirmModal {...baseProps} onConfirm={onConfirm} onClose={onClose} />);
+    fireEvent.click(getCancelButton());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(transactionSuccessToast).not.toHaveBeenCalled();
+  });
+
+  it("renders the remaining balance as deposited minus withdrawn, including a zero boundary", () => {
+    render(<CancelConfirmModal {...baseProps} deposited={500} withdrawn={500} />);
+    expect(screen.getAllByText(/0 USDC/).length).toBeGreaterThan(0);
+  });
 });

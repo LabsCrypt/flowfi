@@ -119,7 +119,7 @@ jobs:
         id: publish
         continue-on-error: true
         run: |
-          if [ -n "${{ secrets.FLY_API_TOKEN }}" ]; then
+          if [ -n "$FLY_API_TOKEN" ]; then
             bash scripts/deploy-preview.sh --deploy-backend --pr "$PR_NUMBER" --sha "$PR_SHA"
           else
             echo "FLY_API_TOKEN not set — skipping live Fly deploy; using CI-validated image as preview artifact."
@@ -135,8 +135,8 @@ jobs:
         run: |
           # When a live Fly app exists the deploy script already health-checked it.
           # Otherwise validate the preview image locally so reviewers still get a signal.
-          if [ -n "${{ steps.publish.outputs.preview_url }}" ]; then
-            echo "url=${{ steps.publish.outputs.preview_url }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$PUBLISH_PREVIEW_URL" ]; then
+            echo "url=$PUBLISH_PREVIEW_URL" >> "$GITHUB_OUTPUT"
           else
             docker run -d --name "flowfi-preview-${PR_NUMBER}" \
               -e DATABASE_URL="postgresql://postgres:password@127.0.0.1:5432/flowfi_preview" \
@@ -146,6 +146,8 @@ jobs:
             docker rm -f "flowfi-preview-${PR_NUMBER}" || true
             echo "url=https://pr-${PR_NUMBER}.flowfi-preview.local" >> "$GITHUB_OUTPUT"
           fi
+        env:
+          PUBLISH_PREVIEW_URL: ${{ steps.publish.outputs.preview_url }}
 
       - name: Comment preview URL on PR
         continue-on-error: true

@@ -102,16 +102,20 @@ jobs:
 
       - name: Emit Deployment Summary
         if: always()
+        env:
+          CONTRACT_ID: ${{ steps.contract.outputs.contract_id }}
+          WASM_PATH: ${{ env.WASM_WASM_PATH }}
+          DEPLOYMENT_JSON: ${{ steps.contract.outputs.deployment-json }}
         run: |
           {
             echo "## Deployment Summary"
             echo ""
             echo "- **Network**: \`$NETWORK\`"
-            echo "- **Contract ID**: \`${{ steps.contract.outputs.contract_id }}\`"
-            echo "- **WASM**: \`${{ env.WASM_WASM_PATH }}\`"
+            echo "- **Contract ID**: \`$CONTRACT_ID\`"
+            echo "- **WASM**: \`$WASM_PATH\`"
             echo "- **Deployment info**: "
             echo '```json'
-            echo "${{ steps.contract.outputs.deployment-json }}"
+            echo "$DEPLOYMENT_JSON"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
