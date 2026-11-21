@@ -6770,6 +6770,86 @@ fn test_coverage_modify_rate_recomputes_end_time_and_emits() {
 }
 
 #[test]
+fn test_coverage_modify_rate_settles_accrued_amount_before_anchor_moves() {
+    // #1862: everything vested when the rate changes is paid out at the old
+    // rate. Before this, the anchor moved without settling and the recipient
+    // had to re-accrue tokens they had already earned.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // 1_000 over 1_000s → 1 token per second.
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    advance(&env, 100);
+
+    let new_end = client.modify_rate(&sender, &id, &2);
+    let now = env.ledger().timestamp();
+    let stream = client.get_stream(&id).unwrap();
+
+    // The 100 tokens accrued at the old rate were paid, not discarded.
+    assert_eq!(stream.withdrawn_amount, 100);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 100);
+
+    // The new rate applies only to the 900 that had not vested yet.
+    assert_eq!(stream.rate_per_second, 2);
+    assert_eq!(stream.last_update_time, now);
+    assert_eq!(new_end, now + 450);
+
+    // Continuity: 50s at the new rate adds 100 more, on top of what was paid.
+    advance(&env, 50);
+    assert_eq!(client.withdraw(&recipient, &id), 100);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 200);
+}
+
+#[test]
+fn test_coverage_modify_rate_takes_nothing_when_nothing_has_vested() {
+    // The common case — a rate change moments after creation — must stay a
+    // pure bookkeeping change: no transfer, no withdrawal booked.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.modify_rate(&sender, &id, &2);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 0);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+    assert_eq!(token::Client::new(&env, &token).balance(&client.address), 1_000);
+}
+
+#[test]
+fn test_coverage_modify_rate_settles_up_to_the_pause_point_only() {
+    // A paused stream accrues nothing after the pause, so a rate change while
+    // paused settles exactly the interval that ran before it.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    advance(&env, 100);
+    client.pause_stream(&sender, &id);
+    advance(&env, 500);
+
+    client.modify_rate(&sender, &id, &4);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 100);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 100);
+}
+#[test]
 fn test_coverage_modify_rate_rejects_non_linear_schedule() {
     let env = Env::default();
     env.mock_all_auths();

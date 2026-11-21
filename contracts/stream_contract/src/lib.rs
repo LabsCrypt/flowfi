@@ -2766,7 +2766,47 @@ impl StreamContract {
         let now = env.ledger().timestamp();
         let old_rate = stream.rate_per_second;
 
-        // Update the rate
+        // Settle what has already vested at the old rate before the accrual
+        // anchor moves (#1862).
+        //
+        // `last_update_time` is the anchor `calculate_claimable` measures from
+        // (the same rationale `top_up_stream` documents). Advancing it without
+        // settling folds everything the recipient had already earned back into
+        // the unstreamed remainder, so they have to wait for the *new* rate to
+        // re-accrue tokens that were already theirs — a sender can call this
+        // with rate 1 to defer vested wages arbitrarily.
+        //
+        // Settling is a real withdrawal, not a bookkeeping credit: the claimable
+        // figure is `elapsed * rate` clamped to `deposited - withdrawn`, so
+        // crediting `withdrawn_amount` without paying out would delete the
+        // tokens instead of preserving them. The payment is committed to storage
+        // before the transfer (CEI), and it reuses the same event the backend
+        // indexer books ordinary withdrawals from, so the off-chain
+        // `withdrawn_amount` cannot drift.
+        let settled_amount = Self::calculate_claimable(&stream, now);
+        if settled_amount > 0 {
+            let recipient = stream.recipient.clone();
+            Self::apply_withdrawal(
+                &env,
+                &mut stream,
+                stream_id,
+                &recipient,
+                settled_amount,
+                now,
+            )?;
+            emit_tokens_withdrawn(
+                &env,
+                TokensWithdrawnEvent {
+                    stream_id,
+                    recipient,
+                    amount: settled_amount,
+                    timestamp: now,
+                },
+            );
+        }
+
+        // Update the rate. The anchor still moves to `now`, but only after the
+        // interval it measured has been paid out, so nothing accrued is lost.
         stream.rate_per_second = new_rate_per_second;
         stream.last_update_time = now;
 
