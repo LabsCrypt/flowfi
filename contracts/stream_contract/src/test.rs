@@ -19,8 +19,8 @@ use events::{
     StreamToppedUpEvent, TokensWithdrawnEvent,
 };
 use types::{
-    DataKey, DisputeStatus, LegacyProtocolConfig, LegacyStream, ProtocolConfig, Stream,
-    StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+    DataKey, DisputeStatus, FeeRecipient, LegacyProtocolConfig, LegacyStream, ProtocolConfig,
+    Stream, StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
 };
 
 /// Minimal fee-token double that reads the stream from inside the treasury
@@ -7534,4 +7534,131 @@ fn test_get_remaining_balance_cancelled() {
 
     let balance = client.get_remaining_balance(&id);
     assert_eq!(balance, 0);
+}
+
+// ─── Protocol fee splits (#1861) ─────────────────────────────────────────────
+
+#[test]
+fn test_fee_split_payouts_sum_to_total_fee_exactly() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let third = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let client = create_contract(&env);
+    client.initialize(&admin, &treasury, &0);
+
+    // 3_333 / 3_333 / 3_334 bps: each truncated share of a 1 000-stroop fee is
+    // 333, so the naive implementation strands 1 stroop in the contract.
+    let mut splits = SorobanVec::new(&env);
+    splits.push_back(FeeRecipient {
+        recipient: first.clone(),
+        share_bps: 3_333,
+    });
+    splits.push_back(FeeRecipient {
+        recipient: second.clone(),
+        share_bps: 3_333,
+    });
+    splits.push_back(FeeRecipient {
+        recipient: third.clone(),
+        share_bps: 3_334,
+    });
+    client.configure_protocol_fees(&admin, &100, &splits, &true);
+
+    mint(&env, &token, &sender, 100_000);
+    client.create_stream(&sender, &recipient, &token, &100_000, &1_000);
+
+    let token_client = token::Client::new(&env, &token);
+    let first_payout = token_client.balance(&first);
+    let second_payout = token_client.balance(&second);
+    let third_payout = token_client.balance(&third);
+    assert_eq!(
+        first_payout + second_payout + third_payout,
+        1_000,
+        "split payouts must sum to the full 1 000-stroop fee"
+    );
+    // The remainder goes to the first recipient.
+    assert_eq!(first_payout, 334);
+    assert_eq!(second_payout, 333);
+    assert_eq!(third_payout, 333);
+    // None of the fee is left behind in the contract: only the net deposit is held.
+    assert_eq!(
+        token_client.balance(&client.address),
+        99_000,
+        "the contract must not retain any undistributed fee dust"
+    );
+}
+
+#[test]
+fn test_configure_protocol_fees_rejects_overflowing_share_sum() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, treasury) = create_token(&env);
+    let admin = Address::generate(&env);
+
+    let client = create_contract(&env);
+    client.initialize(&admin, &treasury, &0);
+
+    let mut splits = SorobanVec::new(&env);
+    splits.push_back(FeeRecipient {
+        recipient: Address::generate(&env),
+        share_bps: u32::MAX,
+    });
+    splits.push_back(FeeRecipient {
+        recipient: Address::generate(&env),
+        share_bps: 1,
+    });
+
+    let result = client.try_configure_protocol_fees(&admin, &100, &splits, &true);
+    assert_stream_error!(result, StreamError::InvalidFeeSplit);
+}
+
+#[test]
+fn test_configure_protocol_fees_rejects_share_sum_not_ten_thousand() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, treasury) = create_token(&env);
+    let admin = Address::generate(&env);
+
+    let client = create_contract(&env);
+    client.initialize(&admin, &treasury, &0);
+
+    let mut splits = SorobanVec::new(&env);
+    splits.push_back(FeeRecipient {
+        recipient: Address::generate(&env),
+        share_bps: 5_000,
+    });
+
+    let result = client.try_configure_protocol_fees(&admin, &100, &splits, &true);
+    assert_stream_error!(result, StreamError::InvalidFeeSplit);
+}
+
+// ─── resume_stream end-time projection (#1860) ───────────────────────────────
+
+#[test]
+fn test_resume_stream_overflow_returns_arithmetic_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Pause at the accrual anchor, then resume at a timestamp where adding the
+    // remaining 1 000 seconds overflows u64. The unchecked `now + seconds`
+    // panics; the checked projection must return ArithmeticOverflow instead.
+    client.pause_stream(&sender, &id);
+    env.ledger().with_mut(|l| l.timestamp = u64::MAX - 50);
+
+    let result = client.try_resume_stream(&sender, &id);
+    assert_stream_error!(result, StreamError::ArithmeticOverflow);
 }
