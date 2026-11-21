@@ -27,7 +27,15 @@ export function WebhookModal({ userAddress: _userAddress, subscription, secretKe
   const submit = async () => {
     if (!validUrl || events.length === 0) return;
     setSaving(true);
-    try { await onSave({ targetUrl, eventTypes: events }); } finally { setSaving(false); }
+    try {
+      await onSave({ targetUrl, eventTypes: events });
+    } catch {
+      // Surface the failure instead of leaving a rejected promise behind the
+      // still-open modal.
+      toast.error("Failed to save webhook");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="webhook-modal-title">
