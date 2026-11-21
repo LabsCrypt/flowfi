@@ -1,6 +1,10 @@
 node_modules
 # Keep environment variables out of version control
-.env
+# Every env file, not just .env (#1873). backend/.env.local and
+# backend/.env.production were not ignored by any rule while .env.example
+# documents the real JWT_SECRET and KEEPER_SECRET_KEY to put in them.
+.env*
+!.env.example
 
 # Prisma
 /src/generated/prisma
