@@ -845,6 +845,9 @@ pub fn emit_cross_asset_withdrawal_executed(env: &Env, event: CrossAssetWithdraw
 pub struct StreamPositionCreatedEvent {
     pub stream_id: u64,
     pub role: PositionRole,
+    /// Account holding the position for `role`.
+    pub owner: Address,
+    /// The stream's principal token.
     pub token_address: Address,
     pub rate_per_second: i128,
     pub start_time: u64,
@@ -860,7 +863,8 @@ pub struct StreamPositionCreatedEvent {
 pub struct StreamPositionUpdatedEvent {
     pub stream_id: u64,
     pub role: PositionRole,
-    pub new_token_address: Address,
+    /// The position's new owner (the account holding the receipt).
+    pub new_owner: Address,
     pub new_rate_per_second: i128,
     pub new_start_time: u64,
     pub new_end_time: u64,
@@ -892,7 +896,8 @@ pub struct StreamPositionSettledEvent {
 /// # Parameters
 /// - `env` — the Soroban environment to publish into.
 /// - `event` — the [`StreamPositionCreatedEvent`] payload: stream_id, role,
-///   token_address, rate_per_second, start_time, end_time, and is_transferable.
+///   owner, token_address, rate_per_second, start_time, end_time, and
+///   is_transferable.
 pub fn emit_stream_position_created(env: &Env, event: StreamPositionCreatedEvent) {
     env.events().publish(
         (Symbol::new(env, "stream_position_created"), event.stream_id),
@@ -912,7 +917,7 @@ pub fn emit_stream_position_created(env: &Env, event: StreamPositionCreatedEvent
 /// # Parameters
 /// - `env` — the Soroban environment to publish into.
 /// - `event` — the [`StreamPositionUpdatedEvent`] payload: stream_id, role,
-///   new token address, new rate, new start/end times, and new transferability.
+///   new owner, new rate, new start/end times, and new transferability.
 pub fn emit_stream_position_updated(env: &Env, event: StreamPositionUpdatedEvent) {
     env.events().publish(
         (Symbol::new(env, "stream_position_updated"), event.stream_id),
