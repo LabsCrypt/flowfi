@@ -20,6 +20,7 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
       packages: ${{ steps.filter.outputs.packages }}
+      migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,6 +43,11 @@ jobs:
               - '.github/workflows/**'
             packages:
               - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/**'
+            migrations:
+              - 'backend/prisma/**'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/**'
@@ -170,6 +176,62 @@ jobs:
       - name: Check frontend bundle size
         run: bash ./scripts/check-bundle-size.sh
         working-directory: frontend
+
+  migrations:
+    name: Fresh-database migration replay
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.migrations == 'true'
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: flowfi_migrate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      # The service database starts empty, so this replays the entire migration
+      # history from scratch. A migration that only works against an already
+      # drifted database (or that was papered over with `db push`) fails here.
+      - name: Replay every migration on an empty database
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_migrate
+        run: |
+          set -euo pipefail
+          npx prisma generate --schema=prisma/schema.prisma
+          npx prisma migrate deploy --schema=prisma/schema.prisma
+
+      - name: Fail if the migrated database drifts from schema.prisma
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:password@127.0.0.1:5432/flowfi_migrate
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
   backend:
     name: Backend CI

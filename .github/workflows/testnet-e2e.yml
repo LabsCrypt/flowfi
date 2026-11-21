@@ -160,7 +160,7 @@ jobs:
         working-directory: backend
         run: |
           npx prisma generate --schema=prisma/schema.prisma
-          npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
+          npx prisma migrate deploy --schema=prisma/schema.prisma
 
       - name: Run Testnet E2E suite
         working-directory: backend
