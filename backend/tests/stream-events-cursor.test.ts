@@ -3,7 +3,7 @@
  *
  * The cursor lives on `GET /v1/streams/:streamId/events`
  * (`src/routes/v1/stream.routes.ts:468` → `getStreamEvents` in
- * `src/controllers/stream.controller.ts:329`), which is where the OpenAPI
+ * `src/controllers/stream.controller.ts:336`), which is where the OpenAPI
  * document declares the `cursor` parameter. `src/routes/v1/events.routes.ts`,
  * named by the issue, paginates by limit/offset and has no cursor at all —
  * verified with `grep -n cursor src/routes/v1/events.routes.ts`, which
@@ -99,6 +99,27 @@ function soleArgument(spy: ReturnType<typeof vi.fn>, name: string): Record<strin
   const call = spy.mock.calls[0];
   if (!call) throw new Error(`${name} was never called`);
   return call[0] as Record<string, unknown>;
+}
+
+/**
+ * The complete failure envelope, for a request that goes through the real
+ * express app.
+ *
+ * `sendApiError` echoes the `X-Request-ID` the request middleware put on the
+ * response, so a failure body carries three fields rather than two. The header
+ * is pinned non-empty before the comparison, otherwise a build that dropped
+ * both the header and the body field would match `undefined` against
+ * `undefined` and pass.
+ */
+function expectErrorEnvelope(
+  res: { headers: Record<string, string | string[] | undefined>; body: unknown },
+  code: string,
+  message: string,
+) {
+  const requestId = res.headers['x-request-id'];
+  expect(typeof requestId).toBe('string');
+  expect((requestId as string).length).toBeGreaterThan(0);
+  expect(res.body).toEqual({ error: { code, message, requestId } });
 }
 
 /**
@@ -278,9 +299,7 @@ describe('event cursor: page size boundaries', () => {
     const res = await request(app).get(`${PATH}?cursor=evt-7&limit=${encodeURIComponent(limit)}`);
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({
-      error: { code: 'INVALID_PAGINATION', message: 'limit must be a positive integer' },
-    });
+    expectErrorEnvelope(res, 'INVALID_PAGINATION', 'limit must be a positive integer');
     expect(findMany).not.toHaveBeenCalled();
   });
 
@@ -305,12 +324,11 @@ describe('event cursor: a cursor the database cannot resolve', () => {
     const res = await request(app).get(`${PATH}?cursor=evt-deleted`);
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({
-      error: {
-        code: 'INTERNAL_SERVER_ERROR',
-        message: 'A technical error occurred. Please try again later.',
-      },
-    });
+    expectErrorEnvelope(
+      res,
+      'INTERNAL_SERVER_ERROR',
+      'A technical error occurred. Please try again later.',
+    );
   });
 
   it('answers 500 for a cursor that is not an id at all, rather than 400', async () => {
@@ -338,9 +356,7 @@ describe('event cursor: what is not a cursor problem', () => {
     const res = await request(app).get('/v1/streams/not-a-number/events?cursor=evt-7');
 
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({
-      error: { code: 'INVALID_STREAM_ID', message: 'Invalid streamId parameter' },
-    });
+    expectErrorEnvelope(res, 'INVALID_STREAM_ID', 'Invalid streamId parameter');
     expect(findMany).not.toHaveBeenCalled();
   });
 
