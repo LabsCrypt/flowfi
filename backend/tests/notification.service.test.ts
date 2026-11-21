@@ -338,6 +338,19 @@ describe('NotificationService', () => {
       expect(result).toHaveProperty('code');
       expect(result.address).toBe('GUSER123');
       expect(prismaMock.linkCode.create).toHaveBeenCalledTimes(1);
+
+      // #1855: the code must come from a CSPRNG, not Math.random(). Ten
+      // uppercase hex characters: enough entropy that it cannot be predicted
+      // from previously issued codes, and cheap to type.
+      expect(result.code).toMatch(/^[0-9A-F]{10}$/);
+
+      // Two codes for the same wallet must differ.
+      prismaMock.linkCode.create.mockImplementation(async ({ data }) => ({
+        id: 'lc-2',
+        ...data,
+      }));
+      const second = await service.generateLinkCode('GUSER123');
+      expect(second.code).not.toBe(result.code);
     });
 
     it('links telegram when code is valid', async () => {
