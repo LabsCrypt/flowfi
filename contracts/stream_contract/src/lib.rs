@@ -44,7 +44,7 @@ mod property_tests;
 mod test;
 
 use soroban_sdk::{
-    contract, contractimpl, token, vec, Address, BytesN, Env, InvokeError, String, Symbol, Vec,
+    contract, contractimpl, token, vec, Address, BytesN, Env, InvokeError, Symbol, Vec,
 };
 
 use errors::StreamError;
@@ -75,7 +75,8 @@ use storage::{
 };
 use types::{
     BatchStreamInput, ConditionalMilestone, DataKey, DexRouter, DisputeStatus, FeeRecipient,
-    OracleAsset, OracleClient, PositionRole, ProtocolConfig, ProtocolFeeConfig, Stream,
+    OracleAsset, OracleClient, PositionRole, PositionSettlementStatus, ProtocolConfig,
+    ProtocolFeeConfig, Stream,
     StreamPositionMetadata, StreamStatus, UnlockCondition, VestingSchedule, VestingStep,
     MAX_ALLOWED_FEE_BPS, MAX_BATCH_CREATE, MAX_BATCH_WITHDRAW, MAX_CONDITIONAL_MILESTONES,
     MAX_VESTING_STEPS, ORACLE_PRICE_MAX_AGE_SECS,
@@ -1015,20 +1016,41 @@ impl StreamContract {
     ///
     /// # Errors
     /// - `StreamNotFound` — no stream exists with `stream_id`.
+    /// Mark a stream position settled and emit the settlement record.
+    ///
+    /// Only the stream's own parties may speak for it: the sender, the
+    /// recipient, or the protocol admin. Before this the function took no
+    /// caller at all, so any address could emit a settlement event for any
+    /// stream and role, and indexers had no way to tell a real settlement from
+    /// a forged one (#1895).
+    ///
+    /// `status` is a closed enum rather than caller text: the previous
+    /// `String` let the caller write anything into the record, and no
+    /// downstream reader could branch on it.
+    ///
+    /// `StreamPositionMetadata` carries no status field, so there is nothing to
+    /// persist here; the previous implementation re-saved the unchanged record,
+    /// which is a storage write that changes nothing. The event is the record.
     pub fn update_position_on_complete(
         env: Env,
+        caller: Address,
         stream_id: u64,
         role: PositionRole,
-        status: String,
+        status: PositionSettlementStatus,
     ) -> Result<(), StreamError> {
-        let metadata = Self::get_position_metadata(env.clone(), stream_id, role.clone())?;
+        caller.require_auth();
 
-        // Update position metadata in storage
-        let updated_metadata = metadata.clone();
-        // Note: StreamPositionMetadata doesn't have a status field in this
-        // implementation; the status is tracked externally via stream state.
+        let stream = load_stream(&env, stream_id)?;
+        let authorised = caller == stream.sender
+            || caller == stream.recipient
+            || try_load_config(&env).is_some_and(|config| config.admin == caller);
+        if !authorised {
+            return Err(StreamError::Unauthorized);
+        }
 
-        save_position_metadata(&env, &updated_metadata);
+        // The position must exist: settling a role that was never minted is a
+        // record of something that did not happen.
+        Self::get_position_metadata(env.clone(), stream_id, role.clone())?;
 
         emit_stream_position_settled(
             &env,
@@ -2011,9 +2033,22 @@ impl StreamContract {
         // Persist state before any external call (CEI)
         save_stream(env, stream_id, stream);
 
-        // Interaction: transfer tokens only after state is committed to storage
+        // Interaction: transfer tokens only after state is committed to storage.
+        //
+        // An allowance stream holds nothing; the tokens stay in the sender's
+        // balance and are pulled through the approval (#1896). Everything else
+        // is escrowed and paid out of the contract's own balance.
         let token_client = token::Client::new(env, &stream.token_address);
-        token_client.transfer(&env.current_contract_address(), recipient, &amount);
+        if stream.is_allowance_based {
+            token_client.transfer_from(
+                &env.current_contract_address(),
+                &stream.sender,
+                recipient,
+                &amount,
+            );
+        } else {
+            token_client.transfer(&env.current_contract_address(), recipient, &amount);
+        }
 
         Ok(())
     }
@@ -2136,12 +2171,26 @@ impl StreamContract {
         let token_client = token::Client::new(&env, &stream.token_address);
         let contract_address = env.current_contract_address();
 
-        if accrued_amount > 0 {
-            token_client.transfer(&contract_address, &recipient, &accrued_amount);
-        }
+        if stream.is_allowance_based {
+            // Nothing was escrowed, so there is nothing to refund: the tokens
+            // are still in the sender's balance. What has already vested is
+            // pulled through the approval (#1896).
+            if accrued_amount > 0 {
+                token_client.transfer_from(
+                    &contract_address,
+                    &sender,
+                    &recipient,
+                    &accrued_amount,
+                );
+            }
+        } else {
+            if accrued_amount > 0 {
+                token_client.transfer(&contract_address, &recipient, &accrued_amount);
+            }
 
-        if refunded_amount > 0 {
-            token_client.transfer(&contract_address, &sender, &refunded_amount);
+            if refunded_amount > 0 {
+                token_client.transfer(&contract_address, &sender, &refunded_amount);
+            }
         }
 
         // Emit cancellation event
@@ -2842,9 +2891,12 @@ impl StreamContract {
             return Err(StreamError::AllowanceLocked);
         }
 
-        // Calculate rate: use a nominal rate of 1 per second
-        // In practice, the actual streaming amount is controlled by the sender's approved allowance
-        let rate_per_second: i128 = 1;
+        // Stream the approved allowance over the requested duration (#1896).
+        // The old code wrote a nominal rate of 1/s with a zero deposit, which
+        // `calculate_claimable` clamped to `deposited - withdrawn` = 0: the
+        // stream could never pay out, and the `duration` it validated was
+        // never used.
+        let rate_per_second = allowance / (duration as i128);
 
         save_stream(
             &env,
@@ -2854,7 +2906,9 @@ impl StreamContract {
                 recipient: recipient.clone(),
                 token_address: token_address.clone(),
                 rate_per_second,
-                deposited_amount: 0, // No upfront deposit
+                // The allowance is the stream's budget. Nothing is escrowed;
+                // `apply_withdrawal` debits the sender through `transfer_from`.
+                deposited_amount: allowance,
                 withdrawn_amount: 0,
                 start_time,
                 last_update_time: start_time,
