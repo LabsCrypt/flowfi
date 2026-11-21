@@ -87,6 +87,14 @@ function simulationError(error: unknown): rpc.Api.SimulateTransactionErrorRespon
   } as unknown as rpc.Api.SimulateTransactionErrorResponse;
 }
 
+/**
+ * `ApiError.details` is declared `unknown` (#1932 unified the envelope), so the
+ * record these assertions read is narrowed here once instead of at each site.
+ */
+function detailsOf(error: { details?: unknown }): Record<string, unknown> {
+  return (error.details ?? {}) as Record<string, unknown>;
+}
+
 /** Reject with a failed simulation of `error`, then hand back the ApiError. */
 async function simulateFailure(error: unknown): Promise<InstanceType<typeof ApiError>> {
   mocks.server.simulateTransaction.mockResolvedValue(simulationError(error));
@@ -135,12 +143,12 @@ describe('toSimulationApiError — the StreamError table', () => {
     for (const code of DECLARED_CODES) {
       const err = service.toSimulationApiError(hostDiagnostic(code), 'create');
 
-      expect(err.status, `code ${code}`).toBe(400);
+      expect(err.statusCode, `code ${code}`).toBe(400);
       expect(err.code).toBe('simulation_failed');
-      expect(err.details?.contractErrorCode, `code ${code}`).toBe(code);
-      expect(err.details?.action).toBe('create');
-      expect(err.details?.reason).toBe(hostDiagnostic(code));
-      expect(String(err.details?.hint)).not.toBe('');
+      expect(detailsOf(err).contractErrorCode, `code ${code}`).toBe(code);
+      expect(detailsOf(err).action).toBe('create');
+      expect(detailsOf(err).reason).toBe(hostDiagnostic(code));
+      expect(String(detailsOf(err).hint)).not.toBe('');
     }
   });
 
@@ -158,7 +166,7 @@ describe('toSimulationApiError — the StreamError table', () => {
       (code) => service.toSimulationApiError(hostDiagnostic(code), 'create').message,
     );
     const hints = DECLARED_CODES.map(
-      (code) => service.toSimulationApiError(hostDiagnostic(code), 'create').details?.hint,
+      (code) => detailsOf(service.toSimulationApiError(hostDiagnostic(code), 'create')).hint,
     );
 
     // Two codes sharing a message means one of them was pasted in, so the
@@ -167,14 +175,14 @@ describe('toSimulationApiError — the StreamError table', () => {
     expect(new Set(hints).size).toBe(DECLARED_CODES.length);
     for (const code of DECLARED_CODES) {
       const err = service.toSimulationApiError(hostDiagnostic(code), 'create');
-      expect(err.message).not.toBe(err.details?.hint);
+      expect(err.message).not.toBe(detailsOf(err).hint);
     }
   });
 
   it('carries the action through so the client can attribute the failure', () => {
     for (const action of ['create', 'withdraw', 'cancel', 'top_up', 'batch_withdraw'] as const) {
       const err = service.toSimulationApiError(hostDiagnostic(2), action);
-      expect(err.details?.action).toBe(action);
+      expect(detailsOf(err).action).toBe(action);
     }
   });
 });
@@ -184,8 +192,8 @@ describe('toSimulationApiError — codes outside the table', () => {
     for (const code of [15, 42, 999]) {
       const err = service.toSimulationApiError(hostDiagnostic(code), 'top_up');
 
-      expect(err.details?.contractErrorCode).toBe(code);
-      expect('hint' in (err.details ?? {})).toBe(false);
+      expect(detailsOf(err).contractErrorCode).toBe(code);
+      expect('hint' in detailsOf(err)).toBe(false);
       // The raw diagnostic is the only signal the client has for an unknown
       // variant, so it must survive into the message.
       expect(err.message).toContain(hostDiagnostic(code));
@@ -196,16 +204,16 @@ describe('toSimulationApiError — codes outside the table', () => {
   it('treats code 0 as a code rather than as a missing one', () => {
     const err = service.toSimulationApiError(hostDiagnostic(0), 'cancel');
 
-    expect(err.details?.contractErrorCode).toBe(0);
-    expect('hint' in (err.details ?? {})).toBe(false);
+    expect(detailsOf(err).contractErrorCode).toBe(0);
+    expect('hint' in detailsOf(err)).toBe(false);
   });
 
   it('omits contractErrorCode entirely for a diagnostic with no code', () => {
     const raw = 'transaction failed (result not ok)';
     const err = service.toSimulationApiError(raw, 'batch_withdraw');
 
-    expect(Object.keys(err.details ?? {}).sort()).toEqual(['action', 'reason']);
-    expect(err.details?.reason).toBe(raw);
+    expect(Object.keys(detailsOf(err)).sort()).toEqual(['action', 'reason']);
+    expect(detailsOf(err).reason).toBe(raw);
     expect(err.message).toBe(`Simulation of "batch_withdraw" failed: ${raw}`);
   });
 
@@ -217,7 +225,7 @@ describe('toSimulationApiError — codes outside the table', () => {
       'tx Bad Sequencce',
     ];
     for (const raw of raws) {
-      expect(service.toSimulationApiError(raw, 'create').details?.reason).toBe(raw);
+      expect(detailsOf(service.toSimulationApiError(raw, 'create')).reason).toBe(raw);
     }
   });
 });
@@ -277,26 +285,26 @@ describe('simulateStreamAction — failed simulation payloads', () => {
     const err = await simulateFailure(hostDiagnostic(2));
 
     expect(err).toBeInstanceOf(ApiError);
-    expect(err.status).toBe(400);
+    expect(err.statusCode).toBe(400);
     expect(err.message).toBe('Stream not found');
-    expect(err.details?.contractErrorCode).toBe(2);
+    expect(detailsOf(err).contractErrorCode).toBe(2);
   });
 
   it('serialises a structured simulation error instead of printing [object Object]', async () => {
     const diagnostic = { error_code: 3, detail: 'caller is not recipient' };
     const err = await simulateFailure(diagnostic);
 
-    expect(err.details?.reason).toBe(JSON.stringify(diagnostic));
+    expect(detailsOf(err).reason).toBe(JSON.stringify(diagnostic));
     expect(err.message).toContain(JSON.stringify(diagnostic));
     expect(err.message).not.toContain('[object Object]');
   });
 
   it('keeps a non-object, non-string error renderable', async () => {
     const err = await simulateFailure('Error(Contract, #13)');
-    expect(err.details?.contractErrorCode).toBe(13);
+    expect(detailsOf(err).contractErrorCode).toBe(13);
 
     const arrayErr = await simulateFailure([hostDiagnostic(1)]);
-    expect(arrayErr.details?.reason).toBe(JSON.stringify([hostDiagnostic(1)]));
+    expect(detailsOf(arrayErr).reason).toBe(JSON.stringify([hostDiagnostic(1)]));
   });
 });
 
