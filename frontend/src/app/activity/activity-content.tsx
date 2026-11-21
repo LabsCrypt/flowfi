@@ -9,6 +9,7 @@ import { Loader2, Download } from "lucide-react";
 import { formatAmount } from "@/utils/amount";
 import { downloadCSV } from "@/utils/csvExport";
 import { getApiBaseUrl } from "@/lib/api/_shared";
+import { useAsyncPageData } from "@/hooks/useAsyncPageData";
 import { logger } from "@/lib/logger";
 
 const PAGE_SIZE = 10;
@@ -91,6 +92,14 @@ export default function ActivityContent() {
     fetchActivity(nextPage, activeTab, true);
   };
 
+  const view = useAsyncPageData({
+    enabled: status === "connected",
+    isLoading: loading,
+    isError: error !== null,
+    isEmpty: events.length === 0,
+    error,
+  });
+
   const handleExportCSV = () => {
     const csvData = events.map(event => ({
         'Stream ID': event.streamId,
@@ -103,7 +112,7 @@ export default function ActivityContent() {
     downloadCSV(csvData, `flowfi-activity-${Date.now()}.csv`);
   };
 
-  if (status !== "connected") {
+  if (!view.isEnabled) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
         <h1 className="text-2xl font-bold mb-2 text-white">Access Denied</h1>
@@ -157,9 +166,9 @@ export default function ActivityContent() {
 
       <ActivityHistory events={events} isLoading={loading && events.length === 0} />
 
-      {error && (
+      {view.isError && (
         <div role="alert" className="mt-6 text-center">
-          <p className="text-slate-400">{error}</p>
+          <p className="text-slate-400">{view.error}</p>
           <Button
             variant="secondary"
             onClick={() => {
