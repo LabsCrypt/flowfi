@@ -1,3 +1,4 @@
+import { shortenAddress } from "@/utils/format";
 import { useQuery } from "@tanstack/react-query";
 import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
@@ -59,10 +60,9 @@ function formatStreamDateUtc(unixTimestampSeconds: number): string {
   return new Date(unixTimestampSeconds * 1000).toISOString().split("T")[0] ?? "";
 }
 
-function shortenAddress(address: string): string {
-  if (!address || address.length < 10) return address;
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
+// Re-exported from the one formatting module rather than reimplemented: this
+// copy used three dots and a different length guard, so the same recipient read
+// differently in the activity feed than in the table beside it (#1889).
 
 /**
  * Derives the display status from the backend flags. A paused stream reads

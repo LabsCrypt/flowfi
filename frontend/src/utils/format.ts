@@ -61,23 +61,50 @@ export function formatRunway(days: number): string {
   return `${Math.round(days)}d`;
 }
 
+/**
+ * The one way an address is truncated in this app (#1889).
+ *
+ * Two helpers used to share this name and produce different strings — 6/4 with
+ * an ellipsis here, 6/4 with three dots in lib/dashboard.ts — and screens that
+ * were showing the same account side by side did not look like the same
+ * account. Every caller now goes through this one, including the ones that
+ * kept their own slice() calls.
+ */
 export function shortenAddress(address: string, lead = 6, tail = 4): string {
   if (!address) return '—';
   if (address.length <= lead + tail + 2) return address;
   return `${address.slice(0, lead)}…${address.slice(-tail)}`;
 }
 
-export function formatDate(value: string | number | Date): string {
+/**
+ * The one way this app renders a date (#1890).
+ *
+ * Timestamps used to render four ways depending on the screen: raw
+ * `toLocaleString()` in the active browser locale, `toLocaleDateString()`,
+ * `Intl.DateTimeFormat('en-US', ...)` with seconds, and `toISOString()` in the
+ * middle of a panel. Two panels showing the same event disagreed about what day
+ * it happened. Everything now goes through here, in UTC, because these are
+ * on-chain times and a reader in Lagos and a reader in New York must see the
+ * same instant. ISO strings stay for exports.
+ */
+export function formatDate(
+  value: string | number | Date,
+  options: { timeZone?: string } = {},
+): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    timeZone: options.timeZone ?? 'UTC',
   });
 }
 
-export function formatDateTime(value: string | number | Date): string {
+export function formatDateTime(
+  value: string | number | Date,
+  options: { timeZone?: string } = {},
+): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
   return date.toLocaleString('en-US', {
@@ -86,6 +113,8 @@ export function formatDateTime(value: string | number | Date): string {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: options.timeZone ?? 'UTC',
+    timeZoneName: 'short',
   });
 }
 
