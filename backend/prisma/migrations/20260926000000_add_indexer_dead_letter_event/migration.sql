@@ -1,21 +1,26 @@
-DROP TABLE IF EXISTS "IndexerDeadLetterEvent" CASCADE;
+-- The dead-letter table was first created by
+-- 20260830000000_add_indexer_dead_letter_event with a narrower shape
+-- (transactionHash/ledger/rawPayload). This migration used to DROP it with
+-- CASCADE and recreate it, which destroyed every quarantined event on any
+-- replay. Evolve the existing table in place instead: rename the columns that
+-- moved, add the ones that are new, and swap the indexes for the ones the model
+-- declares.
 
--- CreateTable
-CREATE TABLE "IndexerDeadLetterEvent" (
-    "id" TEXT NOT NULL,
-    "eventId" TEXT NOT NULL,
-    "eventType" TEXT NOT NULL,
-    "txHash" TEXT NOT NULL,
-    "ledgerSequence" INTEGER NOT NULL,
-    "cursor" TEXT,
-    "payload" TEXT NOT NULL,
-    "errorMessage" TEXT NOT NULL,
-    "attempts" INTEGER NOT NULL DEFAULT 1,
-    "lastAttemptAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+-- RenameColumn
+ALTER TABLE "IndexerDeadLetterEvent" RENAME COLUMN "transactionHash" TO "txHash";
+ALTER TABLE "IndexerDeadLetterEvent" RENAME COLUMN "ledger" TO "ledgerSequence";
+ALTER TABLE "IndexerDeadLetterEvent" RENAME COLUMN "rawPayload" TO "payload";
 
-    CONSTRAINT "IndexerDeadLetterEvent_pkey" PRIMARY KEY ("id")
-);
+-- AddColumn (existing rows predate event types, so they get an empty one)
+ALTER TABLE "IndexerDeadLetterEvent" ADD COLUMN "eventType" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "IndexerDeadLetterEvent" ALTER COLUMN "eventType" DROP DEFAULT;
+ALTER TABLE "IndexerDeadLetterEvent" ADD COLUMN "cursor" TEXT;
+
+-- DropIndex (superseded by the eventId+eventType uniqueness below)
+DROP INDEX "IndexerDeadLetterEvent_eventId_key";
+DROP INDEX "IndexerDeadLetterEvent_ledger_idx";
+DROP INDEX "IndexerDeadLetterEvent_transactionHash_idx";
+DROP INDEX "IndexerDeadLetterEvent_createdAt_idx";
 
 -- CreateIndex
 CREATE UNIQUE INDEX "IndexerDeadLetterEvent_eventId_eventType_key" ON "IndexerDeadLetterEvent"("eventId", "eventType");

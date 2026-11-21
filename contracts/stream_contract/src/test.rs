@@ -8319,3 +8319,69 @@ fn test_coverage_set_stream_arbiter_is_locked_once_a_dispute_is_open() {
         Err(Ok(StreamError::ArbiterLocked))
     );
 }
+
+// ─── close_stream prunes per-stream side tables (#1863) ────────────────────
+
+#[test]
+fn test_close_stream_prunes_conditional_entry_and_positions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let milestones = vec![
+        &env,
+        ConditionalMilestone {
+            milestone_id: 1,
+            amount: 600,
+            condition: UnlockCondition::TimeOnly(200),
+            is_unlocked: false,
+        },
+        ConditionalMilestone {
+            milestone_id: 2,
+            amount: 400,
+            condition: UnlockCondition::TimeOnly(500),
+            is_unlocked: false,
+        },
+    ];
+    let id = client.create_conditional_stream(&sender, &recipient, &token, &1_000, &milestones);
+    client.mint_stream_position(&id, &sender, &recipient, &token, &10, &0, &500, &true);
+
+    // Drive the stream to a terminal, fully withdrawn state.
+    advance(&env, 500);
+    client.verify_and_unlock_milestone(&recipient, &id, &1);
+    client.verify_and_unlock_milestone(&recipient, &id, &2);
+    assert_eq!(client.withdraw(&recipient, &id), 1_000);
+    assert!(client.is_stream_completed(&id));
+
+    // Everything keyed by the stream is present before the close.
+    env.as_contract(&client.address, || {
+        assert!(env
+            .storage()
+            .instance()
+            .has(&DataKey::ConditionalMilestones(id)));
+        assert!(env.storage().instance().has(&DataKey::AttestedIds(id)));
+        assert!(
+            crate::storage::try_load_position_metadata(&env, id, PositionRole::Sender).is_some()
+        );
+    });
+
+    client.close_stream(&sender, &id);
+    assert!(client.get_stream(&id).is_none());
+
+    // ...and all of it is gone afterwards.
+    env.as_contract(&client.address, || {
+        assert!(!env
+            .storage()
+            .instance()
+            .has(&DataKey::ConditionalMilestones(id)));
+        assert!(!env.storage().instance().has(&DataKey::AttestedIds(id)));
+        assert!(
+            crate::storage::try_load_position_metadata(&env, id, PositionRole::Sender).is_none(),
+            "position metadata survived close_stream"
+        );
+    });
+}
