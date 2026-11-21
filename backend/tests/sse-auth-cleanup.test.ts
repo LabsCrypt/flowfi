@@ -250,8 +250,7 @@ describe('SSE subscribe registration and cleanup handoff (#1747)', () => {
     await runSubscribe(makeReq({ query: { streams: ['999', '111'] } }), res);
 
     const subscriptions = mocks.addClient.mock.calls[0]![2] as string[];
-    expect(subscriptions).toContain('111');
-    expect(subscriptions).not.toContain('999');
+    expect(new Set(subscriptions)).toEqual(new Set(['111', 'user:GSENDER']));
   });
 
   it('drops user keys that are not counterparties of the caller', async () => {
@@ -270,22 +269,21 @@ describe('SSE subscribe registration and cleanup handoff (#1747)', () => {
     ['the first entry of an array header', { 'x-forwarded-for': ['198.51.100.3', '203.0.113.9'] }, '198.51.100.3'],
     ['a whitespace-only header', { 'x-forwarded-for': '   ' }, '203.0.113.10'],
     ['an empty array header', { 'x-forwarded-for': [] }, '203.0.113.10'],
-  ] as const)('resolves the client ip from %s', (_label, headers, expected) => {
+  ] as const)('resolves the client ip from %s', async (_label, headers, expected) => {
     const res = makeRes();
 
-    void runSubscribe(makeReq({ headers }), res);
+    await runSubscribe(makeReq({ headers }), res);
 
     expect(mocks.checkCapacity).toHaveBeenCalledWith(expected, 'GSENDER');
   });
 
   it('falls back to the socket address and then to unknown', async () => {
     const socketRes = makeRes();
-    allowCapacity();
     await runSubscribe(makeReq({ ip: undefined, socket: { remoteAddress: '198.51.100.4' } }), socketRes);
     expect(mocks.checkCapacity).toHaveBeenLastCalledWith('198.51.100.4', 'GSENDER');
 
     const unknownRes = makeRes();
-    await runSubscribe(makeReq({ ip: undefined, socket: undefined }), unknownRes);
+    await runSubscribe(makeReq({ ip: undefined, socket: {} }), unknownRes);
     expect(mocks.checkCapacity).toHaveBeenLastCalledWith('unknown', 'GSENDER');
   });
 

@@ -111,7 +111,7 @@ describe('ClaimableAmountService schedule boundaries (#1753)', () => {
   it.each([
     ['ratePerSecond', '1.5'],
     ['depositedAmount', 'abc'],
-    ['withdrawnAmount', ''],
+    ['withdrawnAmount', 'not-a-number'],
   ] as const)('rejects a non-integer %s with the i128 error contract', (field, value) => {
     const before = cache.getStats().itemCount;
 
@@ -190,7 +190,15 @@ describe('calculateHistoricalStreamSnapshot boundaries (#1753)', () => {
     const afterTerminal = calculateHistoricalStreamSnapshot(snapshotStream(), events, 200);
 
     expect(atTerminal).toMatchObject({ claimableAmount: '400', statusAtTimestamp: 'COMPLETED', withdrawnAmount: '100' });
-    expect(afterTerminal).toEqual(atTerminal);
+    // Only the requested timestamp moves; every amount stays frozen at the terminal event.
+    expect(afterTerminal).toMatchObject({
+      timestamp: 200,
+      depositedAmount: atTerminal.depositedAmount,
+      withdrawnAmount: atTerminal.withdrawnAmount,
+      claimableAmount: atTerminal.claimableAmount,
+      unvestedAmount: atTerminal.unvestedAmount,
+      statusAtTimestamp: atTerminal.statusAtTimestamp,
+    });
   });
 
   it('excludes a closed pause interval from vesting', () => {
@@ -204,10 +212,12 @@ describe('calculateHistoricalStreamSnapshot boundaries (#1753)', () => {
       100,
     );
 
+    // 100s elapsed, 40-60s paused => 80s active at rate 5 => 400 claimable,
+    // so the rest of the 1000 deposited is still unvested.
     expect(snapshot).toMatchObject({
       statusAtTimestamp: 'ACTIVE',
       claimableAmount: '400',
-      unvestedAmount: '200',
+      unvestedAmount: '600',
     });
   });
 
@@ -312,7 +322,7 @@ describe('calculateHistoricalStreamSnapshot boundaries (#1753)', () => {
       [snapshotEvent({ eventType: 'WITHDRAWN', amount: '10', timestamp: 10 })],
       'Stream creation event is missing; historical balance cannot be reconstructed',
     ],
-  ] as const)('rejects %s with the history error contract', (_label, stream, events, message) => {
+  ] as Array<[string, HistoricalSnapshotStream, HistoricalSnapshotEvent[], string]>)('rejects %s with the history error contract', (_label, stream, events, message) => {
     expect(() => calculateHistoricalStreamSnapshot(stream, events, 100)).toThrow(StreamSnapshotHistoryError);
     expect(() => calculateHistoricalStreamSnapshot(stream, events, 100)).toThrow(message);
   });

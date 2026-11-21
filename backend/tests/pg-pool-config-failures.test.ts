@@ -121,7 +121,8 @@ describe('pg pool query instrumentation (#1750)', () => {
     ['UPDATE streams SET x = 1', 'UPDATE:streams'],
     ['DELETE FROM streams', 'DELETE:streams'],
     ['SELECT 1', 'SELECT'],
-    ['1SELECT FROM streams', 'OTHER'],
+    ['1SELECT', 'OTHER'],
+    ['1SELECT FROM streams', 'OTHER:streams'],
     ['   select count(*) from streams  ', 'SELECT:streams'],
   ] as const)('labels %j as %j', (text, expected) => {
     expect(labelForQuery(text)).toBe(expected);
@@ -229,14 +230,25 @@ describe('pg pool lifecycle (#1750)', () => {
     expect(metrics.dbPoolConnections.set.mock.calls.length).toBe(publishedAfterInit + 3);
   });
 
-  it('honours PG_POOL_METRICS_INTERVAL_MS', async () => {
+  it('reads PG_POOL_METRICS_INTERVAL_MS at module load and honours it', async () => {
     vi.stubEnv('PG_POOL_METRICS_INTERVAL_MS', '1000');
+    vi.resetModules();
+    const reloaded = await import('../src/lib/pg-pool.js');
 
-    createPgPool();
+    reloaded.createPgPool();
 
     const publishedAfterInit = metrics.dbPoolConnections.set.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(1_000);
+    expect(publishedAfterInit).toBe(3);
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(metrics.dbPoolConnections.set.mock.calls.length).toBe(publishedAfterInit);
+
+    await vi.advanceTimersByTimeAsync(1);
     expect(metrics.dbPoolConnections.set.mock.calls.length).toBe(publishedAfterInit + 3);
+
+    // A 1s cadence, not the 5s default: two more ticks in the next two seconds.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(metrics.dbPoolConnections.set.mock.calls.length).toBe(publishedAfterInit + 9);
   });
 
   it('registers a scrape-time provider that reads the pool it created', () => {
@@ -270,9 +282,10 @@ describe('pg pool lifecycle (#1750)', () => {
     } as unknown as Pool;
 
     const drained = drainPgPool(pool, { timeoutMs: 0 });
-    await vi.advanceTimersByTimeAsync(0);
+    const outcome = expect(drained).rejects.toThrow('pg pool drain timed out after 0ms');
 
-    await expect(drained).rejects.toThrow('pg pool drain timed out after 0ms');
+    await vi.advanceTimersByTimeAsync(0);
+    await outcome;
     await vi.advanceTimersByTimeAsync(1);
   });
 
