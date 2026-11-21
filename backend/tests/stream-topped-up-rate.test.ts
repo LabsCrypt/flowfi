@@ -264,7 +264,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
         transactionHash: '0xabc',
         ledgerSequence: 555,
       });
-      expect(JSON.parse(event.metadata)).toEqual({ newDepositedAmount: '2100' });
+      expect(JSON.parse(event!.metadata)).toEqual({ newDepositedAmount: '2100' });
     });
 
     it('adds totalPausedDuration back onto the derived endTime', async () => {
@@ -334,7 +334,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
         topUpEvent({ body: { amount: [1, 0], newDeposited: [1, 0] } }),
       );
 
-      expect(eventRows()[0].amount).toBe('18446744073709551616');
+      expect(eventRows()[0]?.amount).toBe('18446744073709551616');
       expect(toppedUpRow()?.depositedAmount).toBe('18446744073709551616');
     });
 
@@ -344,7 +344,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
       await worker.processEvent(topUpEvent({ body: { amount: [0, 0], newDeposited: [0, 2100] } }));
 
       expect(toppedUpRow()).toMatchObject({ depositedAmount: '2100', endTime: START + 210n });
-      expect(eventRows()[0].amount).toBe('0');
+      expect(eventRows()[0]?.amount).toBe('0');
     });
 
     it('never rewrites ratePerSecond — the stored rate is the only input', async () => {
@@ -352,7 +352,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
 
       await worker.processEvent(topUpEvent({ body: defaultBody }));
 
-      const updateCall = (fake.tx.stream.update as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      const updateCall = (fake.tx.stream.update as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
         data: Record<string, unknown>;
       };
       expect(Object.keys(updateCall.data).sort()).toEqual(['depositedAmount', 'endTime', 'lastUpdateTime']);
@@ -499,7 +499,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
       await worker.processEvent(topUpEvent({ body: defaultBody }));
 
       expect(toppedUpRow()?.lastUpdateTime).toBe(1735689600);
-      expect(eventRows()[0].timestamp).toBe(1735689600);
+      expect(eventRows()[0]?.timestamp).toBe(1735689600);
     });
 
     it('advances the stamp when a later top-up is processed in a later wall-clock second', async () => {

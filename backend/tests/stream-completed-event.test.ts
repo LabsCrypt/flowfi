@@ -273,7 +273,7 @@ describe('SorobanEventWorker — stream_completed ordering and replay (#1763)', 
       await worker.processEvent(completionEvent({ totalWithdrawn: [0, 1000] }));
 
       expect(streamRow()).toMatchObject({ isActive: false, withdrawnAmount: '1000' });
-      const updateArg = (fake.tx.stream.update as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      const updateArg = (fake.tx.stream.update as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as {
         data: Record<string, unknown>;
       };
       expect(updateArg.data).not.toHaveProperty('depositedAmount');
@@ -315,7 +315,7 @@ describe('SorobanEventWorker — stream_completed ordering and replay (#1763)', 
         transactionHash: '0xc1',
         ledgerSequence: 2100,
       });
-      expect(JSON.parse(event.metadata)).toEqual({ recipient: RECIPIENT });
+      expect(JSON.parse(event!.metadata)).toEqual({ recipient: RECIPIENT });
     });
 
     it('broadcasts stream.completed with the decoded recipient and total', async () => {
@@ -490,7 +490,7 @@ describe('SorobanEventWorker — stream_completed ordering and replay (#1763)', 
       await worker.processEvent(completionEvent({ totalWithdrawn: [0, 0] }));
 
       expect(streamRow()).toMatchObject({ isActive: false, withdrawnAmount: '0' });
-      expect(rowsOfType('COMPLETED')[0].amount).toBe('0');
+      expect(rowsOfType('COMPLETED')[0]?.amount).toBe('0');
     });
 
     it('handles a total that spans both halves of the i128', async () => {
@@ -500,7 +500,7 @@ describe('SorobanEventWorker — stream_completed ordering and replay (#1763)', 
 
       const expected = (1n << 64n) | 5n;
       expect(streamRow()?.withdrawnAmount).toBe(expected.toString());
-      expect(rowsOfType('COMPLETED')[0].amount).toBe(expected.toString());
+      expect(rowsOfType('COMPLETED')[0]?.amount).toBe(expected.toString());
     });
 
     it('stamps the ledger close time rather than the processing time', async () => {
@@ -509,7 +509,7 @@ describe('SorobanEventWorker — stream_completed ordering and replay (#1763)', 
       await worker.processEvent(completionEvent({ ledgerClosedAt: '1700001000', totalWithdrawn: [0, 1000] }));
 
       expect(streamRow()?.lastUpdateTime).toBe(1700001000);
-      expect(rowsOfType('COMPLETED')[0].timestamp).toBe(1700001000);
+      expect(rowsOfType('COMPLETED')[0]?.timestamp).toBe(1700001000);
     });
 
     it('falls back to the wall clock when ledgerClosedAt is not an epoch number', async () => {
@@ -520,7 +520,7 @@ describe('SorobanEventWorker — stream_completed ordering and replay (#1763)', 
       );
 
       expect(streamRow()?.lastUpdateTime).toBe(1735689600);
-      expect(rowsOfType('COMPLETED')[0].timestamp).toBe(1735689600);
+      expect(rowsOfType('COMPLETED')[0]?.timestamp).toBe(1735689600);
     });
   });
 

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import React from "react";
 
 // The incoming page now derives its loading / error / empty / ready branches
 // from `useAsyncPageData` (#1085). These tests pin the rendered result of each
