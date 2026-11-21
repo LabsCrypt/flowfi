@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { sendApiError } from '../lib/api-error.js';
 
 /**
  * API Version middleware
@@ -46,11 +47,13 @@ export function apiVersionMiddleware(
       req.url = newPath + (queryString ? '?' + queryString : '');
       // Note: req.path is read-only, but req.url modification affects routing
     } else {
-      res.status(400).json({
-        error: 'Unsupported API version',
-        message: `API version '${versionString}' is not supported. Supported versions: ${SUPPORTED_VERSIONS.join(', ')}`,
-        supportedVersions: SUPPORTED_VERSIONS,
-      });
+      sendApiError(
+        res,
+        400,
+        'UNSUPPORTED_API_VERSION',
+        `API version '${versionString}' is not supported. Supported versions: ${SUPPORTED_VERSIONS.join(', ')}`,
+        { supportedVersions: SUPPORTED_VERSIONS },
+      );
       return;
     }
   }

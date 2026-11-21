@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { getTokenMetadata, listVerifiedTokens } from '../services/token-registry.service.js';
-import { sendApiError } from '../types/api-error.js';
+import { sendApiError } from '../lib/api-error.js';
 import type { TokenMetadata as RegistryTokenMetadata } from '../services/token-registry.service.js';
 
 export function toPublicTokenMetadata(token: RegistryTokenMetadata) {

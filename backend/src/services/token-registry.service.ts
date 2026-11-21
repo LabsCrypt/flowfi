@@ -2,7 +2,7 @@ import { Account, Asset, Contract, Keypair, Networks, rpc, scValToNative, StrKey
 import { prisma } from '../lib/prisma.js';
 import { getPublisher } from '../lib/redis.js';
 import { rpcPool } from '../lib/rpc-pool.js';
-import { ApiError } from '../types/api-error.js';
+import { ApiError } from '../lib/api-error.js';
 
 const CACHE_TTL_SECONDS = 24 * 60 * 60;
 const CACHE_PREFIX = 'token-registry:v1';

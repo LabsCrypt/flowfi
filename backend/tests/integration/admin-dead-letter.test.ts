@@ -166,7 +166,7 @@ describe('dead-letter auth', () => {
       .set('Authorization', `Bearer ${userToken()}`);
 
     expect(res.status).toBe(403);
-    expect(res.body.message).toMatch(/Admin access required/i);
+    expect(res.body.error.message).toMatch(/Admin access required/i);
   });
 
   it.each([
@@ -252,7 +252,7 @@ describe('GET /v1/admin/indexer/dead-letter', () => {
       .set('Authorization', `Bearer ${adminToken()}`);
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/startDate must be a valid ISO-8601 date/);
+    expect(res.body.error.message).toMatch(/startDate must be a valid ISO-8601 date/);
     expect(mocks.prisma.indexerDeadLetterEvent.findMany).not.toHaveBeenCalled();
   });
 
@@ -262,7 +262,7 @@ describe('GET /v1/admin/indexer/dead-letter', () => {
       .set('Authorization', `Bearer ${adminToken()}`);
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/startDate must be before endDate/);
+    expect(res.body.error.message).toMatch(/startDate must be before endDate/);
   });
 
   it('answers 500 when the table read fails', async () => {
@@ -275,7 +275,7 @@ describe('GET /v1/admin/indexer/dead-letter', () => {
       .set('Authorization', `Bearer ${adminToken()}`);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toMatch(/Failed to list dead-letter events/);
+    expect(res.body.error.message).toMatch(/Failed to list dead-letter events/);
   });
 });
 
@@ -325,10 +325,14 @@ describe('POST /v1/admin/indexer/dead-letter/:id/replay', () => {
 
     expect(res.status).toBe(422);
     expect(res.body).toMatchObject({
-      code: 'replay_failed',
-      id: 'row-1',
-      attempts: 2,
-      errorMessage: 'handler still throws',
+      error: {
+        code: 'replay_failed',
+        details: {
+          id: 'row-1',
+          attempts: 2,
+          errorMessage: 'handler still throws',
+        },
+      },
     });
     expect(mocks.prisma.indexerDeadLetterEvent.delete).not.toHaveBeenCalled();
   });
@@ -344,7 +348,7 @@ describe('POST /v1/admin/indexer/dead-letter/:id/replay', () => {
       .set('Authorization', `Bearer ${adminToken()}`);
 
     expect(res.status).toBe(422);
-    expect(res.body.code).toBe('undecodable_payload');
+    expect(res.body.error.code).toBe('undecodable_payload');
     expect(mocks.processEvent).not.toHaveBeenCalled();
   });
 });
