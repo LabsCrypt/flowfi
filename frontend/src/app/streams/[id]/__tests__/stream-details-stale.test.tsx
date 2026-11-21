@@ -51,6 +51,11 @@ const { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount, mockTransac
     resumeStream: vi.fn(),
     toBaseUnits: vi.fn((v: string) => BigInt(Math.round(parseFloat(v)) * 10_000_000)),
     toSorobanErrorMessage: vi.fn((e: unknown) => (e instanceof Error ? e.message : String(e))),
+    TOKEN_ADDRESSES: {
+      USDC: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      XLM: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN",
+      EURC: "CCWAMYJME4YOIUNAKVYEBYOG5I65QMKEX2NMN4OJAPXRPIF24ONPSHY",
+    },
   };
   const mockTracker = {
     status: "idle" as string,
