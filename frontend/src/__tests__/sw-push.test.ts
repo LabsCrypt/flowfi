@@ -125,7 +125,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      pushHandler(event);
+      pushHandler!(event);
       expect(waitUntil).toHaveBeenCalled();
       await Promise.all(waitUntilPromises);
 
@@ -157,7 +157,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      pushHandler(event);
+      pushHandler!(event);
       await Promise.all(waitUntilPromises);
 
       expect(mockShowNotification).toHaveBeenCalledWith('Runway Warning', {
@@ -185,7 +185,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      pushHandler(event);
+      pushHandler!(event);
       await Promise.all(waitUntilPromises);
 
       expect(mockShowNotification).toHaveBeenCalledWith('FlowFi', {
@@ -208,7 +208,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      pushHandler(event);
+      pushHandler!(event);
       await Promise.all(waitUntilPromises);
 
       expect(mockShowNotification).toHaveBeenCalledWith('FlowFi', {
@@ -248,7 +248,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      clickHandler(event);
+      clickHandler!(event);
 
       expect(mockClose).toHaveBeenCalledTimes(1);
       expect(waitUntil).toHaveBeenCalledTimes(1);
@@ -276,7 +276,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      clickHandler(event);
+      clickHandler!(event);
 
       expect(mockClose).toHaveBeenCalledTimes(1);
       await Promise.all(waitUntilPromises);
@@ -301,7 +301,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      clickHandler(event);
+      clickHandler!(event);
       await Promise.all(waitUntilPromises);
 
       expect(mockOpenWindow).toHaveBeenCalledWith('/');
@@ -323,7 +323,7 @@ describe('Service Worker Push and Notification Click (sw.js)', () => {
         waitUntil,
       };
 
-      clickHandler(event);
+      clickHandler!(event);
       await Promise.all(waitUntilPromises);
 
       expect(mockOpenWindow).toHaveBeenCalledWith('/streams/10');

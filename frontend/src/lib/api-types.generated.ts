@@ -1278,7 +1278,7 @@ export interface paths {
         };
         /**
          * Get stream details
-         * @description Returns a single stream. Falls back to live on-chain data when the DB record is missing or stale.
+         * @description Returns a single stream with up to 20 most recent embedded events. Falls back to live on-chain data when the DB record is missing or stale. For complete paginated event history, see /v1/streams/{streamId}/events.
          */
         get: {
             parameters: {
@@ -3600,6 +3600,8 @@ export interface components {
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
+            /** @description Up to 20 most recent stream events ordered descending by timestamp. For complete event history use GET /v1/streams/{streamId}/events. */
+            events?: components["schemas"]["StreamEvent"][];
         };
         StreamEvent: {
             /** Format: uuid */
