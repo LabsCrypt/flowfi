@@ -16,7 +16,7 @@
 //! | [`DataKey`] variant | Storage | Value | Accessed by |
 //! |---|---|---|---|
 //! | `Stream(id)` | persistent | [`Stream`] (or [`LegacyStream`]) | [`load_stream`], [`try_load_stream`], [`save_stream`], [`remove_stream`] |
-//! | `StreamCounter` | instance | `u64` next stream ID | [`next_stream_id`] |
+//! | `StreamCounter` | instance | `u64` next stream ID | [`next_stream_id`], [`load_stream_counter`] |
 //! | `ProtocolConfig` | instance | [`ProtocolConfig`] | [`config_exists`], [`load_config`], [`try_load_config`], [`save_config`] |
 //! | `ContractVersion` | instance | `u32` state schema version | [`get_contract_version`], [`save_contract_version`] |
 //! | `ContractWasmHash` | instance | `BytesN<32>` executable hash | [`get_recorded_wasm_hash`], [`save_recorded_wasm_hash`] |
@@ -151,6 +151,23 @@ pub fn next_stream_id(env: &Env) -> u64 {
         .instance()
         .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
     id
+}
+
+/// Reads the persisted stream ID counter without mutating it.
+///
+/// **Key:** [`DataKey::StreamCounter`] in instance storage, the same entry
+/// [`next_stream_id`] writes. A deployment that has never created a stream has
+/// never written the key, so the absent entry reads as `0` rather than
+/// panicking.
+///
+/// **TTL:** No bump. This is a read-only query, and the counter shares the
+/// instance entry with [`DataKey::ProtocolConfig`] and the version keys, which
+/// every mutating operation renews.
+pub fn load_stream_counter(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::StreamCounter)
+        .unwrap_or(0)
 }
 
 // ─── Stream CRUD ─────────────────────────────────────────────────────────────
