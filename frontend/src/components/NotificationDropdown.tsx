@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useStreamEvents } from "@/hooks/useStreamEvents";
 import { formatAmount } from "@/utils/amount";
 import { Button } from "./ui/Button";
+import { formatDateTime } from "@/utils/format";
 
 interface NotificationDropdownProps {
     publicKey: string;
@@ -241,7 +242,7 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
                                     >
                                         <p className="text-sm text-white font-medium">{notification.message}</p>
                                         <p className="text-xs text-slate-400 mt-1">
-                                            {new Date(notification.timestamp).toLocaleString()}
+                                            {formatDateTime(notification.timestamp)}
                                         </p>
                                     </div>
                                 ))}
