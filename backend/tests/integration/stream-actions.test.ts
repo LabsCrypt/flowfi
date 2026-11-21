@@ -101,7 +101,7 @@ describe('stream action routes', () => {
     mockPrisma.streamEvent.count.mockResolvedValue(0);
   });
 
-  it('POST /v1/streams/:streamId/pause pauses an active sender-owned stream', async () => {
+  it('POST /v1/streams/:streamId/pause answers 501 instead of a fake success (#1220)', async () => {
     const sender = makeKeypair();
     const token = await getValidJwt(sender);
 
@@ -114,26 +114,19 @@ describe('stream action routes', () => {
       pausedAt: null,
       totalPausedDuration: 0,
     });
-    mockPauseStream.mockResolvedValue({ txHash: 'pause-tx-hash' });
-    mockPrisma.stream.update.mockResolvedValue({
-      streamId: 7,
-      isActive: true,
-      isPaused: true,
-      pausedAt: 1700000000,
-      totalPausedDuration: 0,
-    });
 
     const response = await request(app)
       .post('/v1/streams/7/pause')
       .set('Authorization', `Bearer ${token}`);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(501);
     expect(response.body).toMatchObject({
-      success: true,
-      streamId: 7,
-      txHash: 'pause-tx-hash',
+      error: { code: 'NOT_IMPLEMENTED' },
     });
-    expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7n);
+    // No on-chain submission and no DB write, so the simulation is not even
+    // reached.
+    expect(mockPauseStream).not.toHaveBeenCalled();
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
   });
 
   it('rejects a raw signed transaction bearer token without a JWT', async () => {
@@ -150,7 +143,7 @@ describe('stream action routes', () => {
     });
   });
 
-  it('POST /v1/streams/:streamId/resume resumes a paused sender-owned stream', async () => {
+  it('POST /v1/streams/:streamId/resume answers 501 instead of a fake success (#1220)', async () => {
     const sender = makeKeypair();
     const token = await getValidJwt(sender);
 
@@ -163,26 +156,17 @@ describe('stream action routes', () => {
       pausedAt: Math.floor(Date.now() / 1000) - 30,
       totalPausedDuration: 10,
     });
-    mockResumeStream.mockResolvedValue({ txHash: 'resume-tx-hash' });
-    mockPrisma.stream.update.mockResolvedValue({
-      streamId: 9,
-      isActive: true,
-      isPaused: false,
-      pausedAt: null,
-      totalPausedDuration: 40,
-    });
 
     const response = await request(app)
       .post('/v1/streams/9/resume')
       .set('Authorization', `Bearer ${token}`);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(501);
     expect(response.body).toMatchObject({
-      success: true,
-      streamId: 9,
-      txHash: 'resume-tx-hash',
+      error: { code: 'NOT_IMPLEMENTED' },
     });
-    expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9n);
+    expect(mockResumeStream).not.toHaveBeenCalled();
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
   });
 
   it('POST /v1/streams/:streamId/withdraw withdraws the claimable amount for the recipient', async () => {
