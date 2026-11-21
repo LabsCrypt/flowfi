@@ -12,15 +12,17 @@ use errors::test_diagnostics::assert_stream_error;
 use errors::StreamError;
 use events::{
     emit_stream_cancelled, emit_stream_created, emit_tokens_withdrawn, AdminTransferredEvent,
-    ContractUpgradedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent, FeeConfigUpdatedEvent,
-    HybridCliffStreamCreatedEvent, InitializedEvent, ProtocolPauseStatusEvent, ProtocolPausedEvent,
-    StateMigratedEvent, StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamCompletedEvent,
-    StreamCreatedEvent, StreamPausedEvent, StreamRefueledEvent, StreamResumedEvent,
-    StreamToppedUpEvent, TokensWithdrawnEvent,
+    ContractUpgradedEvent, CrossAssetWithdrawalExecutedEvent, EmergencyGuardianUpdatedEvent,
+    FeeCollectedEvent, FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
+    ProtocolPauseStatusEvent, ProtocolPausedEvent, StateMigratedEvent,
+    StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
+    StreamPausedEvent, StreamRefueledEvent, StreamResumedEvent, StreamToppedUpEvent,
+    TokensWithdrawnEvent,
 };
 use types::{
-    DataKey, DisputeStatus, FeeRecipient, LegacyProtocolConfig, LegacyStream, ProtocolConfig,
-    Stream, StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW, MAX_VESTING_STEPS,
+    DataKey, DisputeStatus, FeeRecipient, LegacyProtocolConfig, LegacyStream, PositionRole,
+    ProtocolConfig, Stream, StreamStatus, VestingSchedule, VestingStep, MAX_BATCH_WITHDRAW,
+    MAX_VESTING_STEPS,
 };
 
 /// Minimal fee-token double that reads the stream from inside the treasury
@@ -7661,4 +7663,349 @@ fn test_resume_stream_overflow_returns_arithmetic_overflow() {
 
     let result = client.try_resume_stream(&sender, &id);
     assert_stream_error!(result, StreamError::ArithmeticOverflow);
+}
+
+// ─── Hybrid-cliff tail rate is (net - cliff) / duration (#1856) ────────────
+
+#[test]
+fn test_hybrid_cliff_tail_rate_excludes_the_cliff_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // 200 at the cliff, then the 800 remainder over 80s at exactly 10/s.
+    // The old buggy formula (net / duration) produced 12/s.
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &200, &80);
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.rate_per_second, 10);
+
+    // 40s into the tail: 200 unlocked at the cliff + 400 dripped.
+    advance(&env, 540);
+    assert_eq!(client.get_claimable_amount(&id), Some(600));
+}
+
+#[test]
+fn test_hybrid_cliff_tail_rate_with_protocol_fee_enabled() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    // 5% protocol fee: 50 taken, 950 net.
+    client.initialize(&admin, &treasury, &500);
+
+    // 150 at the cliff, then the 800 remainder over 80s at 10/s.
+    let id =
+        client.create_hybrid_cliff_stream(&sender, &recipient, &token, &1_000, &500, &150, &80);
+
+    assert_eq!(client.get_stream(&id).unwrap().rate_per_second, 10);
+    assert_eq!(token::Client::new(&env, &token).balance(&treasury), 50);
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        950
+    );
+
+    advance(&env, 540);
+    assert_eq!(client.get_claimable_amount(&id), Some(550));
+}
+
+// ─── Position metadata: auth, owner field, per-role storage (#1858, #1859) ─
+
+#[test]
+fn test_mint_stream_position_requires_the_stream_sender() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    env.set_auths(&[]);
+
+    // A third party cannot mint a position into someone else's stream, even by
+    // claiming to be the sender.
+    assert_stream_error!(
+        client.try_mint_stream_position(&id, &outsider, &recipient, &token, &10, &0, &100, &true),
+        StreamError::Unauthorized
+    );
+
+    // The documented sender still needs to authorise the call.
+    assert!(client
+        .try_mint_stream_position(&id, &sender, &recipient, &token, &10, &0, &100, &true)
+        .is_err());
+
+    env.mock_all_auths();
+    client.mint_stream_position(&id, &sender, &recipient, &token, &10, &0, &100, &true);
+
+    let sender_position = client.get_position_metadata(&id, &PositionRole::Sender);
+    assert_eq!(sender_position.owner, sender);
+}
+
+#[test]
+fn test_position_metadata_is_keyed_per_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let new_recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    client.mint_stream_position(&id, &sender, &recipient, &token, &10, &0, &100, &true);
+
+    let sender_position = client.get_position_metadata(&id, &PositionRole::Sender);
+    let recipient_position = client.get_position_metadata(&id, &PositionRole::Recipient);
+
+    assert_eq!(sender_position.role, PositionRole::Sender);
+    assert_eq!(recipient_position.role, PositionRole::Recipient);
+    assert_eq!(sender_position.owner, sender);
+    assert_eq!(recipient_position.owner, recipient);
+    // Both records carry the real stream token, not an account address.
+    assert_eq!(sender_position.token_address, token);
+    assert_eq!(recipient_position.token_address, token);
+
+    // Moving the recipient position leaves the sender's slot untouched.
+    client.update_position_on_transfer(&id, &recipient, &new_recipient);
+
+    let sender_after = client.get_position_metadata(&id, &PositionRole::Sender);
+    let recipient_after = client.get_position_metadata(&id, &PositionRole::Recipient);
+    assert_eq!(sender_after.owner, sender);
+    assert_eq!(recipient_after.owner, new_recipient);
+}
+
+#[test]
+fn test_get_position_metadata_reports_position_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+
+    // The stream exists but no position was minted for that role.
+    assert_stream_error!(
+        client.try_get_position_metadata(&id, &PositionRole::Sender),
+        StreamError::PositionNotFound
+    );
+    // Unknown streams keep reporting StreamNotFound.
+    assert_stream_error!(
+        client.try_get_position_metadata(&99_999u64, &PositionRole::Sender),
+        StreamError::StreamNotFound
+    );
+}
+
+// ─── withdraw_and_swap: single payout, isolation, slippage (#1857) ─────────
+
+/// Minimal DEX router double. It pulls the input token from its caller using
+/// the allowance the stream contract grants, and delivers the target token to
+/// the recipient — the flow a real router follows.
+#[contract]
+pub struct TestDexRouter;
+
+#[contractimpl]
+impl TestDexRouter {
+    pub fn set_rate(env: Env, payer: Address, numerator: i128, denominator: i128) {
+        env.storage().instance().set(&0u32, &numerator);
+        env.storage().instance().set(&1u32, &denominator);
+        env.storage().instance().set(&3u32, &payer);
+    }
+
+    pub fn set_failing(env: Env, failing: bool) {
+        env.storage().instance().set(&2u32, &failing);
+    }
+
+    pub fn swap_exact_tokens_for_tokens(
+        env: Env,
+        amount_in: i128,
+        _amount_out_min: i128,
+        path: soroban_sdk::Vec<Address>,
+        to: Address,
+        _deadline: u64,
+    ) -> soroban_sdk::Vec<i128> {
+        if env
+            .storage()
+            .instance()
+            .get::<u32, bool>(&2u32)
+            .unwrap_or(false)
+        {
+            panic!("router failure");
+        }
+
+        let input_token = path.get(0).unwrap();
+        let output_token = path.get(1).unwrap();
+
+        // The stream contract is the account that granted the allowance.
+        let payer: Address = env.storage().instance().get(&3u32).unwrap();
+        token::Client::new(&env, &input_token).transfer_from(
+            &env.current_contract_address(),
+            &payer,
+            &env.current_contract_address(),
+            &amount_in,
+        );
+
+        let numerator: i128 = env.storage().instance().get(&0u32).unwrap_or(1);
+        let denominator: i128 = env.storage().instance().get(&1u32).unwrap_or(1);
+        let output = amount_in * numerator / denominator;
+
+        token::Client::new(&env, &output_token).transfer(
+            &env.current_contract_address(),
+            &to,
+            &output,
+        );
+
+        vec![&env, amount_in, output]
+    }
+}
+
+fn register_swap_router(env: &Env) -> Address {
+    env.register(TestDexRouter, ())
+}
+
+#[test]
+fn test_withdraw_and_swap_pays_once_and_leaves_other_escrow_intact() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let (target, _) = create_token(&env);
+    let client = create_contract(&env);
+    let router = register_swap_router(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let other_recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 2_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    let other = client.create_stream(&sender, &other_recipient, &token, &1_000, &100);
+
+    advance(&env, 100);
+    mint(&env, &target, &router, 10_000);
+    // 2 target units per principal unit.
+    TestDexRouterClient::new(&env, &router).set_rate(&client.address, &2, &1);
+
+    let deadline = env.ledger().timestamp() + 1_000;
+    let output = client.withdraw_and_swap(&recipient, &id, &target, &1_500, &router, &deadline);
+
+    // Capture the invocation's events before any further contract call.
+    let events = env.events().all();
+
+    // Paid exactly once, in the target token.
+    assert_eq!(output, 2_000);
+    assert_eq!(token::Client::new(&env, &target).balance(&recipient), 2_000);
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
+
+    // The other stream's escrow was never touched.
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        1_000
+    );
+    assert_eq!(
+        client.get_claimable_amount(&other),
+        Some(1_000),
+        "the other stream's escrow must still be fully claimable"
+    );
+
+    // The swapped stream is fully accounted for.
+    assert!(client.is_stream_completed(&id));
+    assert_eq!(client.get_stream(&id).unwrap().withdrawn_amount, 1_000);
+
+    // Slippage is reported as the positive delta over the caller's floor.
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "cross_asset_withdrawal_executed")
+        })
+        .expect("cross_asset_withdrawal_executed event not found");
+    let payload: CrossAssetWithdrawalExecutedEvent =
+        CrossAssetWithdrawalExecutedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.output_amount, 2_000);
+    assert_eq!(payload.slippage, 500);
+}
+
+#[test]
+fn test_withdraw_and_swap_rejects_output_below_the_floor_without_mutating_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let (target, _) = create_token(&env);
+    let client = create_contract(&env);
+    let router = register_swap_router(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    advance(&env, 100);
+    mint(&env, &target, &router, 10_000);
+    // Only 0.5 target units per principal unit, below the requested 1_500.
+    TestDexRouterClient::new(&env, &router).set_rate(&client.address, &1, &2);
+
+    let deadline = env.ledger().timestamp() + 1_000;
+    assert_stream_error!(
+        client.try_withdraw_and_swap(&recipient, &id, &target, &1_500, &router, &deadline),
+        StreamError::InsufficientOutput
+    );
+
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 0);
+    assert!(stream.is_active);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        1_000
+    );
+    assert_eq!(token::Client::new(&env, &target).balance(&recipient), 0);
+}
+
+#[test]
+fn test_withdraw_and_swap_rolls_back_when_the_router_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let (target, _) = create_token(&env);
+    let client = create_contract(&env);
+    let router = register_swap_router(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &100);
+    advance(&env, 100);
+    mint(&env, &target, &router, 10_000);
+    TestDexRouterClient::new(&env, &router).set_rate(&client.address, &2, &1);
+    TestDexRouterClient::new(&env, &router).set_failing(&true);
+
+    let deadline = env.ledger().timestamp() + 1_000;
+    assert!(client
+        .try_withdraw_and_swap(&recipient, &id, &target, &1_500, &router, &deadline)
+        .is_err());
+
+    // Nothing moved and the stream is untouched, so the recipient can retry.
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.withdrawn_amount, 0);
+    assert!(stream.is_active);
+    assert_eq!(client.get_claimable_amount(&id), Some(1_000));
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        1_000
+    );
+    assert_eq!(token::Client::new(&env, &target).balance(&recipient), 0);
 }
