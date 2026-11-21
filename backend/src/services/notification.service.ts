@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { prisma } from '../lib/prisma.js';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import webpush from 'web-push';
@@ -61,7 +62,12 @@ export class NotificationService {
   }
 
   async generateLinkCode(address: string) {
-    const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+    // A verification code is a bearer secret: whoever guesses it can attach a
+    // chat to the wallet. Math.random() is a non-cryptographic PRNG whose
+    // stream is reproducible from a handful of outputs, and 6 base-36
+    // characters is ~31 bits (#1855). 5 CSPRNG bytes give 10 hex characters
+    // that cannot be predicted from earlier codes.
+    const code = crypto.randomBytes(5).toString('hex').toUpperCase();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     return prisma.linkCode.create({ data: { code, address, expiresAt } });
   }
