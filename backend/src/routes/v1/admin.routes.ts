@@ -23,7 +23,8 @@ import { getPoolMetrics } from '../../lib/pg-pool.js';
 import { INDEXER_STATE_ID } from '../../lib/indexer-state.js';
 import { sseService } from '../../services/sse.service.js';
 import { cache } from '../../lib/redis.js';
-import logger from '../../logger.js';
+import logger, { auditLog } from '../../logger.js';
+import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import { sorobanEventWorker } from '../../workers/soroban-event-worker.js';
 import { sendApiError } from '../../lib/api-error.js';
 
@@ -425,6 +426,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
       return;
     }
     await resetIndexer(ledger);
+    auditLog('indexer.reset', (req as AuthenticatedRequest).user.publicKey, { ledger });
     res.json({ ok: true, lastLedger: ledger });
   } catch (err) {
     sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Reset failed');
@@ -504,6 +506,10 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
       return;
     }
     const requestId = await replayFromLedger(fromLedger);
+    auditLog('indexer.replay', (req as AuthenticatedRequest).user.publicKey, {
+      fromLedger,
+      replayRequestId: requestId,
+    });
     res.status(202).json({ ok: true, replayingFrom: fromLedger, requestId });
   } catch (err) {
     sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Replay failed');
