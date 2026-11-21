@@ -7,6 +7,7 @@
   "scripts": {
     "prebuild": "prisma generate",
     "pretest": "prisma generate",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:unit": "vitest run --exclude='tests/integration/**'",
     "test:integration": "vitest run tests/integration",

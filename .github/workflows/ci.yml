@@ -210,6 +210,10 @@ jobs:
       - name: Install dependencies
         run: npm install --include=optional
 
+      - name: Lint backend TypeScript
+        run: npm run lint
+        working-directory: backend
+
       - name: Setup Database
         run: |
           npx prisma generate --schema=prisma/schema.prisma
