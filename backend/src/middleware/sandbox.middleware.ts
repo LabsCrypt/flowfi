@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { getSandboxConfig, isSandboxModeEnabled } from '../config/sandbox.js';
+import { sendApiError } from '../lib/api-error.js';
 
 /**
  * Extended Request interface with sandbox flag
@@ -80,22 +81,23 @@ export function requireSandbox(
   next: NextFunction
 ): void {
   if (!isSandboxModeEnabled()) {
-    res.status(503).json({
-      error: 'Sandbox mode not available',
-      message: 'Sandbox mode is not enabled on this server.',
-    });
+    sendApiError(
+      res,
+      503,
+      'SANDBOX_MODE_NOT_AVAILABLE',
+      'Sandbox mode is not enabled on this server.',
+    );
     return;
   }
 
   if (!isSandboxRequest(req)) {
-    res.status(400).json({
-      error: 'Sandbox mode required',
-      message: 'This endpoint requires sandbox mode. Add X-Sandbox-Mode: true header or ?sandbox=true query parameter.',
-      hint: {
-        header: 'X-Sandbox-Mode: true',
-        queryParam: '?sandbox=true',
-      },
-    });
+    sendApiError(
+      res,
+      400,
+      'SANDBOX_MODE_REQUIRED',
+      'This endpoint requires sandbox mode. Add X-Sandbox-Mode: true header or ?sandbox=true query parameter.',
+      { hint: { header: 'X-Sandbox-Mode: true', queryParam: '?sandbox=true' } },
+    );
     return;
   }
 

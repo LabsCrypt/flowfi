@@ -13,7 +13,7 @@ import {
   resolveEventsPageSize,
 } from "../repositories/streamEvent.repository.js";
 import * as exportService from "../services/export.service.js";
-import { sendApiError } from "../types/api-error.js";
+import { sendApiError } from "../lib/api-error.js";
 
 /**
  * Public shape of a Stream, used when embedding streams inside a public
@@ -177,9 +177,7 @@ export const getUserEvents = async (
 
     const { requested, types } = parseEventTypeFilter(req.query["type"]);
     if (requested.length > 0 && types.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "No valid event types in `type` filter" });
+      return sendApiError(res, 400, "BAD_REQUEST", "No valid event types in `type` filter");
     }
 
     const limit = resolveEventsPageSize(req.query["limit"]);

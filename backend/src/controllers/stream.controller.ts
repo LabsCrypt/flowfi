@@ -14,13 +14,14 @@ import {
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
+import { applyTopUpOnce } from "../services/top-up-writer.js";
 import { createStreamSchema, parsePagination } from "../validators/stream.validator.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
 } from "../repositories/streamEvent.repository.js";
 import { findStreams } from "../repositories/stream.repository.js";
-import { sendApiError } from "../types/api-error.js";
+import { ApiError, fromPrismaError, sendApiError } from "../lib/api-error.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
@@ -132,10 +133,13 @@ export const createStream = async (req: Request, res: Response) => {
 
     const chainStream = await getStreamFromChain(parsedStreamId);
     if (!chainStream) {
-      return res.status(409).json({
-        error: "Stream has not been confirmed on-chain",
-        message: "Submit the stream creation transaction and retry after confirmation.",
-      });
+      return sendApiError(
+        res,
+        409,
+        "STREAM_NOT_CONFIRMED",
+        "Stream has not been confirmed on-chain",
+        { hint: "Submit the stream creation transaction and retry after confirmation." },
+      );
     }
 
     if (
@@ -146,9 +150,12 @@ export const createStream = async (req: Request, res: Response) => {
       chainStream.depositedAmount !== parsedDepositedAmount.toString() ||
       chainStream.startTime !== parsedStartTime
     ) {
-      return res.status(409).json({
-        error: "Stream request does not match on-chain state",
-      });
+      return sendApiError(
+        res,
+        409,
+        "STREAM_STATE_MISMATCH",
+        "Stream request does not match on-chain state",
+      );
     }
 
     const endTime =
@@ -706,29 +713,44 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
       return sendApiError(res, 409, "CONFLICT", "Cannot top up a paused stream");
     }
 
-    const txHash = await topUpStream(streamId, amount, callerAddress);
+    let txHash: string;
+    try {
+      txHash = await topUpStream(streamId, amount, callerAddress);
+    } catch (chainError) {
+      // A failure here is the caller's transaction not landing: a reverted
+      // contract call, a missing trustline, insufficient balance. Nothing was
+      // written, so a 4xx is the honest answer.
+      logger.error(`[topUp] stream=${streamId} on-chain call failed:`, chainError);
+      return sendApiError(res, 400, "TOP_UP_FAILED", "Failed to top up stream on chain");
+    }
 
-    // Use raw SQL atomic increment to prevent concurrent top-ups from
-    // overwriting each other's updates (Issue #1217 — read-compute-write race).
-    // Prisma's built-in { increment } is unavailable on String-typed columns,
-    // so we perform SET deposited_amount = deposited_amount + $1::bigint
-    // directly in a single SQL statement.
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    await prisma.$executeRawUnsafe(
-      `UPDATE "Stream" SET "depositedAmount" = ("depositedAmount"::bigint + $1::bigint)::text, "lastUpdateTime" = $2 WHERE "streamId" = $3`,
-      amount.toString(),
-      now,
-      streamId,
+    // #1848: the indexer's `handleStreamToppedUp` writes the same top-up from
+    // the on-chain event, so this write is conditional on that event row not
+    // existing yet and holds the stream's row lock while it decides. Exactly
+    // one of the two writers moves `depositedAmount`, in either arrival order.
+    const depositedAmount = await prisma.$transaction((tx) =>
+      applyTopUpOnce(tx, { streamId, txHash, amount }),
     );
-    const updatedStream = await prisma.stream.findUnique({ where: { streamId } });
 
     logger.info(`[topUp] stream=${streamId} amount=${amount} txHash=${txHash}`);
     return res
       .status(200)
-      .json({ streamId, txHash, depositedAmount: updatedStream!.depositedAmount });
-  } catch (error: any) {
-    logger.error(`[topUp] stream=${streamId} error:`, error);
-    return sendApiError(res, 400, "TOP_UP_FAILED", "Failed to top up stream on chain");
+      .json({ streamId, txHash, depositedAmount: depositedAmount.toString() });
+  } catch (error) {
+    // Reaching this catch means the top-up question is already settled — the
+    // chain call either failed (handled above) or succeeded and this is the
+    // bookkeeping. A database outage is not the client's error, so it must not
+    // be reported as TOP_UP_FAILED: they would retry and pay twice. The
+    // indexer reconciles the row from the confirmed event.
+    logger.error(`[topUp] stream=${streamId} database update failed:`, error);
+    if (error instanceof ApiError) {
+      return sendApiError(res, error.statusCode, error.code, error.message, error.details);
+    }
+    const mapped = fromPrismaError(error);
+    if (mapped) {
+      return sendApiError(res, mapped.statusCode, mapped.code, mapped.message);
+    }
+    return sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "A technical error occurred. Please try again later.");
   }
 };
 

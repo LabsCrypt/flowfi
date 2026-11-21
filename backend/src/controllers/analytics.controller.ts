@@ -14,7 +14,7 @@ import {
   type AnalyticsInterval,
   type AnalyticsPeriod,
 } from "../services/analytics.service.js";
-import { sendApiError } from "../types/api-error.js";
+import { sendApiError } from "../lib/api-error.js";
 import logger from "../logger.js";
 
 const VALID_PERIODS: AnalyticsPeriod[] = ["7d", "30d", "90d", "1y"];

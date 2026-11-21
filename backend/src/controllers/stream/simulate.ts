@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { ApiError } from '../../lib/api-error.js';
+import { ApiError, sendApiError } from '../../lib/api-error.js';
 import logger from '../../logger.js';
 import { simulateStreamAction, type StreamAction } from '../../services/sorobanService.js';
 
@@ -65,11 +65,13 @@ const simulateBodySchema = z.object({
 export const simulateStreamHandler = async (req: Request, res: Response) => {
   const parsed = simulateBodySchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({
-      error: 'Validation error',
-      code: 'invalid_params',
-      details: parsed.error.issues,
-    });
+    return sendApiError(
+      res,
+      400,
+      'invalid_params',
+      'Validation error',
+      parsed.error.issues,
+    );
   }
 
   const { action, senderPublicKey, params } = parsed.data;
@@ -79,17 +81,10 @@ export const simulateStreamHandler = async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, data });
   } catch (err) {
     if (err instanceof ApiError) {
-      return res.status(err.status).json({
-        error: err.message,
-        code: err.code,
-        ...(err.details ? { details: err.details } : {}),
-      });
+      return sendApiError(res, err.statusCode, err.code, err.message, err.details);
     }
 
     logger.error(`[simulate] Unexpected failure for action ${action}:`, err);
-    return res.status(500).json({
-      error: 'Simulation failed',
-      code: 'simulation_error',
-    });
+    return sendApiError(res, 500, 'simulation_error', 'Simulation failed');
   }
 };

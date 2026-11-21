@@ -1,34 +1,48 @@
+import type { Response } from 'express';
 import { Prisma } from '../generated/prisma/index.js';
+
+/**
+ * The one error envelope every API response uses:
+ *
+ * ```json
+ * { "error": { "code": "STRING_CODE", "message": "human text", "details": ... } }
+ * ```
+ */
+export interface ApiErrorBody {
+  code: string;
+  message: string;
+  details?: unknown;
+}
 
 /**
  * Typed application error carrying an HTTP status and optional machine-readable
  * remediation hints.
  *
- * `errorHandler` reads `err.status`, so throwing an `ApiError` from anywhere in
- * a handler chain produces the right status code without a try/catch at every
- * call site. The optional `code` lets clients branch on the failure class rather
- * than string-matching a message.
+ * The constructor order — `(statusCode, code, message, details)` — is identical
+ * to `sendApiError`, so a call site can move between throwing and responding
+ * without reordering arguments. `code` precedes `message` because `code` is what
+ * clients branch on and `message` is display text.
+ *
+ * `errorHandler` reads `err.statusCode`, so throwing an `ApiError` from anywhere
+ * in a handler chain produces the right status code without a try/catch at every
+ * call site.
  */
 export class ApiError extends Error {
-  readonly status: number;
+  readonly statusCode: number;
   readonly code: string;
-  readonly details?: Record<string, unknown>;
+  readonly details?: unknown;
 
   constructor(
-    status: number,
+    statusCode: number,
+    code: string,
     message: string,
-    code = 'api_error',
-    details?: Record<string, unknown>,
+    details?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
-    this.status = status;
+    this.statusCode = statusCode;
     this.code = code;
-    if (details !== undefined) this.details = details;
-  }
-
-  get statusCode(): number {
-    return this.status;
+    this.details = details;
   }
 
   static fromPrismaError(err: unknown): ApiError | null {
@@ -36,32 +50,48 @@ export class ApiError extends Error {
   }
 }
 
-export const badRequest = (message: string, code = 'BAD_REQUEST', details?: Record<string, unknown>) =>
-  new ApiError(400, message, code, details);
+/**
+ * Writes the standard error envelope. Every non-2xx REST response goes through
+ * this function so clients never have to branch on the shape of a failure.
+ */
+export function sendApiError(
+  res: Response,
+  statusCode: number,
+  code: string,
+  message: string,
+  details?: unknown,
+) {
+  const error: ApiErrorBody = { code, message };
+  if (details !== undefined) error.details = details;
+  return res.status(statusCode).json({ error });
+}
+
+export const badRequest = (message: string, code = 'BAD_REQUEST', details?: unknown) =>
+  new ApiError(400, code, message, details);
 
 export const duplicateEntry = (
   message = 'A record with this unique value already exists.',
   code = 'DUPLICATE_ENTRY',
-  details?: Record<string, unknown>,
-) => new ApiError(409, message, code, details);
+  details?: unknown,
+) => new ApiError(409, code, message, details);
 
 export const resourceNotFound = (
   message = 'The requested record was not found.',
   code = 'RESOURCE_NOT_FOUND',
-  details?: Record<string, unknown>,
-) => new ApiError(404, message, code, details);
+  details?: unknown,
+) => new ApiError(404, code, message, details);
 
 export const foreignKeyViolation = (
   message = 'Related resource constraint violation.',
   code = 'FOREIGN_KEY_VIOLATION',
-  details?: Record<string, unknown>,
-) => new ApiError(409, message, code, details);
+  details?: unknown,
+) => new ApiError(409, code, message, details);
 
 export const internal = (
   message = 'A technical error occurred. Please try again later.',
   code = 'INTERNAL_SERVER_ERROR',
-  details?: Record<string, unknown>,
-) => new ApiError(500, message, code, details);
+  details?: unknown,
+) => new ApiError(500, code, message, details);
 
 /**
  * Check if an error appears to be an error originating from Prisma.
@@ -119,45 +149,33 @@ export function fromPrismaError(err: unknown): ApiError | null {
     switch (code) {
       case 'P2002':
         // Unique constraint violation - NEVER leak meta.target, column names, or table names
-        return new ApiError(
-          409,
-          'A record with this unique value already exists.',
-          'DUPLICATE_ENTRY',
-        );
+        return duplicateEntry();
 
       case 'P2001':
       case 'P2015':
       case 'P2018':
       case 'P2025':
         // Record not found - NEVER leak model name or search condition
-        return new ApiError(
-          404,
-          'The requested record was not found.',
-          'RESOURCE_NOT_FOUND',
-        );
+        return resourceNotFound();
 
       case 'P2003':
         // Foreign key violation - NEVER leak meta.field_name or relation
-        return new ApiError(
-          409,
-          'Related resource constraint violation.',
-          'FOREIGN_KEY_VIOLATION',
-        );
+        return foreignKeyViolation();
 
       case 'P2000':
         // Value too long for column
         return new ApiError(
           400,
-          'A provided value exceeds the allowable limit.',
           'VALUE_OUT_OF_RANGE',
+          'A provided value exceeds the allowable limit.',
         );
 
       case 'P2004':
         // Database constraint failed
         return new ApiError(
           400,
-          'A database constraint was violated.',
           'CONSTRAINT_FAILED',
+          'A database constraint was violated.',
         );
 
       case 'P2005':
@@ -165,8 +183,8 @@ export function fromPrismaError(err: unknown): ApiError | null {
         // Invalid data for field type
         return new ApiError(
           400,
-          'Invalid data provided for one or more fields.',
           'INVALID_INPUT',
+          'Invalid data provided for one or more fields.',
         );
 
       case 'P2011':
@@ -175,8 +193,8 @@ export function fromPrismaError(err: unknown): ApiError | null {
         // Null or missing required field
         return new ApiError(
           400,
-          'A required field was not provided.',
           'MISSING_REQUIRED_FIELD',
+          'A required field was not provided.',
         );
 
       case 'P2014':
@@ -184,34 +202,22 @@ export function fromPrismaError(err: unknown): ApiError | null {
         // Relation violation
         return new ApiError(
           409,
-          'The requested operation violates a relation constraint.',
           'RELATION_VIOLATION',
+          'The requested operation violates a relation constraint.',
         );
 
       case 'P2016':
         // Query interpretation error
-        return new ApiError(
-          400,
-          'Invalid query parameters.',
-          'INVALID_QUERY',
-        );
+        return new ApiError(400, 'INVALID_QUERY', 'Invalid query parameters.');
 
       case 'P2021':
       case 'P2022':
         // Table or column does not exist
-        return new ApiError(
-          500,
-          'A technical error occurred. Please try again later.',
-          'INTERNAL_SERVER_ERROR',
-        );
+        return internal();
 
       default:
         // Any other Prisma request errors (P2xxx, etc.)
-        return new ApiError(
-          400,
-          'A database error occurred.',
-          'DATABASE_ERROR',
-        );
+        return new ApiError(400, 'DATABASE_ERROR', 'A database error occurred.');
     }
   }
 
@@ -220,7 +226,7 @@ export function fromPrismaError(err: unknown): ApiError | null {
     err instanceof Prisma.PrismaClientValidationError ||
     (err instanceof Error && err.name === 'PrismaClientValidationError')
   ) {
-    return new ApiError(400, 'Invalid request data.', 'VALIDATION_ERROR');
+    return new ApiError(400, 'VALIDATION_ERROR', 'Invalid request data.');
   }
 
   // Handle PrismaClientUnknownRequestError, RustPanic, InitializationError
@@ -233,11 +239,7 @@ export function fromPrismaError(err: unknown): ApiError | null {
         err.name === 'PrismaClientRustPanicError' ||
         err.name === 'PrismaClientInitializationError'))
   ) {
-    return new ApiError(
-      500,
-      'A technical error occurred. Please try again later.',
-      'INTERNAL_SERVER_ERROR',
-    );
+    return internal();
   }
 
   return null;

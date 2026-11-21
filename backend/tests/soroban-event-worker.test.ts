@@ -546,10 +546,12 @@ describe('SorobanEventWorker', () => {
       };
 
       const mockTx = {
+        $executeRaw: vi.fn().mockResolvedValue(1),
         stream: {
           findUniqueOrThrow: vi.fn().mockResolvedValue({
             ratePerSecond: '10',
-            startTime: 1700000000,
+            // `Stream.startTime` is a BigInt column, so Prisma hands back a bigint.
+            startTime: 1700000000n,
             totalPausedDuration: 0,
           }),
           update: vi.fn().mockResolvedValue({}),
@@ -577,7 +579,9 @@ describe('SorobanEventWorker', () => {
 
       // Second processing (replay of same txHash): the event now exists, so
       // depositedAmount/endTime must NOT be re-applied.
-      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'topup-event-row' });
+      // Second processing (replay of same txHash): the event now exists with the
+      // ledger this worker wrote, so it is a real replay, not an API marker.
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'topup-event-row', ledgerSequence: 4001 });
       await expect((worker as any).handleStreamToppedUp(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
       expect(mockTx.stream.update).not.toHaveBeenCalled();
       expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();

@@ -146,8 +146,7 @@ describe('stream action routes', () => {
 
     expect(response.status).toBe(401);
     expect(response.body).toMatchObject({
-      error: 'Unauthorized',
-      message: 'Invalid or expired token',
+      error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
     });
   });
 

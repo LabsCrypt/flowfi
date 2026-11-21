@@ -412,8 +412,8 @@ describe('Compliance screening middleware', () => {
     const res = await request(app).post('/streams').send({ sender: USER, recipient: MW_SANCTIONED });
 
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe('COMPLIANCE_RESTRICTION');
-    expect(res.body.message).toBe('Address restricted under compliance policy');
+    expect(res.body.error.code).toBe('COMPLIANCE_RESTRICTION');
+    expect(res.body.error.message).toBe('Address restricted under compliance policy');
     expect(prisma.complianceAuditLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ eventType: 'SCREENING_BLOCKED', isSanctioned: true }),
@@ -438,7 +438,7 @@ describe('Compliance screening middleware', () => {
 
     const res = await request(app).post('/streams').send({ sender: USER, recipient: CLEAN });
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe('COMPLIANCE_RESTRICTION');
+    expect(res.body.error.code).toBe('COMPLIANCE_RESTRICTION');
   });
 
   it('allows an address whose risk score equals the threshold', async () => {
@@ -469,7 +469,7 @@ describe('Compliance screening middleware', () => {
     const res = await request(app).post('/streams').send({ sender: USER, recipient: CLEAN });
 
     expect(res.status).toBe(503);
-    expect(res.body.error).toBe('COMPLIANCE_SCREENING_UNAVAILABLE');
+    expect(res.body.error.code).toBe('COMPLIANCE_SCREENING_UNAVAILABLE');
     expect(service.writeAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'SCREENING_ERROR' }),
     );
