@@ -22,10 +22,10 @@ jobs:
       preview: ${{ steps.filter.outputs.preview }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check changed files
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
             preview:
@@ -58,10 +58,10 @@ jobs:
       PREVIEW_NAMESPACE: flowfi-pr-${{ github.event.pull_request.number }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.nvmrc'
           cache: "npm"
@@ -107,9 +107,9 @@ jobs:
       - name: Deploy backend preview (Fly.io, if configured)
         id: backend-deploy
         continue-on-error: true
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # v1.5
         with:
-          version: latest
+          version: 0.5.14
 
       - name: Publish backend preview app
         id: publish
@@ -147,7 +147,7 @@ jobs:
 
       - name: Comment preview URL on PR
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const pr = context.payload.pull_request.number;

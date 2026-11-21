@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bundle size budget check for the Next.js frontend build.
 # Compares the total size of static JS files in .next/static against a
-# configurable budget (default 300 KB gzipped).  Fails the CI step when
+# configurable budget (default 600 KB gzipped = 614400 bytes).  Fails the CI step when
 # the budget is exceeded.
 set -euo pipefail
 
@@ -14,12 +14,17 @@ if [ ! -d "$NEXT_STATIC_DIR" ]; then
 fi
 
 total=0
-for f in $(find "$NEXT_STATIC_DIR" -type f -name "*.js" | head -100); do
+file_count=0
+# Measure every chunk (no cap); NUL-delimited so names with spaces work.
+# Process substitution keeps the loop in the current shell so totals persist.
+while IFS= read -r -d '' f; do
   # Use gzip -c | wc -c for accurate gzipped size
   gzipped_size=$(gzip -c "$f" | wc -c)
   total=$((total + gzipped_size))
-done
+  file_count=$((file_count + 1))
+done < <(find "$NEXT_STATIC_DIR" -type f -name "*.js" -print0)
 
+echo "Measured ${file_count} JS files"
 echo "Frontend JS bundle gzipped size: ${total} bytes (${BUDGET_BYTES} byte budget)"
 
 if [ "$total" -gt "$BUDGET_BYTES" ]; then
