@@ -185,7 +185,7 @@ describe("DashboardView failed actions", () => {
 
   it("preserves the deposited amount when a top-up fails", async () => {
     vi.mocked(topUpStream).mockRejectedValueOnce(new Error("top-up failed"));
-    renderDashboard([makeStream("stream-1", 100, 0)]);
+    renderDashboard([makeStream("1", 100, 0)]);
 
     expect(screen.getByText("100 XLM")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Funds" }));
@@ -197,7 +197,7 @@ describe("DashboardView failed actions", () => {
 
   it("keeps the stream active when cancellation fails", async () => {
     vi.mocked(cancelStream).mockRejectedValueOnce(new Error("cancel failed"));
-    renderDashboard([makeStream("stream-1", 100, 50)]);
+    renderDashboard([makeStream("1", 100, 50)]);
 
     expect(screen.getByText("50 XLM")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -211,8 +211,8 @@ describe("DashboardView failed actions", () => {
   it("does not change other streams when one top-up fails", async () => {
     vi.mocked(topUpStream).mockRejectedValueOnce(new Error("top-up failed"));
     renderDashboard([
-      makeStream("stream-1", 100, 0),
-      makeStream("stream-2", 200, 50),
+      makeStream("1", 100, 0),
+      makeStream("2", 200, 50),
     ]);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Add Funds" })[1]!);
