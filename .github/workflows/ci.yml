@@ -250,7 +250,7 @@ jobs:
           vite-config-path: vitest.config.ts
 
       - name: Upload backend coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: backend/coverage/lcov.info
           flags: backend
@@ -366,7 +366,7 @@ jobs:
         working-directory: contracts
 
       - name: Upload contract coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: contracts/coverage/cobertura.xml
           flags: contracts
