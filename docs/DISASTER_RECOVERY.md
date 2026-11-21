@@ -13,15 +13,55 @@ FlowFi stores encrypted PostgreSQL backups in Amazon S3. The backup includes a p
 
 ## Restore a backup
 
-Restore to an empty PostgreSQL database. The script authenticates and decompresses the full archive before submitting SQL, then compares the restored count of every recorded public table to the manifest. It exits nonzero on decryption, archive, SQL, or row-count errors.
+Restore into a freshly provisioned, empty PostgreSQL database whenever possible.
 
 ```sh
 export DATABASE_URL='postgresql://user:password@localhost:5432/flowfi_recovery'
 export BACKUP_ENCRYPTION_KEY='<64 hex characters from the secret store>'
+
+# 1. Rehearse first: decrypts and validates the backup, inspects the target,
+#    prints the plan, and changes nothing.
+bash scripts/db-restore.sh --dry-run /secure/path/flowfi-<timestamp>-<run-id>.tar.gz.enc
+
+# 2. Restore.
 bash scripts/db-restore.sh /secure/path/flowfi-<timestamp>-<run-id>.tar.gz.enc
 ```
 
-For S3, download the selected object to a protected temporary location with `aws s3 cp`, then pass its path to the restore script. Restrict access to both the encrypted object and the key; encryption does not replace access controls.
+For S3, download the selected object to a protected temporary location with `aws s3 cp`, then pass its path to the restore script. Restrict access to both the encrypted object and the key; encryption does not replace access controls. Run `bash scripts/db-restore.sh --help` for every option.
+
+### What the script does
+
+1. **Validates the backup before touching the database.** The archive is authenticated (AES-256-GCM), decompressed and checked for its dump and row-count manifest before any SQL is sent. A wrong key, tampered file or malformed manifest exits with code `1` and no changes.
+2. **Checks that the target is empty.** If the target database contains any user tables, views, sequences, types or functions, the restore is **refused with exit code `3`** unless `--force` is given.
+3. **Restores in a single transaction.** The SQL dump and the row-count verification for every recorded `public` table run inside one transaction (`psql --single-transaction`). If any statement fails or any count differs from the manifest, PostgreSQL rolls back the entire restore.
+
+### Replacing a non-empty database (`--force`)
+
+`--force` replaces the contents of a non-empty database. Use it only when restoring into a fresh database is impossible.
+
+```sh
+bash scripts/db-restore.sh --dry-run --force <backup>   # review the plan
+bash scripts/db-restore.sh --force <backup>             # asks you to type the database name
+bash scripts/db-restore.sh --force --yes <backup>       # non-interactive (automation only)
+```
+
+With `--force` the script:
+
+1. asks the operator to type the database name to confirm (skipped only with `--yes`; without a TTY `--yes` is mandatory);
+2. writes an encrypted **pre-restore snapshot** of the current database, in the same format as regular backups, to `--snapshot-dir` (default `$RESTORE_SNAPSHOT_DIR` or `./restore-snapshots`). The snapshot is encrypted with the same `BACKUP_ENCRYPTION_KEY`; store it as carefully as a production backup;
+3. drops every user schema and restores the backup, all in the same transaction as the verification.
+
+### Failure and recovery states
+
+| Failure point | State of the target database | What to do |
+| --- | --- | --- |
+| Decryption, archive or manifest validation | Untouched | Check the key and backup file, then retry. |
+| Target not empty (exit `3`) | Untouched | Use a fresh database, or re-run with `--force`. |
+| Snapshot fails (`--force`) | Untouched | Fix the cause (disk space, `pg_dump` version) and retry; no restore was attempted. |
+| SQL error or row-count mismatch during restore | **Unchanged**: the transaction is rolled back, including the `--force` schema wipe | Read the error printed by the script, fix the cause and retry. |
+| Connection lost mid-restore | Unchanged: PostgreSQL aborts the uncommitted transaction | Retry. |
+
+A successful run ends with `Restore completed and all N recorded public table row counts matched.` If a forced restore succeeded but the old data is needed again, restore the snapshot with `bash scripts/db-restore.sh --force <snapshot file>`.
 
 ## Weekly disaster-recovery verification
 

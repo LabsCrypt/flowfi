@@ -83,7 +83,7 @@ npm run dev:mock
 ### Prerequisites for the sandbox
 
 - Docker & Docker Compose (for Postgres, Redis, mock RPC)
-- Node.js 20+ and npm (for backend, frontend, seed script)
+- Node.js 22 (see `.nvmrc`) and npm (for backend, frontend, seed script)
 
 No Rust, no Stellar CLI, no testnet account needed.
 
@@ -94,7 +94,7 @@ No Rust, no Stellar CLI, no testnet account needed.
 Required:
 
 - Rust toolchain (stable via rustup)
-- Node.js 20+
+- Node.js 22 (`^22.22.1`) — the version is pinned in `.nvmrc` and enforced via `engines` + `engine-strict`; run `nvm use` in the repo root
 - npm
 - PostgreSQL 16 (matches the version pinned in `docker-compose.yml` and CI)
 - Docker & Docker Compose (recommended for local infra)

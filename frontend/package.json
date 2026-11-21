@@ -14,6 +14,9 @@
     "test:e2e:headed": "playwright test --headed",
     "codegen:api-types": "openapi-typescript ../backend/swagger/flowfi.openapi.json -o src/lib/api-types.generated.ts"
   },
+  "engines": {
+    "node": "^22.22.1"
+  },
   "dependencies": {
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^17.0.1",

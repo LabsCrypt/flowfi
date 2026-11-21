@@ -19,6 +19,12 @@ if (sslmode) entries.push(["sslmode", sslmode]);
 for (const [key, value] of entries) {
   if (/[\r\n]/.test(value)) throw new Error(`Invalid newline in PostgreSQL ${key}`);
 }
-const escape = (value) => `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
-const contents = `[flowfi_backup]\n${entries.map(([key, value]) => `${key}=${escape(value)}`).join("\n")}\n`;
+// libpq service files are plain `key=value` lines: values are taken verbatim
+// (only surrounding whitespace is trimmed) and quotes are NOT stripped, so
+// quoting them would make libpq read e.g. port as the literal "'5432'".
+// Newlines are rejected above, which is the only way to break out of a line.
+for (const [key, value] of entries) {
+  if (value !== value.trim()) throw new Error(`PostgreSQL ${key} must not have leading/trailing whitespace`);
+}
+const contents = `[flowfi_backup]\n${entries.map(([key, value]) => `${key}=${value}`).join("\n")}\n`;
 writeFileSync(output, contents, { mode: 0o600, flag: "wx" });

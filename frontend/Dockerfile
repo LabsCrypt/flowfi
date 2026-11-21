@@ -4,7 +4,7 @@
 # emits a self-contained server bundle (`output: "standalone"` in
 # frontend/next.config.ts) instead of the full `.next` tree + node_modules.
 # ============================================================================
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS builder
 
 WORKDIR /app
 
@@ -41,7 +41,7 @@ RUN npm run build --workspace frontend
 # Copies only the traced standalone output (never the workspace node_modules)
 # and runs as the non-root `node` user that ships with the Alpine base image.
 # ============================================================================
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS runner
 
 WORKDIR /app
 

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { BackendStream } from "./api-types";
 import { getStreamsEndpointCandidates, toTokenAmount } from "./api/_shared";
-import { TOKEN_ADDRESSES } from "./soroban";
+import { resolveTokenLabel } from "./tokens";
 import { logger } from "./logger";
 
 export interface ActivityItem {
@@ -62,18 +62,6 @@ function formatStreamDateUtc(unixTimestampSeconds: number): string {
 function shortenAddress(address: string): string {
   if (!address || address.length < 10) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-/**
- * Resolves a token contract address to its symbol (XLM/USDC/EURC), falling
- * back to a shortened address when the token is unknown.
- */
-function resolveTokenLabel(tokenAddress: string): string {
-  const entry = Object.entries(TOKEN_ADDRESSES).find(
-    ([, address]) => address === tokenAddress,
-  );
-
-  return entry?.[0] ?? shortenAddress(tokenAddress);
 }
 
 /**
