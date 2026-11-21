@@ -555,6 +555,11 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                   description: 'Structured validation issues when applicable',
                   items: { type: 'object' },
                 },
+                requestId: {
+                  type: 'string',
+                  description:
+                    'Correlation ID echoed from X-Request-ID; matches the response header',
+                },
               },
             },
           },
