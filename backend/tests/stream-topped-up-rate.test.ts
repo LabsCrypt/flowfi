@@ -108,6 +108,7 @@ const fake = vi.hoisted(() => {
   return {
     streams,
     events,
+    eventKey: rowKey,
     tx,
     // Same call shape as `prisma.$transaction`, including rollback of the
     // in-memory rows so a mid-transaction throw cannot leave a partial write.
@@ -237,6 +238,31 @@ function eventRows() {
 }
 function broadcastCalls() {
   return (sseService.broadcastToStream as ReturnType<typeof vi.fn>).mock.calls;
+}
+
+/**
+ * The row `applyTopUpOnce` leaves behind when this API process confirms a
+ * top-up before the indexer sees it: the real dedup key with the
+ * `ledgerSequence = 0` marker meaning "chain position not known yet".
+ */
+function seedApiMarkerRow(opts: {
+  txHash: string;
+  amount: string;
+  timestamp?: bigint;
+  ledgerSequence?: number;
+}) {
+  const row: FakeStreamEvent = {
+    id: 900,
+    streamId: 42n,
+    eventType: 'TOPPED_UP',
+    amount: opts.amount,
+    transactionHash: opts.txHash,
+    ledgerSequence: opts.ledgerSequence ?? 0,
+    timestamp: opts.timestamp ?? 1735689600n,
+    metadata: '{}',
+  };
+  fake.events.set(fake.eventKey(opts.txHash, 'TOPPED_UP'), row as unknown as Record<string, unknown>);
+  return row;
 }
 
 describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () => {
@@ -506,6 +532,59 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
 
       expect(eventRows()).toHaveLength(2);
       expect(toppedUpRow()?.endTime).toBe(START + 210n);
+    });
+  });
+
+  describe('reconciling the marker row the API writer leaves behind', () => {
+    it('assigns the chain total instead of adding its own delta on top of it', async () => {
+      // `applyTopUpOnce` already credited 2100 and stored the top-up with
+      // ledgerSequence 0; re-applying the 1100 delta here would overcount the
+      // stream permanently.
+      fake.stream(42n, { depositedAmount: '2100', endTime: START + 210n });
+      seedApiMarkerRow({ txHash: '0xapi', amount: '1100' });
+
+      await worker.processEvent(topUpEvent({ txHash: '0xapi', ledger: 555, body: defaultBody }));
+
+      expect(toppedUpRow()).toMatchObject({ depositedAmount: '2100', endTime: START + 210n });
+      expect(fake.tx.stream.update).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Reconciling API-applied top-up against chain: txHash=0xapi'),
+      );
+    });
+
+    it('overwrites the deposit with the chain value when the two disagree', async () => {
+      fake.stream(42n, { depositedAmount: '2100' });
+      seedApiMarkerRow({ txHash: '0xapi', amount: '1100' });
+
+      await worker.processEvent(
+        topUpEvent({ txHash: '0xapi', ledger: 555, body: { amount: [0, 1050], newDeposited: [0, 2050] } }),
+      );
+
+      expect(toppedUpRow()?.depositedAmount).toBe('2050');
+      expect(toppedUpRow()?.endTime).toBe(START + 205n);
+    });
+
+    it('fills the ledger position into the existing row instead of writing a second one', async () => {
+      fake.stream(42n, { depositedAmount: '2100' });
+      const marker = seedApiMarkerRow({ txHash: '0xapi', amount: '1100' });
+
+      await worker.processEvent(topUpEvent({ txHash: '0xapi', ledger: 555, body: defaultBody }));
+
+      expect(eventRows()).toHaveLength(1);
+      expect(marker.ledgerSequence).toBe(555);
+    });
+
+    it('still skips a row the indexer itself wrote, which is any non-zero ledger position', async () => {
+      fake.stream(42n, { depositedAmount: '2100' });
+      seedApiMarkerRow({ txHash: '0xapi', amount: '1100', ledgerSequence: 444 });
+
+      await worker.processEvent(
+        topUpEvent({ txHash: '0xapi', ledger: 555, body: { amount: [0, 9000], newDeposited: [0, 9999] } }),
+      );
+
+      expect(fake.tx.stream.update).not.toHaveBeenCalled();
+      expect(toppedUpRow()).toMatchObject({ depositedAmount: '2100' });
+      expect(eventRows()[0]?.ledgerSequence).toBe(444);
     });
   });
 
