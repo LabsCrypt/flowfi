@@ -288,6 +288,10 @@ pub enum StreamError {
     DeadlineExpired = 47,
     /// The DEX swap returned less than the caller's minimum output amount.
     InsufficientOutput = 48,
+    /// The arbiter cannot be changed while a dispute is open. A sender who could
+    /// swap the arbiter mid-dispute could replace the decider with someone who
+    /// rules in their favour.
+    ArbiterLocked = 49,
 }
 
 /// Type alias mapping `ContractError` to `StreamError` for off-chain testing and SDK callers.
@@ -359,6 +363,7 @@ impl TryFrom<u32> for StreamError {
             46 => Ok(StreamError::InvalidFeeSplit),
             47 => Ok(StreamError::DeadlineExpired),
             48 => Ok(StreamError::InsufficientOutput),
+            49 => Ok(StreamError::ArbiterLocked),
             _ => Err(()),
         }
     }
@@ -433,6 +438,7 @@ pub(crate) mod test_diagnostics {
                 StreamError::InvalidFeeSplit => "InvalidFeeSplit",
                 StreamError::DeadlineExpired => "DeadlineExpired",
                 StreamError::InsufficientOutput => "InsufficientOutput",
+                StreamError::ArbiterLocked => "ArbiterLocked",
             }
         }
     }
@@ -504,7 +510,7 @@ pub(crate) mod test_diagnostics {
         use std::string::ToString;
 
         /// (variant, identifier, documented numeric code) for every variant.
-        const ALL_VARIANTS: [(StreamError, &str, u32); 48] = [
+        const ALL_VARIANTS: [(StreamError, &str, u32); 49] = [
             (StreamError::InvalidAmount, "InvalidAmount", 1),
             (StreamError::StreamNotFound, "StreamNotFound", 2),
             (StreamError::Unauthorized, "Unauthorized", 3),
@@ -597,6 +603,7 @@ pub(crate) mod test_diagnostics {
             (StreamError::InvalidFeeSplit, "InvalidFeeSplit", 46),
             (StreamError::DeadlineExpired, "DeadlineExpired", 47),
             (StreamError::InsufficientOutput, "InsufficientOutput", 48),
+            (StreamError::ArbiterLocked, "ArbiterLocked", 49),
         ];
 
         #[test]
@@ -629,7 +636,7 @@ pub(crate) mod test_diagnostics {
 
             // Unknown error codes must return Err(())
             assert_eq!(ContractError::try_from(0), Err(()));
-            assert_eq!(ContractError::try_from(49), Err(()));
+            assert_eq!(ContractError::try_from(50), Err(()));
             assert_eq!(ContractError::try_from(100), Err(()));
             assert_eq!(ContractError::try_from(u32::MAX), Err(()));
         }

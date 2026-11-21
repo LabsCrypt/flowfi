@@ -6817,6 +6817,86 @@ fn test_coverage_create_allowance_stream_gates_on_allowance() {
     assert_eq!(stream.status, StreamStatus::Active);
 }
 
+// ─── Coverage: arbiter activation path (#1897) ─────────────────────────────
+
+#[test]
+fn test_coverage_set_stream_arbiter_makes_the_stream_disputable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Before the arbiter is set there is nobody to resolve a dispute.
+    assert_eq!(
+        client.try_request_dispute(&sender, &id),
+        Err(Ok(StreamError::DisputeNotSupported))
+    );
+
+    client.set_stream_arbiter(&sender, &id, &Some(arbiter.clone()));
+    assert_eq!(client.get_stream(&id).unwrap().arbiter, Some(arbiter));
+
+    // The dispute path is now reachable through the public API alone.
+    client.request_dispute(&sender, &id);
+    assert_eq!(
+        client.get_stream(&id).unwrap().dispute_status,
+        DisputeStatus::Requested
+    );
+}
+
+#[test]
+fn test_coverage_set_stream_arbiter_is_the_senders_call_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    assert_eq!(
+        client.try_set_stream_arbiter(&recipient, &id, &Some(Address::generate(&env))),
+        Err(Ok(StreamError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(sender.clone())),
+        Err(Ok(StreamError::Unauthorized))
+    );
+    // The contract itself can never be the arbiter.
+    assert_eq!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(client.address.clone())),
+        Err(Ok(StreamError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_coverage_set_stream_arbiter_is_locked_once_a_dispute_is_open() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.set_stream_arbiter(&sender, &id, &Some(Address::generate(&env)));
+    client.request_dispute(&sender, &id);
+
+    // Swapping the decider mid-dispute would let the sender choose the verdict.
+    assert_eq!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(Address::generate(&env))),
+        Err(Ok(StreamError::ArbiterLocked))
+    );
+}
+
 // ─── Coverage: dispute & escrow (#1319) ────────────────────────────────────
 
 /// Seeds an arbiter directly on the stream's storage. The arbiter slot is
