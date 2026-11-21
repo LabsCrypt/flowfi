@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -14,7 +14,6 @@ const renderWithQueryClient = (ui: React.ReactElement) => {
     </QueryClientProvider>
   );
 };
-import userEvent from "@testing-library/user-event";
 import React from "react";
 
 // ─── Mocks ──────────────────────────────────────────────────────────────
@@ -146,20 +145,6 @@ vi.mock("@/components/TransactionTracker", () => ({
 
 import StreamDetailsContent from "../stream-details-content";
 
-const STREAM_ID = "42";
-
-// Every fetch in the component must resolve to something; the receipt effect
-// (and the 30s re-sync interval) hit endpoints that individual tests do not
-// always queue. Tests override the first calls with `mockResolvedValueOnce`.
-function createFetchMock() {
-  return vi.fn(() =>
-    Promise.resolve({
-      ok: true,
-      // A valid stream shape so post-action / re-sync refetches stay renderable.
-      json: async () => createMockStream(),
-    } as Response),
-  );
-}
 
 function createMockStream() {
   return {
