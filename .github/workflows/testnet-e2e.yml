@@ -101,9 +101,12 @@ jobs:
 
       - name: Resolve contract ID
         id: resolve
+        env:
+          INPUT_CONTRACT_ID: ${{ inputs.contract_id }}
+          DEPLOYED_CONTRACT_ID: ${{ steps.deploy.outputs.contract_id }}
         run: |
           set -euo pipefail
-          ID="${{ inputs.contract_id || steps.deploy.outputs.contract_id }}"
+          ID="${INPUT_CONTRACT_ID:-$DEPLOYED_CONTRACT_ID}"
           echo "contract_id=$ID" >> "$GITHUB_OUTPUT"
           echo "### Testnet contract under test: \`$ID\`" >> "$GITHUB_STEP_SUMMARY"
 

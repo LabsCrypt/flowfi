@@ -260,6 +260,45 @@ function parseCSVLine(line: string): string[] {
   return result;
 }
 
+function escapeCSVField(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+/**
+ * Replaces one data row (entry id, as assigned by parseBatchCSV) with edited
+ * values, writing each value into the column the header maps it to. Extra
+ * columns of the row are preserved; all fields are re-escaped. Returns the
+ * original content if the id or required header columns are not found.
+ */
+export function replaceBatchCSVRow(
+  csvContent: string,
+  entryId: number,
+  values: Omit<BatchStreamEntry, "id">
+): string {
+  const lines = csvContent.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  if (entryId < 1 || entryId >= lines.length) return csvContent;
+
+  const header = parseCSVLine(lines[0] as string);
+  const find = (...names: string[]) => header.findIndex((h) => names.includes(h.toLowerCase()));
+  const idx = {
+    recipient: find("recipient"),
+    amount: find("amount"),
+    durationSeconds: find("duration_seconds", "duration"),
+    cliffSeconds: find("cliff_seconds", "cliff"),
+  };
+  if (idx.recipient === -1 || idx.amount === -1 || idx.durationSeconds === -1) return csvContent;
+
+  const row = parseCSVLine(lines[entryId] as string);
+  for (const key of ["recipient", "amount", "durationSeconds", "cliffSeconds"] as const) {
+    const i = idx[key];
+    if (i < 0) continue;
+    while (row.length <= i) row.push("");
+    row[i] = values[key];
+  }
+  lines[entryId] = row.map(escapeCSVField).join(",");
+  return lines.join("\n");
+}
+
 /**
  * Generates a sample CSV string for download
  */
