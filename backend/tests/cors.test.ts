@@ -11,7 +11,7 @@ describe('CORS middleware', () => {
             .set('Accept', 'text/plain');
 
         expect(response.status).toBe(403);
-        expect(response.body.error).toBe('CORS origin not allowed');
+        expect(response.body.error.message).toBe('CORS origin not allowed');
     });
 });
 
@@ -77,7 +77,13 @@ describe('CORS policy', () => {
 
             expect(response.status).toBe(403);
             expect(response.headers['content-type']).toMatch(/application\/json/);
-            expect(response.body).toEqual({ error: 'CORS origin not allowed' });
+            expect(response.body).toEqual({
+                error: {
+                    code: 'FORBIDDEN',
+                    message: 'CORS origin not allowed',
+                    requestId: expect.any(String),
+                },
+            });
             expect(response.headers['access-control-allow-origin']).toBeUndefined();
             expect(warn).toHaveBeenCalledWith(
                 'CORS origin rejected',

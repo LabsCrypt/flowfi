@@ -72,7 +72,7 @@ describe("webhooks api", () => {
     vi.mocked(shared.fetchWithTimeout).mockResolvedValueOnce({
       ok: false,
       status: 400,
-      json: async () => ({ error: "Bad Request" }),
+      json: async () => ({ error: { code: "WEBHOOK_INVALID_REQUEST", message: "Bad Request" } }),
     } as unknown as Response);
     await expect(listWebhooks("address")).rejects.toThrow("Bad Request");
   });

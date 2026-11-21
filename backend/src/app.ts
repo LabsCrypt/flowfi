@@ -17,6 +17,7 @@ import { requestIdMiddleware } from "./middleware/requestId.js";
 import { buildCorsOptions, CorsError } from "./config/cors.js";
 import logger from "./logger.js";
 import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
+import { sendApiError } from "./lib/api-error.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
@@ -79,7 +80,7 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
       method: req.method,
       path: req.path,
     });
-    res.status(err.statusCode).json({ error: err.message });
+    sendApiError(res, err.statusCode, "FORBIDDEN", err.message);
     return;
   }
   next(err);

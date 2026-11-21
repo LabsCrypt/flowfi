@@ -93,7 +93,10 @@ describe('SSE subscribe authorization and rejection paths (#1747)', () => {
 
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith({
-      message: 'Server is shutting down, please reconnect shortly.',
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Server is shutting down, please reconnect shortly.',
+      },
     });
     expect(mocks.checkCapacity).not.toHaveBeenCalled();
     expect(mocks.findMany).not.toHaveBeenCalled();
@@ -114,7 +117,9 @@ describe('SSE subscribe authorization and rejection paths (#1747)', () => {
 
     expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '60');
     expect(res.status).toHaveBeenCalledWith(429);
-    expect(res.json).toHaveBeenCalledWith({ message: 'Too many SSE connections from this IP. Max 5.' });
+    expect(res.json).toHaveBeenCalledWith({
+      error: { code: 'SSE_CONNECTION_REJECTED', message: 'Too many SSE connections from this IP. Max 5.' },
+    });
     expect(res.writeHead).not.toHaveBeenCalled();
     expect(res.write).not.toHaveBeenCalled();
     expect(mocks.addClient).not.toHaveBeenCalled();
@@ -130,7 +135,9 @@ describe('SSE subscribe authorization and rejection paths (#1747)', () => {
 
     expect(res.setHeader).not.toHaveBeenCalledWith('Retry-After', expect.anything());
     expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith({ message: 'SSE capacity reached.' });
+    expect(res.json).toHaveBeenCalledWith({
+      error: { code: 'SSE_CONNECTION_REJECTED', message: 'SSE capacity reached.' },
+    });
   });
 
   it('honours an explicit 503 rejection without inventing a Retry-After hint', async () => {
@@ -151,7 +158,9 @@ describe('SSE subscribe authorization and rejection paths (#1747)', () => {
     await runSubscribe(makeReq({ user: undefined }), res);
 
     expect(res.statusCode).toBe(500);
-    expect(res.json).toHaveBeenCalledWith({ message: 'Internal server error' });
+    expect(res.json).toHaveBeenCalledWith({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+    });
     expect(res.writeHead).not.toHaveBeenCalled();
     expect(res.write).not.toHaveBeenCalled();
     expect(mocks.addClient).not.toHaveBeenCalled();
@@ -165,7 +174,9 @@ describe('SSE subscribe authorization and rejection paths (#1747)', () => {
     await runSubscribe(makeReq(), res);
 
     expect(res.statusCode).toBe(500);
-    expect(res.json).toHaveBeenCalledWith({ message: 'Internal server error' });
+    expect(res.json).toHaveBeenCalledWith({
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+    });
     expect(res.writeHead).not.toHaveBeenCalled();
     expect(mocks.addClient).not.toHaveBeenCalled();
   });
@@ -179,8 +190,11 @@ describe('SSE subscribe authorization and rejection paths (#1747)', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'Invalid subscription parameters',
-        errors: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+        error: expect.objectContaining({
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid subscription parameters',
+          details: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+        }),
       }),
     );
     expect(res.writeHead).not.toHaveBeenCalled();

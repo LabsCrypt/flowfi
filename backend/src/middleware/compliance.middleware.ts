@@ -12,6 +12,7 @@
  */
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import logger from '../logger.js';
+import { sendApiError } from '../lib/api-error.js';
 import { getComplianceConfig, type ComplianceConfig } from '../config/compliance.config.js';
 import {
   ComplianceScreeningError,
@@ -167,11 +168,12 @@ export function complianceScreening(options: ComplianceMiddlewareOptions): Reque
       });
 
       if (config.failureMode === 'fail-closed') {
-        res.status(503).json({
-          error: 'COMPLIANCE_SCREENING_UNAVAILABLE',
-          message:
-            'Compliance screening is temporarily unavailable. Please try again later.',
-        });
+        sendApiError(
+          res,
+          503,
+          'COMPLIANCE_SCREENING_UNAVAILABLE',
+          'Compliance screening is temporarily unavailable. Please try again later.',
+        );
         return;
       }
 
@@ -198,16 +200,18 @@ export function complianceScreening(options: ComplianceMiddlewareOptions): Reque
         ),
       );
 
-      res.status(403).json({
-        error: 'COMPLIANCE_RESTRICTION',
-        message: 'Address restricted under compliance policy',
-        details: blocked.map((result) => ({
+      sendApiError(
+        res,
+        403,
+        'COMPLIANCE_RESTRICTION',
+        'Address restricted under compliance policy',
+        blocked.map((result) => ({
           address: result.address,
           riskScore: result.riskScore,
           tags: result.tags,
           isSanctioned: result.isSanctioned,
         })),
-      });
+      );
       return;
     }
 

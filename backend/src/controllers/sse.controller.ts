@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma.js';
 import { requestContext } from '../logger.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import { isSandboxRequest } from '../middleware/sandbox.middleware.js';
+import { sendApiError } from '../lib/api-error.js';
 import { z } from 'zod';
 
 const subscribeSchema = z.object({
@@ -36,7 +37,7 @@ function getClientIp(req: Request): string {
 }
 export const subscribe = async (req: Request, res: Response) => {
   if (sseService.isShuttingDown()) {
-    return res.status(503).json({ message: 'Server is shutting down, please reconnect shortly.' });
+    return sendApiError(res, 503, 'SERVICE_UNAVAILABLE', 'Server is shutting down, please reconnect shortly.');
   }
 
   try {
@@ -47,9 +48,12 @@ export const subscribe = async (req: Request, res: Response) => {
       if (capacity.retryAfterSeconds) {
         res.setHeader('Retry-After', String(capacity.retryAfterSeconds));
       }
-      return res.status(capacity.status ?? 503).json({
-        message: capacity.message ?? 'SSE connection rejected',
-      });
+      return sendApiError(
+        res,
+        capacity.status ?? 503,
+        'SSE_CONNECTION_REJECTED',
+        capacity.message ?? 'SSE connection rejected',
+      );
     }
 
     const { publicKey } = (req as AuthenticatedRequest).user;
@@ -116,11 +120,14 @@ export const subscribe = async (req: Request, res: Response) => {
     return;
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({
-        message: 'Invalid subscription parameters',
-        errors: error.issues,
-      });
+      return sendApiError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        'Invalid subscription parameters',
+        error.issues,
+      );
     }
-    return res.status(500).json({ message: 'Internal server error' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Internal server error');
   }
 };

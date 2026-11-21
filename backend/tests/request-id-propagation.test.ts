@@ -5,7 +5,7 @@
  * reimplementation of it:
  *   1. every response carries the `X-Request-ID` header — including the ones
  *      answered before any route runs (a throttled 429, an unrouted 404);
- *   2. an error produced by the shared funnel in `types/api-error.ts` carries
+ *   2. an error produced by the shared funnel in `lib/api-error.ts` carries
  *      `requestId`, with the same value the header carries, for every input the
  *      error handler accepts (`ApiError`, `ZodError`, an unknown `Error`);
  *   3. the id is handed to the logger without any handler passing it.
@@ -104,7 +104,7 @@ import app from "../src/app.js";
 import { requestIdMiddleware } from "../src/middleware/requestId.js";
 import { errorHandler } from "../src/middleware/error.middleware.js";
 import { requestContext } from "../src/logger.js";
-import { ApiError } from "../src/types/api-error.js";
+import { ApiError } from "../src/lib/api-error.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
