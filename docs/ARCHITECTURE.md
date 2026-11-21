@@ -81,7 +81,7 @@ When the indexer worker processes a ledger batch:
 
 1. Reads the cursor from `IndexerState.lastLedger` to determine where to resume
 2. Upserts `Stream` records to mirror on-chain state changes
-3. Persists each `StreamEvent` via per-event `findUnique` + `upsert` keyed on `(transactionHash, eventType)` (not batch `createMany` with `skipDuplicates`)
+3. Persists each `StreamEvent` via per-event `findUnique` + `upsert` keyed on `(transactionHash, eventType)`, both statements inside one `prisma.$transaction` (not batch `createMany` with `skipDuplicates`)
 4. Advances `IndexerState.lastLedger` after the batch completes
 
 **Database Model Reference:**
@@ -174,7 +174,7 @@ Benefits:
 
 All backend log lines use standard JSON formatting via Winston and include a `requestId` correlation ID field when running inside a request or worker context (managed by Node's `AsyncLocalStorage` via `requestContext` in `backend/src/logger.ts`).
 
-- **HTTP Requests:** Requests receive or generate a `requestId` via `requestIdMiddleware` (`X-Request-ID` header).
+- **HTTP Requests:** Requests receive or generate a `requestId` via `requestIdMiddleware` (`X-Request-ID` header), which runs before the global rate limiter so even a throttled response has one. Standard error bodies (`sendApiError`) echo it as `error.requestId`, matching the `X-Request-ID` response header.
 - **Background Indexer/Worker Poll Cycles:** Each `SorobanEventWorker` poll batch runs inside `requestContext.run({ requestId: randomUUID() }, ...)` so all RPC fetches, event processing, and per-event error logs within that poll cycle share a single correlation ID.
 - **Admin Replays:** Triggering an indexer event replay (via `replayFromLedger` or `POST /v1/admin/indexer/replay`) wraps the reset and worker poll cycle in `requestContext`. The correlation ID is included on all log statements emitted during replay and returned in the HTTP API response (`{ ok: true, replayingFrom: <ledger>, requestId: "<id>" }`).
 
@@ -227,7 +227,7 @@ Key points:
 @@unique([transactionHash, eventType])
 ```
 
-This means replaying the same on-chain transaction (e.g. during a re-index or worker restart) will produce an `upsert` conflict rather than a duplicate row. The worker uses Prisma's `createOrUpdate` (upsert) path on `Stream` and a `createMany … skipDuplicates` path on `StreamEvent`.
+This means replaying the same on-chain transaction (e.g. during a re-index or worker restart) will produce an `upsert` conflict rather than a duplicate row. The worker uses Prisma's `createOrUpdate` (upsert) path on `Stream`, and on `StreamEvent` a per-event `findUnique` + `upsert` — never `createMany … skipDuplicates` — with the check and the write taken inside one `prisma.$transaction` so two concurrent deliveries of the same event cannot both see the row as absent.
 
 ### Indexer Cursor — `IndexerState`
 

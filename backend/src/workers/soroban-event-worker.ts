@@ -1239,39 +1239,47 @@ export class SorobanEventWorker {
     const token = decodeAddress(body["token"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    const existingEvent = await prisma.streamEvent.findUnique({
-      where: {
-        transactionHash_eventType: {
-          transactionHash: event.txHash,
-          eventType: "FEE_COLLECTED",
-        },
-      },
-      select: { id: true },
-    });
-    if (existingEvent) {
-      logger.warn(
-        `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
-      );
-    } else {
-      await prisma.streamEvent.upsert({
+    // The dedup check and the write must be atomic: as two separate top-level
+    // `prisma` calls they interleave when the same txHash is delivered twice
+    // (RPC retry, replay, concurrent poll cycles), both checks see no row, and
+    // the unique index on (transactionHash, eventType) rejects the second
+    // insert — surfacing as a 500 on the fee-event path. Matches the pattern
+    // every other handler in this file already uses (issue #1239).
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existingEvent = await tx.streamEvent.findUnique({
         where: {
           transactionHash_eventType: {
             transactionHash: event.txHash,
             eventType: "FEE_COLLECTED",
           },
         },
-        create: {
-          streamId,
-          eventType: "FEE_COLLECTED",
-          amount: feeAmount,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ treasury, token }),
-        },
-        update: {},
+        select: { id: true },
       });
-    }
+      if (existingEvent) {
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
+        );
+      } else {
+        await tx.streamEvent.upsert({
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "FEE_COLLECTED",
+            },
+          },
+          create: {
+            streamId,
+            eventType: "FEE_COLLECTED",
+            amount: feeAmount,
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({ treasury, token }),
+          },
+          update: {},
+        });
+      }
+    });
 
     // Broadcast to admin channel for treasury reporting
     sseService.broadcastToAdmin("stream.fee_collected", {
