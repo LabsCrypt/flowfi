@@ -30,7 +30,8 @@ interface FakeStreamEvent {
   amount: string;
   transactionHash: string;
   ledgerSequence: number;
-  timestamp: number;
+  /** `StreamEvent.timestamp` is a BigInt column; the writer passes `BigInt(...)`. */
+  timestamp: bigint;
   metadata: string;
 }
 
@@ -47,6 +48,12 @@ const fake = vi.hoisted(() => {
   };
 
   const tx = {
+    // `lockStreamForUpdate` (issue #1932) takes the row lock through raw SQL
+    // before touching any amount. Tagged-template call, so the bound values
+    // arrive after the strings array.
+    $executeRaw: vi.fn(async (_strings: unknown, ...values: unknown[]) =>
+      streams.has(BigInt(values[0] as bigint)) ? 1 : 0,
+    ),
     stream: {
       findUniqueOrThrow: vi.fn(async (args: { where: { streamId: bigint } }) => {
         const row = streams.get(BigInt(args.where.streamId));
@@ -62,10 +69,19 @@ const fake = vi.hoisted(() => {
     },
     streamEvent: {
       findUnique: vi.fn(
-        async (args: { where: { transactionHash_eventType: { transactionHash: string; eventType: string } } }) => {
+        async (args: {
+          where: { transactionHash_eventType: { transactionHash: string; eventType: string } };
+          select?: Record<string, boolean>;
+        }) => {
           const { transactionHash, eventType } = args.where.transactionHash_eventType;
           const row = events.get(rowKey(transactionHash, eventType));
-          return row ? { id: row.id } : null;
+          if (!row) return null;
+          // Mirror Prisma's `select`: only the requested columns come back, so a
+          // handler that reads a field it never asked for fails here, not in prod.
+          const selected = args.select ?? { id: true };
+          return Object.fromEntries(
+            Object.keys(selected).map((field) => [field, row[field]]),
+          );
         },
       ),
       upsert: vi.fn(
@@ -248,6 +264,9 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
         depositedAmount: '2100',
         endTime: START + 210n,
       });
+      // The single-writer contract (#1932): the row lock is taken before the
+      // amount is read back, so a concurrent top-up cannot interleave.
+      expect(fake.tx.$executeRaw).toHaveBeenCalledTimes(1);
     });
 
     it('writes exactly one TOPPED_UP StreamEvent keyed on txHash + eventType', async () => {
@@ -499,7 +518,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
       await worker.processEvent(topUpEvent({ body: defaultBody }));
 
       expect(toppedUpRow()?.lastUpdateTime).toBe(1735689600);
-      expect(eventRows()[0]?.timestamp).toBe(1735689600);
+      expect(eventRows()[0]?.timestamp).toBe(1735689600n);
     });
 
     it('advances the stamp when a later top-up is processed in a later wall-clock second', async () => {
@@ -510,7 +529,7 @@ describe('SorobanEventWorker — stream_topped_up rate accounting (#1761)', () =
       await worker.processEvent(topUpEvent({ txHash: '0x2', body: { amount: [0, 1], newDeposited: [0, 1002] } }));
 
       expect(toppedUpRow()?.lastUpdateTime).toBe(1735689660);
-      expect(eventRows().map((row) => row.timestamp)).toEqual([1735689600, 1735689660]);
+      expect(eventRows().map((row) => row.timestamp)).toEqual([1735689600n, 1735689660n]);
     });
   });
 });
