@@ -41,7 +41,7 @@ The CORS policy is built in `src/config/cors.ts` when the app starts and depends
 
 - **`FRONTEND_URL` is required in production.** Set it to the frontend origin, e.g. `FRONTEND_URL=https://app.flowfi.xyz`. Comma-separate several origins (e.g. preview domains). Each entry is normalised to its origin, so `https://app.flowfi.xyz/` works too. If no valid origin is configured, or any entry is not an absolute `http(s)` URL (including `*`), the server throws at startup instead of running with an open policy.
 - **Set `NODE_ENV=production` in every deployed environment.** Otherwise the development policy applies (headers and methods unrestricted). The server logs a warning at startup when `NODE_ENV` is unset.
-- Browser requests from any other origin get `403 {"error": "CORS origin not allowed"}` and no `Access-Control-Allow-Origin` header. The rejected origin is logged at `warn` level.
+- Browser requests from any other origin get `403 {"error": {"code": "FORBIDDEN", "message": "CORS origin not allowed"}}` and no `Access-Control-Allow-Origin` header. The rejected origin is logged at `warn` level.
 - Requests without an `Origin` header (health checks, webhooks, curl, server-to-server calls) are not affected.
 
 ## Prisma Database
@@ -98,6 +98,24 @@ If a `prisma generate` / `prisma migrate` command misbehaves, check `prisma.conf
 ## /v1 API
 
 All REST API endpoints are prefixed with `/v1`. Refer to the API Documentation in the root `README.md` and the `docs/` folder for versioning and authentication details.
+
+### Error envelope
+
+Every non-2xx JSON response has the same body, produced only by `sendApiError` (`src/lib/api-error.ts`) and by `ApiError` → `errorHandler` for thrown errors:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "details": [{ "path": "sender", "message": "Sender address is required", "code": "too_small" }]
+  }
+}
+```
+
+- `code` is stable and machine-readable — branch on it. `message` is display text and may change.
+- `details` is present only when there is something to report and its type depends on `code` (an array of zod issues for `VALIDATION_ERROR`, an object of remediation hints elsewhere).
+- This covers 4xx and 5xx from every layer, including the rate limiter's `429 RATE_LIMITED`, the body-size `413 PAYLOAD_TOO_LARGE` and the CORS `403 FORBIDDEN`. The spec's `components.schemas.Error` in `swagger/flowfi.openapi.json` is the generated contract.
 
 ## Server-Sent Events (SSE)
 
