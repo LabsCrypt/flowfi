@@ -2,10 +2,19 @@
  * Stream Runway & Low-Balance Alert Engine (Issue #1190)
  * Monitors active streams and generates proactive notifications before funds run out
  */
+import type { Stream } from "../generated/prisma/index.js";
 import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
 import { claimableAmountService } from "../services/claimable.service.js";
 import { sseService } from "../services/sse.service.js";
+
+/**
+ * Streams read per round trip. Large enough that the query count is negligible
+ * for a normal hour, small enough that a page of records cannot dominate the
+ * worker's memory: the previous unbounded `findMany` loaded every active
+ * stream and then made one or two dedup queries per stream, serially (#1899).
+ */
+const STREAM_PAGE_SIZE = 500;
 
 const WARNING_THRESHOLD_HOURS = 48;
 const CRITICAL_THRESHOLD_HOURS = 24;
@@ -23,7 +32,7 @@ interface RunwayCalculation {
 /**
  * Calculate remaining runway for a stream in seconds
  */
-function calculateStreamRunway(stream: any, now: number): RunwayCalculation {
+function calculateStreamRunway(stream: Stream, now: number): RunwayCalculation {
   const result = claimableAmountService.getClaimableAmount(
     {
       streamId: stream.streamId,
@@ -65,25 +74,31 @@ function calculateStreamRunway(stream: any, now: number): RunwayCalculation {
 /**
  * Check if alert was recently sent to prevent spam
  */
-async function wasAlertRecentlySent(
-  streamId: bigint,
+/**
+ * Which of `streamIds` already received `alertType` inside the deduplication
+ * window.
+ *
+ * One query per page instead of one per stream: the alert history is keyed by
+ * `(streamId, alertType)` with a `sentAt` index, so a single range scan answers
+ * the whole page.
+ */
+async function recentlyAlertedStreams(
+  streamIds: bigint[],
   alertType: string,
-): Promise<boolean> {
-  const cutoff = new Date(
-    Date.now() - DEDUPLICATION_WINDOW_HOURS * 60 * 60 * 1000,
-  );
+  cutoff: Date,
+): Promise<Set<string>> {
+  if (streamIds.length === 0) return new Set();
 
-  const recent = await prisma.alertHistory.findFirst({
+  const rows = await prisma.alertHistory.findMany({
     where: {
-      streamId,
+      streamId: { in: streamIds },
       alertType,
-      sentAt: {
-        gte: cutoff,
-      },
+      sentAt: { gte: cutoff },
     },
+    select: { streamId: true },
   });
 
-  return !!recent;
+  return new Set(rows.map((row) => row.streamId.toString()));
 }
 
 /**
@@ -144,62 +159,84 @@ export async function runStreamRunwayCheck(): Promise<void> {
   logger.info("[RunwayWorker] Starting runway check...");
 
   try {
-    // Fetch all active, unpaused streams
-    const activeStreams = await prisma.stream.findMany({
-      where: {
-        isActive: true,
-        isPaused: false,
-      },
-    });
-
-    logger.info(
-      `[RunwayWorker] Checking ${activeStreams.length} active streams`,
-    );
-
     const now = Math.floor(Date.now() / 1000);
+    const cutoff = new Date(
+      Date.now() - DEDUPLICATION_WINDOW_HOURS * 60 * 60 * 1000,
+    );
     let warningsSent = 0;
     let criticalsSent = 0;
+    let checked = 0;
 
-    for (const stream of activeStreams) {
-      try {
-        const runway = calculateStreamRunway(stream, now);
+    // Keyset pagination: the stream table is ordered by its unique id, so a
+    // cursor is exact and does not drift as streams are created during the run.
+    // Every page costs one stream query and, at most, two alert-history queries
+    // — constant in the number of streams being checked.
+    let cursor: bigint | undefined;
 
-        // Check critical threshold (24 hours)
-        if (runway.remainingRunwaySeconds <= CRITICAL_THRESHOLD_HOURS * 3600) {
-          const alreadySent = await wasAlertRecentlySent(
-            stream.streamId,
-            "CRITICAL_24H",
-          );
+    for (;;) {
+      const page = await prisma.stream.findMany({
+        where: {
+          isActive: true,
+          isPaused: false,
+        },
+        orderBy: { streamId: "asc" },
+        take: STREAM_PAGE_SIZE,
+        ...(cursor === undefined
+          ? {}
+          : { cursor: { streamId: cursor }, skip: 1 }),
+      });
 
-          if (!alreadySent) {
-            await sendLowBalanceAlert(runway, "CRITICAL_24H");
-            await recordAlert(stream.streamId, "CRITICAL_24H");
-            criticalsSent++;
+      if (page.length === 0) break;
+      checked += page.length;
+
+      const critical = await recentlyAlertedStreams(
+        page.map((stream) => stream.streamId),
+        "CRITICAL_24H",
+        cutoff,
+      );
+      const warning = await recentlyAlertedStreams(
+        page.map((stream) => stream.streamId),
+        "WARNING_48H",
+        cutoff,
+      );
+
+      for (const stream of page) {
+        try {
+          const runway = calculateStreamRunway(stream, now);
+          const key = stream.streamId.toString();
+
+          // Check critical threshold (24 hours)
+          if (runway.remainingRunwaySeconds <= CRITICAL_THRESHOLD_HOURS * 3600) {
+            if (!critical.has(key)) {
+              await sendLowBalanceAlert(runway, "CRITICAL_24H");
+              await recordAlert(stream.streamId, "CRITICAL_24H");
+              criticalsSent++;
+            }
           }
-        }
-        // Check warning threshold (48 hours)
-        else if (
-          runway.remainingRunwaySeconds <=
-          WARNING_THRESHOLD_HOURS * 3600
-        ) {
-          const alreadySent = await wasAlertRecentlySent(
-            stream.streamId,
-            "WARNING_48H",
-          );
-
-          if (!alreadySent) {
-            await sendLowBalanceAlert(runway, "WARNING_48H");
-            await recordAlert(stream.streamId, "WARNING_48H");
-            warningsSent++;
+          // Check warning threshold (48 hours)
+          else if (
+            runway.remainingRunwaySeconds <=
+            WARNING_THRESHOLD_HOURS * 3600
+          ) {
+            if (!warning.has(key)) {
+              await sendLowBalanceAlert(runway, "WARNING_48H");
+              await recordAlert(stream.streamId, "WARNING_48H");
+              warningsSent++;
+            }
           }
+        } catch (error) {
+          logger.error(
+            `[RunwayWorker] Error processing stream ${stream.streamId}:`,
+            error,
+          );
         }
-      } catch (error) {
-        logger.error(
-          `[RunwayWorker] Error processing stream ${stream.streamId}:`,
-          error,
-        );
       }
+
+      if (page.length < STREAM_PAGE_SIZE) break;
+      cursor = page[page.length - 1]!.streamId;
     }
+
+    logger.info(`[RunwayWorker] Checked ${checked} active streams`);
 
     const duration = Date.now() - startTime;
     logger.info(
