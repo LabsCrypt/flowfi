@@ -7,6 +7,7 @@ import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
 import { claimableAmountService } from "../services/claimable.service.js";
 import { sseService } from "../services/sse.service.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 
 /**
  * Streams read per round trip. Large enough that the query count is negligible
@@ -145,6 +146,21 @@ async function sendLowBalanceAlert(
     "STREAM_LOW_BALANCE",
     alertData,
   );
+
+  // The low-balance alert is a stream event like any other, so it reaches
+  // webhook subscribers too (#1854). A failing endpoint is logged by the
+  // dispatcher and recorded as a delivery, never rethrown into the sweep.
+  try {
+    await dispatchWebhookEvent("stream.low_balance", alertData, [
+      runway.sender,
+      runway.recipient,
+    ]);
+  } catch (error) {
+    logger.error(
+      `[RunwayWorker] webhook dispatch failed for stream ${runway.streamId}:`,
+      error,
+    );
+  }
 
   logger.info(
     `[RunwayWorker] ${alertType} alert sent for stream ${runway.streamId}: ${hoursRemaining.toFixed(1)}h remaining`,
