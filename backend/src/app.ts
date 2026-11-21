@@ -92,10 +92,12 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
 // The larger parser MUST be registered first: Express runs middleware in
 // registration order, so a request that reaches the 100kb parser first can
 // never be rescued by the larger one further down the chain.
+//
+// Only routes that exist: `/v1/streams/batch`, `/v1/streams/import` and
+// `/v1/payroll/import` were listed here while no such route existed anywhere in
+// `src/`, so the allowlist granted a 1mb body to requests that could only 404
+// (#1900).
 const BULK_JSON_PATHS = [
-  "/v1/streams/batch",
-  "/v1/streams/import",
-  "/v1/payroll/import",
   // `/v1/streams/simulate` accepts `batch_withdraw`, whose `streamIds` array can
   // be large for payroll recipients.
   "/v1/streams/simulate",
