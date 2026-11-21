@@ -87,14 +87,6 @@ function simulationError(error: unknown): rpc.Api.SimulateTransactionErrorRespon
   } as unknown as rpc.Api.SimulateTransactionErrorResponse;
 }
 
-/**
- * `ApiError.details` is declared `unknown` (#1932 unified the envelope), so the
- * record these assertions read is narrowed here once instead of at each site.
- */
-function detailsOf(error: { details?: unknown }): Record<string, unknown> {
-  return (error.details ?? {}) as Record<string, unknown>;
-}
-
 /** Reject with a failed simulation of `error`, then hand back the ApiError. */
 async function simulateFailure(error: unknown): Promise<InstanceType<typeof ApiError>> {
   mocks.server.simulateTransaction.mockResolvedValue(simulationError(error));
@@ -104,6 +96,22 @@ async function simulateFailure(error: unknown): Promise<InstanceType<typeof ApiE
     return err as InstanceType<typeof ApiError>;
   }
   throw new Error('expected the simulation error to reject');
+}
+
+type SimulationErrorDetails = {
+  action?: string;
+  reason?: string;
+  hint?: string;
+  contractErrorCode?: number;
+};
+
+/**
+ * `details` is `unknown` on the shared ApiError; this suite knows the
+ * simulation funnel always attaches the fields below, so narrow once here
+ * instead of casting at every assertion.
+ */
+function detailsOf(err: { details?: unknown }): SimulationErrorDetails {
+  return (err.details ?? {}) as SimulationErrorDetails;
 }
 
 let service: typeof import('../src/services/sorobanService.js');
@@ -193,7 +201,7 @@ describe('toSimulationApiError — codes outside the table', () => {
       const err = service.toSimulationApiError(hostDiagnostic(code), 'top_up');
 
       expect(detailsOf(err).contractErrorCode).toBe(code);
-      expect('hint' in detailsOf(err)).toBe(false);
+      expect('hint' in (detailsOf(err))).toBe(false);
       // The raw diagnostic is the only signal the client has for an unknown
       // variant, so it must survive into the message.
       expect(err.message).toContain(hostDiagnostic(code));
@@ -205,7 +213,7 @@ describe('toSimulationApiError — codes outside the table', () => {
     const err = service.toSimulationApiError(hostDiagnostic(0), 'cancel');
 
     expect(detailsOf(err).contractErrorCode).toBe(0);
-    expect('hint' in detailsOf(err)).toBe(false);
+    expect('hint' in (detailsOf(err))).toBe(false);
   });
 
   it('omits contractErrorCode entirely for a diagnostic with no code', () => {

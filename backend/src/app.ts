@@ -31,11 +31,13 @@ const app = express();
 // or invalid, so the server never runs with an open CORS policy.
 const corsOptions = buildCorsOptions();
 
-// Apply global rate limiter first
-app.use(globalRateLimiter);
-
-// Request ID tracing
+// Request ID tracing runs first, before the rate limiter: a throttled 429 is
+// still a response the caller has to correlate, and the id has to exist before
+// anything downstream can echo it in a header or an error body.
 app.use(requestIdMiddleware);
+
+// Apply global rate limiter
+app.use(globalRateLimiter);
 
 // Request counting/latency for the Prometheus registry
 app.use(metricsMiddleware);

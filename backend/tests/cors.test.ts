@@ -78,7 +78,11 @@ describe('CORS policy', () => {
             expect(response.status).toBe(403);
             expect(response.headers['content-type']).toMatch(/application\/json/);
             expect(response.body).toEqual({
-                error: { code: 'FORBIDDEN', message: 'CORS origin not allowed' },
+                error: {
+                    code: 'FORBIDDEN',
+                    message: 'CORS origin not allowed',
+                    requestId: expect.any(String),
+                },
             });
             expect(response.headers['access-control-allow-origin']).toBeUndefined();
             expect(warn).toHaveBeenCalledWith(
