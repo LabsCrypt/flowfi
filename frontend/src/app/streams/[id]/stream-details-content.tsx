@@ -27,7 +27,13 @@ import {
 } from "@/lib/soroban";
 import { CancelConfirmModal } from "@/components/stream-creation/CancelConfirmModal";
 import type { BackendStreamEvent } from "@/lib/api-types";
-import { formatAmount, streamProgressPercent, validateAmountInput } from "@/utils/amount";
+import {
+  formatAmount,
+  getCachedTokenDecimals,
+  getDefaultTokenDecimals,
+  streamProgressPercent,
+  validateAmountInput,
+} from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
 import { LiquidStreamVisualizer } from "@/components/LiquidStreamVisualizer";
 import { TokenAvatar } from "@/components/TokenAvatar";
@@ -36,6 +42,12 @@ import { resolveTokenSymbol } from "@/lib/tokens";
 interface StreamDetail {
   id: string;
   streamId: number;
+  /**
+   * Decimals the token's own contract reports (#1884). Required rather than
+   * optional: a missing value used to fall back to a hardcoded 7, which is
+   * wrong by orders of magnitude for any token that does not use 7.
+   */
+  tokenDecimals: number;
   sender: string;
   recipient: string;
   tokenAddress: string;
@@ -135,7 +147,16 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
       if (!response.ok) throw new Error("Stream not found");
       const data = await response.json();
       if (reqId === streamReqId.current) {
-        setStream(data);
+        // Resolve the token's decimals once, here, so every amount on the page
+        // is formatted with the same value the contract uses (#1884). The
+        // cache is filled by the same lookup amount formatting and the
+        // dashboard read use; the per-symbol default is the last resort.
+        const decimals =
+          data?.tokenDecimals ??
+          data?.token_decimals ??
+          getCachedTokenDecimals(data?.tokenAddress ?? "") ??
+          getDefaultTokenDecimals(data?.tokenSymbol ?? data?.token_symbol ?? "");
+        setStream({ ...data, tokenDecimals: Number(decimals) });
       }
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
@@ -442,6 +463,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
     );
   }
 
+  const decimals = stream.tokenDecimals;
   const deposited = BigInt(stream.depositedAmount);
   const withdrawn = BigInt(stream.withdrawnAmount);
   const ratePerSecond = BigInt(stream.ratePerSecond);
@@ -510,11 +532,11 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             <div className="space-y-4">
               <InfoRow
                 label="Rate"
-                value={`${formatAmount(ratePerSecond, 7)} ${tokenSymbol}/sec`}
+                value={`${formatAmount(ratePerSecond, decimals)} ${tokenSymbol}/sec`}
               />
               <InfoRow
                 label="Rate/day"
-                value={`${formatAmount(ratePerSecond * 86400n, 7)} ${tokenSymbol}`}
+                value={`${formatAmount(ratePerSecond * 86400n, decimals)} ${tokenSymbol}`}
               />
               <InfoRow
                 label="Started"
@@ -544,11 +566,11 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             />
             <ReceiptRow
               label="Total streamed"
-              value={`${formatAmount(deposited, 7)} ${tokenSymbol} (${formatFiatAmount(convertToFiat(deposited, tokenPrice?.priceUSD ?? 0))})`}
+              value={`${formatAmount(deposited, decimals)} ${tokenSymbol} (${formatFiatAmount(convertToFiat(deposited, tokenPrice?.priceUSD ?? 0))})`}
             />
             <ReceiptRow
               label="Withdrawn"
-              value={`${formatAmount(withdrawn, 7)} ${tokenSymbol} (${formatFiatAmount(convertToFiat(withdrawn, tokenPrice?.priceUSD ?? 0))})`}
+              value={`${formatAmount(withdrawn, decimals)} ${tokenSymbol} (${formatFiatAmount(convertToFiat(withdrawn, tokenPrice?.priceUSD ?? 0))})`}
             />
             <ReceiptRow label="Token contract" value={stream.tokenAddress} />
           </dl>
@@ -559,15 +581,15 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <StatCard
             label="Total Deposited"
-            value={`${formatAmount(deposited, 7)} ${tokenSymbol}`}
+            value={`${formatAmount(deposited, decimals)} ${tokenSymbol}`}
           />
           <StatCard
             label="Withdrawn"
-            value={`${formatAmount(withdrawn, 7)} ${tokenSymbol}`}
+            value={`${formatAmount(withdrawn, decimals)} ${tokenSymbol}`}
           />
           <StatCard
             label="Claimable"
-            value={`${formatAmount(liveClaimable, 7)} ${tokenSymbol}`}
+            value={`${formatAmount(liveClaimable, decimals)} ${tokenSymbol}`}
             highlight
             live
             pulseKey={isTicking ? pulseTick : undefined}
@@ -586,7 +608,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             />
           </div>
           <p className="text-sm text-slate-400 mt-2">
-            {formatAmount(withdrawn, 7)} / {formatAmount(deposited, 7)} {tokenSymbol} withdrawn
+            {formatAmount(withdrawn, decimals)} / {formatAmount(deposited, decimals)} {tokenSymbol} withdrawn
           </p>
         </div>
 
@@ -696,7 +718,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             <>
               <div className="space-y-3">
                 {events.map((event) => (
-                  <EventRow key={event.id} event={event} tokenSymbol={tokenSymbol} />
+                  <EventRow key={event.id} event={event} tokenSymbol={tokenSymbol} tokenDecimals={decimals} />
                 ))}
               </div>
 
@@ -865,11 +887,13 @@ function StatCard({
 }
 
 function EventRow({
+  tokenDecimals,
   event,
   tokenSymbol,
 }: {
   event: BackendStreamEvent;
   tokenSymbol: string;
+  tokenDecimals: number;
 }) {
   const style = EVENT_STYLES[event.eventType] || {
     color: "#6b7280",
@@ -894,7 +918,7 @@ function EventRow({
       {event.amount && (
         <div className="text-right">
           <p className="font-mono">
-            {formatAmount(BigInt(event.amount), 7)} {tokenSymbol}
+            {formatAmount(BigInt(event.amount), tokenDecimals)} {tokenSymbol}
           </p>
         </div>
       )}
