@@ -108,13 +108,13 @@ Every non-2xx JSON response has the same body, produced only by `sendApiError` (
   "error": {
     "code": "VALIDATION_ERROR",
     "message": "Request validation failed",
-    "details": [{ "path": "sender", "message": "Sender address is required", "code": "too_small" }]
+    "details": [{ "path": ["sender"], "message": "Sender address is required", "code": "too_small" }]
   }
 }
 ```
 
 - `code` is stable and machine-readable — branch on it. `message` is display text and may change.
-- `details` is present only when there is something to report and its type depends on `code` (an array of zod issues for `VALIDATION_ERROR`, an object of remediation hints elsewhere).
+- `details` is present only when there is something to report and its shape depends on `code`: the failing zod issues for `VALIDATION_ERROR`, an object of remediation hints elsewhere.
 - This covers 4xx and 5xx from every layer, including the rate limiter's `429 RATE_LIMITED`, the body-size `413 PAYLOAD_TOO_LARGE` and the CORS `403 FORBIDDEN`. The spec's `components.schemas.Error` in `swagger/flowfi.openapi.json` is the generated contract.
 
 ## Server-Sent Events (SSE)
