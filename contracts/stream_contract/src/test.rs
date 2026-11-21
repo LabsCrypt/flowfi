@@ -6812,9 +6812,147 @@ fn test_coverage_create_allowance_stream_gates_on_allowance() {
 
     let stream = client.get_stream(&id).unwrap();
     assert!(stream.is_allowance_based);
-    assert_eq!(stream.deposited_amount, 0);
-    assert_eq!(stream.rate_per_second, 1);
+    // The approval is the stream's budget, spread over the duration (#1896).
+    assert_eq!(stream.deposited_amount, 10_000);
+    assert_eq!(stream.rate_per_second, 10);
     assert_eq!(stream.status, StreamStatus::Active);
+}
+
+// ─── Coverage: position settlement auth (#1895) ────────────────────────────
+
+#[test]
+fn test_coverage_update_position_on_complete_requires_a_party_to_the_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.mint_stream_position(&id, &sender, &recipient, &token, &1, &0, &1_000, &false);
+
+    // A stranger cannot write a settlement record for the stream.
+    let stranger = Address::generate(&env);
+    assert_eq!(
+        client.try_update_position_on_complete(
+            &stranger,
+            &id,
+            &PositionRole::Recipient,
+            &PositionSettlementStatus::Settled
+        ),
+        Err(Ok(StreamError::Unauthorized))
+    );
+
+    // Both parties can, for their own stream.
+    assert_eq!(
+        client.try_update_position_on_complete(
+            &sender,
+            &id,
+            &PositionRole::Recipient,
+            &PositionSettlementStatus::Settled
+        ),
+        Ok(Ok(()))
+    );
+    assert_eq!(
+        client.try_update_position_on_complete(
+            &recipient,
+            &id,
+            &PositionRole::Sender,
+            &PositionSettlementStatus::Cancelled
+        ),
+        Ok(Ok(()))
+    );
+}
+
+#[test]
+fn test_coverage_update_position_on_complete_requires_a_minted_position() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // No position was minted, so there is nothing to settle.
+    assert_eq!(
+        client.try_update_position_on_complete(
+            &sender,
+            &id,
+            &PositionRole::Recipient,
+            &PositionSettlementStatus::Settled
+        ),
+        Err(Ok(StreamError::StreamNotFound))
+    );
+}
+
+// ─── Coverage: allowance debit path (#1896) ────────────────────────────────
+
+#[test]
+fn test_coverage_allowance_stream_withdraws_through_the_approval() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+    mint(&env, &token, &sender, 1_000);
+
+    token_client.approve(
+        &sender,
+        &client.address,
+        &1_000,
+        &(env.ledger().sequence() + 10_000),
+    );
+    // 1_000 approved over 100s → 10 tokens per second.
+    let id = client.create_allowance_stream(&sender, &recipient, &token, &100);
+
+    // Nothing is escrowed: the tokens never leave the sender.
+    assert_eq!(token_client.balance(&sender), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+
+    advance(&env, 10);
+    assert_eq!(client.withdraw(&recipient, &id), 100);
+
+    // Paid out of the sender's balance through the approval.
+    assert_eq!(token_client.balance(&recipient), 100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&client.address), 0);
+    assert_eq!(token_client.allowance(&sender, &client.address), 900);
+}
+
+#[test]
+fn test_coverage_allowance_stream_cancel_refunds_nothing_it_never_held() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+    mint(&env, &token, &sender, 1_000);
+
+    token_client.approve(
+        &sender,
+        &client.address,
+        &1_000,
+        &(env.ledger().sequence() + 10_000),
+    );
+    let id = client.create_allowance_stream(&sender, &recipient, &token, &100);
+    advance(&env, 10);
+
+    client.cancel_stream(&sender, &id);
+
+    // The vested 100 is paid; the rest stays in the sender's balance, where it
+    // already was — no refund transfer, and no reverted "transfer of nothing".
+    assert_eq!(token_client.balance(&recipient), 100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&client.address), 0);
 }
 
 // ─── Coverage: dispute & escrow (#1319) ────────────────────────────────────
