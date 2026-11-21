@@ -19,6 +19,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      packages: ${{ steps.filter.outputs.packages }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,8 +31,20 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'scripts/**'
+              - '.github/workflows/**'
             frontend:
               - 'frontend/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/**'
+            packages:
+              - 'packages/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/**'
 
   docs-encoding:
     name: Docs encoding check
@@ -58,6 +71,38 @@ jobs:
             status=1
           fi
           exit $status
+
+  packages:
+    name: Packages CI
+    runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.packages == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: "npm"
+          cache-dependency-path: packages/*/package-lock.json
+
+      - name: Test @flowfi/sdk
+        working-directory: packages/flowfi-sdk
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      # @flowfi/react is not gated yet: tests/useClaimableBalance.test.tsx
+      # renders <ClaimableTicker stream={...} format={...} animated={...} />,
+      # while the component takes `baseBalance` and has no test id, so the
+      # suite fails against the current source rather than against a
+      # regression. Running it here would only report a known-broken baseline.
 
   frontend:
     name: Frontend CI

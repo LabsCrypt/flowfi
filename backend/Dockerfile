@@ -77,8 +77,10 @@ EXPOSE 3001
 
 # Native healthcheck so Docker Compose / Kubernetes can gate traffic on
 # readiness instead of only checking that the process is running.
+# node-based check: the runtime image only ships busybox wget, which rejects
+# GNU flags such as --no-verbose/--tries.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1
+  CMD node -e "require('http').get('http://127.0.0.1:3001/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
 
 # Exec node directly instead of `npm start` so the server runs as PID 1 and
 # receives SIGTERM/SIGINT for the graceful-shutdown handler in src/index.ts.

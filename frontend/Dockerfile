@@ -63,7 +63,9 @@ EXPOSE 3000
 
 # Native healthcheck against the app's own /health route handler so Compose /
 # Kubernetes can gate traffic on readiness, not just process liveness.
+# node-based check: the runtime image only ships busybox wget, which rejects
+# GNU flags such as --no-verbose/--tries.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || exit 1
+  CMD node -e "require('http').get('http://127.0.0.1:3000/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
 
 CMD ["node", "frontend/server.js"]
