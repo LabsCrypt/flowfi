@@ -25,9 +25,11 @@ The preferred and fastest way to report a vulnerability is **GitHub Security Adv
 2. Click **"Report a vulnerability"** (or use the direct link: [Report a vulnerability](https://github.com/LabsCrypt/flowfi/security/advisories/new)).
 3. Fill in the private advisory form with as much detail as possible (see "What to Include" below).
 
-This opens a private channel between you and the maintainers — nothing is visible publicly until we agree on a disclosure timeline.
+This opens a private channel between you and the maintainers — nothing is visible publicly until we agree on a disclosure timeline. If that button is missing from the page, private vulnerability reporting has not been switched on for this repository yet (it is still an unchecked box in [.github/SECURITY_SETUP_CHECKLIST.md](.github/SECURITY_SETUP_CHECKLIST.md)); use the fallback below until it is.
 
-If you cannot use GitHub Security Advisories for any reason, open a **non-sensitive** [GitHub Discussion](https://github.com/LabsCrypt/flowfi/discussions) asking the maintainers for a private contact channel. Do not include vulnerability details, and never post them in public issues, discussions, or chat groups (including Telegram).
+If you cannot use GitHub Security Advisories for any reason, open a **non-sensitive** [GitHub issue](https://github.com/LabsCrypt/flowfi/issues/new) titled `[security] private report channel requested` asking the maintainers for a private contact channel. Do not include vulnerability details, and never post them in public issues or chat groups (including Telegram). GitHub Discussions are disabled on this repository, so a discussion is not a fallback here.
+
+Conduct and community reports take a different path: see the Enforcement section of [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#enforcement). Keep vulnerability details out of the Telegram group, and keep conduct reports out of the advisory form.
 
 ### What to Include
 

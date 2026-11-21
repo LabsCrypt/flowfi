@@ -62,8 +62,36 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement on Telegram at
-**https://t.me/+DOylgFv1jyJlNzM0**.
+reported to the community leaders responsible for enforcement, who are the
+owners of the [LabsCrypt](https://github.com/LabsCrypt) organisation.
+
+### Report it on Telegram
+
+The day-to-day channel is the **LabsCrypt HQ** group:
+**https://t.me/+DOylgFv1jyJlNzM0**
+
+Join the group and open a direct message to an account shown as `owner` or
+`admin` in the member list. Do not post the report itself in the group: every
+member of that group would see it, which is the opposite of what a report
+needs. The direct message reaches only the leader you wrote to.
+
+### Report it on GitHub
+
+If Telegram is not available to you, or the report concerns one of that
+group's leaders, open an issue at
+**https://github.com/LabsCrypt/flowfi/issues/new** titled
+`[conduct] private report channel requested` and put no details of the
+incident in it. A maintainer replies with a way to continue out of public view.
+The issue tracker is public: it is a way to ask for a private channel, never a
+place to describe what happened.
+
+### Channels that do not exist
+
+Do not look for an e-mail address: this repository publishes none, and
+`flowfi.io` carries a null MX record (`0 .`), which is DNS for "this domain
+receives no mail"; `labscrypt.io` does not resolve at all. GitHub Discussions
+are disabled on this repository too. A report that does not go through one of
+the two paths above reaches nobody.
 
 All complaints will be reviewed and investigated promptly and fairly.
 
