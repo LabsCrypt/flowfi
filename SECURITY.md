@@ -27,7 +27,7 @@ The preferred and fastest way to report a vulnerability is **GitHub Security Adv
 
 This opens a private channel between you and the maintainers — nothing is visible publicly until we agree on a disclosure timeline.
 
-If you cannot use GitHub Security Advisories for any reason, you may instead reach out to the maintainers directly through the [community Telegram](https://t.me/+DOylgFv1jyJlNzM0) and request a private contact, or send a message via GitHub Discussions asking to be contacted privately (do not include vulnerability details in the public message).
+If you cannot use GitHub Security Advisories for any reason, open a **non-sensitive** [GitHub Discussion](https://github.com/LabsCrypt/flowfi/discussions) asking the maintainers for a private contact channel. Do not include vulnerability details, and never post them in public issues, discussions, or chat groups (including Telegram).
 
 ### What to Include
 
@@ -48,9 +48,9 @@ We are committed to responding to security reports promptly:
 - **Status Update**: Within 7 days with our assessment and planned timeline
 - **Resolution**: We aim to resolve critical vulnerabilities within 30 days
 
-These targets apply to every reporting channel — private GitHub Security Advisories and non-sensitive public reports filed with the [security issue template](.github/ISSUE_TEMPLATE/security.md), which restates the same timeline. If you update one, update the other so they do not drift.
+These targets apply to private GitHub Security Advisories, the single intake path for vulnerability reports. The [security hardening question template](.github/ISSUE_TEMPLATE/security.md) is for non-sensitive questions only and is not a vulnerability intake.
 
-If you have not heard from us within 48 hours, please reach out through our [community Telegram](https://t.me/+DOylgFv1jyJlNzM0).
+If you have not heard from us within 48 hours, add a comment on your private advisory. Do not escalate through public channels.
 
 ### Disclosure Policy
 

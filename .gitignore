@@ -17,3 +17,7 @@ issue*.md
 pr*.md
 ISSUE_*.md
 PR_*.md
+*issue*.md
+docs-issue-*.md
+*.diff.txt
+pr_*_diff.txt
