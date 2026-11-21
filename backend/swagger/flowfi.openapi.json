@@ -2557,7 +2557,7 @@
           "Streams"
         ],
         "summary": "Pause a payment stream",
-        "description": "Pause an active stream. Only the sender can pause their own stream.",
+        "description": "Validate a pause request. Only the sender can pause their own stream. The pause itself has to be submitted as a signed transaction by the sender's wallet, so this endpoint answers 501 and never reports a success whose transaction hash is a placeholder (#1220).",
         "parameters": [
           {
             "in": "path",
@@ -2575,18 +2575,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Stream paused successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PauseResumeResponse"
-                }
-              }
-            }
-          },
           "400": {
-            "description": "Invalid streamId, or on-chain pause simulation failed",
+            "description": "Invalid streamId",
             "content": {
               "application/json": {
                 "schema": {
@@ -2644,6 +2634,16 @@
                 }
               }
             }
+          },
+          "501": {
+            "description": "Not implemented - pausing requires a sender-signed transaction",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -2654,7 +2654,7 @@
           "Streams"
         ],
         "summary": "Resume a paused payment stream",
-        "description": "Resume a paused stream. Only the sender can resume their own stream.",
+        "description": "Validate a resume request. Only the sender can resume their own stream. The resume itself has to be submitted as a signed transaction by the sender's wallet, so this endpoint answers 501 and never reports a success whose transaction hash is a placeholder (#1220).",
         "parameters": [
           {
             "in": "path",
@@ -2672,18 +2672,8 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Stream resumed successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PauseResumeResponse"
-                }
-              }
-            }
-          },
           "400": {
-            "description": "Invalid streamId, or on-chain resume simulation failed",
+            "description": "Invalid streamId",
             "content": {
               "application/json": {
                 "schema": {
@@ -2734,6 +2724,16 @@
           },
           "500": {
             "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Not implemented - resuming requires a sender-signed transaction",
             "content": {
               "application/json": {
                 "schema": {

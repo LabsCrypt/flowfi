@@ -1503,7 +1503,7 @@ export interface paths {
         put?: never;
         /**
          * Pause a payment stream
-         * @description Pause an active stream. Only the sender can pause their own stream.
+         * @description Validate a pause request. Only the sender can pause their own stream. The pause itself has to be submitted as a signed transaction by the sender's wallet, so this endpoint answers 501 and never reports a success whose transaction hash is a placeholder (#1220).
          */
         post: {
             parameters: {
@@ -1517,16 +1517,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Stream paused successfully */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["PauseResumeResponse"];
-                    };
-                };
-                /** @description Invalid streamId, or on-chain pause simulation failed */
+                /** @description Invalid streamId */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -1580,6 +1571,15 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
+                /** @description Not implemented - pausing requires a sender-signed transaction */
+                501: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
             };
         };
         delete?: never;
@@ -1599,7 +1599,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a paused payment stream
-         * @description Resume a paused stream. Only the sender can resume their own stream.
+         * @description Validate a resume request. Only the sender can resume their own stream. The resume itself has to be submitted as a signed transaction by the sender's wallet, so this endpoint answers 501 and never reports a success whose transaction hash is a placeholder (#1220).
          */
         post: {
             parameters: {
@@ -1613,16 +1613,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Stream resumed successfully */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["PauseResumeResponse"];
-                    };
-                };
-                /** @description Invalid streamId, or on-chain resume simulation failed */
+                /** @description Invalid streamId */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -1669,6 +1660,15 @@ export interface paths {
                 };
                 /** @description Internal server error */
                 500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not implemented - resuming requires a sender-signed transaction */
+                501: {
                     headers: {
                         [name: string]: unknown;
                     };

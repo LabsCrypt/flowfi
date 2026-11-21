@@ -524,7 +524,11 @@ router.get('/:streamId/snapshot', getStreamSnapshot);
  *     tags:
  *       - Streams
  *     summary: Pause a payment stream
- *     description: Pause an active stream. Only the sender can pause their own stream.
+ *     description: >-
+ *       Validate a pause request. Only the sender can pause their own stream.
+ *       The pause itself has to be submitted as a signed transaction by the
+ *       sender's wallet, so this endpoint answers 501 and never reports a
+ *       success whose transaction hash is a placeholder (#1220).
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -535,14 +539,14 @@ router.get('/:streamId/snapshot', getStreamSnapshot);
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       200:
- *         description: Stream paused successfully
+ *       501:
+ *         description: Not implemented - pausing requires a sender-signed transaction
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/PauseResumeResponse'
+ *               $ref: '#/components/schemas/Error'
  *       400:
- *         description: Invalid streamId, or on-chain pause simulation failed
+ *         description: Invalid streamId
  *         content:
  *           application/json:
  *             schema:
@@ -587,7 +591,11 @@ router.post('/:streamId/pause', requireAuth, pauseStream);
  *     tags:
  *       - Streams
  *     summary: Resume a paused payment stream
- *     description: Resume a paused stream. Only the sender can resume their own stream.
+ *     description: >-
+ *       Validate a resume request. Only the sender can resume their own stream.
+ *       The resume itself has to be submitted as a signed transaction by the
+ *       sender's wallet, so this endpoint answers 501 and never reports a
+ *       success whose transaction hash is a placeholder (#1220).
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -598,14 +606,14 @@ router.post('/:streamId/pause', requireAuth, pauseStream);
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       200:
- *         description: Stream resumed successfully
+ *       501:
+ *         description: Not implemented - resuming requires a sender-signed transaction
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/PauseResumeResponse'
+ *               $ref: '#/components/schemas/Error'
  *       400:
- *         description: Invalid streamId, or on-chain resume simulation failed
+ *         description: Invalid streamId
  *         content:
  *           application/json:
  *             schema:

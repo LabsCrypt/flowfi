@@ -97,11 +97,14 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
       .post(`/v1/streams/${streamId}/pause`)
       .set('Authorization', `Bearer ${token}`);
 
-    expect(pauseRes.status).toBe(200);
+    expect(pauseRes.status).toBe(501);
 
     // Controller should NOT write to DB for PAUSED event
     expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
     expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    // And it must not reach the simulation either: the 501 says no transaction
+    // was submitted, so a simulated txHash would contradict the response.
+    expect(mockPauseStream).not.toHaveBeenCalled();
 
     // 2. Indexer flow
     const worker = new SorobanEventWorker();
