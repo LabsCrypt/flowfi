@@ -413,8 +413,11 @@ pub fn try_load_fee_config(env: &Env) -> Option<ProtocolFeeConfig> {
 
     let raw = raw?;
 
+    // `ProtocolFeeConfig` has exactly three fields (`fee_bps`, `splits`,
+    // `is_enabled`); matching on a different count silently rejected every
+    // stored config and dropped the contract back onto the legacy treasury.
     match record_field_count(env, &raw)? {
-        4 => ProtocolFeeConfig::try_from_val(env, &raw).ok(),
+        3 => ProtocolFeeConfig::try_from_val(env, &raw).ok(),
         _ => None,
     }
 }

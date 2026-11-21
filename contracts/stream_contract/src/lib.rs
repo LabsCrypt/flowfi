@@ -175,7 +175,12 @@ impl StreamContract {
         if fee_bps > MAX_ALLOWED_FEE_BPS {
             return Err(StreamError::FeeExceedsMaximum);
         }
-        let total_share: u32 = splits.iter().map(|s| s.share_bps).sum();
+        let mut total_share: u32 = 0;
+        for split in splits.iter() {
+            total_share = total_share
+                .checked_add(split.share_bps)
+                .ok_or(StreamError::InvalidFeeSplit)?;
+        }
         if total_share != 10_000 {
             return Err(StreamError::InvalidFeeSplit);
         }
@@ -2411,7 +2416,9 @@ impl StreamContract {
         let new_end_time = match stream.schedule {
             // A linear stream is guaranteed rate >= 1 by create_stream's
             // InvalidRate guard, so the division is safe here.
-            VestingSchedule::Linear => now + (remaining / stream.rate_per_second) as u64,
+            VestingSchedule::Linear => {
+                Self::project_end_time(now, remaining, stream.rate_per_second)?
+            }
             // Step and hybrid schedules are anchored to absolute timestamps;
             // ask the schedule-aware projection instead of dividing.
             _ => {
@@ -3044,6 +3051,7 @@ impl StreamContract {
                     / 10_000;
 
                 let mut recipients: FeeRecipients = Vec::new(env);
+                let mut distributed: i128 = 0;
 
                 // Distribute to each split recipient
                 for split in fee_cfg.splits.iter() {
@@ -3052,7 +3060,23 @@ impl StreamContract {
                         .ok_or(StreamError::ArithmeticOverflow)?
                         / 10_000;
                     if split_amount > 0 {
+                        distributed = distributed
+                            .checked_add(split_amount)
+                            .ok_or(StreamError::ArithmeticOverflow)?;
                         recipients.push_back((split.recipient.clone(), split_amount));
+                    }
+                }
+
+                // Integer division truncates every share, so the split payouts can
+                // sum to less than `total_fee` (a 1 000-stroop fee split three ways
+                // at 3 333/3 333/3 334 bps pays 999). The stream is nonetheless
+                // credited only the full-fee remainder, so any undistributed stroop
+                // would be stranded in the contract forever. Award it to the first
+                // recipient so the payouts always sum back to `total_fee` exactly.
+                if let Some((first_recipient, first_amount)) = recipients.get(0) {
+                    let remainder = total_fee.saturating_sub(distributed);
+                    if remainder > 0 {
+                        recipients.set(0, (first_recipient, first_amount + remainder));
                     }
                 }
 
