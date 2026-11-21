@@ -356,7 +356,7 @@ Replaying events is safe against duplicate event creation in the database:
   ```prisma
   @@unique([transactionHash, eventType])
   ```
-* **Worker Execution**: In `backend/src/workers/soroban-event-worker.ts`, event handlers execute `prisma.streamEvent.upsert(...)` matching on `{ transactionHash_eventType: { transactionHash, eventType } }`. If an event for that transaction and type has already been recorded, the insertion is skipped.
+* **Worker Execution**: In `backend/src/workers/soroban-event-worker.ts`, every event handler runs its duplicate check and its write as one `prisma.$transaction`: a `tx.streamEvent.findUnique(...)` on `{ transactionHash_eventType: { transactionHash, eventType } }` followed by `tx.streamEvent.upsert(...)` only when that lookup came back empty. If an event for that transaction and type has already been recorded, the insertion is skipped and a `Duplicate StreamEvent skipped` warning is logged.
 * **Operational Note / Caveat**: As documented in `backend/src/services/indexerService.ts:44-47`, deduplication applies to `StreamEvent` log rows. Stream entity state mutations (such as `Stream.withdrawnAmount` in `handleTokensWithdrawn`) are currently updated unconditionally upon reprocessing events; full state mutation idempotency is tracked under issue #808.
 
 ---

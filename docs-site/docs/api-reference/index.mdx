@@ -17,8 +17,9 @@ import OpenApiConsole from '@site/src/components/OpenApiConsole';
 - **Versioned base path** — everything lives under `/api/v1/`.
 - **Auth** — wallet JWTs (`Authorization: Bearer …`) for user-scoped routes;
   admin routes additionally require the admin role claim.
-- **Errors** — JSON `{ "success": false, "error": { "code", "message" } }`
+- **Errors** — JSON `{ "error": { "code", "message", "requestId"? } }`
   with meaningful HTTP status codes; validation failures are `400`.
+  `requestId` echoes the response's `X-Request-ID` when one was assigned.
 - **Amounts** — all amounts are integer **stroops** (`1 XLM = 10^7` stroops)
   as strings or numbers; never floats.
 

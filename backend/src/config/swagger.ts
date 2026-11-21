@@ -558,7 +558,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                 requestId: {
                   type: 'string',
                   description:
-                    'Correlation ID echoed from X-Request-ID; matches the response header',
+                    'Correlation ID echoed from the response X-Request-ID header; omitted when no ID was assigned',
                 },
               },
             },
