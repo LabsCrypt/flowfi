@@ -5,6 +5,29 @@ import { ApiError as TypeApiError, sendApiError } from '../types/api-error.js';
 import { ApiError as LibApiError, fromPrismaError, sanitizeDatabaseErrorMessage } from '../lib/api-error.js';
 
 /**
+ * The status this error will be answered with, before anything is sent.
+ *
+ * Needed because the log line and the response must agree on severity: logging
+ * every rejected request at `error` level buries the failures worth waking up
+ * for (#1901).
+ */
+function resolveErrorStatus(err: unknown): number {
+    if (err instanceof ZodError) return 400;
+
+    const prismaError = fromPrismaError(err);
+    if (prismaError) return prismaError.status;
+
+    if (err instanceof LibApiError) return err.status;
+    if (err instanceof TypeApiError) return err.statusCode ?? 500;
+
+    const candidate = err as { status?: unknown; statusCode?: unknown };
+    if (typeof candidate?.status === 'number') return candidate.status;
+    if (typeof candidate?.statusCode === 'number') return candidate.statusCode;
+
+    return 500;
+}
+
+/**
  * Global error handler middleware
  */
 export const errorHandler = (
@@ -13,7 +36,18 @@ export const errorHandler = (
     res: Response,
     next: NextFunction
 ) => {
-    logger.error('Unhandled error:', err);
+    const resolvedStatus = resolveErrorStatus(err);
+
+    if (resolvedStatus >= 500) {
+        // Only server-side failures are incidents. A rejected request is the
+        // API working: it is logged at warn, with the route, so it stays visible
+        // without drowning the error stream.
+        logger.error('Unhandled error:', err);
+    } else {
+        logger.warn(
+            `Request rejected with ${resolvedStatus}: ${req.method} ${req.originalUrl}`,
+        );
+    }
 
     if (res.headersSent) {
         return next(err);

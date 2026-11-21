@@ -31,7 +31,8 @@ describe('Error Middleware', () => {
   });
 
   it('should handle Prisma P2002 error with sanitized DUPLICATE_ENTRY code and without schema leak', () => {
-    const loggerSpy = vi.spyOn(logger, 'error');
+    const loggerSpy = vi.spyOn(logger, 'warn');
+    const errorSpy = vi.spyOn(logger, 'error');
     const error = new Prisma.PrismaClientKnownRequestError(
       'Unique constraint failed on the fields: (`email`)',
       { code: 'P2002', clientVersion: '1.0', meta: { target: ['email', 'User_email_key'] } },
@@ -53,8 +54,10 @@ describe('Error Middleware', () => {
     expect(jsonStr).not.toContain('email');
     expect(jsonStr).not.toContain('User_email_key');
 
-    // Verify full error context is preserved in logger
-    expect(loggerSpy).toHaveBeenCalledWith('Unhandled error:', error);
+    // A 409 is the API rejecting a duplicate, not an incident: it is logged at
+    // warn and must not reach the error stream (#1901).
+    expect(loggerSpy).toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('should handle Prisma P2025 error with sanitized RESOURCE_NOT_FOUND code', () => {

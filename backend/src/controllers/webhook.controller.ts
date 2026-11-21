@@ -4,6 +4,7 @@
 import type { Request, Response } from "express";
 import * as webhookService from "../services/webhook.service.js";
 import logger from "../logger.js";
+import { sanitizeDatabaseErrorMessage } from "../lib/api-error.js";
 
 export async function createWebhook(
   req: Request,
@@ -37,7 +38,12 @@ export async function createWebhook(
     logger.error("[Webhook Controller] Create error:", error);
     res
       .status(500)
-      .json({ error: error.message || "Failed to create webhook" });
+      .json({
+        // Client-facing text only: a Prisma message names models and columns
+        // (#1901). The real error went to the log on the line above.
+        error: sanitizeDatabaseErrorMessage(error?.message ?? "", 500)
+          || "Failed to create webhook",
+      });
   }
 }
 
@@ -99,7 +105,13 @@ export async function updateWebhook(req: Request, res: Response): Promise<void> 
     const subscription = await webhookService.updateWebhookSubscription(id, userAddress, req.body);
     res.json(subscription);
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Failed to update webhook" });
+    logger.warn(`[Webhook Controller] Failed to update webhook:`, error);
+    res.status(400).json({
+      // A 400 here is a rejected request, not an incident, but the text still
+      // must not carry database detail (#1901).
+      error: sanitizeDatabaseErrorMessage(error?.message ?? "", 400)
+        || "Failed to update webhook",
+    });
   }
 }
 
@@ -113,7 +125,13 @@ export async function listDeliveries(req: Request, res: Response): Promise<void>
     }
     res.json(await webhookService.listWebhookDeliveries(id, userAddress, Number(page), Number(limit)));
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Failed to list webhook deliveries" });
+    logger.warn(`[Webhook Controller] Failed to list webhook deliveries:`, error);
+    res.status(400).json({
+      // A 400 here is a rejected request, not an incident, but the text still
+      // must not carry database detail (#1901).
+      error: sanitizeDatabaseErrorMessage(error?.message ?? "", 400)
+        || "Failed to list webhook deliveries",
+    });
   }
 }
 
@@ -127,7 +145,13 @@ export async function regenerateSecret(req: Request, res: Response): Promise<voi
     }
     res.json({ secretKey: await webhookService.regenerateWebhookSecret(id, userAddress) });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Failed to regenerate webhook secret" });
+    logger.warn(`[Webhook Controller] Failed to regenerate webhook secret:`, error);
+    res.status(400).json({
+      // A 400 here is a rejected request, not an incident, but the text still
+      // must not carry database detail (#1901).
+      error: sanitizeDatabaseErrorMessage(error?.message ?? "", 400)
+        || "Failed to regenerate webhook secret",
+    });
   }
 }
 
@@ -152,6 +176,9 @@ export async function testWebhook(req: Request, res: Response): Promise<void> {
     logger.error("[Webhook Controller] Test error:", error);
     res
       .status(500)
-      .json({ error: error.message || "Failed to send test webhook" });
+      .json({
+        error: sanitizeDatabaseErrorMessage(error?.message ?? "", 500)
+          || "Failed to send test webhook",
+      });
   }
 }
