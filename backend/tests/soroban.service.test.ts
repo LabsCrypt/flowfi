@@ -335,7 +335,7 @@ describe('Soroban Service', () => {
   });
 
   describe('chain reads', () => {
-    it.skip('verifies mock server is called', async () => {
+    it('verifies mock server is called', async () => {
       const { getStreamFromChain } = await importService();
       mocks.server.simulateTransaction.mockResolvedValue(
         simulationSuccess(nativeToScVal(99n, { type: 'i128' }))
@@ -346,7 +346,7 @@ describe('Soroban Service', () => {
       expect(mocks.server.simulateTransaction).toHaveBeenCalled();
     });
 
-    it.skip('decodes getStreamFromChain response', async () => {
+    it('decodes getStreamFromChain response', async () => {
       const { getStreamFromChain } = await importService();
       const sender = Keypair.random().publicKey();
       const recipient = Keypair.random().publicKey();
@@ -367,8 +367,10 @@ describe('Soroban Service', () => {
         )
       );
 
+      // The id comes back as the bigint it was asked for, not a number: a
+      // stream id is u64 and JS numbers lose precision above 2^53.
       await expect(getStreamFromChain(7n)).resolves.toEqual({
-        streamId: 7,
+        streamId: 7n,
         sender,
         recipient,
         tokenAddress,
@@ -390,7 +392,7 @@ describe('Soroban Service', () => {
       await expect(getStreamFromChain(8n)).resolves.toBeNull();
     });
 
-    it.skip('decodes getClaimableFromChain response', async () => {
+    it('decodes getClaimableFromChain response', async () => {
       const { getClaimableFromChain } = await importService();
 
       mocks.server.simulateTransaction.mockResolvedValue(
