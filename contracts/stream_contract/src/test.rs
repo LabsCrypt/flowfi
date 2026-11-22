@@ -2638,6 +2638,11 @@ fn test_cancel_while_paused_keeps_inactive() {
     let stream = client.get_stream(&id).unwrap();
     assert!(!stream.is_active);
     assert_eq!(stream.status, StreamStatus::Cancelled);
+    // Cancel must also clear the pause markers, otherwise the stream is left
+    // looking "cancelled but still paused" — the state that let a later resume
+    // flip it back to Active.
+    assert!(!stream.paused);
+    assert!(stream.paused_at.is_none());
 }
 
 #[test]
@@ -2848,6 +2853,56 @@ fn test_resume_on_cancelled_stream_fails() {
     );
 
     // Stream state must be unchanged: still cancelled, not resumed.
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    assert!(!s.paused);
+}
+
+/// Regression for #787: a stream cancelled while paused must not be resumable,
+/// and the rejected call must not emit `stream_resumed` — indexers treat that
+/// event as the stream going live again.
+#[test]
+fn test_resume_after_cancel_is_rejected_and_emits_no_resumed_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.cancel_stream(&sender, &id);
+
+    let result = client.try_resume_stream(&sender, &id);
+    assert_stream_error!(
+        result,
+        StreamError::StreamNotActive,
+        "resume_stream must reject a stream cancelled while paused"
+    );
+
+    // `events()` reflects the last invocation, so this is the rejected resume's
+    // own (empty) event list: it must never carry stream_resumed for an
+    // inactive stream.
+    let events = env.events().all();
+    assert!(
+        events.iter().all(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                != Symbol::new(&env, "stream_resumed")
+        }),
+        "stream_resumed must not be emitted for an inactive stream"
+    );
+    assert!(
+        events.is_empty(),
+        "a rejected resume must not emit any event"
+    );
+
     let s = client.get_stream(&id).unwrap();
     assert!(!s.is_active);
     assert_eq!(s.status, StreamStatus::Cancelled);

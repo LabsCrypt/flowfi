@@ -2439,6 +2439,9 @@ impl StreamContract {
     /// # Errors
     /// - `StreamNotFound`  — no stream exists with `stream_id`.
     /// - `Unauthorized`    — caller is not the stream's sender.
+    /// - `StreamNotActive` — stream was cancelled or fully withdrawn while
+    ///   paused. Checked before `StreamNotPaused` so a cancelled stream can
+    ///   never be transitioned back to `Active`.
     /// - `StreamNotPaused` — stream is active but not currently paused.
     /// - `ArithmeticOverflow` — the projected end time overflows `u64`.
     pub fn resume_stream(env: Env, sender: Address, stream_id: u64) -> Result<u64, StreamError> {
