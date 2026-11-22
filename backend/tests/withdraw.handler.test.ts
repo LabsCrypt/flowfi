@@ -76,7 +76,7 @@ describe('Withdraw Handler', () => {
     expect(res.status).toHaveBeenCalledWith(403);
   });
 
-  it('should successfully withdraw', async () => {
+  it('simulates the withdrawal without touching any accounting', async () => {
     const mockStream = {
       streamId: 123,
       recipient: 'GRECIPIENT1',
@@ -86,26 +86,22 @@ describe('Withdraw Handler', () => {
     };
     (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
     (claimableAmountService.getClaimableAmount as any).mockReturnValue({ actionable: true, claimableAmount: '100' });
+    // The service resolves with a hash from the dry-run; issue #1847 is that it
+    // must never reach the client or the ledger book as if it were submitted.
     (sorobanWithdraw as any).mockResolvedValue({ txHash: 'tx123' });
-    // Mock the $transaction callback to return the refreshed stream
-    vi.mocked(prisma.$transaction as any).mockImplementation(async (fn: any) => {
-      mockTx.stream.findUnique.mockResolvedValue({ ...mockStream, withdrawnAmount: '100' });
-      return fn(mockTx);
-    });
 
     await withdrawHandler(req as AuthenticatedRequest, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, txHash: 'tx123' }));
-    expect(prisma.streamEvent.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: 'tx123',
-            eventType: 'WITHDRAWN',
-          },
-        },
-      })
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, simulated: true, amount: '100' }),
     );
+    const body = (res.json as any).mock.calls[0][0];
+    expect(body).not.toHaveProperty('txHash');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.stream.update).not.toHaveBeenCalled();
+    expect(prisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(prisma.streamEvent.create).not.toHaveBeenCalled();
   });
 });
