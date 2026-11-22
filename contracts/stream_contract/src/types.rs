@@ -104,6 +104,18 @@ pub enum PositionRole {
     Recipient,
 }
 
+/// Terminal state a stream position reaches when its stream ends (#1895).
+///
+/// The event that carries this used to carry a free-form `String`, which any
+/// address could set to any word on any stream. An indexer cannot branch on
+/// caller-supplied text, and a spoofed record is worse than no record.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PositionSettlementStatus {
+    Settled,
+    Cancelled,
+}
+
 /// Metadata for a stream position receipt (NFT/soulbound token).
 ///
 /// `owner` is the account holding the position for `role`; `token_address` is
