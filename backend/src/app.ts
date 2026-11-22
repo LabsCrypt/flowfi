@@ -11,6 +11,7 @@ import {
   type VersionedRequest,
 } from "./middleware/api-version.middleware.js";
 import { sandboxMiddleware } from "./middleware/sandbox.middleware.js";
+import { rejectWalletSecrets } from "./middleware/reject-wallet-secrets.middleware.js";
 import { globalRateLimiter, healthRateLimiter } from "./middleware/rate-limiter.middleware.js";
 import { metricsMiddleware } from "./middleware/metrics.middleware.js";
 import { requestIdMiddleware } from "./middleware/requestId.js";
@@ -109,6 +110,10 @@ app.use(express.json({ limit: "100kb" }));
 // BigInt-safe JSON responses (Issue #1493): Prisma bigint columns must be
 // emitted as decimal strings, never throw in res.json().
 app.use(bigIntSafeJsonMiddleware);
+
+// Refuse any request that carries a Stellar secret key (issue #1845). Mounted
+// with the JSON parser, before any route: signing happens in the wallet.
+app.use(rejectWalletSecrets);
 
 // Sandbox mode detection (before versioning)
 app.use(sandboxMiddleware);

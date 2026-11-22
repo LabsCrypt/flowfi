@@ -145,7 +145,7 @@ vi.mock('../../src/services/sorobanService.js', () => ({
   pauseStream: vi.fn(),
   resumeStream: vi.fn(),
   withdrawStream: vi.fn(),
-  cancelStream: vi.fn(),
+  submitSignedCancel: vi.fn(),
 }));
 
 // Preserve the module's real exports (issueChallenge, verifyChallenge,

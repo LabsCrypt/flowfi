@@ -32,15 +32,16 @@ import {
   explainSkipReason,
 } from "./_db.js";
 
-const { SENDER, RECIPIENT, TOKEN, API_CANCEL_TX } = vi.hoisted(() => ({
+const { SENDER, RECIPIENT, TOKEN, API_CANCEL_TX, SIGNED_XDR } = vi.hoisted(() => ({
   SENDER: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
   RECIPIENT: "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
   TOKEN: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   API_CANCEL_TX: "api_cancel_tx_hash",
+  SIGNED_XDR: "AAAAAGV1nQJ2Z3F0dXliMG5jaGtoMnJkM2s0dHV2OHk=",
 }));
 
 vi.mock("../../src/services/sorobanService.js", () => ({
-  cancelStream: vi.fn().mockResolvedValue(API_CANCEL_TX),
+  submitSignedCancel: vi.fn().mockResolvedValue(API_CANCEL_TX),
   getStreamFromChain: vi.fn(),
   getClaimableFromChain: vi.fn(),
   isStale: vi.fn().mockReturnValue(false),
@@ -155,7 +156,7 @@ async function cancelViaApi() {
     .post(`/v1/streams/${STREAM_ID}/cancel`)
     .set("Authorization", "Bearer dummy_token")
     .set("x-test-caller", SENDER)
-    .send({ senderSecret: "S_SECRET_123" });
+    .send({ signedXdr: SIGNED_XDR });
 }
 
 describe("API cancel → cancelled status filter (issue #1219)", () => {
