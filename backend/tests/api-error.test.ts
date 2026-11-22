@@ -15,22 +15,22 @@ import {
 
 describe('ApiError and Prisma error sanitization', () => {
   describe('ApiError class and factory functions', () => {
-    it('creates ApiError with default code and optional details', () => {
-      const err = new ApiError(400, 'Invalid request');
-      expect(err.status).toBe(400);
+    it('takes status, code and message positionally, with optional details', () => {
+      const err = new ApiError(400, 'INVALID_REQUEST', 'Invalid request');
       expect(err.statusCode).toBe(400);
-      expect(err.code).toBe('api_error');
+      expect(err.code).toBe('INVALID_REQUEST');
       expect(err.message).toBe('Invalid request');
       expect(err.details).toBeUndefined();
 
-      const errWithDetails = new ApiError(422, 'Unprocessable', 'UNPROCESSABLE', { foo: 'bar' });
+      const errWithDetails = new ApiError(422, 'UNPROCESSABLE', 'Unprocessable', { foo: 'bar' });
       expect(errWithDetails.details).toEqual({ foo: 'bar' });
       expect(errWithDetails.code).toBe('UNPROCESSABLE');
+      expect(errWithDetails.message).toBe('Unprocessable');
     });
 
     it('creates badRequest error', () => {
       const err = badRequest('Bad input', 'INVALID_PARAM');
-      expect(err.status).toBe(400);
+      expect(err.statusCode).toBe(400);
       expect(err.statusCode).toBe(400);
       expect(err.code).toBe('INVALID_PARAM');
       expect(err.message).toBe('Bad input');
@@ -38,28 +38,28 @@ describe('ApiError and Prisma error sanitization', () => {
 
     it('creates duplicateEntry error', () => {
       const err = duplicateEntry();
-      expect(err.status).toBe(409);
+      expect(err.statusCode).toBe(409);
       expect(err.code).toBe('DUPLICATE_ENTRY');
       expect(err.message).toBe('A record with this unique value already exists.');
     });
 
     it('creates resourceNotFound error', () => {
       const err = resourceNotFound();
-      expect(err.status).toBe(404);
+      expect(err.statusCode).toBe(404);
       expect(err.code).toBe('RESOURCE_NOT_FOUND');
       expect(err.message).toBe('The requested record was not found.');
     });
 
     it('creates foreignKeyViolation error', () => {
       const err = foreignKeyViolation();
-      expect(err.status).toBe(409);
+      expect(err.statusCode).toBe(409);
       expect(err.code).toBe('FOREIGN_KEY_VIOLATION');
       expect(err.message).toBe('Related resource constraint violation.');
     });
 
     it('creates internal error', () => {
       const err = internal();
-      expect(err.status).toBe(500);
+      expect(err.statusCode).toBe(500);
       expect(err.code).toBe('INTERNAL_SERVER_ERROR');
       expect(err.message).toBe('A technical error occurred. Please try again later.');
     });
@@ -123,7 +123,7 @@ describe('ApiError and Prisma error sanitization', () => {
 
       const apiErr = fromPrismaError(err);
       expect(apiErr).not.toBeNull();
-      expect(apiErr?.status).toBe(409);
+      expect(apiErr?.statusCode).toBe(409);
       expect(apiErr?.code).toBe('DUPLICATE_ENTRY');
       expect(apiErr?.message).toBe('A record with this unique value already exists.');
       expect(apiErr?.message).not.toContain('User');
@@ -142,7 +142,7 @@ describe('ApiError and Prisma error sanitization', () => {
       );
 
       const apiErr2025 = fromPrismaError(err2025);
-      expect(apiErr2025?.status).toBe(404);
+      expect(apiErr2025?.statusCode).toBe(404);
       expect(apiErr2025?.code).toBe('RESOURCE_NOT_FOUND');
       expect(apiErr2025?.message).toBe('The requested record was not found.');
       expect(apiErr2025?.message).not.toContain('Stream');
@@ -152,7 +152,7 @@ describe('ApiError and Prisma error sanitization', () => {
         { code: 'P2001', clientVersion: '1.0' },
       );
       const apiErr2001 = fromPrismaError(err2001);
-      expect(apiErr2001?.status).toBe(404);
+      expect(apiErr2001?.statusCode).toBe(404);
       expect(apiErr2001?.code).toBe('RESOURCE_NOT_FOUND');
     });
 
@@ -167,7 +167,7 @@ describe('ApiError and Prisma error sanitization', () => {
       );
 
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(409);
+      expect(apiErr?.statusCode).toBe(409);
       expect(apiErr?.code).toBe('FOREIGN_KEY_VIOLATION');
       expect(apiErr?.message).toBe('Related resource constraint violation.');
       expect(apiErr?.message).not.toContain('userId');
@@ -180,7 +180,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('VALUE_OUT_OF_RANGE');
     });
 
@@ -190,7 +190,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('CONSTRAINT_FAILED');
     });
 
@@ -200,7 +200,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('INVALID_INPUT');
     });
 
@@ -210,7 +210,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('MISSING_REQUIRED_FIELD');
     });
 
@@ -220,7 +220,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(409);
+      expect(apiErr?.statusCode).toBe(409);
       expect(apiErr?.code).toBe('RELATION_VIOLATION');
     });
 
@@ -230,7 +230,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('INVALID_QUERY');
     });
 
@@ -240,7 +240,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(500);
+      expect(apiErr?.statusCode).toBe(500);
       expect(apiErr?.code).toBe('INTERNAL_SERVER_ERROR');
       expect(apiErr?.message).toBe('A technical error occurred. Please try again later.');
     });
@@ -251,7 +251,7 @@ describe('ApiError and Prisma error sanitization', () => {
         clientVersion: '1.0',
       });
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('DATABASE_ERROR');
       expect(apiErr?.message).toBe('A database error occurred.');
     });
@@ -262,7 +262,7 @@ describe('ApiError and Prisma error sanitization', () => {
         { clientVersion: '1.0' },
       );
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(400);
+      expect(apiErr?.statusCode).toBe(400);
       expect(apiErr?.code).toBe('VALIDATION_ERROR');
       expect(apiErr?.message).toBe('Invalid request data.');
       expect(apiErr?.message).not.toContain('findMany');
@@ -275,7 +275,7 @@ describe('ApiError and Prisma error sanitization', () => {
         { clientVersion: '1.0' },
       );
       const apiErr = fromPrismaError(err);
-      expect(apiErr?.status).toBe(500);
+      expect(apiErr?.statusCode).toBe(500);
       expect(apiErr?.code).toBe('INTERNAL_SERVER_ERROR');
       expect(apiErr?.message).toBe('A technical error occurred. Please try again later.');
       expect(apiErr?.message).not.toContain('SELECT');

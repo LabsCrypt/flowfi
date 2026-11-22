@@ -82,12 +82,8 @@ migrate_and_seed() {
   export DATABASE_URL="${PREVIEW_DATABASE_URL:-${DATABASE_URL%/*}/${DB_NAME}}"
   cd "${ROOT}/backend"
   npx prisma generate --schema=prisma/schema.prisma
-  # Try `migrate deploy` first per spec; fall back to `db push` (Backend CI
-  # path) because the committed init migration fails on fresh databases.
-  if ! npx prisma migrate deploy --schema=prisma/schema.prisma; then
-    echo "migrate deploy failed — falling back to prisma db push for ephemeral preview."
-    npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
-  fi
+  # Documented bootstrap path (same as CONTRIBUTING.md and CI); no silent fallback.
+  npx prisma migrate deploy --schema=prisma/schema.prisma
   if npm run | grep -q "prisma:seed"; then
     npm run prisma:seed
   else
@@ -101,7 +97,15 @@ deploy_backend() {
   echo "==> Deploying backend preview ${APP_NAME} (${SHA})"
   if [[ -n "${FLY_API_TOKEN:-}" ]]; then
     if ! command -v flyctl > /dev/null 2>&1; then
-      curl -L https://fly.io/install.sh | sh
+      # Pinned release + checksum verification instead of piping a remote script to a shell.
+      FLYCTL_VERSION="0.5.14"
+      FLYCTL_SHA256="0ff9abeae51ef2efe5eec13e260c2090a533f8250b1bed7094acdbc7b8e5a9a5"
+      FLYCTL_TMP="$(mktemp -d)"
+      curl -fsSL -o "${FLYCTL_TMP}/flyctl.tar.gz" "https://github.com/superfly/flyctl/releases/download/v${FLYCTL_VERSION}/flyctl_${FLYCTL_VERSION}_Linux_x86_64.tar.gz"
+      echo "${FLYCTL_SHA256}  ${FLYCTL_TMP}/flyctl.tar.gz" | sha256sum -c -
+      mkdir -p "$HOME/.fly/bin"
+      tar -xzf "${FLYCTL_TMP}/flyctl.tar.gz" -C "$HOME/.fly/bin" flyctl
+      rm -rf "${FLYCTL_TMP}"
       export PATH="$HOME/.fly/bin:$PATH"
     fi
     echo "${FLY_API_TOKEN}" | flyctl auth docker || true

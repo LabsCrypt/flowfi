@@ -288,10 +288,14 @@ pub enum StreamError {
     DeadlineExpired = 47,
     /// The DEX swap returned less than the caller's minimum output amount.
     InsufficientOutput = 48,
+    /// No position metadata exists for the requested `(stream_id, role)` pair.
+    ///
+    /// Returned by: `get_position_metadata`.
+    PositionNotFound = 49,
     /// The arbiter cannot be changed while a dispute is open. A sender who could
     /// swap the arbiter mid-dispute could replace the decider with someone who
     /// rules in their favour.
-    ArbiterLocked = 49,
+    ArbiterLocked = 50,
 }
 
 /// Type alias mapping `ContractError` to `StreamError` for off-chain testing and SDK callers.
@@ -363,7 +367,8 @@ impl TryFrom<u32> for StreamError {
             46 => Ok(StreamError::InvalidFeeSplit),
             47 => Ok(StreamError::DeadlineExpired),
             48 => Ok(StreamError::InsufficientOutput),
-            49 => Ok(StreamError::ArbiterLocked),
+            49 => Ok(StreamError::PositionNotFound),
+            50 => Ok(StreamError::ArbiterLocked),
             _ => Err(()),
         }
     }
@@ -438,6 +443,7 @@ pub(crate) mod test_diagnostics {
                 StreamError::InvalidFeeSplit => "InvalidFeeSplit",
                 StreamError::DeadlineExpired => "DeadlineExpired",
                 StreamError::InsufficientOutput => "InsufficientOutput",
+                StreamError::PositionNotFound => "PositionNotFound",
                 StreamError::ArbiterLocked => "ArbiterLocked",
             }
         }
@@ -510,7 +516,7 @@ pub(crate) mod test_diagnostics {
         use std::string::ToString;
 
         /// (variant, identifier, documented numeric code) for every variant.
-        const ALL_VARIANTS: [(StreamError, &str, u32); 49] = [
+        const ALL_VARIANTS: [(StreamError, &str, u32); 50] = [
             (StreamError::InvalidAmount, "InvalidAmount", 1),
             (StreamError::StreamNotFound, "StreamNotFound", 2),
             (StreamError::Unauthorized, "Unauthorized", 3),
@@ -603,7 +609,8 @@ pub(crate) mod test_diagnostics {
             (StreamError::InvalidFeeSplit, "InvalidFeeSplit", 46),
             (StreamError::DeadlineExpired, "DeadlineExpired", 47),
             (StreamError::InsufficientOutput, "InsufficientOutput", 48),
-            (StreamError::ArbiterLocked, "ArbiterLocked", 49),
+            (StreamError::PositionNotFound, "PositionNotFound", 49),
+            (StreamError::ArbiterLocked, "ArbiterLocked", 50),
         ];
 
         #[test]

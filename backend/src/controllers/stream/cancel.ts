@@ -5,7 +5,7 @@ import * as sorobanService from '../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import * as streamRepository from '../../repositories/stream.repository.js';
 import { parseStreamId } from '../../lib/stream-id.js';
-import { sendApiError } from '../../types/api-error.js';
+import { sendApiError } from '../../lib/api-error.js';
 
 /**
  * @openapi

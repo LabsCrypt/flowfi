@@ -4,7 +4,7 @@ import { requireAuth } from '../../middleware/auth.js';
 import { complianceService } from '../../services/compliance.service.js';
 import { getComplianceConfig } from '../../config/compliance.config.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
-import { sendApiError } from '../../types/api-error.js';
+import { sendApiError } from '../../lib/api-error.js';
 import logger from '../../logger.js';
 
 const router = Router();

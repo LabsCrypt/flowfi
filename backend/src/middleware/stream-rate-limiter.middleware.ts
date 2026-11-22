@@ -1,4 +1,4 @@
-import { createRateLimiter } from './rate-limiter.middleware.js';
+import { createRateLimiter, rateLimitHandler } from './rate-limiter.middleware.js';
 import { type Request, type Response, type NextFunction } from 'express';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import logger from '../logger.js';
@@ -25,11 +25,7 @@ export function createStreamRateLimiter(
   return createRateLimiter({
     windowMs,
     max,
-    message: {
-      error: 'Too many stream creation requests - rate limit exceeded',
-      message: 'You have exceeded the rate limit for stream creation. Please try again later.',
-      status: 429,
-    },
+    message: 'You have exceeded the rate limit for stream creation. Please try again later.',
     /**
      * KeyGenerator: Use wallet address as the rate limit key
      * For authenticated requests, use the wallet's public key
@@ -56,7 +52,7 @@ export function createStreamRateLimiter(
         `Rate limit exceeded for wallet: ${authReq.user?.publicKey || 'unknown'}`,
         { endpoint: req.path, method: req.method }
       );
-      res.status(options.statusCode).json(options.message);
+      rateLimitHandler(req, res, next, options);
     },
   });
 }

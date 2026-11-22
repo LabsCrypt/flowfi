@@ -104,16 +104,23 @@ X-API-Migration-Path: /v1/streams
 
 ### Example Deprecated Response
 
+Sunset responses use the same envelope as every other error; see
+[DEPRECATION_POLICY.md](./DEPRECATION_POLICY.md) for the contract and for the fact
+that no endpoint emits it yet.
+
 ```json
 {
-  "error": "Deprecated endpoint",
-  "message": "This endpoint has been deprecated. Please use /v1/streams instead.",
-  "deprecated": true,
-  "migration": {
-    "old": "/streams",
-    "new": "/v1/streams"
-  },
-  "sunsetDate": "2024-12-31"
+  "error": {
+    "code": "ENDPOINT_DEPRECATED",
+    "message": "This endpoint has been deprecated. Please use /v1/streams instead.",
+    "details": {
+      "migration": {
+        "old": "/streams",
+        "new": "/v1/streams"
+      },
+      "sunsetDate": "2024-12-31"
+    }
+  }
 }
 ```
 
@@ -221,9 +228,13 @@ GET /v2/streams
 Response:
 ```json
 {
-  "error": "Unsupported API version",
-  "message": "API version 'v2' is not supported. Supported versions: v1",
-  "supportedVersions": ["v1"]
+  "error": {
+    "code": "UNSUPPORTED_API_VERSION",
+    "message": "API version 'v2' is not supported. Supported versions: v1",
+    "details": {
+      "supportedVersions": ["v1"]
+    }
+  }
 }
 ```
 

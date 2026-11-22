@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import { useModalDialog } from "@/hooks/useModalDialog";
 
 export interface ShortcutReference {
   /** Keys that trigger the action, rendered as `<kbd>` chips. */
@@ -30,15 +31,22 @@ export function KeyboardShortcutsModal({
 }) {
   if (!open) return null;
 
+  return <KeyboardShortcutsDialog onClose={onClose} />;
+}
+
+function KeyboardShortcutsDialog({ onClose }: { onClose: () => void }) {
+  const dialogRef = useModalDialog({ onClose });
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Keyboard shortcuts"
+      aria-labelledby="keyboard-shortcuts-title"
       className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         className="w-full max-w-md rounded-2xl border border-white/10 bg-slate-950 p-6 text-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
@@ -47,7 +55,9 @@ export function KeyboardShortcutsModal({
             <p className="text-xs uppercase tracking-widest text-accent">
               Cheatsheet
             </p>
-            <h2 className="mt-1 text-2xl font-semibold">Keyboard shortcuts</h2>
+            <h2 id="keyboard-shortcuts-title" className="mt-1 text-2xl font-semibold">
+              Keyboard shortcuts
+            </h2>
           </div>
           <button
             type="button"

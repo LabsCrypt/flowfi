@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Check, Copy, RefreshCw, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useModalDialog } from "@/hooks/useModalDialog";
 import { WEBHOOK_EVENT_TYPES, type WebhookSubscription } from "@/lib/api/webhooks";
 
 interface Props {
@@ -21,16 +22,25 @@ export function WebhookModal({ userAddress: _userAddress, subscription, secretKe
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const validUrl = /^https:\/\/[^\s]+$/i.test(targetUrl);
+  const dialogRef = useModalDialog({ onClose });
 
   const submit = async () => {
     if (!validUrl || events.length === 0) return;
     setSaving(true);
-    try { await onSave({ targetUrl, eventTypes: events }); } finally { setSaving(false); }
+    try {
+      await onSave({ targetUrl, eventTypes: events });
+    } catch {
+      // Surface the failure instead of leaving a rejected promise behind the
+      // still-open modal.
+      toast.error("Failed to save webhook");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-    <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-950 p-6 text-white shadow-2xl">
-      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{subscription ? "Edit webhook" : "Register webhook"}</h2><button onClick={onClose} aria-label="Close"><X /></button></div>
+  return <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" aria-labelledby="webhook-modal-title">
+    <div ref={dialogRef} className="w-full max-w-lg rounded-2xl border border-white/10 bg-slate-950 p-6 text-white shadow-2xl">
+      <div className="flex items-center justify-between"><h2 id="webhook-modal-title" className="text-xl font-semibold">{subscription ? "Edit webhook" : "Register webhook"}</h2><button onClick={onClose} aria-label="Close"><X /></button></div>
       <label className="mt-6 block text-sm font-medium" htmlFor="webhook-url">HTTPS endpoint</label>
       <input id="webhook-url" value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} placeholder="https://api.example.com/flowfi" className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 outline-none focus:border-emerald-400" />
       {targetUrl && !validUrl && <p className="mt-1 text-xs text-rose-400">Enter a valid HTTPS URL.</p>}

@@ -4,6 +4,7 @@
 import type { Request, Response } from "express";
 import * as webhookService from "../services/webhook.service.js";
 import logger from "../logger.js";
+import { sendApiError } from "../lib/api-error.js";
 
 export async function createWebhook(
   req: Request,
@@ -13,9 +14,12 @@ export async function createWebhook(
     const { userAddress, targetUrl, eventTypes } = req.body;
 
     if (!userAddress || !targetUrl || !Array.isArray(eventTypes)) {
-      res.status(400).json({
-        error: "Missing required fields: userAddress, targetUrl, eventTypes",
-      });
+      sendApiError(
+        res,
+        400,
+        "WEBHOOK_INVALID_REQUEST",
+        "Missing required fields: userAddress, targetUrl, eventTypes",
+      );
       return;
     }
 
@@ -35,9 +39,12 @@ export async function createWebhook(
     });
   } catch (error: any) {
     logger.error("[Webhook Controller] Create error:", error);
-    res
-      .status(500)
-      .json({ error: error.message || "Failed to create webhook" });
+    sendApiError(
+      res,
+      500,
+      "INTERNAL_SERVER_ERROR",
+      error.message || "Failed to create webhook",
+    );
   }
 }
 
@@ -46,7 +53,7 @@ export async function listWebhooks(req: Request, res: Response): Promise<void> {
     const { userAddress } = req.query;
 
     if (!userAddress || typeof userAddress !== "string") {
-      res.status(400).json({ error: "userAddress query parameter required" });
+      sendApiError(res, 400, "WEBHOOK_INVALID_REQUEST", "userAddress query parameter required");
       return;
     }
 
@@ -61,7 +68,7 @@ export async function listWebhooks(req: Request, res: Response): Promise<void> {
     res.json({ subscriptions: safeSubscriptions });
   } catch (error: any) {
     logger.error("[Webhook Controller] List error:", error);
-    res.status(500).json({ error: "Failed to list webhooks" });
+    sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "Failed to list webhooks");
   }
 }
 
@@ -75,7 +82,7 @@ export async function deleteWebhook(
     const { userAddress } = req.query;
 
     if (!id || !userAddress || typeof userAddress !== "string") {
-      res.status(400).json({ error: "Invalid id or userAddress required" });
+      sendApiError(res, 400, "WEBHOOK_INVALID_REQUEST", "Invalid id or userAddress required");
       return;
     }
 
@@ -84,7 +91,7 @@ export async function deleteWebhook(
     res.status(204).send();
   } catch (error: any) {
     logger.error("[Webhook Controller] Delete error:", error);
-    res.status(500).json({ error: "Failed to delete webhook" });
+    sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "Failed to delete webhook");
   }
 }
 
@@ -93,13 +100,18 @@ export async function updateWebhook(req: Request, res: Response): Promise<void> 
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const { userAddress } = req.query;
     if (!id || typeof userAddress !== "string") {
-      res.status(400).json({ error: "id and userAddress are required" });
+      sendApiError(res, 400, "WEBHOOK_INVALID_REQUEST", "id and userAddress are required");
       return;
     }
     const subscription = await webhookService.updateWebhookSubscription(id, userAddress, req.body);
     res.json(subscription);
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Failed to update webhook" });
+    sendApiError(
+      res,
+      400,
+      "WEBHOOK_INVALID_REQUEST",
+      error.message || "Failed to update webhook",
+    );
   }
 }
 
@@ -108,12 +120,17 @@ export async function listDeliveries(req: Request, res: Response): Promise<void>
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const { userAddress, page = "1", limit = "20" } = req.query;
     if (!id || typeof userAddress !== "string") {
-      res.status(400).json({ error: "id and userAddress are required" });
+      sendApiError(res, 400, "WEBHOOK_INVALID_REQUEST", "id and userAddress are required");
       return;
     }
     res.json(await webhookService.listWebhookDeliveries(id, userAddress, Number(page), Number(limit)));
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Failed to list webhook deliveries" });
+    sendApiError(
+      res,
+      400,
+      "WEBHOOK_INVALID_REQUEST",
+      error.message || "Failed to list webhook deliveries",
+    );
   }
 }
 
@@ -122,12 +139,17 @@ export async function regenerateSecret(req: Request, res: Response): Promise<voi
     const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const { userAddress } = req.body;
     if (!id || !userAddress) {
-      res.status(400).json({ error: "id and userAddress are required" });
+      sendApiError(res, 400, "WEBHOOK_INVALID_REQUEST", "id and userAddress are required");
       return;
     }
     res.json({ secretKey: await webhookService.regenerateWebhookSecret(id, userAddress) });
   } catch (error: any) {
-    res.status(400).json({ error: error.message || "Failed to regenerate webhook secret" });
+    sendApiError(
+      res,
+      400,
+      "WEBHOOK_INVALID_REQUEST",
+      error.message || "Failed to regenerate webhook secret",
+    );
   }
 }
 
@@ -138,7 +160,7 @@ export async function testWebhook(req: Request, res: Response): Promise<void> {
     const { userAddress } = req.body;
 
     if (!id || !userAddress) {
-      res.status(400).json({ error: "id and userAddress required" });
+      sendApiError(res, 400, "WEBHOOK_INVALID_REQUEST", "id and userAddress required");
       return;
     }
 
@@ -150,8 +172,11 @@ export async function testWebhook(req: Request, res: Response): Promise<void> {
     });
   } catch (error: any) {
     logger.error("[Webhook Controller] Test error:", error);
-    res
-      .status(500)
-      .json({ error: error.message || "Failed to send test webhook" });
+    sendApiError(
+      res,
+      500,
+      "INTERNAL_SERVER_ERROR",
+      error.message || "Failed to send test webhook",
+    );
   }
 }

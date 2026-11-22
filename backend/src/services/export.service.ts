@@ -5,6 +5,7 @@
 import type { Response } from "express";
 import { prisma } from "../lib/prisma.js";
 import logger from "../logger.js";
+import { sendApiError } from "../lib/api-error.js";
 
 export interface ExportOptions {
   format: "csv" | "json";
@@ -257,7 +258,7 @@ export async function streamTransactionCSV(
   } catch (error) {
     logger.error("[Export] CSV streaming error:", error);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Export failed" });
+      sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "Export failed");
     } else {
       if (typeof res.destroy === "function") {
         res.destroy(error as Error);
@@ -373,7 +374,7 @@ export async function streamTransactionJSON(
   } catch (error) {
     logger.error("[Export] JSON streaming error:", error);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Export failed" });
+      sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "Export failed");
     } else {
       if (typeof res.destroy === "function") {
         res.destroy(error as Error);

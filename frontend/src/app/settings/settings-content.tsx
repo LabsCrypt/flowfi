@@ -37,7 +37,9 @@ const THEME_LABEL_KEYS = {
 } as const;
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "1.0.0";
-const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAMING_CONTRACT || "CDV4K...7ZQY";
+// Same variable `stellar-config.ts` reads. An unset value is shown as "Not
+// configured" rather than a truncated placeholder that looks like an address.
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID?.trim() ?? "";
 const INDEXER_URL = `${getApiBaseUrl()}/v1`;
 
 const STORAGE_KEYS = {
@@ -510,7 +512,10 @@ export default function SettingsContent() {
               <div className="flex items-center justify-between py-2 border-b border-white/5 dark:border-black/5">
                 <span className="text-sm text-white/60 dark:text-black/60">Contract Address</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-mono text-white dark:text-black">{shortenPublicKey(CONTRACT_ADDRESS)}</span>
+                  <span className="text-sm font-mono text-white dark:text-black">
+                    {CONTRACT_ADDRESS ? shortenPublicKey(CONTRACT_ADDRESS) : "Not configured"}
+                  </span>
+                  {CONTRACT_ADDRESS && (
                   <button
                     onClick={() =>
                       copyToClipboard(CONTRACT_ADDRESS, {
@@ -522,6 +527,7 @@ export default function SettingsContent() {
                   >
                     <Copy size={14} />
                   </button>
+                  )}
                 </div>
               </div>
 

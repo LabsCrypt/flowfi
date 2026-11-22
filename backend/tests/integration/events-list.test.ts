@@ -94,7 +94,7 @@ describe('GET /v1/events', () => {
       .get('/v1/events')
       .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/address/i);
+    expect(res.body.error.message).toMatch(/address/i);
     expect(mocks.prisma.streamEvent.findMany).not.toHaveBeenCalled();
   });
 
@@ -111,7 +111,7 @@ describe('GET /v1/events', () => {
       .get(`/v1/events?address=${ADDR}`)
       .set('Authorization', `Bearer ${otherToken}`);
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe('Forbidden');
+    expect(res.body.error.code).toBe('FORBIDDEN');
   });
 
   it('returns the paged event list for the wallet', async () => {
