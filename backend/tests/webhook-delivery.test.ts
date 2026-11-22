@@ -12,6 +12,13 @@ vi.mock("../src/logger.js", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// Delivery re-validates its target through the real guard (issue #1849), which
+// resolves the hostname. The resolver is stubbed to a public address so the
+// suite exercises the guard without live DNS.
+vi.mock("node:dns/promises", () => ({
+  lookup: async () => [{ address: "93.184.216.34" }],
+}));
+
 import {
   deliverWebhook,
   verifyWebhookSignature,

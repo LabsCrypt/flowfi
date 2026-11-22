@@ -2,6 +2,7 @@
  * Webhook subscription management routes (Issue #1189)
  */
 import { Router } from "express";
+import { requireAuth } from "../../middleware/auth.js";
 import * as webhookController from "../../controllers/webhook.controller.js";
 
 const router = Router();
@@ -13,6 +14,8 @@ const router = Router();
  *     summary: Register a new webhook subscription
  *     description: Creates a webhook subscription. The returned `secretKey` is only shown once.
  *     tags: [Webhooks]
+ *     security:
+ *       - bearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -20,13 +23,9 @@ const router = Router();
  *           schema:
  *             type: object
  *             required:
- *               - userAddress
  *               - targetUrl
  *               - eventTypes
  *             properties:
- *               userAddress:
- *                 type: string
- *                 description: Stellar public key
  *               targetUrl:
  *                 type: string
  *                 format: uri
@@ -56,6 +55,12 @@ const router = Router();
  *           application/json:
  *             schema:
  *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
  *       500:
  *         description: Internal server error
  *         content:
@@ -63,20 +68,17 @@ const router = Router();
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post("/", webhookController.createWebhook);
+router.post("/", requireAuth, webhookController.createWebhook);
 
 /**
  * @openapi
  * /v1/webhooks:
  *   get:
- *     summary: List all webhooks for authenticated user
+ *     summary: List all webhooks for the authenticated wallet
+ *     description: Subscriptions are scoped to the authenticated wallet; the caller supplies no address.
  *     tags: [Webhooks]
- *     parameters:
- *       - in: query
- *         name: userAddress
- *         required: true
- *         schema:
- *           type: string
+ *     security:
+ *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: List of webhook subscriptions
@@ -89,8 +91,8 @@ router.post("/", webhookController.createWebhook);
  *                   type: array
  *                   items:
  *                     $ref: '#/components/schemas/WebhookSubscription'
- *       400:
- *         description: Missing userAddress
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication
  *         content:
  *           application/json:
  *             schema:
@@ -102,30 +104,34 @@ router.post("/", webhookController.createWebhook);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.get("/", webhookController.listWebhooks);
+router.get("/", requireAuth, webhookController.listWebhooks);
 
 /**
  * @openapi
  * /v1/webhooks/{id}:
  *   delete:
  *     summary: Delete a webhook subscription
+ *     description: Only the subscription owner can delete it; a foreign id is reported as not found.
  *     tags: [Webhooks]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: string
- *       - in: query
- *         name: userAddress
- *         required: true
- *         schema:
- *           type: string
  *     responses:
  *       204:
  *         description: Webhook deleted successfully
- *       400:
- *         description: Invalid id or missing userAddress
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Webhook subscription not found
  *         content:
  *           application/json:
  *             schema:
@@ -137,11 +143,11 @@ router.get("/", webhookController.listWebhooks);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.delete("/:id", webhookController.deleteWebhook);
+router.delete("/:id", requireAuth, webhookController.deleteWebhook);
 
-router.patch("/:id", webhookController.updateWebhook);
-router.post("/:id/secret", webhookController.regenerateSecret);
-router.get("/:id/deliveries", webhookController.listDeliveries);
+router.patch("/:id", requireAuth, webhookController.updateWebhook);
+router.post("/:id/secret", requireAuth, webhookController.regenerateSecret);
+router.get("/:id/deliveries", requireAuth, webhookController.listDeliveries);
 
 /**
  * @openapi
@@ -149,23 +155,14 @@ router.get("/:id/deliveries", webhookController.listDeliveries);
  *   post:
  *     summary: Send a test ping to a webhook
  *     tags: [Webhooks]
+ *     security:
+ *       - bearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - userAddress
- *             properties:
- *               userAddress:
- *                 type: string
  *     responses:
  *       200:
  *         description: Test webhook sent
@@ -180,8 +177,14 @@ router.get("/:id/deliveries", webhookController.listDeliveries);
  *                 result:
  *                   type: object
  *                   additionalProperties: true
- *       400:
- *         description: Missing id or userAddress
+ *       401:
+ *         description: Unauthorized - missing or invalid authentication
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       404:
+ *         description: Webhook subscription not found
  *         content:
  *           application/json:
  *             schema:
@@ -193,6 +196,6 @@ router.get("/:id/deliveries", webhookController.listDeliveries);
  *             schema:
  *               $ref: '#/components/schemas/Error'
  */
-router.post("/:id/test", webhookController.testWebhook);
+router.post("/:id/test", requireAuth, webhookController.testWebhook);
 
 export default router;
