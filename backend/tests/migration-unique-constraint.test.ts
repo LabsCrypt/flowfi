@@ -304,12 +304,8 @@ describe('Issue #1765 - Migration Unique Constraint Recovery (StreamEvent)', () 
         const mockExecuteRaw = vi.fn().mockRejectedValue(new Error('connection to server at "postgres" failed: Connection refused'));
 
         const runMigrationWithClient = async () => {
-          try {
-            await mockExecuteRaw('ALTER TABLE "StreamEvent" ADD CONSTRAINT ...');
-            dbState.constraints.add('StreamEvent_transactionHash_eventType_key');
-          } catch (err) {
-            throw err;
-          }
+          await mockExecuteRaw('ALTER TABLE "StreamEvent" ADD CONSTRAINT ...');
+          dbState.constraints.add('StreamEvent_transactionHash_eventType_key');
         };
 
         await expect(runMigrationWithClient()).rejects.toThrow('Connection refused');

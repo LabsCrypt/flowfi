@@ -85,7 +85,7 @@ export async function listWebhooks(req: Request, res: Response): Promise<void> {
 
     // Don't expose secret keys
     const safeSubscriptions = subscriptions.map(
-      ({ secretKey, ...rest }) => rest,
+      ({ secretKey: _secretKey, ...rest }) => rest,
     );
 
     res.json({ subscriptions: safeSubscriptions });

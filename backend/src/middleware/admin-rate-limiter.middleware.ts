@@ -23,7 +23,7 @@ export const adminRateLimiter = rateLimit({
         : req.ip;
     return ipKeyGenerator(ip ?? 'unknown');
   },
-  skip: (req: Request): boolean => {
+  skip: (_req: Request): boolean => {
     // Skip rate limiting in test environment
     return process.env.NODE_ENV === 'test';
   },
