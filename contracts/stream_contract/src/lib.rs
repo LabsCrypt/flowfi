@@ -69,9 +69,10 @@ use events::{
 };
 use storage::{
     bump_position_ttl, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
-    load_stream, next_stream_id, remove_stream, save_config, save_contract_version,
-    save_fee_config, save_position_metadata, save_recorded_wasm_hash, save_stream, try_load_config,
-    try_load_fee_config, try_load_position_metadata, try_load_positions_by_owner, try_load_stream,
+    load_stream, load_stream_counter, next_stream_id, remove_stream, save_config,
+    save_contract_version, save_fee_config, save_position_metadata, save_recorded_wasm_hash,
+    save_stream, try_load_config, try_load_fee_config, try_load_position_metadata,
+    try_load_positions_by_owner, try_load_stream,
 };
 use types::{
     BatchStreamInput, ConditionalMilestone, DataKey, DexRouter, DisputeStatus, FeeRecipient,
@@ -2721,6 +2722,18 @@ impl StreamContract {
     /// Returns the stream record for `stream_id`, or `None` if it does not exist.
     pub fn get_stream(env: Env, stream_id: u64) -> Option<Stream> {
         try_load_stream(&env, stream_id)
+    }
+
+    /// Returns the number of streams ever created.
+    ///
+    /// This is the monotonic ID counter [`Self::create_stream`] increments, not
+    /// a count of streams still in existence: a cancelled or completed stream
+    /// still counts, and so does one whose storage entry `close_stream` has
+    /// pruned. Because IDs start at 1 and only ever increase, the value is also
+    /// the highest ID ever issued, which is what an indexer needs to paginate
+    /// without an enumeration call. `0` on a freshly deployed contract.
+    pub fn stream_count(env: Env) -> u64 {
+        load_stream_counter(&env)
     }
 
     /// Returns `true` if the stream exists and has status `Completed`.

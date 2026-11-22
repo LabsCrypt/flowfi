@@ -2480,6 +2480,45 @@ fn test_is_stream_completed_missing_id_returns_false() {
 }
 
 #[test]
+fn test_stream_count_is_zero_before_any_stream() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // `initialize` and `create_stream` have both been skipped, so
+    // `DataKey::StreamCounter` has never been written; the view must report the
+    // absent key as `0` rather than panic.
+    assert_eq!(client.stream_count(), 0);
+}
+
+#[test]
+fn test_stream_count_increments_by_one_per_create_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 3_000);
+
+    let client = create_contract(&env);
+
+    for expected in 1..=3u64 {
+        let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+        assert_eq!(id, expected, "IDs are issued from 1 in order");
+        assert_eq!(
+            client.stream_count(),
+            expected,
+            "stream_count must track the ID counter, not a live-stream count"
+        );
+    }
+
+    // Settling a stream removes it from the active set but not from the
+    // counter: this is the highest ID ever issued, so an indexer paginating by
+    // it does not skip the records that were cancelled.
+    client.cancel_stream(&sender, &1);
+    assert_eq!(client.stream_count(), 3);
+}
+
+#[test]
 fn test_completed_event_emitted_on_final_withdrawal() {
     let env = Env::default();
     env.mock_all_auths();
