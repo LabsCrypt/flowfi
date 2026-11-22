@@ -522,23 +522,32 @@
         "type": "object",
         "required": [
           "success",
+          "simulated",
           "streamId",
-          "txHash"
+          "isPaused"
         ],
         "properties": {
           "success": {
             "type": "boolean",
             "example": true
           },
+          "simulated": {
+            "type": "boolean",
+            "description": "True: the call was dry-run only. Nothing was submitted and nothing was written."
+          },
           "streamId": {
             "type": "integer"
           },
-          "txHash": {
-            "type": "string",
-            "description": "Stellar transaction hash of the pause/resume simulation"
+          "isPaused": {
+            "type": "boolean",
+            "description": "Current pause flag, unchanged by a simulation"
           },
           "stream": {
             "$ref": "#/components/schemas/Stream"
+          },
+          "message": {
+            "type": "string",
+            "description": "How to complete the action by signing in the wallet"
           }
         }
       },
@@ -567,8 +576,8 @@
         "type": "object",
         "required": [
           "success",
+          "simulated",
           "streamId",
-          "txHash",
           "amount"
         ],
         "properties": {
@@ -576,19 +585,20 @@
             "type": "boolean",
             "example": true
           },
+          "simulated": {
+            "type": "boolean",
+            "description": "True: the withdrawal was dry-run only. `withdrawnAmount` and StreamEvent rows are written by the indexer from the confirmed on-chain event."
+          },
           "streamId": {
             "type": "integer"
           },
-          "txHash": {
-            "type": "string",
-            "description": "Stellar transaction hash of the withdrawal"
-          },
           "amount": {
             "type": "string",
-            "description": "Amount withdrawn (i128 as string)"
+            "description": "Amount that would be withdrawn right now (i128 as string)"
           },
-          "stream": {
-            "$ref": "#/components/schemas/Stream"
+          "message": {
+            "type": "string",
+            "description": "How to complete the withdrawal by signing in the wallet"
           }
         }
       },
@@ -1065,6 +1075,11 @@
         "tags": [
           "Webhooks"
         ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1072,15 +1087,10 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "userAddress",
                   "targetUrl",
                   "eventTypes"
                 ],
                 "properties": {
-                  "userAddress": {
-                    "type": "string",
-                    "description": "Stellar public key"
-                  },
                   "targetUrl": {
                     "type": "string",
                     "format": "uri"
@@ -1139,6 +1149,16 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -1152,18 +1172,14 @@
         }
       },
       "get": {
-        "summary": "List all webhooks for authenticated user",
+        "summary": "List all webhooks for the authenticated wallet",
+        "description": "Subscriptions are scoped to the authenticated wallet; the caller supplies no address.",
         "tags": [
           "Webhooks"
         ],
-        "parameters": [
+        "security": [
           {
-            "in": "query",
-            "name": "userAddress",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
+            "bearerAuth": []
           }
         ],
         "responses": {
@@ -1185,8 +1201,8 @@
               }
             }
           },
-          "400": {
-            "description": "Missing userAddress",
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
             "content": {
               "application/json": {
                 "schema": {
@@ -1211,21 +1227,19 @@
     "/v1/webhooks/{id}": {
       "delete": {
         "summary": "Delete a webhook subscription",
+        "description": "Only the subscription owner can delete it; a foreign id is reported as not found.",
         "tags": [
           "Webhooks"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
         ],
         "parameters": [
           {
             "in": "path",
             "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "userAddress",
             "required": true,
             "schema": {
               "type": "string"
@@ -1236,8 +1250,18 @@
           "204": {
             "description": "Webhook deleted successfully"
           },
-          "400": {
-            "description": "Invalid id or missing userAddress",
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook subscription not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1265,6 +1289,11 @@
         "tags": [
           "Webhooks"
         ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "in": "path",
@@ -1275,24 +1304,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "userAddress"
-                ],
-                "properties": {
-                  "userAddress": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Test webhook sent",
@@ -1314,8 +1325,18 @@
               }
             }
           },
-          "400": {
-            "description": "Missing id or userAddress",
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook subscription not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2556,8 +2577,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Pause a payment stream",
-        "description": "Pause an active stream. Only the sender can pause their own stream.",
+        "summary": "Dry-run a stream pause",
+        "description": "Verifies that the sender could pause the stream right now. Nothing is\nsubmitted and `isPaused` is not changed: `pause_stream` is authorized by\nthe sender's wallet, so the client signs the transaction returned by\n`POST /v1/streams/simulate` and the indexer applies the state from the\nconfirmed event (issue #1847).\n",
         "parameters": [
           {
             "in": "path",
@@ -2576,7 +2597,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Stream paused successfully",
+            "description": "Pause verified as possible (simulated - state unchanged)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2653,8 +2674,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Resume a paused payment stream",
-        "description": "Resume a paused stream. Only the sender can resume their own stream.",
+        "summary": "Dry-run resuming a paused stream",
+        "description": "Verifies that the sender could resume the stream right now. Nothing is\nsubmitted and `isPaused` is not changed — see the pause endpoint.\n",
         "parameters": [
           {
             "in": "path",
@@ -2673,7 +2694,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Stream resumed successfully",
+            "description": "Resume verified as possible (simulated - state unchanged)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2750,8 +2771,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Withdraw claimable balance from a payment stream",
-        "description": "Withdraws the currently claimable amount. Only the recipient can withdraw.",
+        "summary": "Dry-run a withdrawal of the claimable balance",
+        "description": "Verifies that a withdrawal of the currently claimable amount would\nsucceed on-chain. Only the stream recipient may call it.\n\nNothing is submitted and nothing is written: `withdraw` is authorized by\nthe recipient's wallet, so the backend cannot perform it on their\nbehalf. Sign the XDR from `POST /v1/streams/simulate`\n(`action: \"withdraw\"`) to actually move funds; the indexer then records\nthe WITHDRAWN event and updates `withdrawnAmount` from the confirmed\non-chain event (issue #1847).\n",
         "parameters": [
           {
             "in": "path",
@@ -2770,7 +2791,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Withdrawal submitted successfully",
+            "description": "Withdrawal verified as possible (simulated - no funds moved)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2836,6 +2857,16 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
               }
             }
           }
@@ -2964,8 +2995,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Cancel an active payment stream",
-        "description": "Cancels an active payment stream on the Stellar network.\nOnly the original sender can cancel the stream.\nAccrued tokens are sent to the recipient, and the remainder is refunded to the sender.\n",
+        "summary": "Cancel an active payment stream with a wallet-signed transaction",
+        "description": "Broadcasts the cancel transaction the caller's wallet already signed and\nrecords the cancellation. Only the original sender can cancel their\nstream; accrued tokens go to the recipient and the remainder is refunded\nto the sender.\n\nSigning happens in the wallet. `POST /v1/streams/simulate` with\n`action: \"cancel\"` returns an unsigned, footprint-annotated XDR; the\nwallet signs those exact bytes and the signature is posted here as\n`signedXdr`. The API no longer accepts `senderSecret` (issue #1845) —\na request that still carries one is rejected.\n",
         "security": [
           {
             "bearerAuth": []
@@ -2984,27 +3015,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Stream cancelled successfully",
+            "description": "Stream cancelled on-chain",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelResponse",
-                  "type": "object",
-                  "properties": {
-                    "txHash": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "type": "string",
-                      "example": "CANCELLED"
-                    }
-                  }
+                  "$ref": "#/components/schemas/CancelResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid streamId or transaction simulation failed",
+            "description": "Missing/invalid signedXdr, a legacy senderSecret, or an envelope that is not this stream's cancel",
             "content": {
               "application/json": {
                 "schema": {
@@ -3059,6 +3080,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "signedXdr"
+                ],
+                "properties": {
+                  "signedXdr": {
+                    "type": "string",
+                    "description": "base64 `TransactionEnvelope` returned by the wallet, signing the simulated cancel transaction"
+                  }
                 }
               }
             }

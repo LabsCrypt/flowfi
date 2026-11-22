@@ -523,8 +523,13 @@ router.get('/:streamId/snapshot', getStreamSnapshot);
  *   post:
  *     tags:
  *       - Streams
- *     summary: Pause a payment stream
- *     description: Pause an active stream. Only the sender can pause their own stream.
+ *     summary: Dry-run a stream pause
+ *     description: |
+ *       Verifies that the sender could pause the stream right now. Nothing is
+ *       submitted and `isPaused` is not changed: `pause_stream` is authorized by
+ *       the sender's wallet, so the client signs the transaction returned by
+ *       `POST /v1/streams/simulate` and the indexer applies the state from the
+ *       confirmed event (issue #1847).
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -536,7 +541,7 @@ router.get('/:streamId/snapshot', getStreamSnapshot);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Stream paused successfully
+ *         description: Pause verified as possible (simulated - state unchanged)
  *         content:
  *           application/json:
  *             schema:
@@ -586,8 +591,10 @@ router.post('/:streamId/pause', requireAuth, pauseStream);
  *   post:
  *     tags:
  *       - Streams
- *     summary: Resume a paused payment stream
- *     description: Resume a paused stream. Only the sender can resume their own stream.
+ *     summary: Dry-run resuming a paused stream
+ *     description: |
+ *       Verifies that the sender could resume the stream right now. Nothing is
+ *       submitted and `isPaused` is not changed — see the pause endpoint.
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -599,7 +606,7 @@ router.post('/:streamId/pause', requireAuth, pauseStream);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Stream resumed successfully
+ *         description: Resume verified as possible (simulated - state unchanged)
  *         content:
  *           application/json:
  *             schema:
@@ -649,8 +656,13 @@ router.post('/:streamId/resume', requireAuth, resumeStream);
  *   post:
  *     tags:
  *       - Streams
- *     summary: Withdraw claimable balance from a payment stream
- *     description: Withdraws the currently claimable amount. Only the recipient can withdraw.
+ *     summary: Dry-run a withdrawal of the claimable balance
+ *     description: |
+ *       Verifies that the recipient could withdraw the claimable amount right
+ *       now. Nothing is submitted and no accounting is written; the indexer owns
+ *       `withdrawnAmount` and WITHDRAWN events from confirmed on-chain events
+ *       (issue #1847). Sign the simulated `withdraw` transaction to take the
+ *       funds.
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -662,7 +674,7 @@ router.post('/:streamId/resume', requireAuth, resumeStream);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Withdrawal submitted successfully
+ *         description: Withdrawal verified as possible (simulated - no funds moved)
  *         content:
  *           application/json:
  *             schema:
