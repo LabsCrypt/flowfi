@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import net from 'node:net';
 import { getMetricsRegistry, metricsContentType } from '../lib/metrics.js';
+import { sendApiError } from '../lib/api-error.js';
 import logger from '../logger.js';
 
 const router = Router();
@@ -108,12 +109,12 @@ function hasValidToken(req: Request): boolean {
  */
 router.get('/', (req: Request, res: Response) => {
   if (!metricsEnabled()) {
-    res.status(404).json({ error: 'Not found' });
+    sendApiError(res, 404, 'NOT_FOUND', 'Not found');
     return;
   }
 
   if (!isAllowedIp(clientIp(req)) || !hasValidToken(req)) {
-    res.status(403).json({ error: 'Forbidden', message: 'Metrics access denied' });
+    sendApiError(res, 403, 'FORBIDDEN', 'Metrics access denied');
     return;
   }
 
@@ -126,7 +127,7 @@ router.get('/', (req: Request, res: Response) => {
     .catch((err: unknown) => {
       logger.error('[Metrics] Failed to render registry:', err);
       if (!res.headersSent) {
-        res.status(500).json({ error: 'Failed to render metrics' });
+        sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Failed to render metrics');
       }
     });
 });

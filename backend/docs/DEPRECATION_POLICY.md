@@ -88,16 +88,24 @@ X-API-Migration-Path: /v1/streams
 ```
 
 **Body:**
+
+> Not yet implemented — no endpoint in `src/` returns `410` or sets the
+> `X-API-*` headers. This is the shape such a response must use once it exists,
+> written against the envelope every other error already returns.
+
 ```json
 {
-  "error": "Deprecated endpoint",
-  "message": "This endpoint has been deprecated. Please use /v1/streams instead.",
-  "deprecated": true,
-  "migration": {
-    "old": "/streams",
-    "new": "/v1/streams"
-  },
-  "sunsetDate": "2024-12-31"
+  "error": {
+    "code": "ENDPOINT_DEPRECATED",
+    "message": "This endpoint has been deprecated. Please use /v1/streams instead.",
+    "details": {
+      "migration": {
+        "old": "/streams",
+        "new": "/v1/streams"
+      },
+      "sunsetDate": "2024-12-31"
+    }
+  }
 }
 ```
 
@@ -253,4 +261,4 @@ For questions about deprecations or migrations:
 
 - Open an issue on GitHub
 - Check the [API Versioning Guide](./API_VERSIONING.md)
-- Review the [CHANGELOG.md](../../CHANGELOG.md)
+- Review the project release notes on the GitHub Releases page

@@ -117,11 +117,16 @@ pub enum PositionSettlementStatus {
 }
 
 /// Metadata for a stream position receipt (NFT/soulbound token).
+///
+/// `owner` is the account holding the position for `role`; `token_address` is
+/// the stream's principal token. Keeping them in separate fields means the
+/// record no longer overloads a token address with an account address.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamPositionMetadata {
     pub stream_id: u64,
     pub role: PositionRole,
+    pub owner: Address,
     pub token_address: Address,
     pub rate_per_second: i128,
     pub start_time: u64,
@@ -274,8 +279,9 @@ pub enum DataKey {
     AttestedIds(u64),
     /// Protocol fee configuration with multi-recipient treasury splits.
     ProtocolFeeConfig,
-    /// Position metadata for a stream (instance storage).
-    StreamPosition(u64),
+    /// Position metadata for one `(stream, role)` pair, so the sender and
+    /// recipient positions of the same stream never overwrite each other.
+    StreamPosition(u64, PositionRole),
 }
 
 /// Immutable state of a payment stream.

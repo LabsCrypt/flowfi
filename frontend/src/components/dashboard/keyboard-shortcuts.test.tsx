@@ -191,10 +191,10 @@ describe("DashboardView keyboard shortcuts", () => {
     renderDashboard();
     await waitForRows();
 
-    expect(screen.queryByLabelText(/batch claim drawer/i)).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Batch claim" })).toBeNull();
 
     press("c");
-    expect(screen.getByLabelText(/batch claim drawer/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Batch claim" })).toBeInTheDocument();
   });
 
   it("ignores shortcuts while typing in the search field", async () => {

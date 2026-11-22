@@ -1,11 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act, fireEvent } from "@testing-library/react";
-import React from "react";
+import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { PropsWithChildren } from "react";
 
-// ─── Mocks ──────────────────────────────────────────────────────────────
+// `settings-content` reads the contract address at module scope, so the value
+// has to be present before the component module is evaluated.
+vi.hoisted(() => {
+  process.env.NEXT_PUBLIC_STREAM_CONTRACT_ID =
+    "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
+});
 
 const push = vi.fn();
 const disconnect = vi.fn();
+const toastError = vi.fn();
+const toastSuccess = vi.fn();
+
+const walletState = vi.hoisted(() => ({
+  session: {
+    publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
+    network: "TESTNET",
+    walletName: "Freighter",
+  } as { publicKey: string; network: string; walletName: string } | null,
+}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -13,37 +29,26 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("next/link", () => ({
   __esModule: true,
-  default: ({
-    href,
-    children,
-    ...props
-  }: {
-    href: string;
-    children: React.ReactNode;
-  }) => (
+  default: ({ href, children, ...props }: PropsWithChildren<{ href: string }>) => (
     <a href={href} {...props}>
       {children}
     </a>
   ),
 }));
 
-vi.mock("react-hot-toast", () => ({
-  default: { success: vi.fn(), error: vi.fn(), loading: vi.fn() },
-}));
-
-let mockSession: {
-  publicKey: string;
-  network: string;
-  walletName: string;
-} | null = {
-  publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
-  network: "TESTNET",
-  walletName: "Freighter",
-};
+vi.mock("react-hot-toast", () => {
+  const toast = (...args: unknown[]) => {
+    void args;
+  };
+  toast.success = (...args: unknown[]) => toastSuccess(...args);
+  toast.error = (...args: unknown[]) => toastError(...args);
+  toast.loading = vi.fn();
+  return { default: toast };
+});
 
 vi.mock("@/context/wallet-context", () => ({
   useWallet: () => ({
-    session: mockSession,
+    session: walletState.session,
     disconnect,
     isHydrated: true,
   }),
@@ -51,7 +56,7 @@ vi.mock("@/context/wallet-context", () => ({
 
 vi.mock("@/lib/wallet", () => ({
   shortenPublicKey: (key: string) => `${key.slice(0, 4)}...${key.slice(-4)}`,
-  formatNetwork: (n: string) => n,
+  formatNetwork: (network: string) => network,
   STELLAR_NETWORK: "TESTNET",
 }));
 
@@ -59,32 +64,17 @@ vi.mock("@/lib/api/_shared", () => ({
   getApiBaseUrl: () => "http://localhost:4000",
 }));
 
-vi.mock("@/components/wallet/DisconnectConfirmModal", () => ({
-  DisconnectConfirmModal: ({
-    onConfirm,
-  }: {
-    onClose: () => void;
-    onConfirm: () => void;
-    walletAddress: string;
-  }) => {
-    // Auto-confirm immediately so tests can assert the downstream flow.
-    React.useEffect(() => {
-      onConfirm();
-    }, []);
-    return null;
-  },
-}));
-
 import SettingsContent from "../settings-content";
 
 function getThemeButtons(): HTMLElement[] {
-  const buttons = screen.getAllByRole("button");
-  return buttons.filter(
-    (b) =>
-      b.textContent === "Light" ||
-      b.textContent === "Dark" ||
-      b.textContent === "System"
-  );
+  return screen
+    .getAllByRole("button")
+    .filter(
+      (button) =>
+        button.textContent === "Light" ||
+        button.textContent === "Dark" ||
+        button.textContent === "System",
+    );
 }
 
 function getCurrencySelect(): HTMLSelectElement | null {
@@ -100,39 +90,87 @@ function getConnectWalletLink(): HTMLElement {
 }
 
 function getDisconnectButton(): HTMLElement {
-  return screen.getByText(/disconnect wallet/i);
+  return screen.getByRole("button", { name: /disconnect wallet/i });
 }
 
+/** Opens the disconnect modal and clicks its confirm button. */
+function confirmDisconnect() {
+  act(() => {
+    fireEvent.click(getDisconnectButton());
+  });
+  act(() => {
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  walletState.session = {
+    publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
+    network: "TESTNET",
+    walletName: "Freighter",
+  };
+  localStorage.clear();
+  localStorage.setItem("flowfi-theme", "dark");
+  localStorage.setItem("flowfi-currency", "USD");
+  localStorage.setItem("flowfi-amount-format", "full");
+  localStorage.setItem("flowfi-decimal-places", "7");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockRejectedValue(new Error("network disabled in tests")),
+  );
+  vi.spyOn(window, "confirm").mockReturnValue(false);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe("SettingsContent disconnect confirmation", () => {
+  it("opens the confirmation modal instead of disconnecting immediately", () => {
+    render(<SettingsContent />);
+
+    fireEvent.click(getDisconnectButton());
+
+    expect(
+      screen.getByRole("heading", { name: /disconnect wallet\?/i }),
+    ).toBeInTheDocument();
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("closes the modal without disconnecting when Cancel is clicked", () => {
+    render(<SettingsContent />);
+
+    fireEvent.click(getDisconnectButton());
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(
+      screen.queryByRole("heading", { name: /disconnect wallet\?/i }),
+    ).not.toBeInTheDocument();
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
+  it("disconnects and redirects to home when confirmed", () => {
+    render(<SettingsContent />);
+
+    fireEvent.click(getDisconnectButton());
+    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }));
+
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
 describe("SettingsContent draft-and-save dirty-state handling", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockSession = {
-      publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
-      network: "TESTNET",
-      walletName: "Freighter",
-    };
-    // Set default saved settings
-    localStorage.clear();
-    localStorage.setItem("flowfi-theme", "dark");
-    localStorage.setItem("flowfi-currency", "USD");
-    localStorage.setItem("flowfi-amount-format", "full");
-    localStorage.setItem("flowfi-decimal-places", "7");
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
   it("starts clean (not dirty) on initial render", () => {
     render(<SettingsContent />);
 
     expect(getSaveButton()).toBeDisabled();
 
-    // Disconnect without changes — no confirmation needed
-    act(() => {
-      fireEvent.click(getDisconnectButton());
-    });
+    // Disconnect without changes — no confirmation needed.
+    confirmDisconnect();
 
     expect(window.confirm).not.toHaveBeenCalled();
     expect(disconnect).toHaveBeenCalled();
@@ -142,7 +180,7 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
   it("detects dirty state when theme is changed", () => {
     render(<SettingsContent />);
 
-    const lightButton = getThemeButtons().find((b) => b.textContent === "Light");
+    const lightButton = getThemeButtons().find((button) => button.textContent === "Light");
     expect(lightButton).toBeDefined();
 
     act(() => {
@@ -151,10 +189,8 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
 
     expect(getSaveButton()).toBeEnabled();
 
-    // Navigate away while dirty — confirm should fire (mock returns false = declined)
-    act(() => {
-      fireEvent.click(getDisconnectButton());
-    });
+    // Navigate away while dirty — confirm fires and the user declines.
+    confirmDisconnect();
 
     expect(window.confirm).toHaveBeenCalled();
     expect(disconnect).not.toHaveBeenCalled();
@@ -165,14 +201,11 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
 
     render(<SettingsContent />);
 
-    const lightButton = getThemeButtons().find((b) => b.textContent === "Light");
     act(() => {
-      fireEvent.click(lightButton!);
+      fireEvent.click(getThemeButtons().find((button) => button.textContent === "Light")!);
     });
 
-    act(() => {
-      fireEvent.click(getDisconnectButton());
-    });
+    confirmDisconnect();
 
     expect(window.confirm).toHaveBeenCalled();
     expect(disconnect).toHaveBeenCalled();
@@ -191,9 +224,7 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
 
     expect(getSaveButton()).toBeEnabled();
 
-    act(() => {
-      fireEvent.click(getDisconnectButton());
-    });
+    confirmDisconnect();
 
     expect(window.confirm).toHaveBeenCalled();
   });
@@ -203,7 +234,7 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
 
     const compactButton = screen
       .getAllByRole("button")
-      .find((b) => b.textContent?.includes("Compact"));
+      .find((button) => button.textContent?.includes("Compact"));
     expect(compactButton).toBeDefined();
 
     act(() => {
@@ -216,13 +247,13 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
   it("detects dirty state when decimal places is changed", () => {
     render(<SettingsContent />);
 
-    const fourDecimalsBtn = screen
+    const fourDecimalButton = screen
       .getAllByRole("button")
-      .find((b) => b.textContent?.includes("4 decimals"));
-    expect(fourDecimalsBtn).toBeDefined();
+      .find((button) => button.textContent?.includes("4 decimals"));
+    expect(fourDecimalButton).toBeDefined();
 
     act(() => {
-      fireEvent.click(fourDecimalsBtn!);
+      fireEvent.click(fourDecimalButton!);
     });
 
     expect(getSaveButton()).toBeEnabled();
@@ -231,11 +262,9 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
   it("saving changes persists the draft and clears the dirty state", () => {
     render(<SettingsContent />);
 
-    const lightButton = getThemeButtons().find((b) => b.textContent === "Light");
     act(() => {
-      fireEvent.click(lightButton!);
+      fireEvent.click(getThemeButtons().find((button) => button.textContent === "Light")!);
     });
-
     act(() => {
       fireEvent.click(getSaveButton());
     });
@@ -243,35 +272,109 @@ describe("SettingsContent draft-and-save dirty-state handling", () => {
     expect(localStorage.getItem("flowfi-theme")).toBe("light");
     expect(getSaveButton()).toBeDisabled();
 
-    // No longer dirty — disconnect proceeds without confirmation
-    act(() => {
-      fireEvent.click(getDisconnectButton());
-    });
+    confirmDisconnect();
 
     expect(window.confirm).not.toHaveBeenCalled();
     expect(disconnect).toHaveBeenCalled();
   });
 
   it("guards internal link navigation when dirty (not connected)", () => {
-    mockSession = null;
+    walletState.session = null;
     render(<SettingsContent />);
 
-    // Pristine — internal link navigation is not blocked
+    // Pristine — internal link navigation is not blocked.
     act(() => {
       fireEvent.click(getConnectWalletLink());
     });
     expect(window.confirm).not.toHaveBeenCalled();
 
-    // Make a change, then try to leave via the internal link
-    const lightButton = getThemeButtons().find((b) => b.textContent === "Light");
     act(() => {
-      fireEvent.click(lightButton!);
+      fireEvent.click(getThemeButtons().find((button) => button.textContent === "Light")!);
     });
-
     act(() => {
       fireEvent.click(getConnectWalletLink());
     });
 
     expect(window.confirm).toHaveBeenCalled();
+  });
+});
+
+describe("SettingsContent clipboard copy", () => {
+  function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  const originalClipboard = navigator.clipboard;
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: originalClipboard,
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("shows an error toast when copying the wallet address is denied", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockRejectedValue(new Error("Permission denied"));
+    stubClipboard(writeText);
+
+    render(<SettingsContent />);
+
+    await user.click(screen.getByRole("button", { name: /copy wallet address/i }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Failed to copy to clipboard"),
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("shows a success toast when copying the wallet address succeeds", async () => {
+    const user = userEvent.setup();
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+
+    render(<SettingsContent />);
+
+    await user.click(screen.getByRole("button", { name: /copy wallet address/i }));
+
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith("Address copied to clipboard"),
+    );
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("shows an error toast when copying the contract address is denied", async () => {
+    const user = userEvent.setup();
+    stubClipboard(vi.fn().mockRejectedValue(new Error("Permission denied")));
+
+    render(<SettingsContent />);
+
+    await user.click(screen.getByRole("button", { name: /copy contract address/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Failed to copy to clipboard"),
+    );
+  });
+
+  it("copies the configured contract address", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+
+    render(<SettingsContent />);
+
+    await user.click(screen.getByRole("button", { name: /copy contract address/i }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+      ),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith("Contract address copied");
   });
 });

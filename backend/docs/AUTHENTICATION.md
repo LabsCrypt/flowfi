@@ -105,12 +105,26 @@ const response = await fetch('http://localhost:3001/v1/users/me', {
 
 ## Error Responses
 
+Every non-2xx response, including the two 401s below, uses the shared error envelope:
+
+```json
+{
+  "error": {
+    "code": "STRING_CODE",
+    "message": "human readable text",
+    "details": "optional; omitted when there is nothing to report"
+  }
+}
+```
+
 ### 401 Unauthorized - Missing Token
 
 ```json
 {
-  "error": "Unauthorized",
-  "message": "Missing or invalid Authorization header. Expected format: Bearer <signed_transaction>"
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Missing Bearer token"
+  }
 }
 ```
 
@@ -118,8 +132,10 @@ const response = await fetch('http://localhost:3001/v1/users/me', {
 
 ```json
 {
-  "error": "Unauthorized",
-  "message": "Invalid or expired signature"
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Invalid or expired token"
+  }
 }
 ```
 

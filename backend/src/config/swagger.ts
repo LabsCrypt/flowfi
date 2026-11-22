@@ -86,6 +86,18 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         name: 'Analytics',
         description: 'Public protocol statistics (TVL, history, DefiLlama)',
       },
+      {
+        name: 'Auth',
+        description: 'SEP-0010 challenge and verification endpoints that issue API tokens',
+      },
+      {
+        name: 'Tokens',
+        description: 'Verified Stellar token metadata',
+      },
+      {
+        name: 'Webhooks',
+        description: 'Webhook subscriptions and delivery testing',
+      },
     ],
     components: {
       securitySchemes: {
@@ -554,6 +566,11 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                   type: 'array',
                   description: 'Structured validation issues when applicable',
                   items: { type: 'object' },
+                },
+                requestId: {
+                  type: 'string',
+                  description:
+                    'Correlation ID echoed from the response X-Request-ID header; omitted when no ID was assigned',
                 },
               },
             },

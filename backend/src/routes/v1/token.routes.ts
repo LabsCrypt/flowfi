@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { getToken, toPublicTokenMetadata } from '../../controllers/token.controller.js';
 import { createHash } from 'node:crypto';
 import { listVerifiedTokens } from '../../services/token-registry.service.js';
-import { sendApiError } from '../../types/api-error.js';
+import { sendApiError } from '../../lib/api-error.js';
 
 const router = Router();
 

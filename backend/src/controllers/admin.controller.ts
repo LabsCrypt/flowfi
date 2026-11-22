@@ -14,6 +14,7 @@ import {
   isSentinelSeverity,
 } from '../services/sentinel.service.js';
 import logger from '../logger.js';
+import { sendApiError } from '../lib/api-error.js';
 
 /** Parse an optional positive-integer query param. */
 function parseOptionalInt(raw: unknown): number | undefined {
@@ -53,9 +54,12 @@ export const listSentinelAlertsHandler = async (req: Request, res: Response) => 
   const severity =
     rawSeverity && isSentinelSeverity(rawSeverity) ? rawSeverity : undefined;
   if (rawSeverity && !severity) {
-    return res.status(400).json({
-      error: 'severity must be one of LOW, MEDIUM, HIGH, CRITICAL',
-    });
+    return sendApiError(
+      res,
+      400,
+      'BAD_REQUEST',
+      'severity must be one of LOW, MEDIUM, HIGH, CRITICAL',
+    );
   }
 
   const limit = parseOptionalInt(readSingleQueryParam(req.query.limit));
@@ -78,7 +82,7 @@ export const listSentinelAlertsHandler = async (req: Request, res: Response) => 
     });
   } catch (err) {
     logger.error('[AdminController] Failed to list sentinel alerts:', err);
-    return res.status(500).json({ error: 'Failed to list sentinel alerts' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Failed to list sentinel alerts');
   }
 };
 
@@ -95,12 +99,12 @@ export const acknowledgeSentinelAlertHandler = async (
   const rawId = req.params.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
   if (!id) {
-    return res.status(400).json({ error: 'id is required' });
+    return sendApiError(res, 400, 'BAD_REQUEST', 'id is required');
   }
 
   const acknowledged = getSentinelService().acknowledgeAlert(id);
   if (!acknowledged) {
-    return res.status(404).json({ error: 'Sentinel incident not found' });
+    return sendApiError(res, 404, 'NOT_FOUND', 'Sentinel incident not found');
   }
   return res.status(200).json({ ok: true, id, acknowledged: true });
 };
@@ -123,7 +127,7 @@ export const listDeadLetterHandler = async (req: Request, res: Response) => {
     'startDate',
   );
   if (startDate.error) {
-    return res.status(400).json({ error: startDate.error });
+    return sendApiError(res, 400, 'BAD_REQUEST', startDate.error);
   }
 
   const endDate = parseOptionalDate(
@@ -131,11 +135,11 @@ export const listDeadLetterHandler = async (req: Request, res: Response) => {
     'endDate',
   );
   if (endDate.error) {
-    return res.status(400).json({ error: endDate.error });
+    return sendApiError(res, 400, 'BAD_REQUEST', endDate.error);
   }
 
   if (startDate.value && endDate.value && startDate.value > endDate.value) {
-    return res.status(400).json({ error: 'startDate must be before endDate' });
+    return sendApiError(res, 400, 'BAD_REQUEST', 'startDate must be before endDate');
   }
 
   try {
@@ -156,7 +160,7 @@ export const listDeadLetterHandler = async (req: Request, res: Response) => {
     return res.status(200).json(result);
   } catch (err) {
     logger.error('[AdminController] Failed to list dead-letter events:', err);
-    return res.status(500).json({ error: 'Failed to list dead-letter events' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Failed to list dead-letter events');
   }
 };
 
@@ -171,33 +175,34 @@ export const replayDeadLetterHandler = async (req: Request, res: Response) => {
   const rawId = req.params.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
   if (!id) {
-    return res.status(400).json({ error: 'id is required' });
+    return sendApiError(res, 400, 'BAD_REQUEST', 'id is required');
   }
 
   try {
     const result = await replayDeadLetterEvent(id);
 
     if (result.outcome === 'not_found') {
-      return res.status(404).json({ error: 'Dead-letter event not found' });
+      return sendApiError(res, 404, 'DEAD_LETTER_NOT_FOUND', 'Dead-letter event not found');
     }
 
     if (result.outcome === 'undecodable') {
-      return res.status(422).json({
-        error: 'Dead-letter payload could not be decoded',
-        code: 'undecodable_payload',
-        id,
-        errorMessage: result.errorMessage,
-      });
+      return sendApiError(
+        res,
+        422,
+        'undecodable_payload',
+        'Dead-letter payload could not be decoded',
+        { id, errorMessage: result.errorMessage },
+      );
     }
 
     if (result.outcome === 'failed') {
-      return res.status(422).json({
-        error: 'Replay failed; the event remains quarantined',
-        code: 'replay_failed',
-        id,
-        attempts: result.attempts,
-        errorMessage: result.errorMessage,
-      });
+      return sendApiError(
+        res,
+        422,
+        'replay_failed',
+        'Replay failed; the event remains quarantined',
+        { id, attempts: result.attempts, errorMessage: result.errorMessage },
+      );
     }
 
     return res.status(200).json({
@@ -208,7 +213,7 @@ export const replayDeadLetterHandler = async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error(`[AdminController] Replay of dead-letter ${id} threw:`, err);
-    return res.status(500).json({ error: 'Replay failed' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Replay failed');
   }
 };
 
@@ -223,7 +228,7 @@ export const replayAllDeadLetterHandler = async (_req: Request, res: Response) =
     return res.status(200).json({ ok: true, ...summary });
   } catch (err) {
     logger.error('[AdminController] Dead-letter replay-all threw:', err);
-    return res.status(500).json({ error: 'Replay-all failed' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Replay-all failed');
   }
 };
 
@@ -237,16 +242,16 @@ export const discardDeadLetterHandler = async (req: Request, res: Response) => {
   const rawId = req.params.id;
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
   if (!id) {
-    return res.status(400).json({ error: 'id is required' });
+    return sendApiError(res, 400, 'BAD_REQUEST', 'id is required');
   }  const discardedBy = (req as AuthenticatedRequest).user?.publicKey ?? 'unknown';
   try {
     const discarded = await discardDeadLetterEvent(id, discardedBy);
     return res.status(200).json({ ok: true, discarded });
   } catch (err) {
     if (err instanceof DeadLetterNotFoundError) {
-      return res.status(404).json({ error: 'Dead-letter event not found' });
+      return sendApiError(res, 404, 'DEAD_LETTER_NOT_FOUND', 'Dead-letter event not found');
     }
     logger.error(`[AdminController] Discard of dead-letter ${id} threw:`, err);
-    return res.status(500).json({ error: 'Discard failed' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Discard failed');
   }
 };

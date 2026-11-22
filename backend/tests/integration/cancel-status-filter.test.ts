@@ -114,10 +114,14 @@ function createStreamCancelledEvent(
 }
 
 async function cleanupDatabase() {
+  // Scoped to this file's fixtures: vitest runs each test file in its own process
+  // against one shared database, and a whole-table `deleteMany` deleted the rows
+  // another file had just seeded.
   const db = getDb();
-  await db.streamEvent.deleteMany();
-  await db.stream.deleteMany();
-  await db.user.deleteMany();
+  const streamId = BigInt(STREAM_ID);
+  await db.streamEvent.deleteMany({ where: { streamId } });
+  await db.stream.deleteMany({ where: { streamId } });
+  await db.user.deleteMany({ where: { publicKey: { in: [SENDER, RECIPIENT] } } });
 }
 
 const STREAM_ID = 900;

@@ -713,7 +713,7 @@ export function toSimulationApiError(
     ? known.message
     : `Simulation of "${action}" failed: ${rawError}`;
 
-  return new ApiError(400, message, 'simulation_failed', {
+  return new ApiError(400, 'simulation_failed', message, {
     action,
     reason: rawError,
     ...(code !== null ? { contractErrorCode: code } : {}),
@@ -723,36 +723,36 @@ export function toSimulationApiError(
 
 function toStreamId(raw: string | undefined, field: string): bigint {
   if (raw === undefined || raw === null || raw === '') {
-    throw new ApiError(400, `${field} is required`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is required`);
   }
   if (!/^\d+$/.test(raw)) {
-    throw new ApiError(400, `${field} must be a non-negative integer string`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} must be a non-negative integer string`);
   }
   return BigInt(raw);
 }
 
 function toPositiveI128(raw: string | undefined, field: string): bigint {
   if (raw === undefined || raw === null || raw === '') {
-    throw new ApiError(400, `${field} is required`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is required`);
   }
   if (!/^\d+$/.test(raw)) {
-    throw new ApiError(400, `${field} must be a positive integer string`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} must be a positive integer string`);
   }
   const value = BigInt(raw);
   if (value <= 0n) {
-    throw new ApiError(400, `${field} must be greater than zero`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} must be greater than zero`);
   }
   return value;
 }
 
 function toAddress(raw: string | undefined, field: string): Address {
   if (!raw) {
-    throw new ApiError(400, `${field} is required`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is required`);
   }
   try {
     return new Address(raw);
   } catch {
-    throw new ApiError(400, `${field} is not a valid Stellar address`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is not a valid Stellar address`);
   }
 }
 
@@ -778,8 +778,8 @@ function buildInvocations(
       if (params.duration === undefined || !Number.isInteger(params.duration) || params.duration <= 0) {
         throw new ApiError(
           400,
-          'params.duration must be a positive integer (seconds)',
           'invalid_params',
+          'params.duration must be a positive integer (seconds)',
         );
       }
 
@@ -839,15 +839,15 @@ function buildInvocations(
       if (!ids || ids.length === 0) {
         throw new ApiError(
           400,
-          'params.streamIds is required for batch_withdraw',
           'invalid_params',
+          'params.streamIds is required for batch_withdraw',
         );
       }
       if (ids.length > MAX_BATCH_WITHDRAW) {
         throw new ApiError(
           400,
-          `batch_withdraw accepts at most ${MAX_BATCH_WITHDRAW} streams per transaction`,
           'invalid_params',
+          `batch_withdraw accepts at most ${MAX_BATCH_WITHDRAW} streams per transaction`,
         );
       }
       // The contract has no batch entrypoint, so each stream becomes its own
@@ -861,7 +861,7 @@ function buildInvocations(
 
     default: {
       const exhaustive: never = action;
-      throw new ApiError(400, `Unsupported action: ${String(exhaustive)}`, 'invalid_params');
+      throw new ApiError(400, 'invalid_params', `Unsupported action: ${String(exhaustive)}`);
     }
   }
 }
@@ -950,7 +950,7 @@ export async function simulateStreamAction(
 ): Promise<StreamSimulationResult> {
   const contractId = getContractId();
   if (!contractId) {
-    throw new ApiError(503, 'Stream contract is not configured', 'contract_not_configured');
+    throw new ApiError(503, 'contract_not_configured', 'Stream contract is not configured');
   }
 
   const sender = toAddress(senderPublicKey, 'senderPublicKey');

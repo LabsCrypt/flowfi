@@ -130,7 +130,7 @@
               "code": 400,
               "_postman_previewlanguage": "json",
               "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
-              "body": "{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"Request validation failed\",\n    \"details\": [\n      { \"code\": \"too_small\", \"path\": [\"sender\"], \"message\": \"Sender address is required\" }\n    ]\n  }\n}"
+              "body": "{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"Request validation failed\",\n    \"details\": [\n      { \"code\": \"too_small\", \"path\": [\"sender\"], \"message\": \"Sender address is required\" }\n    ],\n    \"requestId\": \"3f2b1c4a-9d7e-4b52-8a1f-6c0d2e9f4b77\"\n  }\n}"
             }
           ]
         },

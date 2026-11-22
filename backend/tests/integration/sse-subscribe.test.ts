@@ -73,8 +73,8 @@ describe('GET /v1/events/subscribe', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(400);
-    expect(res.body.message).toBe('Invalid subscription parameters');
-    expect(res.body.errors).toBeDefined();
+    expect(res.body.error.message).toBe('Invalid subscription parameters');
+    expect(res.body.error.details).toBeDefined();
   });
 
   it('rejects requests missing authentication', async () => {

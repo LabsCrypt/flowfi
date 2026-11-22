@@ -25,6 +25,7 @@ import { sseService } from '../../services/sse.service.js';
 import { cache } from '../../lib/redis.js';
 import logger from '../../logger.js';
 import { sorobanEventWorker } from '../../workers/soroban-event-worker.js';
+import { sendApiError } from '../../lib/api-error.js';
 
 const router = Router();
 
@@ -302,7 +303,7 @@ router.get('/metrics', async (_req: Request, res: Response) => {
     res.json(withCalculatedAt(payload));
   } catch (err) {
     logger.error('Error fetching admin metrics:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Internal server error');
   }
 });
 
@@ -345,7 +346,7 @@ router.get('/indexer/status', async (req: Request, res: Response) => {
     const status = await getIndexerStatus();
     res.json(status);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch indexer status' });
+    sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Failed to fetch indexer status');
   }
 });
 
@@ -411,7 +412,7 @@ router.get('/indexer/status', async (req: Request, res: Response) => {
 router.post('/indexer/reset', async (req: Request, res: Response) => {
   const ledger = Number(req.body?.ledger);
   if (!Number.isInteger(ledger) || ledger < 0) {
-    res.status(400).json({ error: 'ledger must be a non-negative integer' });
+    sendApiError(res, 400, 'BAD_REQUEST', 'ledger must be a non-negative integer');
     return;
   }
 
@@ -426,7 +427,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
     await resetIndexer(ledger);
     res.json({ ok: true, lastLedger: ledger });
   } catch (err) {
-    res.status(500).json({ error: 'Reset failed' });
+    sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Reset failed');
   }
 });
 
@@ -490,7 +491,7 @@ router.post('/indexer/reset', async (req: Request, res: Response) => {
 router.post('/indexer/replay', async (req: Request, res: Response) => {
   const fromLedger = Number(req.query.from_ledger);
   if (!Number.isInteger(fromLedger) || fromLedger < 0) {
-    res.status(400).json({ error: 'from_ledger must be a non-negative integer' });
+    sendApiError(res, 400, 'BAD_REQUEST', 'from_ledger must be a non-negative integer');
     return;
   }
 
@@ -505,7 +506,7 @@ router.post('/indexer/replay', async (req: Request, res: Response) => {
     const requestId = await replayFromLedger(fromLedger);
     res.status(202).json({ ok: true, replayingFrom: fromLedger, requestId });
   } catch (err) {
-    res.status(500).json({ error: 'Replay failed' });
+    sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Replay failed');
   }
 });
 
