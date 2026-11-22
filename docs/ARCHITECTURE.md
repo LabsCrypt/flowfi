@@ -294,7 +294,6 @@ To run the full stack end-to-end, set the following secrets. See [`backend/.env.
 | `NEXT_PUBLIC_SOROBAN_RPC_URL` | Soroban RPC endpoint (e.g. `https://soroban-testnet.stellar.org`) |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Stellar network passphrase (e.g. `Test SDF Network ; September 2015`) |
 | `NEXT_PUBLIC_STREAM_CONTRACT_ID` | Soroban stream contract ID used by the Soroban client |
-| `NEXT_PUBLIC_STREAMING_CONTRACT` | Contract address displayed in the Settings page |
 | `NEXT_PUBLIC_USDC_ADDRESS` | USDC token contract address (testnet default provided) |
 | `NEXT_PUBLIC_EURC_ADDRESS` | EURC token contract address (testnet default provided) |
 | `NEXT_PUBLIC_XLM_ADDRESS` | XLM token contract address (testnet default provided) |
