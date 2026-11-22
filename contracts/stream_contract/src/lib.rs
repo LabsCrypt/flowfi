@@ -34,10 +34,8 @@ pub mod storage;
 pub mod types;
 pub mod yield_strategy;
 
-// acceptance_tests.rs describes proposed contract entrypoints that have not
-// been implemented yet; including it makes the current contract fail to compile.
-// #[cfg(test)]
-// mod acceptance_tests;
+#[cfg(test)]
+mod acceptance_tests;
 #[cfg(test)]
 mod property_tests;
 #[cfg(test)]
@@ -865,6 +863,13 @@ impl StreamContract {
     }
 
     /// Returns all position metadata entries for a given owner.
+    ///
+    /// # Limitations
+    /// Position records are keyed by stream, and the contract has no way to
+    /// enumerate storage keys by owner. The metadata is mirrorable off-chain
+    /// from the `stream_position_*` events, so this getter currently always
+    /// reports `StreamNotFound`; see
+    /// [`storage::try_load_positions_by_owner`](crate::storage::try_load_positions_by_owner).
     ///
     /// # Errors
     /// - `StreamNotFound` — no stream exists with the given owner's positions.

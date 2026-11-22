@@ -483,13 +483,17 @@ pub fn try_load_position_metadata(
 
 /// Returns all position metadata entries for a given owner.
 ///
-/// **Key:** Instance storage is not used for per-owner position lookups;
-/// this function iterates persistent storage entries matching the owner.
-/// In a production implementation, a secondary index or off-chain indexer
-/// would be used for efficient lookups.
+/// # Unsupported by design
+///
+/// Soroban exposes no way to enumerate storage keys, so an owner-indexed
+/// lookup cannot be answered from the contract's own state without maintaining
+/// a secondary index that every mint/transfer/settle path would have to keep
+/// in sync. This function is therefore a deliberate, documented stub: it always
+/// returns an empty vector, and
+/// [`StreamContract::get_positions_by_owner`](crate::StreamContract::get_positions_by_owner)
+/// reports `StreamNotFound` as a result. Off-chain consumers should query the
+/// backend indexer, which mirrors position metadata from the emitted events.
 pub fn try_load_positions_by_owner(env: &Env, _owner: Address) -> Vec<StreamPositionMetadata> {
-    // In a production implementation, this would query a secondary index.
-    // For now, return an empty vector.
     Vec::new(env)
 }
 
