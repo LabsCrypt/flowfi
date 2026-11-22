@@ -5,6 +5,7 @@ import { sseService } from '../../services/sse.service.js';
 import { requireAdmin, requireAuth } from '../../middleware/auth.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import logger from '../../logger.js';
+import { sendApiError } from '../../lib/api-error.js';
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
@@ -95,19 +96,19 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
     const { publicKey } = (req as AuthenticatedRequest).user;
     const address = typeof req.query.address === 'string' ? req.query.address.trim() : '';
     if (!address) {
-      res.status(400).json({ error: 'address query parameter is required' });
+      sendApiError(res, 400, 'BAD_REQUEST', 'address query parameter is required');
       return;
     }
 
     // Aligned with SSE security: history queries require authentication and are scoped to the caller.
     if (address !== publicKey) {
-      res.status(403).json({ error: 'Forbidden', message: 'You can only view your own event history' });
+      sendApiError(res, 403, 'FORBIDDEN', 'You can only view your own event history');
       return;
     }
 
     const { requested, types } = parseEventTypeFilter(req.query.type);
     if (requested.length > 0 && types.length === 0) {
-      res.status(400).json({ error: 'No valid event types in `type` filter' });
+      sendApiError(res, 400, 'BAD_REQUEST', 'No valid event types in `type` filter');
       return;
     }
 
@@ -116,7 +117,7 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
       maxLimit: MAX_EVENTS_PAGE_SIZE,
     });
     if (!pagination.ok) {
-      res.status(400).json({ error: pagination.message });
+      sendApiError(res, 400, 'BAD_REQUEST', pagination.message);
       return;
     }
     const { limit, offset } = pagination;

@@ -56,7 +56,11 @@ describe('SSE Controller', () => {
     await subscribe(req as Request, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: 'Too many connections' }));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'Too many connections' }),
+      }),
+    );
   });
 
   it('should subscribe and add client to sseService', async () => {
@@ -119,8 +123,10 @@ describe('SSE Controller', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'Invalid subscription parameters',
-        errors: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+        error: expect.objectContaining({
+          message: 'Invalid subscription parameters',
+          details: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+        }),
       }),
     );
   });

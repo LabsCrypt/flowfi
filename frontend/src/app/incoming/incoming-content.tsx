@@ -16,6 +16,7 @@ import {
   useIncomingStreams,
   useWithdrawIncomingStream,
 } from "@/hooks/useIncomingStreams";
+import { useAsyncPageData } from "@/hooks/useAsyncPageData";
 
 function LoadingCard() {
   return (
@@ -77,10 +78,17 @@ export default function IncomingContent() {
     }
   };
 
-  const isLoading =
-    !isHydrated ||
-    (status === "connected" && incomingStreamsQuery.isLoading);
   const streams = incomingStreamsQuery.data ?? [];
+  const view = useAsyncPageData({
+    enabled: isHydrated && status === "connected",
+    isLoading: incomingStreamsQuery.isLoading,
+    isError: incomingStreamsQuery.isError,
+    isEmpty: streams.length === 0,
+    error:
+      incomingStreamsQuery.error instanceof Error
+        ? incomingStreamsQuery.error.message
+        : "Please try again in a moment.",
+  });
 
   return (
     <main className="px-4 py-10 sm:px-6 lg:px-8">
@@ -116,7 +124,7 @@ export default function IncomingContent() {
             <LoadingCard />
             <LoadingCard />
           </section>
-        ) : status !== "connected" ? (
+        ) : !view.isEnabled ? (
           <section className="mt-8 rounded-[2rem] border border-white/45 bg-white/75 p-10 text-center shadow-[0_24px_50px_rgba(15,23,42,0.07)]">
             <h2 className="text-2xl font-semibold text-slate-950">
               Connect a wallet to view incoming streams
@@ -126,24 +134,20 @@ export default function IncomingContent() {
               where you are the recipient and keep the claimable balance fresh.
             </p>
           </section>
-        ) : incomingStreamsQuery.isError ? (
+        ) : view.isError ? (
           <section className="mt-8 rounded-[2rem] border border-rose-200 bg-rose-50/80 p-8 shadow-[0_18px_36px_rgba(190,24,93,0.08)]">
             <h2 className="text-xl font-semibold text-rose-900">
               We couldn&apos;t load your incoming streams
             </h2>
-            <p className="mt-2 text-sm text-rose-700">
-              {incomingStreamsQuery.error instanceof Error
-                ? incomingStreamsQuery.error.message
-                : "Please try again in a moment."}
-            </p>
+            <p className="mt-2 text-sm text-rose-700">{view.error}</p>
           </section>
-        ) : isLoading ? (
+        ) : view.isLoading ? (
           <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <LoadingCard />
             <LoadingCard />
             <LoadingCard />
           </section>
-        ) : streams.length === 0 ? (
+        ) : view.isEmpty ? (
           <section className="mt-8 rounded-[2rem] border border-white/45 bg-white/75 p-10 text-center shadow-[0_24px_50px_rgba(15,23,42,0.07)]">
             <h2 className="text-2xl font-semibold text-slate-950">
               No incoming streams yet

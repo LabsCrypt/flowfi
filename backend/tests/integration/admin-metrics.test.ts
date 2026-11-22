@@ -469,7 +469,7 @@ describe('GET /v1/admin/indexer/status', () => {
       .get('/v1/admin/indexer/status')
       .set('Authorization', `Bearer ${createToken(NON_ADMIN_PUBLIC_KEY)}`);
     expect(nonAdminRes.status).toBe(403);
-    expect(nonAdminRes.body.error).toBe('Forbidden');
+    expect(nonAdminRes.body.error.code).toBe('FORBIDDEN');
   });
 
   it('returns status 200 with indexer status data for admin', async () => {
@@ -498,7 +498,7 @@ describe('GET /v1/admin/indexer/status', () => {
       .set('Authorization', `Bearer ${createToken()}`);
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Failed to fetch indexer status' });
+    expect(res.body).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch indexer status', requestId: expect.any(String) } });
   });
 });
 
@@ -538,7 +538,7 @@ describe('POST /v1/admin/indexer/reset', () => {
         .send(body);
 
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'ledger must be a non-negative integer' });
+      expect(res.body).toEqual({ error: { code: 'BAD_REQUEST', message: 'ledger must be a non-negative integer', requestId: expect.any(String) } });
     }
 
     expect(resetIndexer).not.toHaveBeenCalled();
@@ -572,7 +572,7 @@ describe('POST /v1/admin/indexer/reset', () => {
       .send({ ledger: 100 });
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Reset failed' });
+    expect(res.body).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR', message: 'Reset failed', requestId: expect.any(String) } });
   });
 
   it('returns a dry-run preview without calling resetIndexer when dryRun=true', async () => {
@@ -615,7 +615,7 @@ describe('POST /v1/admin/indexer/reset', () => {
       .send({ ledger: 500 });
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Reset failed' });
+    expect(res.body).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR', message: 'Reset failed', requestId: expect.any(String) } });
     expect(resetIndexer).not.toHaveBeenCalled();
   });
 });
@@ -652,7 +652,7 @@ describe('POST /v1/admin/indexer/replay', () => {
         .set('Authorization', `Bearer ${createToken()}`);
 
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'from_ledger must be a non-negative integer' });
+      expect(res.body).toEqual({ error: { code: 'BAD_REQUEST', message: 'from_ledger must be a non-negative integer', requestId: expect.any(String) } });
     }
 
     expect(replayFromLedger).not.toHaveBeenCalled();
@@ -683,7 +683,7 @@ describe('POST /v1/admin/indexer/replay', () => {
       .set('Authorization', `Bearer ${createToken()}`);
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Replay failed' });
+    expect(res.body).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR', message: 'Replay failed', requestId: expect.any(String) } });
   });
 
   it('returns a dry-run preview without triggering a replay when dryRun=true', async () => {
@@ -726,7 +726,7 @@ describe('POST /v1/admin/indexer/replay', () => {
       .set('Authorization', `Bearer ${createToken()}`);
 
     expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Replay failed' });
+    expect(res.body).toEqual({ error: { code: 'INTERNAL_SERVER_ERROR', message: 'Replay failed', requestId: expect.any(String) } });
     expect(replayFromLedger).not.toHaveBeenCalled();
   });
 });

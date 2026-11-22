@@ -5,6 +5,7 @@ import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
 import { sentinelService } from "../services/sentinel.service.js";
 import { publishIndexerLag, quarantineEvent } from "../services/indexerService.js";
+import { applyToppedUpEvent } from "../services/top-up-writer.js";
 import {
   indexerEventsProcessedTotal,
   indexerPollsTotal,
@@ -937,73 +938,16 @@ export class SorobanEventWorker {
     const newDepositedAmount = decodeI128(body["new_deposited_amount"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // Check for a duplicate BEFORE mutating any Stream fields so that a
-      // replayed event never re-applies the top-up.
-      const existingEvent = await tx.streamEvent.findUnique({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: event.txHash,
-            eventType: "TOPPED_UP",
-          },
-        },
-        select: { id: true },
-      });
-      if (existingEvent) {
-        logger.warn(
-          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`,
-        );
-        return;
-      }
-
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: {
-          ratePerSecond: true,
-          startTime: true,
-          totalPausedDuration: true,
-        },
-      });
-
-      const ratePerSecondBigInt = BigInt(stream.ratePerSecond);
-      const newEndTime =
-        ratePerSecondBigInt === 0n
-          ? null
-          : BigInt(stream.startTime) +
-            BigInt(newDepositedAmount) / ratePerSecondBigInt +
-            BigInt(stream.totalPausedDuration);
-
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          depositedAmount: newDepositedAmount,
-          endTime: newEndTime,
-          lastUpdateTime: timestamp,
-        },
-      });
-
-      await tx.streamEvent.upsert({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: event.txHash,
-            eventType: "TOPPED_UP",
-          },
-        },
-        create: {
-          streamId,
-          eventType: "TOPPED_UP",
-          amount,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ newDepositedAmount }),
-        },
-        update: {
-          ledgerSequence: event.ledger,
-          timestamp,
-        },
-      });
-    });
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) =>
+      applyToppedUpEvent(tx, {
+        streamId,
+        txHash: event.txHash,
+        amount,
+        newDepositedAmount,
+        ledgerSequence: event.ledger,
+        timestamp,
+      }),
+    );
 
     sseService.broadcastToStream(String(streamId), "stream.topped_up", {
       streamId,
@@ -1295,39 +1239,47 @@ export class SorobanEventWorker {
     const token = decodeAddress(body["token"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    const existingEvent = await prisma.streamEvent.findUnique({
-      where: {
-        transactionHash_eventType: {
-          transactionHash: event.txHash,
-          eventType: "FEE_COLLECTED",
-        },
-      },
-      select: { id: true },
-    });
-    if (existingEvent) {
-      logger.warn(
-        `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
-      );
-    } else {
-      await prisma.streamEvent.upsert({
+    // The dedup check and the write must be atomic: as two separate top-level
+    // `prisma` calls they interleave when the same txHash is delivered twice
+    // (RPC retry, replay, concurrent poll cycles), both checks see no row, and
+    // the unique index on (transactionHash, eventType) rejects the second
+    // insert — surfacing as a 500 on the fee-event path. Matches the pattern
+    // every other handler in this file already uses (issue #1239).
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existingEvent = await tx.streamEvent.findUnique({
         where: {
           transactionHash_eventType: {
             transactionHash: event.txHash,
             eventType: "FEE_COLLECTED",
           },
         },
-        create: {
-          streamId,
-          eventType: "FEE_COLLECTED",
-          amount: feeAmount,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ treasury, token }),
-        },
-        update: {},
+        select: { id: true },
       });
-    }
+      if (existingEvent) {
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
+        );
+      } else {
+        await tx.streamEvent.upsert({
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "FEE_COLLECTED",
+            },
+          },
+          create: {
+            streamId,
+            eventType: "FEE_COLLECTED",
+            amount: feeAmount,
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({ treasury, token }),
+          },
+          update: {},
+        });
+      }
+    });
 
     // Broadcast to admin channel for treasury reporting
     sseService.broadcastToAdmin("stream.fee_collected", {

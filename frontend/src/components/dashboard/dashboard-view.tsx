@@ -434,7 +434,7 @@ const StreamsTable = React.memo(function StreamsTable({
                     <div className="flex items-center justify-end gap-2">
                       {/^\d+$/.test(stream.id) ? (
                         <Link
-                          href={`/app/streams/${stream.id}`}
+                          href={`/streams/${stream.id}`}
                           className="secondary-button py-1 px-3 text-sm h-auto inline-flex items-center"
                         >
                           Details
@@ -577,6 +577,16 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
   const filteredOutgoing = React.useMemo(
     () => (snapshot?.outgoingStreams ?? []).filter(matchesSearch),
     [snapshot, matchesSearch],
+  );
+  const projectionStreams = React.useMemo(
+    () =>
+      snapshot
+        ? [
+            ...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })),
+            ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token })),
+          ]
+        : [],
+    [snapshot],
   );
   const filteredSnapshot = React.useMemo<DashboardSnapshot | null>(
     () => (snapshot ? { ...snapshot, outgoingStreams: filteredOutgoing } : null),
@@ -901,7 +911,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
-          <CashflowProjectionChart streams={[...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })), ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token }))]} />
+          <CashflowProjectionChart streams={projectionStreams} />
           <StreamsTable
             snapshot={filteredSnapshot}
             onTopUp={handleTopUp}

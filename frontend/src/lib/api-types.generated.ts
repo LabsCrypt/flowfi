@@ -3889,6 +3889,8 @@ export interface components {
                 message: string;
                 /** @description Structured validation issues when applicable */
                 details?: Record<string, never>[];
+                /** @description Correlation ID echoed from the response X-Request-ID header; omitted when no ID was assigned */
+                requestId?: string;
             };
         };
     };

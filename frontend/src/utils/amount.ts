@@ -271,6 +271,7 @@ export function getDefaultTokenDecimals(symbol: string): number {
 }
 
 import { logger } from "@/lib/logger";
+import { loadStellarSdk } from "@/lib/stellar-sdk";
 
 // RPC configuration for fetching token decimals
 const SOROBAN_RPC_URL =
@@ -292,11 +293,8 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sdk: any = await import("@stellar/stellar-sdk");
-    const { Contract, TransactionBuilder, BASE_FEE } = sdk;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
+    const sdk = await loadStellarSdk();
+    const { Contract, TransactionBuilder, BASE_FEE, rpc } = sdk;
 
     // Use a dummy account for simulation (just need to read contract data)
     const dummyKeypair = sdk.Keypair.random();
@@ -316,7 +314,7 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
 
     const simResult = await server.simulateTransaction(tx);
 
-    if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+    if (rpc.Api.isSimulationError(simResult)) {
       logger.warn(`Failed to fetch decimals for ${tokenAddress}:`, simResult.error);
       // Cache default to avoid repeated failed calls
       setCachedTokenDecimals(tokenAddress, 7);

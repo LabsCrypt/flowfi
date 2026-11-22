@@ -84,8 +84,8 @@ describe('Stream Creation Rate Limiter Middleware', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(429);
-      expect(res.body).toHaveProperty('error');
-      expect(res.body.error).toContain('rate limit');
+      expect(res.body.error.code).toBe('RATE_LIMITED');
+      expect(res.body.error.message).toContain('rate limit');
     });
 
     it('should include Retry-After header in rate limit response', async () => {
@@ -342,10 +342,10 @@ describe('Stream Creation Rate Limiter Middleware', () => {
         .set('Content-Type', 'application/json');
 
       expect(res.status).toBe(429);
-      expect(res.body).toHaveProperty('error');
-      expect(res.body).toHaveProperty('message');
-      expect(typeof res.body.message).toBe('string');
-      expect(res.body.message.toLowerCase()).toContain('rate limit');
+      expect(Object.keys(res.body)).toEqual(['error']);
+      expect(res.body.error.code).toBe('RATE_LIMITED');
+      expect(typeof res.body.error.message).toBe('string');
+      expect(res.body.error.message.toLowerCase()).toContain('rate limit');
     });
 
     it('should include rate limit information in response headers', async () => {

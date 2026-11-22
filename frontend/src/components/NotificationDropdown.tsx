@@ -26,6 +26,12 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     const [notifications, setNotifications] = useState<NotificationItem[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
     const containerRef = useRef<HTMLDivElement>(null);
+    const isOpenRef = useRef(isOpen);
+    // Events already turned into notifications. The stream hook keeps the same
+    // event objects as it prepends new ones, so identity tells new from seen.
+    const processedEventsRef = useRef(new WeakSet<object>());
+    // Disambiguates notification IDs for same-type events in the same millisecond.
+    const notificationSeqRef = useRef(0);
 
     const { events: streamEvents, connected } = useStreamEvents({
         userPublicKeys: [publicKey],
@@ -87,31 +93,36 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ publ
     }, []);
 
     useEffect(() => {
-        if (streamEvents.length === 0) return;
+        isOpenRef.current = isOpen;
+    }, [isOpen]);
 
-        const newNotifications = streamEvents.map((event) => ({
-            id: `sse-${event.type}-${event.timestamp}`,
+    // Only derive notifications from events that have not been seen yet, so
+    // the badge grows by exactly one per new event and opening or closing the
+    // dropdown never re-counts the buffered history.
+    useEffect(() => {
+        const freshEvents = streamEvents.filter((event) => !processedEventsRef.current.has(event));
+        if (freshEvents.length === 0) return;
+
+        freshEvents.forEach((event) => processedEventsRef.current.add(event));
+
+        const read = isOpenRef.current;
+        const newNotifications = freshEvents.map((event) => ({
+            id: `sse-${event.type}-${event.timestamp}-${notificationSeqRef.current++}`,
             streamId: ((event.data as Record<string, unknown>)?.streamId as number) || 0,
             type: event.type,
             message: formatEventMessage(event as { type: string; data?: Record<string, unknown> }),
             timestamp: event.timestamp,
-            read: isOpen,
+            read,
         }));
 
         queueMicrotask(() => {
-            setNotifications((prev) => {
-                const combined = [...newNotifications, ...prev];
-                const unique = combined.filter(
-                    (notif, index, self) => index === self.findIndex((n) => n.id === notif.id),
-                );
-                return unique.slice(0, 20);
-            });
+            setNotifications((prev) => [...newNotifications, ...prev].slice(0, 20));
 
-            if (!isOpen) {
+            if (!read) {
                 setUnreadCount((prev) => prev + newNotifications.length);
             }
         });
-    }, [streamEvents, isOpen, formatEventMessage]);
+    }, [streamEvents, formatEventMessage]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
