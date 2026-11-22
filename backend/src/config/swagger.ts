@@ -237,6 +237,14 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               type: 'string',
               format: 'date-time',
             },
+            events: {
+              type: 'array',
+              description:
+                'Up to 20 most recent stream events ordered descending by timestamp. For complete event history use GET /v1/streams/{streamId}/events.',
+              items: {
+                $ref: '#/components/schemas/StreamEvent',
+              },
+            },
           },
         },
         StreamEvent: {

@@ -27,6 +27,14 @@ const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
 
 /**
+ * Hard cap on embedded events returned with a stream in GET /v1/streams/:streamId.
+ * Prevents memory amplification and unbounded payload sizes when a stream accumulates
+ * many events. Callers requiring full event history should query the paginated
+ * GET /v1/streams/:streamId/events endpoint.
+ */
+export const EMBEDDED_EVENTS_LIMIT = 20;
+
+/**
  * Hard cap on the number of streams fetched per user in the summary endpoint.
  * Prevents unbounded DB queries when a wallet has thousands of streams.
  * Users who exceed this cap receive a truncated summary (counts and totals
@@ -281,7 +289,10 @@ export const listStreams = async (req: Request, res: Response) => {
 };
 
 /**
- * Get a single stream by ID
+ * Get a single stream by ID.
+ * Embedded events are limited to the most recent 20 (EMBEDDED_EVENTS_LIMIT)
+ * to prevent memory amplification. For full event history, use
+ * GET /v1/streams/:streamId/events.
  */
 export const getStream = async (req: Request, res: Response) => {
   try {
@@ -300,6 +311,7 @@ export const getStream = async (req: Request, res: Response) => {
         recipientUser: true,
         events: {
           orderBy: { timestamp: "desc" },
+          take: EMBEDDED_EVENTS_LIMIT,
         },
       },
     }));
