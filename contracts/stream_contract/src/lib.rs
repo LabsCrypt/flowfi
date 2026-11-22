@@ -84,6 +84,11 @@ use types::{
 /// Maximum allowed protocol fee: 1 000 bps = 10%.
 const MAX_FEE_RATE_BPS: u32 = 1_000;
 
+/// Ledgers a `withdraw_and_swap` router allowance stays live for. The approval
+/// is consumed (or revoked) inside the same invocation, so this only has to
+/// outlive it.
+const SWAP_ALLOWANCE_LEDGERS: u32 = 100;
+
 /// Resolved fee split: a list of `(recipient, amount)` pairs to pay out.
 type FeeRecipients = Vec<(Address, i128)>;
 
@@ -853,14 +858,9 @@ impl StreamContract {
         stream_id: u64,
         role: PositionRole,
     ) -> Result<StreamPositionMetadata, StreamError> {
-        let metadata =
-            try_load_position_metadata(&env, stream_id, role).ok_or(StreamError::StreamNotFound)?;
-
-        if metadata.stream_id != stream_id {
-            return Err(StreamError::StreamNotFound);
-        }
-
-        Ok(metadata)
+        // Distinguish "no such stream" from "no position for that role".
+        load_stream(&env, stream_id)?;
+        try_load_position_metadata(&env, stream_id, role).ok_or(StreamError::PositionNotFound)
     }
 
     /// Returns all position metadata entries for a given owner.
@@ -887,6 +887,11 @@ impl StreamContract {
     /// whether the position can be transferred to a third party.
     ///
     /// # Errors
+    /// - `StreamNotFound` — no stream exists with `stream_id`.
+    /// - `Unauthorized` — `sender` is not the stream's sender, or `recipient`
+    ///   is not the stream's recipient; also returned when `sender` has not
+    ///   authorised the call.
+    /// - `InvalidTokenAddress` — `token_address` is not the stream's token.
     /// - `AlreadyInitialized` — position metadata already exists for this stream.
     pub fn mint_stream_position(
         env: Env,
@@ -899,6 +904,17 @@ impl StreamContract {
         end_time: u64,
         is_transferable: bool,
     ) -> Result<(), StreamError> {
+        // Positions belong to a real stream, and only its participants may mint
+        // them. Without this anyone could mint a receipt for any stream id.
+        let stream = load_stream(&env, stream_id)?;
+        if stream.sender != sender || stream.recipient != recipient {
+            return Err(StreamError::Unauthorized);
+        }
+        if stream.token_address != token_address {
+            return Err(StreamError::InvalidTokenAddress);
+        }
+        sender.require_auth();
+
         // Check if position already exists
         if try_load_position_metadata(&env, stream_id, PositionRole::Sender).is_some()
             || try_load_position_metadata(&env, stream_id, PositionRole::Recipient).is_some()
@@ -912,6 +928,7 @@ impl StreamContract {
             StreamPositionCreatedEvent {
                 stream_id,
                 role: PositionRole::Sender,
+                owner: sender.clone(),
                 token_address: token_address.clone(),
                 rate_per_second,
                 start_time,
@@ -925,6 +942,7 @@ impl StreamContract {
             StreamPositionCreatedEvent {
                 stream_id,
                 role: PositionRole::Recipient,
+                owner: recipient.clone(),
                 token_address: token_address.clone(),
                 rate_per_second,
                 start_time,
@@ -937,7 +955,8 @@ impl StreamContract {
         let sender_metadata = StreamPositionMetadata {
             stream_id,
             role: PositionRole::Sender,
-            token_address: sender,
+            owner: sender,
+            token_address: token_address.clone(),
             rate_per_second,
             start_time,
             end_time,
@@ -947,7 +966,8 @@ impl StreamContract {
         let recipient_metadata = StreamPositionMetadata {
             stream_id,
             role: PositionRole::Recipient,
-            token_address: recipient,
+            owner: recipient,
+            token_address: token_address.clone(),
             rate_per_second,
             start_time,
             end_time,
@@ -982,29 +1002,26 @@ impl StreamContract {
         }
         Self::validate_stream_active(&stream)?;
 
-        // Update recipient position metadata
-        let position_key = DataKey::StreamPosition(stream_id);
-        if env.storage().persistent().has(&position_key) {
-            let mut position: StreamPositionMetadata =
-                env.storage().persistent().get(&position_key).unwrap();
+        // Update recipient position metadata. Only the recipient's slot moves;
+        // the sender's record is untouched.
+        if let Some(mut position) =
+            try_load_position_metadata(&env, stream_id, PositionRole::Recipient)
+        {
+            position.owner = new_recipient.clone();
+            save_position_metadata(&env, &position);
 
-            if position.role == PositionRole::Recipient {
-                position.token_address = new_recipient.clone();
-                save_position_metadata(&env, &position);
-
-                emit_stream_position_updated(
-                    &env,
-                    StreamPositionUpdatedEvent {
-                        stream_id,
-                        role: PositionRole::Recipient,
-                        new_token_address: new_recipient,
-                        new_rate_per_second: position.rate_per_second,
-                        new_start_time: position.start_time,
-                        new_end_time: position.end_time,
-                        new_is_transferable: position.is_transferable,
-                    },
-                );
-            }
+            emit_stream_position_updated(
+                &env,
+                StreamPositionUpdatedEvent {
+                    stream_id,
+                    role: PositionRole::Recipient,
+                    new_owner: new_recipient,
+                    new_rate_per_second: position.rate_per_second,
+                    new_start_time: position.start_time,
+                    new_end_time: position.end_time,
+                    new_is_transferable: position.is_transferable,
+                },
+            );
         }
 
         Ok(())
@@ -1200,7 +1217,7 @@ impl StreamContract {
         let contract_address = env.current_contract_address();
         token_client.transfer(&sender, &contract_address, &amount);
 
-        let (net_amount, total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
+        let (net_amount, _total_fee, recipients) = Self::collect_fee(&env, &token_address, amount)?;
 
         // The cliff must land strictly after creation, and must leave a
         // non-empty remainder so the linear component is well defined.
@@ -1209,7 +1226,9 @@ impl StreamContract {
             return Err(StreamError::InvalidCliffParameters);
         }
 
-        let linear_amount = net_amount - total_fee;
+        // `net_amount` is already post-fee; the tail carries everything that
+        // the cliff does not release.
+        let linear_amount = net_amount - cliff_unlock_amount;
         let rate_per_second = linear_amount / (linear_duration as i128);
         if rate_per_second == 0 {
             return Err(StreamError::InvalidCliffParameters);
@@ -1995,6 +2014,28 @@ impl StreamContract {
         amount: i128,
         now: u64,
     ) -> Result<(), StreamError> {
+        Self::record_withdrawal(env, stream, stream_id, amount, now)?;
+
+        // Interaction: transfer tokens only after state is committed to storage
+        let token_client = token::Client::new(env, &stream.token_address);
+        token_client.transfer(&env.current_contract_address(), recipient, &amount);
+
+        Ok(())
+    }
+
+    /// Commits a withdrawal to the stream's accounting without paying anyone.
+    ///
+    /// Split out of [`Self::apply_withdrawal`] so callers that settle the
+    /// principal through another path — `withdraw_and_swap` hands it to a DEX
+    /// router — reduce `withdrawn_amount` exactly once without also paying the
+    /// recipient.
+    fn record_withdrawal(
+        env: &Env,
+        stream: &mut Stream,
+        stream_id: u64,
+        amount: i128,
+        now: u64,
+    ) -> Result<(), StreamError> {
         // Effects: update stream state. The checked add runs before any state
         // mutation or transfer, so an overflow leaves the stream untouched.
         stream.withdrawn_amount = stream
@@ -2010,10 +2051,6 @@ impl StreamContract {
 
         // Persist state before any external call (CEI)
         save_stream(env, stream_id, stream);
-
-        // Interaction: transfer tokens only after state is committed to storage
-        let token_client = token::Client::new(env, &stream.token_address);
-        token_client.transfer(&env.current_contract_address(), recipient, &amount);
 
         Ok(())
     }
@@ -2210,8 +2247,23 @@ impl StreamContract {
         // Get the stream's principal token address
         let principal_token = stream.token_address.clone();
 
-        // Withdraw the principal amount from stream accounting
-        Self::apply_withdrawal(&env, &mut stream, stream_id, &recipient, claimable, now)?;
+        // Reduce the stream's accounting exactly once. The recipient is *not*
+        // paid here: the principal leaves the contract as the router's input,
+        // and the recipient receives the swap output. Paying the recipient
+        // first would pay twice and let the router pull from other streams'
+        // pooled escrow.
+        Self::record_withdrawal(&env, &mut stream, stream_id, claimable, now)?;
+
+        // Grant the router a one-shot allowance for exactly this stream's
+        // claimable amount, then revoke it once the swap has settled.
+        let token_client = token::Client::new(&env, &principal_token);
+        let allowance_expiry = env.ledger().sequence() + SWAP_ALLOWANCE_LEDGERS;
+        token_client.approve(
+            &env.current_contract_address(),
+            &dex_router,
+            &claimable,
+            &allowance_expiry,
+        );
 
         // Execute swap via DEX router
         let router_client = DexRouter::new(&env, &dex_router);
@@ -2229,14 +2281,22 @@ impl StreamContract {
             &deadline,
         );
 
-        // The last amount in the array is the actual output amount
         let output_amount = amounts.last().unwrap_or(0);
 
+        // Any error here rolls the whole invocation back (accounting, approval
+        // and token movements), so no explicit refund is needed.
         if output_amount < min_target_amount {
-            // Revert: we need to refund the withdrawn amount
-            // In a real implementation, this would be more complex
             return Err(StreamError::InsufficientOutput);
         }
+
+        // Drop the leftover allowance so a compromised router cannot come back
+        // for another stream's escrow.
+        token_client.approve(
+            &env.current_contract_address(),
+            &dex_router,
+            &0,
+            &allowance_expiry,
+        );
 
         // Emit cross-asset withdrawal event
         emit_cross_asset_withdrawal_executed(
@@ -2249,7 +2309,8 @@ impl StreamContract {
                 output_amount,
                 rate_per_second: stream.rate_per_second,
                 deadline,
-                slippage: min_target_amount - output_amount,
+                // Positive when the swap beat the caller's floor.
+                slippage: output_amount - min_target_amount,
             },
         );
 
