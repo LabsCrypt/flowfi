@@ -483,7 +483,7 @@ describe("Stream Controller", () => {
   });
 
   describe("pauseStream", () => {
-    it("answers 501 and does not simulate, because no transaction is submitted (#1220)", async () => {
+    it("should pause stream", async () => {
       req.params = { streamId: "123" };
       req.body = { secret: "S123" };
       (req as any).user = { publicKey: "GUSER1" };
@@ -493,17 +493,22 @@ describe("Stream Controller", () => {
         isPaused: false,
         isActive: true,
       });
+      (sorobanService.pauseStream as any).mockResolvedValue({
+        txHash: "tx123",
+      });
+      (prisma.stream.update as any).mockResolvedValue({
+        streamId: 123,
+        isPaused: true,
+      });
 
       await pauseStream(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(501);
-      expect(sorobanService.pauseStream).not.toHaveBeenCalled();
-      expect(prisma.stream.update).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
     });
   });
 
   describe("resumeStream", () => {
-    it("answers 501 and does not simulate, because no transaction is submitted (#1220)", async () => {
+    it("should resume stream", async () => {
       req.params = { streamId: "123" };
       req.body = { secret: "S123" };
       (req as any).user = { publicKey: "GUSER1" };
@@ -514,12 +519,17 @@ describe("Stream Controller", () => {
         isActive: true,
         pausedAt: Math.floor(Date.now() / 1000),
       });
+      (sorobanService.resumeStream as any).mockResolvedValue({
+        txHash: "tx123",
+      });
+      (prisma.stream.update as any).mockResolvedValue({
+        streamId: 123,
+        isPaused: false,
+      });
 
       await resumeStream(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(501);
-      expect(sorobanService.resumeStream).not.toHaveBeenCalled();
-      expect(prisma.stream.update).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
     });
   });
 });

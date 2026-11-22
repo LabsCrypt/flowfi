@@ -101,7 +101,7 @@ describe('stream action routes', () => {
     mockPrisma.streamEvent.count.mockResolvedValue(0);
   });
 
-  it('POST /v1/streams/:streamId/pause answers 501 instead of a fake success (#1220)', async () => {
+  it('POST /v1/streams/:streamId/pause pauses an active sender-owned stream', async () => {
     const sender = makeKeypair();
     const token = await getValidJwt(sender);
 
@@ -114,19 +114,32 @@ describe('stream action routes', () => {
       pausedAt: null,
       totalPausedDuration: 0,
     });
+    mockPauseStream.mockResolvedValue({ txHash: 'pause-tx-hash' });
+    mockPrisma.stream.update.mockResolvedValue({
+      streamId: 7,
+      isActive: true,
+      isPaused: true,
+      pausedAt: 1700000000,
+      totalPausedDuration: 0,
+    });
 
     const response = await request(app)
       .post('/v1/streams/7/pause')
       .set('Authorization', `Bearer ${token}`);
 
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(200);
+    // Issue #1847: a dry-run reports the state it read, never one it wrote.
     expect(response.body).toMatchObject({
-      error: { code: 'NOT_IMPLEMENTED' },
+      success: true,
+      simulated: true,
+      streamId: 7,
+      isPaused: false,
     });
-    // No on-chain submission and no DB write, so the simulation is not even
-    // reached.
-    expect(mockPauseStream).not.toHaveBeenCalled();
+    expect(response.body).not.toHaveProperty("txHash");
+    expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7n);
     expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
   });
 
   it('rejects a raw signed transaction bearer token without a JWT', async () => {
@@ -143,7 +156,7 @@ describe('stream action routes', () => {
     });
   });
 
-  it('POST /v1/streams/:streamId/resume answers 501 instead of a fake success (#1220)', async () => {
+  it('POST /v1/streams/:streamId/resume resumes a paused sender-owned stream', async () => {
     const sender = makeKeypair();
     const token = await getValidJwt(sender);
 
@@ -156,17 +169,30 @@ describe('stream action routes', () => {
       pausedAt: Math.floor(Date.now() / 1000) - 30,
       totalPausedDuration: 10,
     });
+    mockResumeStream.mockResolvedValue({ txHash: 'resume-tx-hash' });
+    mockPrisma.stream.update.mockResolvedValue({
+      streamId: 9,
+      isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 40,
+    });
 
     const response = await request(app)
       .post('/v1/streams/9/resume')
       .set('Authorization', `Bearer ${token}`);
 
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
-      error: { code: 'NOT_IMPLEMENTED' },
+      success: true,
+      simulated: true,
+      streamId: 9,
+      isPaused: true,
     });
-    expect(mockResumeStream).not.toHaveBeenCalled();
+    expect(response.body).not.toHaveProperty("txHash");
+    expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9n);
     expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
   });
 
   it('POST /v1/streams/:streamId/withdraw withdraws the claimable amount for the recipient', async () => {
@@ -206,19 +232,17 @@ describe('stream action routes', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       success: true,
+      simulated: true,
       streamId: 11,
-      txHash: 'withdraw-tx-hash',
       amount: '100',
     });
+    expect(response.body).not.toHaveProperty("txHash");
     expect(mockWithdraw).toHaveBeenCalledWith(11n, recipient.publicKey());
-    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({
-          eventType: 'WITHDRAWN',
-          amount: '100',
-          transactionHash: 'withdraw-tx-hash',
-        }),
-      }),
-    );
+    // Issue #1847: the dry-run moves no funds, so it may not record that it did.
+    // `withdrawnAmount` and the WITHDRAWN row come from the confirmed on-chain
+    // event, written only by the indexer.
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
   });
 });

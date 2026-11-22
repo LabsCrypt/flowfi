@@ -523,12 +523,13 @@ router.get('/:streamId/snapshot', getStreamSnapshot);
  *   post:
  *     tags:
  *       - Streams
- *     summary: Pause a payment stream
- *     description: >-
- *       Validate a pause request. Only the sender can pause their own stream.
- *       The pause itself has to be submitted as a signed transaction by the
- *       sender's wallet, so this endpoint answers 501 and never reports a
- *       success whose transaction hash is a placeholder (#1220).
+ *     summary: Dry-run a stream pause
+ *     description: |
+ *       Verifies that the sender could pause the stream right now. Nothing is
+ *       submitted and `isPaused` is not changed: `pause_stream` is authorized by
+ *       the sender's wallet, so the client signs the transaction returned by
+ *       `POST /v1/streams/simulate` and the indexer applies the state from the
+ *       confirmed event (issue #1847).
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -539,14 +540,14 @@ router.get('/:streamId/snapshot', getStreamSnapshot);
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       501:
- *         description: Not implemented - pausing requires a sender-signed transaction
+ *       200:
+ *         description: Pause verified as possible (simulated - state unchanged)
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Error'
+ *               $ref: '#/components/schemas/PauseResumeResponse'
  *       400:
- *         description: Invalid streamId
+ *         description: Invalid streamId, or on-chain pause simulation failed
  *         content:
  *           application/json:
  *             schema:
@@ -590,12 +591,10 @@ router.post('/:streamId/pause', requireAuth, pauseStream);
  *   post:
  *     tags:
  *       - Streams
- *     summary: Resume a paused payment stream
- *     description: >-
- *       Validate a resume request. Only the sender can resume their own stream.
- *       The resume itself has to be submitted as a signed transaction by the
- *       sender's wallet, so this endpoint answers 501 and never reports a
- *       success whose transaction hash is a placeholder (#1220).
+ *     summary: Dry-run resuming a paused stream
+ *     description: |
+ *       Verifies that the sender could resume the stream right now. Nothing is
+ *       submitted and `isPaused` is not changed — see the pause endpoint.
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -606,14 +605,14 @@ router.post('/:streamId/pause', requireAuth, pauseStream);
  *     security:
  *       - bearerAuth: []
  *     responses:
- *       501:
- *         description: Not implemented - resuming requires a sender-signed transaction
+ *       200:
+ *         description: Resume verified as possible (simulated - state unchanged)
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Error'
+ *               $ref: '#/components/schemas/PauseResumeResponse'
  *       400:
- *         description: Invalid streamId
+ *         description: Invalid streamId, or on-chain resume simulation failed
  *         content:
  *           application/json:
  *             schema:
@@ -657,8 +656,13 @@ router.post('/:streamId/resume', requireAuth, resumeStream);
  *   post:
  *     tags:
  *       - Streams
- *     summary: Withdraw claimable balance from a payment stream
- *     description: Withdraws the currently claimable amount. Only the recipient can withdraw.
+ *     summary: Dry-run a withdrawal of the claimable balance
+ *     description: |
+ *       Verifies that the recipient could withdraw the claimable amount right
+ *       now. Nothing is submitted and no accounting is written; the indexer owns
+ *       `withdrawnAmount` and WITHDRAWN events from confirmed on-chain events
+ *       (issue #1847). Sign the simulated `withdraw` transaction to take the
+ *       funds.
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -670,7 +674,7 @@ router.post('/:streamId/resume', requireAuth, resumeStream);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Withdrawal submitted successfully
+ *         description: Withdrawal verified as possible (simulated - no funds moved)
  *         content:
  *           application/json:
  *             schema:

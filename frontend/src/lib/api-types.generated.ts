@@ -179,12 +179,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List all webhooks for authenticated user */
+        /**
+         * List all webhooks for the authenticated wallet
+         * @description Subscriptions are scoped to the authenticated wallet; the caller supplies no address.
+         */
         get: {
             parameters: {
-                query: {
-                    userAddress: string;
-                };
+                query?: never;
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -202,8 +203,8 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Missing userAddress */
-                400: {
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -237,8 +238,6 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        /** @description Stellar public key */
-                        userAddress: string;
                         /** Format: uri */
                         targetUrl: string;
                         eventTypes: ("CREATED" | "TOPPED_UP" | "WITHDRAWN" | "CANCELLED" | "COMPLETED" | "PAUSED" | "RESUMED" | "FEE_COLLECTED")[];
@@ -262,6 +261,15 @@ export interface paths {
                 };
                 /** @description Missing required fields */
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -296,12 +304,13 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete a webhook subscription */
+        /**
+         * Delete a webhook subscription
+         * @description Only the subscription owner can delete it; a foreign id is reported as not found.
+         */
         delete: {
             parameters: {
-                query: {
-                    userAddress: string;
-                };
+                query?: never;
                 header?: never;
                 path: {
                     id: string;
@@ -317,8 +326,17 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Invalid id or missing userAddress */
-                400: {
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Webhook subscription not found */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -361,13 +379,7 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        userAddress: string;
-                    };
-                };
-            };
+            requestBody?: never;
             responses: {
                 /** @description Test webhook sent */
                 200: {
@@ -384,8 +396,17 @@ export interface paths {
                         };
                     };
                 };
-                /** @description Missing id or userAddress */
-                400: {
+                /** @description Unauthorized - missing or invalid authentication */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Webhook subscription not found */
+                404: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -1502,8 +1523,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Pause a payment stream
-         * @description Validate a pause request. Only the sender can pause their own stream. The pause itself has to be submitted as a signed transaction by the sender's wallet, so this endpoint answers 501 and never reports a success whose transaction hash is a placeholder (#1220).
+         * Dry-run a stream pause
+         * @description Verifies that the sender could pause the stream right now. Nothing is
+         *     submitted and `isPaused` is not changed: `pause_stream` is authorized by
+         *     the sender's wallet, so the client signs the transaction returned by
+         *     `POST /v1/streams/simulate` and the indexer applies the state from the
+         *     confirmed event (issue #1847).
          */
         post: {
             parameters: {
@@ -1517,7 +1542,16 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Invalid streamId */
+                /** @description Pause verified as possible (simulated - state unchanged) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PauseResumeResponse"];
+                    };
+                };
+                /** @description Invalid streamId, or on-chain pause simulation failed */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -1571,15 +1605,6 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Not implemented - pausing requires a sender-signed transaction */
-                501: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
             };
         };
         delete?: never;
@@ -1598,8 +1623,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Resume a paused payment stream
-         * @description Validate a resume request. Only the sender can resume their own stream. The resume itself has to be submitted as a signed transaction by the sender's wallet, so this endpoint answers 501 and never reports a success whose transaction hash is a placeholder (#1220).
+         * Dry-run resuming a paused stream
+         * @description Verifies that the sender could resume the stream right now. Nothing is
+         *     submitted and `isPaused` is not changed — see the pause endpoint.
          */
         post: {
             parameters: {
@@ -1613,7 +1639,16 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Invalid streamId */
+                /** @description Resume verified as possible (simulated - state unchanged) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PauseResumeResponse"];
+                    };
+                };
+                /** @description Invalid streamId, or on-chain resume simulation failed */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -1667,15 +1702,6 @@ export interface paths {
                         "application/json": components["schemas"]["Error"];
                     };
                 };
-                /** @description Not implemented - resuming requires a sender-signed transaction */
-                501: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
             };
         };
         delete?: never;
@@ -1694,8 +1720,16 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Withdraw claimable balance from a payment stream
-         * @description Withdraws the currently claimable amount. Only the recipient can withdraw.
+         * Dry-run a withdrawal of the claimable balance
+         * @description Verifies that a withdrawal of the currently claimable amount would
+         *     succeed on-chain. Only the stream recipient may call it.
+         *
+         *     Nothing is submitted and nothing is written: `withdraw` is authorized by
+         *     the recipient's wallet, so the backend cannot perform it on their
+         *     behalf. Sign the XDR from `POST /v1/streams/simulate`
+         *     (`action: "withdraw"`) to actually move funds; the indexer then records
+         *     the WITHDRAWN event and updates `withdrawnAmount` from the confirmed
+         *     on-chain event (issue #1847).
          */
         post: {
             parameters: {
@@ -1707,9 +1741,13 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
             responses: {
-                /** @description Withdrawal submitted successfully */
+                /** @description Withdrawal verified as possible (simulated - no funds moved) */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1896,10 +1934,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Cancel an active payment stream
-         * @description Cancels an active payment stream on the Stellar network.
-         *     Only the original sender can cancel the stream.
-         *     Accrued tokens are sent to the recipient, and the remainder is refunded to the sender.
+         * Cancel an active payment stream with a wallet-signed transaction
+         * @description Broadcasts the cancel transaction the caller's wallet already signed and
+         *     records the cancellation. Only the original sender can cancel their
+         *     stream; accrued tokens go to the recipient and the remainder is refunded
+         *     to the sender.
+         *
+         *     Signing happens in the wallet. `POST /v1/streams/simulate` with
+         *     `action: "cancel"` returns an unsigned, footprint-annotated XDR; the
+         *     wallet signs those exact bytes and the signature is posted here as
+         *     `signedXdr`. The API no longer accepts `senderSecret` (issue #1845) —
+         *     a request that still carries one is rejected.
          */
         post: {
             parameters: {
@@ -1911,9 +1956,16 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description base64 `TransactionEnvelope` returned by the wallet, signing the simulated cancel transaction */
+                        signedXdr: string;
+                    };
+                };
+            };
             responses: {
-                /** @description Stream cancelled successfully */
+                /** @description Stream cancelled on-chain */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -1922,7 +1974,7 @@ export interface paths {
                         "application/json": components["schemas"]["CancelResponse"];
                     };
                 };
-                /** @description Invalid streamId or transaction simulation failed */
+                /** @description Missing/invalid signedXdr, a legacy senderSecret, or an envelope that is not this stream's cancel */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -3730,10 +3782,14 @@ export interface components {
         PauseResumeResponse: {
             /** @example true */
             success: boolean;
+            /** @description True: the call was dry-run only. Nothing was submitted and nothing was written. */
+            simulated: boolean;
             streamId: number;
-            /** @description Stellar transaction hash of the pause/resume simulation */
-            txHash: string;
+            /** @description Current pause flag, unchanged by a simulation */
+            isPaused: boolean;
             stream?: components["schemas"]["Stream"];
+            /** @description How to complete the action by signing in the wallet */
+            message?: string;
         };
         TopUpResponse: {
             streamId: number;
@@ -3745,12 +3801,13 @@ export interface components {
         WithdrawResponse: {
             /** @example true */
             success: boolean;
+            /** @description True: the withdrawal was dry-run only. `withdrawnAmount` and StreamEvent rows are written by the indexer from the confirmed on-chain event. */
+            simulated: boolean;
             streamId: number;
-            /** @description Stellar transaction hash of the withdrawal */
-            txHash: string;
-            /** @description Amount withdrawn (i128 as string) */
+            /** @description Amount that would be withdrawn right now (i128 as string) */
             amount: string;
-            stream?: components["schemas"]["Stream"];
+            /** @description How to complete the withdrawal by signing in the wallet */
+            message?: string;
         };
         CancelResponse: {
             /** @description Stellar transaction hash of the cancel */

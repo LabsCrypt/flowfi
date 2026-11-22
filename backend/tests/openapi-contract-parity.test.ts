@@ -349,13 +349,7 @@ describe('internal contract of the generated document', () => {
     for (const operation of ops) {
       if (!operation.spec.summary) problems.push(`${labelled(operation)}: no summary`);
       const codes = statusCodesOf(operation);
-      // An operation that documents 501 Not Implemented has no success path to
-      // advertise until the missing capability lands: pause/resume need a
-      // sender-signed transaction the backend cannot produce (#1220). Requiring
-      // a 2xx here would force the document to claim a response that never
-      // happens, which is the false success #1220 removed.
-      const notImplemented = codes.includes('501');
-      if (!codes.some(isSuccess) && !notImplemented) problems.push(`${labelled(operation)}: no 2xx response`);
+      if (!codes.some(isSuccess)) problems.push(`${labelled(operation)}: no 2xx response`);
       if (!codes.some(isFailure)) problems.push(`${labelled(operation)}: no failure response`);
       for (const [code, response] of Object.entries<Record<string, any>>(operation.spec.responses)) {
         if (!response?.description) problems.push(`${labelled(operation)}: ${code} has no description`);

@@ -91,20 +91,23 @@ describe('Regression #804: Pause/resume controller duplicate StreamEvent', () =>
       isActive: true,
       isPaused: false,
     });
-    mockPauseStream.mockResolvedValue({ txHash: 'simulated-pause-77' });
+    mockPauseStream.mockResolvedValue({ simulated: true, fn: 'pause_stream' });
 
     const pauseRes = await request(app)
       .post(`/v1/streams/${streamId}/pause`)
       .set('Authorization', `Bearer ${token}`);
 
-    expect(pauseRes.status).toBe(501);
+    expect(pauseRes.status).toBe(200);
+
+    // Issue #1847: the dry run says so, and it reports the stream's real
+    // paused state instead of implying a change that never happened.
+    expect(pauseRes.body).toMatchObject({ success: true, simulated: true, isPaused: false });
+    expect(pauseRes.body.txHash).toBeUndefined();
 
     // Controller should NOT write to DB for PAUSED event
     expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
     expect(mockPrisma.stream.update).not.toHaveBeenCalled();
-    // And it must not reach the simulation either: the 501 says no transaction
-    // was submitted, so a simulated txHash would contradict the response.
-    expect(mockPauseStream).not.toHaveBeenCalled();
 
     // 2. Indexer flow
     const worker = new SorobanEventWorker();

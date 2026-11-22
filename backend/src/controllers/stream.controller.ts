@@ -9,6 +9,8 @@ import {
   getClaimableFromChain,
   isStale,
   topUpStream,
+  pauseStream as sorobanPauseStream,
+  resumeStream as sorobanResumeStream,
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
@@ -753,8 +755,10 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
 };
 
 /**
- * Pause a stream. Only the sender can pause their own stream.
- * Validates the request, checks ownership, and updates the database.
+ * Dry-run a pause for the stream sender. Only the sender may pause their own
+ * stream. Nothing is written to the database: `pause_stream` is authorized by
+ * the sender's wallet, so the client has to sign and submit it, and the indexer
+ * sets `isPaused` from the confirmed PAUSED event (issue #1847).
  */
 export const pauseStream = async (req: Request, res: Response) => {
   try {
@@ -796,16 +800,31 @@ export const pauseStream = async (req: Request, res: Response) => {
       return sendApiError(res, 409, "CONFLICT", "Cannot pause an inactive stream");
     }
 
-    // The pause must be submitted as a signed transaction by the sender's
-    // wallet; `sorobanService.pauseStream` only simulates it. Answering 200
-    // here would return a placeholder txHash and the unmodified record, which
-    // is a success the caller cannot verify anywhere (#1220).
-    return sendApiError(
-      res,
-      501,
-      "NOT_IMPLEMENTED",
-      "Pausing requires a signed transaction from the sender wallet; this endpoint does not submit one",
-    );
+    try {
+      // Call Soroban service to verify the pause operation would succeed
+      await sorobanPauseStream(authReq.user.publicKey, parsedStreamId);
+
+      logger.info(
+        `Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`,
+      );
+
+      // `stream` is returned as read: the simulation cannot have changed it.
+      return res.status(200).json({
+        success: true,
+        simulated: true,
+        streamId: parsedStreamId,
+        isPaused: stream.isPaused,
+        stream,
+        message:
+          'Pause is available but was not submitted. Sign the simulated pause_stream transaction with the sender wallet.',
+      });
+    } catch (sorobanError) {
+      logger.error(
+        `Soroban pause failed for stream ${parsedStreamId}:`,
+        sorobanError,
+      );
+      return sendApiError(res, 400, "PAUSE_FAILED", "Failed to pause stream on chain");
+    }
   } catch (error) {
     logger.error("Error pausing stream:", error);
     return sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "A technical error occurred. Please try again later.");
@@ -813,8 +832,8 @@ export const pauseStream = async (req: Request, res: Response) => {
 };
 
 /**
- * Resume a paused stream. Only the sender can resume their own stream.
- * Validates the request, checks ownership, and updates the database.
+ * Dry-run a resume for the stream sender. Only the sender may resume their own
+ * stream. Nothing is written to the database — see `pauseStream`.
  */
 export const resumeStream = async (req: Request, res: Response) => {
   try {
@@ -851,14 +870,31 @@ export const resumeStream = async (req: Request, res: Response) => {
       return sendApiError(res, 409, "CONFLICT", "Stream is not paused");
     }
 
-    // Same as pause: `sorobanService.resumeStream` only simulates the call, so
-    // there is no state change to report. See #1220.
-    return sendApiError(
-      res,
-      501,
-      "NOT_IMPLEMENTED",
-      "Resuming requires a signed transaction from the sender wallet; this endpoint does not submit one",
-    );
+    try {
+      // Call Soroban service to verify the resume operation would succeed
+      await sorobanResumeStream(authReq.user.publicKey, parsedStreamId);
+
+      logger.info(
+        `Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`,
+      );
+
+      // `stream` is returned as read: the simulation cannot have changed it.
+      return res.status(200).json({
+        success: true,
+        simulated: true,
+        streamId: parsedStreamId,
+        isPaused: stream.isPaused,
+        stream,
+        message:
+          'Resume is available but was not submitted. Sign the simulated resume_stream transaction with the sender wallet.',
+      });
+    } catch (sorobanError) {
+      logger.error(
+        `Soroban resume failed for stream ${parsedStreamId}:`,
+        sorobanError,
+      );
+      return sendApiError(res, 400, "RESUME_FAILED", "Failed to resume stream on chain");
+    }
   } catch (error) {
     logger.error("Error resuming stream:", error);
     return sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "A technical error occurred. Please try again later.");
