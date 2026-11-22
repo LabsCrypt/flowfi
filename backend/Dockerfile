@@ -16,7 +16,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 
-RUN npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 COPY tsconfig.json ./
 COPY prisma.config.ts ./
@@ -41,7 +41,7 @@ ENV NODE_ENV=production
 # below), so the runner never needs the schema to install dependencies.
 # The npm cache is purged in the same layer so it never ships in the image.
 COPY package*.json ./
-RUN npm install --omit=dev --ignore-scripts --no-audit --no-fund \
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
  && npm cache clean --force
 
 # `--ignore-scripts` also skips the @prisma/engines postinstall, so the
@@ -77,8 +77,10 @@ EXPOSE 3001
 
 # Native healthcheck so Docker Compose / Kubernetes can gate traffic on
 # readiness instead of only checking that the process is running.
+# node-based check: the runtime image only ships busybox wget, which rejects
+# GNU flags such as --no-verbose/--tries.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1
+  CMD node -e "require('http').get('http://127.0.0.1:3001/health', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" || exit 1
 
 # Exec node directly instead of `npm start` so the server runs as PID 1 and
 # receives SIGTERM/SIGINT for the graceful-shutdown handler in src/index.ts.

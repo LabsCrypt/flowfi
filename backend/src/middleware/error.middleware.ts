@@ -1,8 +1,33 @@
 import type { Request, Response, NextFunction } from 'express';
 import { ZodError, type ZodIssue } from 'zod';
 import logger from '../logger.js';
-import { ApiError as TypeApiError, sendApiError } from '../types/api-error.js';
-import { ApiError as LibApiError, fromPrismaError, sanitizeDatabaseErrorMessage } from '../lib/api-error.js';
+import {
+  ApiError,
+  fromPrismaError,
+  sanitizeDatabaseErrorMessage,
+  sendApiError,
+} from '../lib/api-error.js';
+
+/**
+ * Shape of the third-party errors that reach this handler. `express`,
+ * `body-parser` and the auth libraries attach a status (and sometimes a machine
+ * code) to a plain `Error`, so the handler reads those fields through this
+ * interface instead of through `any`.
+ */
+interface StatusedError extends Error {
+  status?: number;
+  statusCode?: number;
+  code?: string;
+  type?: string;
+  details?: unknown;
+}
+
+const asStatusedError = (err: unknown): StatusedError | null =>
+  err instanceof Error ? err : null;
+
+/** The status an error asks to be answered with, or 500 when it says nothing. */
+const statusOf = (err: StatusedError): number =>
+  err.statusCode ?? err.status ?? 500;
 
 /**
  * The status this error will be answered with, before anything is sent.
@@ -53,12 +78,12 @@ export const errorHandler = (
         return next(err);
     }
 
+    const statused = asStatusedError(err);
+
     // body-parser signals an over-limit body with `type: 'entity.too.large'`
     // (and status 413). Translate it to the API's standard JSON error envelope
     // instead of leaking the raw parser message.
-    const maybeStatus = (err as { status?: number; statusCode?: number })?.status
-        ?? (err as { statusCode?: number })?.statusCode;
-    if ((err as { type?: string })?.type === 'entity.too.large' || maybeStatus === 413) {
+    if (statused?.type === 'entity.too.large' || (statused !== null && statusOf(statused) === 413)) {
         return sendApiError(
             res,
             413,
@@ -78,27 +103,41 @@ export const errorHandler = (
     // Intercept Prisma database errors to prevent schema disclosure
     const prismaError = fromPrismaError(err);
     if (prismaError) {
-        return sendApiError(res, prismaError.status, prismaError.code, prismaError.message);
+        return sendApiError(res, prismaError.statusCode, prismaError.code, prismaError.message);
     }
 
-    if (
-        err instanceof TypeApiError ||
-        err instanceof LibApiError ||
-        (err instanceof Error && 'statusCode' in err && 'code' in err) ||
-        (err instanceof Error && 'status' in err && 'code' in err)
-    ) {
-        const statusCode = (err as any).statusCode ?? (err as any).status ?? 500;
-        const code = (err as any).code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR');
-        let message = (err as any).message || 'Request failed';
-        message = sanitizeDatabaseErrorMessage(message, statusCode);
-        return sendApiError(res, statusCode, code, message, (err as any).details);
+    // The application's own error type: the thrower already chose the status,
+    // the code and any details, so only the message needs sanitising.
+    if (err instanceof ApiError) {
+        return sendApiError(
+            res,
+            err.statusCode,
+            err.code,
+            sanitizeDatabaseErrorMessage(err.message, err.statusCode),
+            err.details,
+        );
     }
 
-    // Default Error
-    const statusCode = (err instanceof Error && (err as any).status) || (err instanceof Error && (err as any).statusCode) || 500;
-    let message = statusCode === 500 ? 'A technical error occurred. Please try again later.' : (err instanceof Error ? err.message : 'Request failed');
-    message = sanitizeDatabaseErrorMessage(message, statusCode);
-    const code = statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR';
-    return sendApiError(res, statusCode, code, message);
+    if (statused) {
+        const statusCode = statusOf(statused);
+        const rawMessage = statusCode === 500
+            ? 'A technical error occurred. Please try again later.'
+            : (statused.message || 'Request failed');
+        return sendApiError(
+            res,
+            statusCode,
+            statused.code || (statusCode === 500 ? 'INTERNAL_SERVER_ERROR' : 'REQUEST_ERROR'),
+            sanitizeDatabaseErrorMessage(rawMessage, statusCode),
+            statused.details,
+        );
+    }
+
+    // A thrown non-Error (a string, an object literal): report a generic 500
+    // rather than echoing an unknown payload back to the caller.
+    return sendApiError(
+        res,
+        500,
+        'INTERNAL_SERVER_ERROR',
+        'A technical error occurred. Please try again later.',
+    );
 };
-

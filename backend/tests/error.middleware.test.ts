@@ -196,7 +196,7 @@ describe('Error Middleware', () => {
   });
 
   it('should handle ApiError instances and preserve code/details', () => {
-    const error = new ApiError(403, 'Forbidden action', 'FORBIDDEN_ACTION', { reason: 'denied' });
+    const error = new ApiError(403, 'FORBIDDEN_ACTION', 'Forbidden action', { reason: 'denied' });
     errorHandler(error, req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith({
@@ -209,7 +209,7 @@ describe('Error Middleware', () => {
   });
 
   it('should sanitize ApiError instances if message contains raw database details', () => {
-    const error = new ApiError(400, 'Error in table "users": syntax error at or near "SELECT"', 'BAD_INPUT');
+    const error = new ApiError(400, 'BAD_INPUT', 'Error in table "users": syntax error at or near "SELECT"');
     errorHandler(error, req as Request, res as Response, next);
     expect(res.status).toHaveBeenCalledWith(400);
     const jsonCall = (res.json as ReturnType<typeof vi.fn>).mock.calls[0]![0];

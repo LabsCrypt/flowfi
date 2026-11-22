@@ -17,6 +17,7 @@ import { requestIdMiddleware } from "./middleware/requestId.js";
 import { buildCorsOptions, CorsError } from "./config/cors.js";
 import logger from "./logger.js";
 import { bigIntSafeJsonMiddleware } from "./lib/serialize.js";
+import { sendApiError } from "./lib/api-error.js";
 import v1Routes from "./routes/v1/index.js";
 import healthRoutes from "./routes/health.routes.js";
 import metricsRoutes from "./routes/metrics.routes.js";
@@ -30,11 +31,13 @@ const app = express();
 // or invalid, so the server never runs with an open CORS policy.
 const corsOptions = buildCorsOptions();
 
-// Apply global rate limiter first
-app.use(globalRateLimiter);
-
-// Request ID tracing
+// Request ID tracing runs first, before the rate limiter: a throttled 429 is
+// still a response the caller has to correlate, and the id has to exist before
+// anything downstream can echo it in a header or an error body.
 app.use(requestIdMiddleware);
+
+// Apply global rate limiter
+app.use(globalRateLimiter);
 
 // Request counting/latency for the Prometheus registry
 app.use(metricsMiddleware);
@@ -77,7 +80,7 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
       method: req.method,
       path: req.path,
     });
-    res.status(err.statusCode).json({ error: err.message });
+    sendApiError(res, err.statusCode, "FORBIDDEN", err.message);
     return;
   }
   next(err);
@@ -161,7 +164,8 @@ app.use("/health", healthRateLimiter, healthRoutes);
 // default. Access control lives in the router (see metrics.routes.ts).
 app.use("/metrics", metricsRoutes);
 
-// GraphQL API endpoint. GET serves the playground in non-production; POST
+// GraphQL API endpoint (documented in docs/api/README.md). Intentionally
+// unversioned and read-only; REST under /v1 is the stable contract. GET serves the playground in non-production; POST
 // executes queries/mutations with a per-request DataLoader context.
 app.use("/graphql", graphqlRoutes);
 

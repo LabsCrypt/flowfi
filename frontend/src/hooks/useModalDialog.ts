@@ -22,6 +22,15 @@ export function useModalDialog({
 }: UseModalDialogOptions) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  // Read the latest callbacks through refs so a parent re-render with a new
+  // inline onClose does not re-run the effect and steal focus.
+  const onCloseRef = useRef(onClose);
+  const isCloseDisabledRef = useRef(isCloseDisabled);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    isCloseDisabledRef.current = isCloseDisabled;
+  }, [onClose, isCloseDisabled]);
 
   useEffect(() => {
     previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
@@ -38,8 +47,8 @@ export function useModalDialog({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        if (!isCloseDisabled) {
-          onClose();
+        if (!isCloseDisabledRef.current) {
+          onCloseRef.current();
         }
         return;
       }
@@ -80,7 +89,7 @@ export function useModalDialog({
       document.body.style.overflow = "";
       previouslyFocusedRef.current?.focus();
     };
-  }, [onClose, isCloseDisabled, initialFocusRef]);
+  }, [initialFocusRef]);
 
   return dialogRef;
 }

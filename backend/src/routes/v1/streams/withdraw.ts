@@ -5,7 +5,7 @@ import { claimableAmountService } from '../../../services/claimable.service.js';
 import { withdraw as sorobanWithdraw } from '../../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../../types/auth.types.js';
 import { parseStreamId } from '../../../lib/stream-id.js';
-import { sendApiError } from '../../../types/api-error.js';
+import { sendApiError } from '../../../lib/api-error.js';
 
 /**
  * @openapi

@@ -164,7 +164,7 @@ describe('simulateStreamAction', () => {
     try {
       await expect(
         service.simulateStreamAction('cancel', senderKp.publicKey(), { streamId: '1' }),
-      ).rejects.toMatchObject({ status: 503, code: 'contract_not_configured' });
+      ).rejects.toMatchObject({ statusCode: 503, code: 'contract_not_configured' });
     } finally {
       process.env.STREAM_CONTRACT_ID = contractId;
     }
@@ -209,7 +209,7 @@ describe('simulateStreamAction', () => {
           amount: '100',
           duration: 60,
         }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects a zero amount', async () => {
@@ -219,7 +219,7 @@ describe('simulateStreamAction', () => {
           amount: '0',
           duration: 60,
         }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects a non-positive or fractional duration', async () => {
@@ -230,7 +230,7 @@ describe('simulateStreamAction', () => {
             amount: '100',
             duration,
           }),
-        ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+        ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
       }
     });
   });
@@ -270,13 +270,13 @@ describe('simulateStreamAction', () => {
     it('rejects a non-numeric streamId', async () => {
       await expect(
         service.simulateStreamAction('cancel', senderKp.publicKey(), { streamId: '12abc' }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects a missing streamId', async () => {
       await expect(
         service.simulateStreamAction('cancel', senderKp.publicKey(), {}),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
   });
 
@@ -296,13 +296,13 @@ describe('simulateStreamAction', () => {
       const streamIds = Array.from({ length: 11 }, (_, i) => String(i + 1));
       await expect(
         service.simulateStreamAction('batch_withdraw', recipientKp.publicKey(), { streamIds }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects an empty batch', async () => {
       await expect(
         service.simulateStreamAction('batch_withdraw', recipientKp.publicKey(), { streamIds: [] }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
   });
 
@@ -448,15 +448,15 @@ describe('simulateStreamAction', () => {
 
       expect(err).toBeInstanceOf(ApiError);
       expect(err).toMatchObject({
-        status: 400,
+        statusCode: 400,
         code: 'simulation_failed',
         message: 'Stream not found',
       });
       expect((err as InstanceType<typeof ApiError>).details).toMatchObject({
         action: 'cancel',
         contractErrorCode: 2,
+        hint: expect.any(String),
       });
-      expect((err as InstanceType<typeof ApiError>).details?.hint).toBeTruthy();
     });
 
     it('passes through an unrecognised reason when no code can be parsed', async () => {
@@ -467,7 +467,7 @@ describe('simulateStreamAction', () => {
       await expect(
         service.simulateStreamAction('withdraw', recipientKp.publicKey(), { streamId: '1' }),
       ).rejects.toMatchObject({
-        status: 400,
+        statusCode: 400,
         code: 'simulation_failed',
         message: 'Simulation of "withdraw" failed: Host function failed: panic',
       });

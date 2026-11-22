@@ -148,11 +148,15 @@ If an endpoint requires sandbox mode and the request is not sandboxed:
 
 ```json
 {
-  "error": "Sandbox mode required",
-  "message": "This endpoint requires sandbox mode.",
-  "hint": {
-    "header": "X-Sandbox-Mode: true",
-    "queryParam": "?sandbox=true"
+  "error": {
+    "code": "SANDBOX_MODE_REQUIRED",
+    "message": "This endpoint requires sandbox mode. Add X-Sandbox-Mode: true header or ?sandbox=true query parameter.",
+    "details": {
+      "hint": {
+        "header": "X-Sandbox-Mode: true",
+        "queryParam": "?sandbox=true"
+      }
+    }
   }
 }
 ```

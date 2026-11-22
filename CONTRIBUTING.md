@@ -169,8 +169,10 @@ The backend uses PostgreSQL. You can either:
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate
+npm run prisma:deploy   # prisma migrate deploy: replays committed migrations on a fresh DB
 ```
+
+This is the same sequence CI uses (`prisma generate` then `prisma migrate deploy`). Use `npm run prisma:migrate` (`prisma migrate dev`) only when you are authoring a new migration after changing `schema.prisma`.
 
 4. **Start Development Server**
 
@@ -187,7 +189,8 @@ Backend runs on: `http://localhost:3001`
 - `npm run start` - Start production server
 - `npm run test` - Run test suite
 - `npm run prisma:generate` - Generate Prisma client
-- `npm run prisma:migrate` - Run database migrations
+- `npm run prisma:deploy` - Apply committed migrations (bootstrap a fresh database)
+- `npm run prisma:migrate` - Create a new migration during development (`prisma migrate dev`)
 - `npm run prisma:studio` - Open Prisma Studio (database GUI)
 
 **Backend API Documentation:**
@@ -222,7 +225,7 @@ Frontend runs on: `http://localhost:3000`
 - `npm run lint` - Run ESLint
 
 **Environment Variables:**
-Copy [`frontend/.env.example`](../frontend/.env.example) to `frontend/.env.local` and adjust as needed. The `.env.example` file documents every `NEXT_PUBLIC_*` variable the application reads, with sensible testnet defaults.
+Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` and adjust as needed. The `.env.example` file documents every `NEXT_PUBLIC_*` variable the application reads, with sensible testnet defaults.
 
 ---
 

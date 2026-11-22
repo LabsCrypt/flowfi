@@ -224,3 +224,20 @@ describe("DashboardView failed actions", () => {
     expect(screen.getByText("50 XLM")).toBeInTheDocument();
   });
 });
+
+describe("DashboardView stream Details link", () => {
+  it("links to the canonical /streams/:id route", () => {
+    renderDashboard([makeStream("42", 100, 0)]);
+
+    const details = screen.getByRole("link", { name: "Details" });
+    expect(details).toHaveAttribute("href", "/streams/42");
+  });
+
+  it("does not link to the non-existent /app/streams route", () => {
+    renderDashboard([makeStream("42", 100, 0), makeStream("43", 200, 0)]);
+
+    for (const link of screen.getAllByRole("link", { name: "Details" })) {
+      expect(link.getAttribute("href")).not.toMatch(/^\/app\//);
+    }
+  });
+});
