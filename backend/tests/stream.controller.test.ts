@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getStreamSnapshot, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS } from '../src/controllers/stream.controller.js';
+import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getStreamSnapshot, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS, EMBEDDED_EVENTS_LIMIT } from '../src/controllers/stream.controller.js';
 import { prisma } from '../src/lib/prisma.js';
 import { claimableAmountService, calculateHistoricalStreamSnapshot } from '../src/services/claimable.service.js';
 import * as sorobanService from '../src/services/sorobanService.js';
@@ -280,10 +280,41 @@ describe("Stream Controller", () => {
       expect(prisma.stream.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
           include: expect.objectContaining({
-            events: { orderBy: { timestamp: 'desc' } },
+            events: { orderBy: { timestamp: 'desc' }, take: EMBEDDED_EVENTS_LIMIT },
           }),
         }),
       );
+    });
+
+    it("limits embedded events to EMBEDDED_EVENTS_LIMIT (20) when stream has many events", async () => {
+      req.params = { streamId: "123" };
+      const manyEvents = Array.from({ length: 35 }, (_, i) => ({
+        id: `evt-${i}`,
+        streamId: 123,
+        eventType: "TOPPED_UP",
+        timestamp: 1622505600 + i,
+      }));
+      (prisma.stream.findUnique as any).mockImplementation(({ include }: any) => {
+        const take = include?.events?.take ?? manyEvents.length;
+        return Promise.resolve({
+          streamId: 123,
+          updatedAt: new Date(),
+          events: manyEvents.slice(0, take),
+        });
+      });
+
+      await getStream(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            events: { orderBy: { timestamp: 'desc' }, take: 20 },
+          }),
+        }),
+      );
+      const data = (res.json as any).mock.calls[0][0];
+      expect(data.events).toHaveLength(20);
     });
   });
 

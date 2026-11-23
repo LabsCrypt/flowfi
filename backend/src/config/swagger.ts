@@ -237,6 +237,14 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               type: 'string',
               format: 'date-time',
             },
+            events: {
+              type: 'array',
+              description:
+                'Up to 20 most recent stream events ordered descending by timestamp. For complete event history use GET /v1/streams/{streamId}/events.',
+              items: {
+                $ref: '#/components/schemas/StreamEvent',
+              },
+            },
           },
         },
         StreamEvent: {
@@ -388,12 +396,14 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         },
         PauseResumeResponse: {
           type: 'object',
-          required: ['success', 'streamId', 'txHash'],
+          required: ['success', 'simulated', 'streamId', 'isPaused'],
           properties: {
             success: { type: 'boolean', example: true },
+            simulated: { type: 'boolean', description: 'True: the call was dry-run only. Nothing was submitted and nothing was written.' },
             streamId: { type: 'integer' },
-            txHash: { type: 'string', description: 'Stellar transaction hash of the pause/resume simulation' },
+            isPaused: { type: 'boolean', description: 'Current pause flag, unchanged by a simulation' },
             stream: { $ref: '#/components/schemas/Stream' },
+            message: { type: 'string', description: 'How to complete the action by signing in the wallet' },
           },
         },
         TopUpResponse: {
@@ -407,13 +417,13 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         },
         WithdrawResponse: {
           type: 'object',
-          required: ['success', 'streamId', 'txHash', 'amount'],
+          required: ['success', 'simulated', 'streamId', 'amount'],
           properties: {
             success: { type: 'boolean', example: true },
+            simulated: { type: 'boolean', description: 'True: the withdrawal was dry-run only. `withdrawnAmount` and StreamEvent rows are written by the indexer from the confirmed on-chain event.' },
             streamId: { type: 'integer' },
-            txHash: { type: 'string', description: 'Stellar transaction hash of the withdrawal' },
-            amount: { type: 'string', description: 'Amount withdrawn (i128 as string)' },
-            stream: { $ref: '#/components/schemas/Stream' },
+            amount: { type: 'string', description: 'Amount that would be withdrawn right now (i128 as string)' },
+            message: { type: 'string', description: 'How to complete the withdrawal by signing in the wallet' },
           },
         },
         CancelResponse: {

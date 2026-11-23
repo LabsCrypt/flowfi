@@ -297,4 +297,27 @@ describe('GET /v1/streams/:id/events — pagination and eventType filter', () =>
     expect(res.body.hasMore).toBe(true);
     expect(res.body.total).toBe(100);
   });
+
+  it('caps embedded events in stream detail response to 20', async () => {
+    mockPrisma.stream.findUnique.mockImplementation(async ({ include }: any) => {
+      expect(include?.events).toEqual({
+        orderBy: { timestamp: 'desc' },
+        take: 20,
+      });
+      return {
+        ...makeStream(),
+        updatedAt: new Date(),
+        events: Array.from({ length: include?.events?.take ?? 20 }, (_, i) => ({
+          id: `evt-${i}`,
+          streamId: 1,
+          eventType: 'TOPPED_UP',
+          timestamp: 1700000000 + i,
+        })),
+      };
+    });
+
+    const res = await request(app).get('/v1/streams/1');
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(20);
+  });
 });

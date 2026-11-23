@@ -62,7 +62,7 @@ describe('Action Controller vs Worker Event Write Race Guard (Issue #831)', () =
     };
   });
 
-  it('withdrawHandler uses upsert on transactionHash_eventType preventing P2002 duplicate crashes when worker processes event first', async () => {
+  it('withdrawHandler writes no StreamEvent row, so it cannot race the worker that does (issues #831, #1847)', async () => {
     const mockStream = {
       streamId: 100n,
       recipient: 'GRECIPIENT',
@@ -73,29 +73,17 @@ describe('Action Controller vs Worker Event Write Race Guard (Issue #831)', () =
     (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
     (claimableAmountService.getClaimableAmount as any).mockReturnValue({ actionable: true, claimableAmount: '500' });
     (sorobanWithdraw as any).mockResolvedValue({ txHash: 'tx_race_123' });
-    // Mock the $transaction to return the refreshed stream
-    vi.mocked(prisma.$transaction as any).mockImplementation(async (fn: any) => {
-      mockTx.stream.findUnique.mockResolvedValue({ ...mockStream, withdrawnAmount: '500' });
-      return fn(mockTx);
-    });
     (prisma.streamEvent.upsert as any).mockResolvedValue({ id: 'evt_1' });
 
     await withdrawHandler(req as AuthenticatedRequest, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(prisma.streamEvent.upsert).toHaveBeenCalledWith({
-      where: {
-        transactionHash_eventType: {
-          transactionHash: 'tx_race_123',
-          eventType: 'WITHDRAWN',
-        },
-      },
-      create: expect.objectContaining({
-        streamId: 100n,
-        eventType: 'WITHDRAWN',
-        transactionHash: 'tx_race_123',
-      }),
-      update: {},
-    });
+    // Issue #831 protected the shared `(transactionHash, eventType)` key from a
+    // P2002 crash caused by the endpoint and the worker both writing the row.
+    // Issue #1847 removed the endpoint-side write entirely — a dry-run has no
+    // real transaction hash to key on — so there is now exactly one writer and
+    // the race is impossible rather than merely handled.
+    expect(prisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(mockTx.stream.update).not.toHaveBeenCalled();
   });
 });

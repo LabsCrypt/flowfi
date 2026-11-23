@@ -77,6 +77,7 @@ vi.mock('../../src/workers/soroban-event-worker.js', () => ({
 
 vi.mock('../../src/logger.js', () => ({
   default: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+  auditLog: vi.fn(),
 }));
 
 const { default: adminRoutes } = await import('../../src/routes/v1/admin.routes.js');

@@ -27,6 +27,14 @@ const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
 
 /**
+ * Hard cap on embedded events returned with a stream in GET /v1/streams/:streamId.
+ * Prevents memory amplification and unbounded payload sizes when a stream accumulates
+ * many events. Callers requiring full event history should query the paginated
+ * GET /v1/streams/:streamId/events endpoint.
+ */
+export const EMBEDDED_EVENTS_LIMIT = 20;
+
+/**
  * Hard cap on the number of streams fetched per user in the summary endpoint.
  * Prevents unbounded DB queries when a wallet has thousands of streams.
  * Users who exceed this cap receive a truncated summary (counts and totals
@@ -281,7 +289,10 @@ export const listStreams = async (req: Request, res: Response) => {
 };
 
 /**
- * Get a single stream by ID
+ * Get a single stream by ID.
+ * Embedded events are limited to the most recent 20 (EMBEDDED_EVENTS_LIMIT)
+ * to prevent memory amplification. For full event history, use
+ * GET /v1/streams/:streamId/events.
  */
 export const getStream = async (req: Request, res: Response) => {
   try {
@@ -300,6 +311,7 @@ export const getStream = async (req: Request, res: Response) => {
         recipientUser: true,
         events: {
           orderBy: { timestamp: "desc" },
+          take: EMBEDDED_EVENTS_LIMIT,
         },
       },
     }));
@@ -755,8 +767,10 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
 };
 
 /**
- * Pause a stream. Only the sender can pause their own stream.
- * Validates the request, checks ownership, and updates the database.
+ * Dry-run a pause for the stream sender. Only the sender may pause their own
+ * stream. Nothing is written to the database: `pause_stream` is authorized by
+ * the sender's wallet, so the client has to sign and submit it, and the indexer
+ * sets `isPaused` from the confirmed PAUSED event (issue #1847).
  */
 export const pauseStream = async (req: Request, res: Response) => {
   try {
@@ -800,20 +814,21 @@ export const pauseStream = async (req: Request, res: Response) => {
 
     try {
       // Call Soroban service to verify the pause operation would succeed
-      const result = await sorobanPauseStream(
-        authReq.user.publicKey,
-        parsedStreamId,
-      );
+      await sorobanPauseStream(authReq.user.publicKey, parsedStreamId);
 
       logger.info(
         `Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`,
       );
 
+      // `stream` is returned as read: the simulation cannot have changed it.
       return res.status(200).json({
         success: true,
+        simulated: true,
         streamId: parsedStreamId,
-        txHash: result.txHash,
+        isPaused: stream.isPaused,
         stream,
+        message:
+          'Pause is available but was not submitted. Sign the simulated pause_stream transaction with the sender wallet.',
       });
     } catch (sorobanError) {
       logger.error(
@@ -829,8 +844,8 @@ export const pauseStream = async (req: Request, res: Response) => {
 };
 
 /**
- * Resume a paused stream. Only the sender can resume their own stream.
- * Validates the request, checks ownership, and updates the database.
+ * Dry-run a resume for the stream sender. Only the sender may resume their own
+ * stream. Nothing is written to the database — see `pauseStream`.
  */
 export const resumeStream = async (req: Request, res: Response) => {
   try {
@@ -869,20 +884,21 @@ export const resumeStream = async (req: Request, res: Response) => {
 
     try {
       // Call Soroban service to verify the resume operation would succeed
-      const result = await sorobanResumeStream(
-        authReq.user.publicKey,
-        parsedStreamId,
-      );
+      await sorobanResumeStream(authReq.user.publicKey, parsedStreamId);
 
       logger.info(
         `Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`,
       );
 
+      // `stream` is returned as read: the simulation cannot have changed it.
       return res.status(200).json({
         success: true,
+        simulated: true,
         streamId: parsedStreamId,
-        txHash: result.txHash,
+        isPaused: stream.isPaused,
         stream,
+        message:
+          'Resume is available but was not submitted. Sign the simulated resume_stream transaction with the sender wallet.',
       });
     } catch (sorobanError) {
       logger.error(

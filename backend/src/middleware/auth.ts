@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
-import logger from '../logger.js';
+import logger, { auditLog } from '../logger.js';
 import { sendApiError } from '../lib/api-error.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -212,6 +212,7 @@ export function verifyChallenge(req: Request, res: Response): void {
     }
 
     challenges.delete(publicKey);
+    auditLog('auth.verify', publicKey);
 
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: publicKey, iat: now, exp: now + JWT_EXPIRY_SECONDS, iss: JWT_ISSUER, aud: JWT_AUDIENCE });
@@ -243,10 +244,17 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
   requireAuth(req, res, () => {
     const user = (req as AuthenticatedRequest).user;
     const adminKey = process.env.ADMIN_PUBLIC_KEY;
-    if (!adminKey || user.publicKey !== adminKey) {
+    if (!adminKey) {
+      auditLog('admin.access_denied', user.publicKey, { reason: 'admin_key_unset' });
       sendApiError(res, 403, 'FORBIDDEN', 'Admin access required');
       return;
     }
+    if (user.publicKey !== adminKey) {
+      auditLog('admin.access_denied', user.publicKey, { reason: 'not_admin' });
+      sendApiError(res, 403, 'FORBIDDEN', 'Admin access required');
+      return;
+    }
+    auditLog('admin.access_granted', user.publicKey);
     next();
   });
 }

@@ -2480,6 +2480,45 @@ fn test_is_stream_completed_missing_id_returns_false() {
 }
 
 #[test]
+fn test_stream_count_is_zero_before_any_stream() {
+    let env = Env::default();
+    let client = create_contract(&env);
+
+    // `initialize` and `create_stream` have both been skipped, so
+    // `DataKey::StreamCounter` has never been written; the view must report the
+    // absent key as `0` rather than panic.
+    assert_eq!(client.stream_count(), 0);
+}
+
+#[test]
+fn test_stream_count_increments_by_one_per_create_stream() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 3_000);
+
+    let client = create_contract(&env);
+
+    for expected in 1..=3u64 {
+        let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+        assert_eq!(id, expected, "IDs are issued from 1 in order");
+        assert_eq!(
+            client.stream_count(),
+            expected,
+            "stream_count must track the ID counter, not a live-stream count"
+        );
+    }
+
+    // Settling a stream removes it from the active set but not from the
+    // counter: this is the highest ID ever issued, so an indexer paginating by
+    // it does not skip the records that were cancelled.
+    client.cancel_stream(&sender, &1);
+    assert_eq!(client.stream_count(), 3);
+}
+
+#[test]
 fn test_completed_event_emitted_on_final_withdrawal() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2599,6 +2638,11 @@ fn test_cancel_while_paused_keeps_inactive() {
     let stream = client.get_stream(&id).unwrap();
     assert!(!stream.is_active);
     assert_eq!(stream.status, StreamStatus::Cancelled);
+    // Cancel must also clear the pause markers, otherwise the stream is left
+    // looking "cancelled but still paused" — the state that let a later resume
+    // flip it back to Active.
+    assert!(!stream.paused);
+    assert!(stream.paused_at.is_none());
 }
 
 #[test]
@@ -2809,6 +2853,56 @@ fn test_resume_on_cancelled_stream_fails() {
     );
 
     // Stream state must be unchanged: still cancelled, not resumed.
+    let s = client.get_stream(&id).unwrap();
+    assert!(!s.is_active);
+    assert_eq!(s.status, StreamStatus::Cancelled);
+    assert!(!s.paused);
+}
+
+/// Regression for #787: a stream cancelled while paused must not be resumable,
+/// and the rejected call must not emit `stream_resumed` — indexers treat that
+/// event as the stream going live again.
+#[test]
+fn test_resume_after_cancel_is_rejected_and_emits_no_resumed_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let client = create_contract(&env);
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    env.ledger().with_mut(|l| l.timestamp += 300);
+    client.pause_stream(&sender, &id);
+
+    env.ledger().with_mut(|l| l.timestamp += 200);
+    client.cancel_stream(&sender, &id);
+
+    let result = client.try_resume_stream(&sender, &id);
+    assert_stream_error!(
+        result,
+        StreamError::StreamNotActive,
+        "resume_stream must reject a stream cancelled while paused"
+    );
+
+    // `events()` reflects the last invocation, so this is the rejected resume's
+    // own (empty) event list: it must never carry stream_resumed for an
+    // inactive stream.
+    let events = env.events().all();
+    assert!(
+        events.iter().all(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                != Symbol::new(&env, "stream_resumed")
+        }),
+        "stream_resumed must not be emitted for an inactive stream"
+    );
+    assert!(
+        events.is_empty(),
+        "a rejected resume must not emit any event"
+    );
+
     let s = client.get_stream(&id).unwrap();
     assert!(!s.is_active);
     assert_eq!(s.status, StreamStatus::Cancelled);
@@ -6814,45 +6908,62 @@ fn test_coverage_create_allowance_stream_gates_on_allowance() {
 
     let stream = client.get_stream(&id).unwrap();
     assert!(stream.is_allowance_based);
-    assert_eq!(stream.deposited_amount, 0);
-    assert_eq!(stream.rate_per_second, 1);
+    // The approval is the stream's budget, spread over the duration (#1896).
+    assert_eq!(stream.deposited_amount, 10_000);
+    assert_eq!(stream.rate_per_second, 10);
     assert_eq!(stream.status, StreamStatus::Active);
 }
 
-// ─── Coverage: arbiter activation path (#1897) ─────────────────────────────
+// ─── Coverage: position settlement auth (#1895) ────────────────────────────
 
 #[test]
-fn test_coverage_set_stream_arbiter_makes_the_stream_disputable() {
+fn test_coverage_update_position_on_complete_requires_a_party_to_the_stream() {
     let env = Env::default();
     env.mock_all_auths();
     let (token, _) = create_token(&env);
     let client = create_contract(&env);
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    let arbiter = Address::generate(&env);
     mint(&env, &token, &sender, 1_000);
 
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.mint_stream_position(&id, &sender, &recipient, &token, &1, &0, &1_000, &false);
 
-    // Before the arbiter is set there is nobody to resolve a dispute.
+    // A stranger cannot write a settlement record for the stream.
+    let stranger = Address::generate(&env);
     assert_eq!(
-        client.try_request_dispute(&sender, &id),
-        Err(Ok(StreamError::DisputeNotSupported))
+        client.try_update_position_on_complete(
+            &stranger,
+            &id,
+            &PositionRole::Recipient,
+            &PositionSettlementStatus::Settled
+        ),
+        Err(Ok(StreamError::Unauthorized))
     );
 
-    client.set_stream_arbiter(&sender, &id, &Some(arbiter.clone()));
-    assert_eq!(client.get_stream(&id).unwrap().arbiter, Some(arbiter));
-
-    // The dispute path is now reachable through the public API alone.
-    client.request_dispute(&sender, &id);
+    // Both parties can, for their own stream.
     assert_eq!(
-        client.get_stream(&id).unwrap().dispute_status,
-        DisputeStatus::Requested
+        client.try_update_position_on_complete(
+            &sender,
+            &id,
+            &PositionRole::Recipient,
+            &PositionSettlementStatus::Settled
+        ),
+        Ok(Ok(()))
+    );
+    assert_eq!(
+        client.try_update_position_on_complete(
+            &recipient,
+            &id,
+            &PositionRole::Sender,
+            &PositionSettlementStatus::Cancelled
+        ),
+        Ok(Ok(()))
     );
 }
 
 #[test]
-fn test_coverage_set_stream_arbiter_is_the_senders_call_only() {
+fn test_coverage_update_position_on_complete_requires_a_minted_position() {
     let env = Env::default();
     env.mock_all_auths();
     let (token, _) = create_token(&env);
@@ -6863,40 +6974,81 @@ fn test_coverage_set_stream_arbiter_is_the_senders_call_only() {
 
     let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
 
+    // No position was minted, so there is nothing to settle.
     assert_eq!(
-        client.try_set_stream_arbiter(&recipient, &id, &Some(Address::generate(&env))),
-        Err(Ok(StreamError::Unauthorized))
-    );
-    assert_eq!(
-        client.try_set_stream_arbiter(&sender, &id, &Some(sender.clone())),
-        Err(Ok(StreamError::Unauthorized))
-    );
-    // The contract itself can never be the arbiter.
-    assert_eq!(
-        client.try_set_stream_arbiter(&sender, &id, &Some(client.address.clone())),
-        Err(Ok(StreamError::Unauthorized))
+        client.try_update_position_on_complete(
+            &sender,
+            &id,
+            &PositionRole::Recipient,
+            &PositionSettlementStatus::Settled
+        ),
+        Err(Ok(StreamError::PositionNotFound))
     );
 }
 
+// ─── Coverage: allowance debit path (#1896) ────────────────────────────────
+
 #[test]
-fn test_coverage_set_stream_arbiter_is_locked_once_a_dispute_is_open() {
+fn test_coverage_allowance_stream_withdraws_through_the_approval() {
     let env = Env::default();
     env.mock_all_auths();
     let (token, _) = create_token(&env);
     let client = create_contract(&env);
     let sender = Address::generate(&env);
     let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
     mint(&env, &token, &sender, 1_000);
 
-    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
-    client.set_stream_arbiter(&sender, &id, &Some(Address::generate(&env)));
-    client.request_dispute(&sender, &id);
-
-    // Swapping the decider mid-dispute would let the sender choose the verdict.
-    assert_eq!(
-        client.try_set_stream_arbiter(&sender, &id, &Some(Address::generate(&env))),
-        Err(Ok(StreamError::ArbiterLocked))
+    token_client.approve(
+        &sender,
+        &client.address,
+        &1_000,
+        &(env.ledger().sequence() + 10_000),
     );
+    // 1_000 approved over 100s → 10 tokens per second.
+    let id = client.create_allowance_stream(&sender, &recipient, &token, &100);
+
+    // Nothing is escrowed: the tokens never leave the sender.
+    assert_eq!(token_client.balance(&sender), 1_000);
+    assert_eq!(token_client.balance(&client.address), 0);
+
+    advance(&env, 10);
+    assert_eq!(client.withdraw(&recipient, &id), 100);
+
+    // Paid out of the sender's balance through the approval.
+    assert_eq!(token_client.balance(&recipient), 100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&client.address), 0);
+    assert_eq!(token_client.allowance(&sender, &client.address), 900);
+}
+
+#[test]
+fn test_coverage_allowance_stream_cancel_refunds_nothing_it_never_held() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token_client = token::Client::new(&env, &token);
+    mint(&env, &token, &sender, 1_000);
+
+    token_client.approve(
+        &sender,
+        &client.address,
+        &1_000,
+        &(env.ledger().sequence() + 10_000),
+    );
+    let id = client.create_allowance_stream(&sender, &recipient, &token, &100);
+    advance(&env, 10);
+
+    client.cancel_stream(&sender, &id);
+
+    // The vested 100 is paid; the rest stays in the sender's balance, where it
+    // already was — no refund transfer, and no reverted "transfer of nothing".
+    assert_eq!(token_client.balance(&recipient), 100);
+    assert_eq!(token_client.balance(&sender), 900);
+    assert_eq!(token_client.balance(&client.address), 0);
 }
 
 // ─── Coverage: dispute & escrow (#1319) ────────────────────────────────────
@@ -8089,3 +8241,82 @@ fn test_withdraw_and_swap_rolls_back_when_the_router_fails() {
     );
     assert_eq!(token::Client::new(&env, &target).balance(&recipient), 0);
 }
+
+#[test]
+fn test_coverage_set_stream_arbiter_makes_the_stream_disputable() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Before the arbiter is set there is nobody to resolve a dispute.
+    assert_eq!(
+        client.try_request_dispute(&sender, &id),
+        Err(Ok(StreamError::DisputeNotSupported))
+    );
+
+    client.set_stream_arbiter(&sender, &id, &Some(arbiter.clone()));
+    assert_eq!(client.get_stream(&id).unwrap().arbiter, Some(arbiter));
+
+    // The dispute path is now reachable through the public API alone.
+    client.request_dispute(&sender, &id);
+    assert_eq!(
+        client.get_stream(&id).unwrap().dispute_status,
+        DisputeStatus::Requested
+    );
+}
+
+#[test]
+fn test_coverage_set_stream_arbiter_is_the_senders_call_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    assert_eq!(
+        client.try_set_stream_arbiter(&recipient, &id, &Some(Address::generate(&env))),
+        Err(Ok(StreamError::Unauthorized))
+    );
+    assert_eq!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(sender.clone())),
+        Err(Ok(StreamError::Unauthorized))
+    );
+    // The contract itself can never be the arbiter.
+    assert_eq!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(client.address.clone())),
+        Err(Ok(StreamError::Unauthorized))
+    );
+}
+
+#[test]
+fn test_coverage_set_stream_arbiter_is_locked_once_a_dispute_is_open() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.set_stream_arbiter(&sender, &id, &Some(Address::generate(&env)));
+    client.request_dispute(&sender, &id);
+
+    // Swapping the decider mid-dispute would let the sender choose the verdict.
+    assert_eq!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(Address::generate(&env))),
+        Err(Ok(StreamError::ArbiterLocked))
+    );
+}
+

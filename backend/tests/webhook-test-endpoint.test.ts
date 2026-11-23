@@ -29,6 +29,13 @@ vi.mock("../src/logger.js", () => ({
   default: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+// A test dispatch re-validates the target through the real guard (issue #1849),
+// which resolves the hostname; stub the resolver to a public address so no live
+// DNS is attempted.
+vi.mock("node:dns/promises", () => ({
+  lookup: async () => [{ address: "93.184.216.34" }],
+}));
+
 import { sendTestWebhook } from "../src/services/webhook.service.js";
 
 const SUBSCRIPTION = {
