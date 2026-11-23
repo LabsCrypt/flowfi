@@ -112,6 +112,9 @@ function mockRpc() {
     async getClaimableAmount() {
       return 10n;
     },
+    async getStreamCount() {
+      return 42n;
+    },
     async getStreamIdForTx() {
       return 7n;
     },
@@ -259,6 +262,11 @@ describe('FlowFiClient', () => {
     const client = new FlowFiClient(CONFIG, { rpcClient });
     expect(await client.getStream(1n)).toBeNull();
     expect(await client.getClaimableAmount(1n)).toBe(10n);
+  });
+
+  it('reads the stream count without signing (#421)', async () => {
+    const client = new FlowFiClient(CONFIG, { rpcClient });
+    expect(await client.getStreamCount()).toBe(42n);
   });
 
   it('requires constructor config', () => {

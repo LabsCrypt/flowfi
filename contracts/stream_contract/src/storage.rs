@@ -16,7 +16,7 @@
 //! | [`DataKey`] variant | Storage | Value | Accessed by |
 //! |---|---|---|---|
 //! | `Stream(id)` | persistent | [`Stream`] (or [`LegacyStream`]) | [`load_stream`], [`try_load_stream`], [`save_stream`], [`remove_stream`] |
-//! | `StreamCounter` | instance | `u64` next stream ID | [`next_stream_id`] |
+//! | `StreamCounter` | instance | `u64` next stream ID | [`next_stream_id`], [`load_stream_counter`] |
 //! | `ProtocolConfig` | instance | [`ProtocolConfig`] | [`config_exists`], [`load_config`], [`try_load_config`], [`save_config`] |
 //! | `ContractVersion` | instance | `u32` state schema version | [`get_contract_version`], [`save_contract_version`] |
 //! | `ContractWasmHash` | instance | `BytesN<32>` executable hash | [`get_recorded_wasm_hash`], [`save_recorded_wasm_hash`] |
@@ -151,6 +151,23 @@ pub fn next_stream_id(env: &Env) -> u64 {
         .instance()
         .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
     id
+}
+
+/// Reads the persisted stream ID counter without mutating it.
+///
+/// **Key:** [`DataKey::StreamCounter`] in instance storage, the same entry
+/// [`next_stream_id`] writes. A deployment that has never created a stream has
+/// never written the key, so the absent entry reads as `0` rather than
+/// panicking.
+///
+/// **TTL:** No bump. This is a read-only query, and the counter shares the
+/// instance entry with [`DataKey::ProtocolConfig`] and the version keys, which
+/// every mutating operation renews.
+pub fn load_stream_counter(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::StreamCounter)
+        .unwrap_or(0)
 }
 
 // ─── Stream CRUD ─────────────────────────────────────────────────────────────
@@ -466,13 +483,17 @@ pub fn try_load_position_metadata(
 
 /// Returns all position metadata entries for a given owner.
 ///
-/// **Key:** Instance storage is not used for per-owner position lookups;
-/// this function iterates persistent storage entries matching the owner.
-/// In a production implementation, a secondary index or off-chain indexer
-/// would be used for efficient lookups.
+/// # Unsupported by design
+///
+/// Soroban exposes no way to enumerate storage keys, so an owner-indexed
+/// lookup cannot be answered from the contract's own state without maintaining
+/// a secondary index that every mint/transfer/settle path would have to keep
+/// in sync. This function is therefore a deliberate, documented stub: it always
+/// returns an empty vector, and
+/// [`StreamContract::get_positions_by_owner`](crate::StreamContract::get_positions_by_owner)
+/// reports `StreamNotFound` as a result. Off-chain consumers should query the
+/// backend indexer, which mirrors position metadata from the emitted events.
 pub fn try_load_positions_by_owner(env: &Env, _owner: Address) -> Vec<StreamPositionMetadata> {
-    // In a production implementation, this would query a secondary index.
-    // For now, return an empty vector.
     Vec::new(env)
 }
 

@@ -4,6 +4,8 @@
  */
 import crypto from "crypto";
 import { prisma } from "../lib/prisma.js";
+import { ApiError } from "../lib/api-error.js";
+import { assertSafeWebhookTarget } from "../lib/url-security.js";
 import logger from "../logger.js";
 
 export interface WebhookSubscription {
@@ -72,10 +74,9 @@ export async function createWebhookSubscription(
   targetUrl: string,
   eventTypes: string[],
 ): Promise<WebhookSubscription> {
-  // Validate HTTPS
-  if (!targetUrl.startsWith("https://")) {
-    throw new Error("Webhook URL must use HTTPS");
-  }
+  // Reject non-HTTPS, private/loopback/link-local/metadata targets and encoded
+  // IP literals before the subscription is ever stored (issue #1849).
+  await assertSafeWebhookTarget(targetUrl);
 
   // Generate secure secret
   const secretKey = crypto.randomBytes(32).toString("hex");
@@ -118,7 +119,7 @@ export async function deleteWebhookSubscription(
   id: string,
   userAddress: string,
 ): Promise<void> {
-  await prisma.webhookSubscription.updateMany({
+  const { count } = await prisma.webhookSubscription.updateMany({
     where: {
       id,
       userAddress, // Ensure user owns this webhook
@@ -127,6 +128,9 @@ export async function deleteWebhookSubscription(
       isActive: false,
     },
   });
+  // An unscoped caller must learn the subscription is not theirs, not that
+  // it "worked" (issue #1846).
+  if (count === 0) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
 }
 
 export async function updateWebhookSubscription(
@@ -134,14 +138,14 @@ export async function updateWebhookSubscription(
   userAddress: string,
   input: { targetUrl?: string; eventTypes?: string[]; isActive?: boolean },
 ): Promise<Omit<WebhookSubscription, "secretKey">> {
-  if (input.targetUrl !== undefined && !input.targetUrl.startsWith("https://")) {
-    throw new Error("Webhook URL must use HTTPS");
+  if (input.targetUrl !== undefined) {
+    await assertSafeWebhookTarget(input.targetUrl);
   }
   const subscription = await prisma.webhookSubscription.updateMany({
     where: { id, userAddress },
     data: input,
   });
-  if (subscription.count === 0) throw new Error("Webhook subscription not found");
+  if (subscription.count === 0) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   const updated = await prisma.webhookSubscription.findUniqueOrThrow({ where: { id } });
   const { secretKey: _secretKey, ...safe } = updated;
   return safe;
@@ -156,7 +160,7 @@ export async function listWebhookDeliveries(
   const safePage = Math.max(1, Math.floor(page) || 1);
   const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 20));
   const subscription = await prisma.webhookSubscription.findFirst({ where: { id, userAddress } });
-  if (!subscription) throw new Error("Webhook subscription not found");
+  if (!subscription) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   const [deliveries, total] = await Promise.all([
     prisma.webhookDelivery.findMany({
       where: { subscriptionId: id },
@@ -171,7 +175,7 @@ export async function listWebhookDeliveries(
 
 export async function regenerateWebhookSecret(id: string, userAddress: string): Promise<string> {
   const owned = await prisma.webhookSubscription.findFirst({ where: { id, userAddress } });
-  if (!owned) throw new Error("Webhook subscription not found");
+  if (!owned) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   const secretKey = crypto.randomBytes(32).toString("hex");
   await prisma.webhookSubscription.update({ where: { id }, data: { secretKey } });
   return secretKey;
@@ -210,7 +214,7 @@ export async function sendTestWebhook(
   });
 
   if (!subscription) {
-    throw new Error("Webhook subscription not found");
+    throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   }
 
   const testPayload: WebhookPayload = {
@@ -255,6 +259,7 @@ export async function deliverWebhook(
 
   let lastError: string | undefined;
   let lastStatus: number | undefined;
+  let blockedTarget = false;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
@@ -264,6 +269,12 @@ export async function deliverWebhook(
           setTimeout(resolve, RETRY_DELAYS_MS[attempt]),
         );
       }
+
+      // Re-validate at dispatch time (issue #1849): a hostname that was public
+      // when the subscription was created can answer with a private address by
+      // the time we connect (DNS rebinding). A blocked target is never retried —
+      // the ladder would only re-open the same hole five times.
+      await assertSafeWebhookTarget(subscription.targetUrl);
 
       // Sign at dispatch time so retries stay within the receiver's replay window.
       const timestamp = Math.floor(Date.now() / 1000);
@@ -284,6 +295,10 @@ export async function deliverWebhook(
         },
         body: payloadJson,
         signal: AbortSignal.timeout(10000), // 10s timeout
+        // Never follow a redirect: a public receiver must not be able to bounce
+        // the signed request into a range the validator blocked (issue #1849).
+        // A 3xx is therefore recorded as a failed delivery, not fetched again.
+        redirect: "manual",
       });
 
       lastStatus = response.status;
@@ -313,6 +328,9 @@ export async function deliverWebhook(
         `[Webhook] Delivery failed with status ${lastStatus} (attempt ${attempt + 1}/${maxAttempts})`,
       );
     } catch (error: any) {
+      if (error instanceof ApiError && error.code === "WEBHOOK_URL_INVALID") {
+        blockedTarget = true;
+      }
       lastError = error.message || "Network error";
       logger.warn(
         `[Webhook] Delivery error: ${lastError} (attempt ${attempt + 1}/${maxAttempts})`,
@@ -325,6 +343,10 @@ export async function deliverWebhook(
           error: lastError || null,
         },
       });
+
+      // A blocked target will be blocked on every attempt, so spending the retry
+      // ladder on it only delays the auto-disable check below.
+      if (blockedTarget) break;
     }
   }
 

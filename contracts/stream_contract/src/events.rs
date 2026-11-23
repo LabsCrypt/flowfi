@@ -1,6 +1,6 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env, String, Symbol};
+use soroban_sdk::{contracttype, Address, BytesN, Env, Symbol};
 
-use crate::types::PositionRole;
+use crate::types::{PositionRole, PositionSettlementStatus};
 
 // ─── Wire Format ─────────────────────────────────────────────────────────────
 //
@@ -879,7 +879,7 @@ pub struct StreamPositionUpdatedEvent {
 pub struct StreamPositionSettledEvent {
     pub stream_id: u64,
     pub role: PositionRole,
-    pub status: String,
+    pub status: PositionSettlementStatus,
     pub timestamp: u64,
 }
 

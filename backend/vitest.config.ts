@@ -27,12 +27,16 @@ export default defineConfig({
                 'src/services/sorobanService.ts',
                 'src/workers/soroban-event-worker.ts',
             ],
-            // Restore thresholds to 60% as targeted in the coverage improvement task.
+            // Measured with the Soroban service and event worker included: 80.3%
+            // statements, 83.6% branches, 79.3% functions, 80.3% lines. The gates
+            // sit a couple of points below that so ordinary churn does not trip
+            // them, and they only ratchet up from here — see docs/coverage.md for
+            // the plan (#1870).
             thresholds: {
-                statements: 60,
-                branches: 60,
-                functions: 60,
-                lines: 60,
+                statements: 78,
+                branches: 82,
+                functions: 77,
+                lines: 78,
             },
         },
         testTimeout: 30000,

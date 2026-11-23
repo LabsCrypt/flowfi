@@ -6,14 +6,15 @@
  * `tests/cancel.controller.test.ts` works at) and pin the parts of the
  * contract that file does not reach: what a second request does, what a
  * request against a finished-but-not-cancelled stream does, the two
- * streamId rejections, and which failure the catch block turns into 400
- * instead of 500.
+ * streamId rejections, and that every relay failure is a 500 rather than a
+ * success the client would not retry.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { cancelStreamHandler } from '../src/controllers/stream/cancel.js';
 import { prisma } from '../src/lib/prisma.js';
 import * as sorobanService from '../src/services/sorobanService.js';
 import * as streamRepository from '../src/repositories/stream.repository.js';
+import { ApiError } from '../src/lib/api-error.js';
 import type { Response } from 'express';
 import type { AuthenticatedRequest } from '../src/types/auth.types.js';
 
@@ -26,7 +27,7 @@ vi.mock('../src/lib/prisma.js', () => ({
 }));
 
 vi.mock('../src/services/sorobanService.js', () => ({
-  cancelStream: vi.fn(),
+  submitSignedCancel: vi.fn(),
 }));
 
 vi.mock('../src/repositories/stream.repository.js', () => ({
@@ -43,12 +44,21 @@ vi.mock('../src/logger.js', () => ({
 }));
 
 const SENDER = 'GSENDER1';
+// Opaque to the handler: `submitSignedCancel` is mocked, so only its presence
+// and type are under test here. Envelope parsing is covered in
+// tests/signed-cancel-relay.test.ts.
+const SIGNED_XDR = 'AAAAAGV1nQJ2Z3F0dXliMG5jaGtoMnJkM2s0dHV2OHk=';
 
 type MockFn = ReturnType<typeof vi.fn>;
 
 const findUnique = prisma.stream.findUnique as unknown as MockFn;
-const cancelOnChain = sorobanService.cancelStream as unknown as MockFn;
+const cancelOnChain = sorobanService.submitSignedCancel as unknown as MockFn;
 const markCancelled = streamRepository.markCancelledProvisionally as unknown as MockFn;
+
+/** What a successful relay must be asked for: the bytes plus the who/what. */
+function relayArgs(streamId: bigint, sender = SENDER) {
+  return [SIGNED_XDR, { streamId, senderAddress: sender }];
+}
 
 function activeStream(overrides: Record<string, unknown> = {}) {
   return { streamId: 123n, sender: SENDER, isActive: true, status: 'ACTIVE', ...overrides };
@@ -62,7 +72,7 @@ function makeReq(overrides: Partial<AuthenticatedRequest> = {}): AuthenticatedRe
   return {
     params: { streamId: '123' },
     user: { publicKey: SENDER },
-    body: { senderSecret: 'SABC123' },
+    body: { signedXdr: SIGNED_XDR },
     ...overrides,
   } as unknown as AuthenticatedRequest;
 }
@@ -77,6 +87,11 @@ function makeRes(): Response & { status: MockFn; json: MockFn } {
 /** The `{ error: { code, message } }` envelope `sendApiError` writes. */
 function errorBody(code: string, message: string) {
   return { error: { code, message } };
+}
+
+/** The error envelope the response actually carried, for code-only assertions. */
+function firstError(res: ReturnType<typeof makeRes>): { code: string; message: string } {
+  return (res.json as MockFn).mock.calls[0]?.[0]?.error;
 }
 
 function deferred<T>() {
@@ -136,7 +151,7 @@ describe('cancel stream: a repeated request must not cancel twice', () => {
     // The point of the 409: a client that retries a cancel it already
     // succeeded with must not move money twice.
     expect(cancelOnChain).toHaveBeenCalledTimes(1);
-    expect(cancelOnChain).toHaveBeenCalledWith(123n, 'SABC123');
+    expect(cancelOnChain).toHaveBeenCalledWith(...relayArgs(123n));
     expect(markCancelled).toHaveBeenCalledTimes(1);
   });
 
@@ -261,7 +276,7 @@ describe('cancel stream: streamId boundary inputs', () => {
 
     // 0 is falsy, which is the case an `if (!streamId)` guard gets wrong.
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(cancelOnChain).toHaveBeenCalledWith(0n, 'SABC123');
+    expect(cancelOnChain).toHaveBeenCalledWith(...relayArgs(0n));
   });
 
   it('keeps precision above Number.MAX_SAFE_INTEGER', async () => {
@@ -274,7 +289,7 @@ describe('cancel stream: streamId boundary inputs', () => {
     await cancelStreamHandler(makeReq({ params: { streamId: huge } }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(cancelOnChain).toHaveBeenCalledWith(BigInt(huge), 'SABC123');
+    expect(cancelOnChain).toHaveBeenCalledWith(...relayArgs(BigInt(huge)));
   });
 
   it('looks the stream up by the parsed bigint, never the raw string', async () => {
@@ -289,28 +304,49 @@ describe('cancel stream: streamId boundary inputs', () => {
   });
 });
 
-describe('cancel stream: senderSecret and the failure taxonomy', () => {
+describe('cancel stream: request-body taxonomy', () => {
   beforeEach(() => {
     findUnique.mockResolvedValue(activeStream());
   });
 
   it.each([
-    ['absent', undefined],
-    ['null', null],
+    ['a string', 'SABC123'],
     ['empty', ''],
+    ['null', null],
     ['a number', 12345],
     ['an array', ['SABC123']],
     ['a boolean', true],
-  ])('rejects a senderSecret that is %s with 400 INVALID_REQUEST', async (_label, secret) => {
+  ])('refuses a legacy senderSecret that is %s with 400', async (_label, _secret) => {
     cancelOnChain.mockResolvedValue('tx_unsent');
 
     const res = makeRes();
-    await cancelStreamHandler(makeReq({ body: { senderSecret: secret } }), res);
+    await cancelStreamHandler(makeReq({ body: { senderSecret: _secret } }), res);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith(
-      errorBody('INVALID_REQUEST', 'senderSecret is required'),
-    );
+    expect(firstError(res).code).toBe('SENDER_SECRET_REMOVED');
+    expect(cancelOnChain).not.toHaveBeenCalled();
+    expect(markCancelled).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['null', null],
+    ['blank', '   '],
+    ['a number', 12345],
+    ['an array', ['AAAAAGV1nQJ2Z3F0']],
+    ['a boolean', true],
+  ])('rejects a signedXdr that is %s with 400 MISSING_SIGNED_XDR', async (_label, signedXdr) => {
+    const res = makeRes();
+    await cancelStreamHandler(makeReq({ body: { signedXdr } }), res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: {
+        code: 'MISSING_SIGNED_XDR',
+        message:
+          'signedXdr is required: sign the cancel transaction from POST /v1/streams/simulate and send the base64 envelope.',
+      },
+    });
     expect(cancelOnChain).not.toHaveBeenCalled();
   });
 
@@ -322,17 +358,19 @@ describe('cancel stream: senderSecret and the failure taxonomy', () => {
     expect(cancelOnChain).not.toHaveBeenCalled();
   });
 
-  it('maps a simulation failure to 400 with the upstream message, not a generic 500', async () => {
-    // A rejected transaction is the network's answer to the caller's own
-    // parameters, so it must not read as a server fault worth retrying.
-    cancelOnChain.mockRejectedValue(new Error('Simulation failed: insufficient balance'));
+  it('maps an envelope rejection to its own 400 code instead of a generic 500', async () => {
+    // The wallet signed the wrong transaction. That is the caller's input to
+    // fix, so it must not read as a server fault worth retrying.
+    cancelOnChain.mockRejectedValue(
+      new ApiError(400, 'SIGNED_TX_MISMATCH', 'The transaction is not a `cancel_stream` call.'),
+    );
 
     const res = makeRes();
     await cancelStreamHandler(makeReq(), res);
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(
-      errorBody('TRANSACTION_SIMULATION_FAILED', 'Simulation failed: insufficient balance'),
+      errorBody('SIGNED_TX_MISMATCH', 'The transaction is not a `cancel_stream` call.'),
     );
     expect(markCancelled).not.toHaveBeenCalled();
   });
@@ -411,7 +449,7 @@ describe('cancel stream: which guard answers first', () => {
     await cancelStreamHandler(makeReq(), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(cancelOnChain).toHaveBeenCalledWith(123n, 'SABC123');
+    expect(cancelOnChain).toHaveBeenCalledWith(...relayArgs(123n));
     expect(markCancelled).toHaveBeenCalledWith(123n, 'tx_ok');
   });
 });

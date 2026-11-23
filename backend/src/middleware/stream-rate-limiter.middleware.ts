@@ -38,7 +38,7 @@ export function createStreamRateLimiter(
      * Skip rate limiting for non-authenticated requests
      * to ensure we only rate limit authenticated users
      */
-    skip: (req: Request, res: Response): boolean => {
+    skip: (req: Request, _res: Response): boolean => {
       const authReq = req as AuthenticatedRequest;
       if (!authReq.user?.publicKey) {
         logger.warn('Stream creation rate limiter skipped: no authenticated user');

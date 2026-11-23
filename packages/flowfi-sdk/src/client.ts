@@ -164,6 +164,21 @@ export class FlowFiClient {
     return BigInt(value ?? 0);
   }
 
+  /**
+   * Number of streams ever created, i.e. the highest stream ID issued.
+   *
+   * This is the contract's monotonic ID counter, not a count of active
+   * streams, so it is stable as a pagination cursor width and `0n` on a fresh
+   * deployment.
+   */
+  async getStreamCount(): Promise<bigint> {
+    if (this.rpcClient && typeof (this.rpcClient as { getStreamCount?: unknown }).getStreamCount === 'function') {
+      return (this.rpcClient as { getStreamCount: () => Promise<bigint> }).getStreamCount();
+    }
+    const value = await this.simulateRead<bigint | string | number>('stream_count', []);
+    return BigInt(value ?? 0);
+  }
+
   // ─── Internals ─────────────────────────────────────────────────────────────
 
   private baseBuildArgs(sourceAccount: string): {
