@@ -435,25 +435,25 @@ pub fn fee_config_exists(env: &Env) -> bool {
 
 /// Returns the position metadata for a given stream and role.
 ///
-/// **Key:** [`DataKey::StreamPosition(stream_id)`] in instance storage.
+/// **Key:** [`DataKey::StreamPosition(stream_id, role)`] in persistent storage.
 ///
-/// Returns `StreamPositionNotFound` if no position metadata exists for the
-/// given stream and role.
+/// Returns `None` when no position metadata exists for the given stream and
+/// role, which callers surface as [`StreamError::PositionNotFound`](crate::errors::StreamError::PositionNotFound).
 pub fn try_load_position_metadata(
     env: &Env,
     stream_id: u64,
-    _role: PositionRole,
+    role: PositionRole,
 ) -> Option<StreamPositionMetadata> {
-    let key = DataKey::StreamPosition(stream_id);
+    let key = DataKey::StreamPosition(stream_id, role);
     let raw: Option<Val> = env.storage().persistent().get(&key);
 
     let raw = raw?;
 
     bump_position_ttl(env, &key);
 
-    // Decode based on field count - position metadata has 7 fields
+    // Decode based on field count - position metadata has 8 fields
     match record_field_count(env, &raw)? {
-        7 => {}
+        8 => {}
         _ => return None,
     }
 
@@ -473,11 +473,11 @@ pub fn try_load_positions_by_owner(env: &Env, _owner: Address) -> Vec<StreamPosi
     Vec::new(env)
 }
 
-/// Persists position metadata for a stream.
+/// Persists position metadata for one role of a stream.
 ///
-/// **Key:** [`DataKey::StreamPosition(stream_id)`] in instance storage.
+/// **Key:** [`DataKey::StreamPosition(stream_id, role)`] in persistent storage.
 pub fn save_position_metadata(env: &Env, metadata: &StreamPositionMetadata) {
-    let key = DataKey::StreamPosition(metadata.stream_id);
+    let key = DataKey::StreamPosition(metadata.stream_id, metadata.role.clone());
     env.storage().persistent().set(&key, metadata);
     bump_position_ttl(env, &key);
 }
