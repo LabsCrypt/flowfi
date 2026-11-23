@@ -40,6 +40,12 @@ describe('RequestId Middleware', () => {
     expect(res.setHeader).toHaveBeenCalledWith('X-Request-ID', 'req_1.0-abc');
   });
 
+  it('should accept the shortest valid client id', () => {
+    req.headers = { 'x-request-id': 'a' };
+    requestIdMiddleware(req as Request, res as Response, next);
+    expect(res.setHeader).toHaveBeenCalledWith('X-Request-ID', 'a');
+  });
+
   it('should accept a valid id that is exactly 64 characters long', () => {
     const id = 'a'.repeat(64);
     req.headers = { 'x-request-id': id };
@@ -70,5 +76,23 @@ describe('RequestId Middleware', () => {
     requestIdMiddleware(req as Request, res as Response, next);
     const call = (res.setHeader as any).mock.calls[0];
     expect(call[1]).toMatch(/^[a-f0-9-]+$/i);
+  });
+
+  it('should generate a safe id for an empty client header', () => {
+    req.headers = { 'x-request-id': '' };
+    requestIdMiddleware(req as Request, res as Response, next);
+
+    const generated = (res.setHeader as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    expect(generated).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it('should generate a safe id when the client sends multiple request-id values', () => {
+    req.headers = { 'x-request-id': ['first', 'second'] };
+    requestIdMiddleware(req as Request, res as Response, next);
+
+    const generated = (res.setHeader as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    expect(generated).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(generated).not.toBe('first,second');
   });
 });

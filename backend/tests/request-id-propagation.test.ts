@@ -191,6 +191,15 @@ describe("AC 1 — every response carries the X-Request-ID header", () => {
     expect(headerId(res)).toMatch(UUID_PATTERN);
   });
 
+  it("preserves a maximum-length valid id on an error response", async () => {
+    const id = "a".repeat(64);
+    const res = await request(buildFunnelApp()).get("/api-error").set("X-Request-ID", id);
+
+    expect(res.status).toBe(400);
+    expect(headerId(res)).toBe(id);
+    expect(errorOf(res).requestId).toBe(id);
+  });
+
   it("adds the header to a 404 produced before any route runs", async () => {
     const res = await request(app).get("/v1/does-not-exist");
 
@@ -243,9 +252,18 @@ describe("AC 2 — error responses carry requestId in the JSON body", () => {
       .set("X-Request-ID", "zod-case");
 
     expect(res.status).toBe(400);
-    expect(errorOf(res).code).toBe("VALIDATION_ERROR");
-    expect(typeof errorOf(res).message).toBe("string");
-    expect(errorOf(res).requestId).toBe("zod-case");
+    expect(errorOf(res)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: "Request validation failed",
+      requestId: "zod-case",
+      details: [
+        {
+          path: "token",
+          message: expect.any(String),
+          code: "invalid_type",
+        },
+      ],
+    });
   });
 
   it("includes requestId for an unknown error and keeps code and message", async () => {
@@ -254,9 +272,11 @@ describe("AC 2 — error responses carry requestId in the JSON body", () => {
       .set("X-Request-ID", "unknown-case");
 
     expect(res.status).toBe(500);
-    expect(errorOf(res).code).toBe("INTERNAL_SERVER_ERROR");
-    expect(typeof errorOf(res).message).toBe("string");
-    expect(errorOf(res).requestId).toBe("unknown-case");
+    expect(errorOf(res)).toEqual({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "A technical error occurred. Please try again later.",
+      requestId: "unknown-case",
+    });
   });
 
   it("stamps a generated id into the body when the caller supplied none", async () => {

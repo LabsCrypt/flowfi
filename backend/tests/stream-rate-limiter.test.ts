@@ -185,6 +185,29 @@ describe('Stream Creation Rate Limiter Middleware', () => {
         .set('Content-Type', 'application/json');
       expect(res2.status).toBe(429);
     });
+
+    it('should keep one wallet bucket across different forwarded IPs', async () => {
+      const limiter = createStreamRateLimiter({ windowMs: 10000, max: 1 });
+      const wallet = 'GUSER_STABLE_BUCKET';
+
+      app.post(
+        '/streams',
+        mockAuthMiddleware(wallet),
+        limiter,
+        (_req: Request, res: Response) => res.status(201).json({ success: true })
+      );
+
+      const first = await request(app)
+        .post('/streams')
+        .set('X-Forwarded-For', '198.51.100.20');
+      const changedIp = await request(app)
+        .post('/streams')
+        .set('X-Forwarded-For', '198.51.100.21');
+
+      expect(first.status).toBe(201);
+      expect(changedIp.status).toBe(429);
+      expect(changedIp.body.error.code).toBe('RATE_LIMITED');
+    });
   });
 
   describe('Authentication Requirements', () => {
