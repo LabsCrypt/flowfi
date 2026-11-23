@@ -643,7 +643,8 @@ pub(crate) mod test_diagnostics {
 
             // Unknown error codes must return Err(())
             assert_eq!(ContractError::try_from(0), Err(()));
-            assert_eq!(ContractError::try_from(50), Err(()));
+            // 50 is now taken by ArbiterLocked, so probe the next free code.
+            assert_eq!(ContractError::try_from(51), Err(()));
             assert_eq!(ContractError::try_from(100), Err(()));
             assert_eq!(ContractError::try_from(u32::MAX), Err(()));
         }
