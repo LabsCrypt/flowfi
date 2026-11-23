@@ -22,6 +22,13 @@ import {
 } from "../repositories/streamEvent.repository.js";
 import { findStreams } from "../repositories/stream.repository.js";
 import { ApiError, fromPrismaError, sendApiError } from "../lib/api-error.js";
+import {
+  getUserStreamSummaryCache,
+  invalidateUserStreamSummaryCache,
+  pruneUserStreamSummaryCache,
+  setUserStreamSummaryCache,
+  type UserStreamSummary,
+} from "../services/user-summary-cache.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
@@ -42,37 +49,6 @@ export const EMBEDDED_EVENTS_LIMIT = 20;
  * frontend can offer a pagination or export fallback.
  */
 export const MAX_USER_STREAMS = 500;
-
-interface UserStreamSummary {
-  address: string;
-  totalStreamsCreated: number;
-  totalStreamedOut: string;
-  totalStreamedIn: string;
-  currentClaimable: string;
-  activeOutgoingCount: number;
-  activeIncomingCount: number;
-}
-
-interface UserSummaryCacheEntry {
-  value: UserStreamSummary;
-  expiresAtMs: number;
-}
-
-const USER_SUMMARY_CACHE_TTL_MS = 30_000;
-const userSummaryCache = new Map<string, UserSummaryCacheEntry>();
-
-function pruneUserSummaryCache(nowMs: number): void {
-  for (const [key, entry] of userSummaryCache.entries()) {
-    if (entry.expiresAtMs <= nowMs) {
-      userSummaryCache.delete(key);
-    }
-  }
-}
-
-// Issue #682: Periodic prune to prevent memory drift when no requests come in
-setInterval(() => {
-  pruneUserSummaryCache(Date.now());
-}, 60_000); // Run every 60 seconds
 
 function sumStringI128(values: string[]): string {
   let total = 0n;
@@ -193,6 +169,7 @@ export const createStream = async (req: Request, res: Response) => {
       },
     });
 
+    invalidateUserStreamSummaryCache(sender, recipient);
     return res.status(201).json(JSON.parse(JSON.stringify(stream, (_key, value) => typeof value === "bigint" ? value.toString() : value)));
   } catch (error) {
     if (
@@ -563,12 +540,12 @@ export const getUserStreamSummary = async (
 
     const nowMs = Date.now();
     const cacheKey = address;
-    const cached = userSummaryCache.get(cacheKey);
-    if (cached && cached.expiresAtMs > nowMs) {
-      return res.status(200).json(cached.value);
+    const cached = getUserStreamSummaryCache(cacheKey, nowMs);
+    if (cached) {
+      return res.status(200).json(cached);
     }
 
-    pruneUserSummaryCache(nowMs);
+    pruneUserStreamSummaryCache(nowMs);
 
     // Issue #1246: cap the number of streams fetched per direction to prevent
     // unbounded DB queries.  Power users with more than MAX_USER_STREAMS
@@ -656,10 +633,7 @@ export const getUserStreamSummary = async (
       ...(truncated ? { truncated: true } : {}),
     } satisfies UserStreamSummary & { truncated?: boolean };
 
-    userSummaryCache.set(cacheKey, {
-      value: summary,
-      expiresAtMs: nowMs + USER_SUMMARY_CACHE_TTL_MS,
-    });
+    setUserStreamSummaryCache(cacheKey, summary, nowMs);
 
     return res.status(200).json(summary);
   } catch (error) {
@@ -744,6 +718,7 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
       applyTopUpOnce(tx, { streamId, txHash, amount }),
     );
 
+    invalidateUserStreamSummaryCache(stream.sender, stream.recipient);
     logger.info(`[topUp] stream=${streamId} amount=${amount} txHash=${txHash}`);
     return res
       .status(200)

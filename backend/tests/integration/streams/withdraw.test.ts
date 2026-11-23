@@ -188,6 +188,96 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
     expect(response.body.error.message).toBe('No claimable balance is currently available');
   });
 
+  it.each([
+    {
+      label: 'exact depletion',
+      withdrawnAmount: '1000',
+      isActive: true,
+    },
+    {
+      label: 'over-withdrawn accounting state',
+      withdrawnAmount: '1001',
+      isActive: true,
+    },
+    {
+      label: 'persisted completed state',
+      withdrawnAmount: '1000',
+      isActive: false,
+    },
+  ])('returns a conflict for $label without mutating persisted completion state', async ({
+    withdrawnAmount,
+    isActive,
+  }) => {
+    const recipient = makeKeypair();
+    const token = setAuthAs(recipient);
+    const streamId = 321;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const stream = {
+      streamId,
+      sender: makeKeypair().publicKey(),
+      recipient: recipient.publicKey(),
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount,
+      startTime: nowSec - 200,
+      lastUpdateTime: nowSec - 100,
+      isActive,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      updatedAt: new Date(),
+    };
+    mockPrisma.stream.findUnique.mockResolvedValue(stream);
+
+    const response = await request(app)
+      .post(`/v1/streams/${streamId}/withdraw`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatchObject({
+      code: 'CONFLICT',
+      message: 'No claimable balance is currently available',
+    });
+    expect(mockWithdraw).not.toHaveBeenCalled();
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
+    expect(stream).toMatchObject({ withdrawnAmount, isActive });
+  });
+
+  it('returns the documented 400 error when the withdrawal simulation dependency fails', async () => {
+    const recipient = makeKeypair();
+    const token = setAuthAs(recipient);
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    mockPrisma.stream.findUnique.mockResolvedValue({
+      streamId: 654,
+      sender: makeKeypair().publicKey(),
+      recipient: recipient.publicKey(),
+      ratePerSecond: '10',
+      depositedAmount: '1000',
+      withdrawnAmount: '0',
+      startTime: nowSec - 100,
+      lastUpdateTime: nowSec - 50,
+      isActive: true,
+      isPaused: false,
+      pausedAt: null,
+      totalPausedDuration: 0,
+      updatedAt: new Date(),
+    });
+    mockWithdraw.mockRejectedValue(new Error('Soroban unavailable'));
+
+    const response = await request(app)
+      .post('/v1/streams/654/withdraw')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: 'WITHDRAWAL_FAILED',
+      message: 'Failed to withdraw from stream on chain',
+    });
+  });
+
   it('never touches withdrawnAmount, isActive or events, however often it is called', async () => {
     const recipient = makeKeypair();
     const token = setAuthAs(recipient);

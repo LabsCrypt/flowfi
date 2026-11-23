@@ -6,6 +6,7 @@ import { sseService } from "../services/sse.service.js";
 import { sentinelService } from "../services/sentinel.service.js";
 import { publishIndexerLag, quarantineEvent } from "../services/indexerService.js";
 import { applyToppedUpEvent } from "../services/top-up-writer.js";
+import { invalidateUserStreamSummaryCache } from "../services/user-summary-cache.js";
 import {
   indexerEventsProcessedTotal,
   indexerPollsTotal,
@@ -633,24 +634,31 @@ export class SorobanEventWorker {
     switch (eventName) {
       case "stream_created":
         await this.handleStreamCreated(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "stream_topped_up":
         await this.handleStreamToppedUp(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "tokens_withdrawn":
         await this.handleTokensWithdrawn(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "stream_paused":
         await this.handleStreamPaused(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "stream_resumed":
         await this.handleStreamResumed(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "stream_cancelled":
         await this.handleStreamCancelled(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "stream_completed":
         await this.handleStreamCompleted(event, topic1);
+        invalidateUserStreamSummaryCache();
         break;
       case "fee_collected":
         await this.handleFeeCollected(event, topic1);
