@@ -40,10 +40,9 @@ function resolveErrorStatus(err: unknown): number {
     if (err instanceof ZodError) return 400;
 
     const prismaError = fromPrismaError(err);
-    if (prismaError) return prismaError.status;
+    if (prismaError) return prismaError.statusCode;
 
-    if (err instanceof LibApiError) return err.status;
-    if (err instanceof TypeApiError) return err.statusCode ?? 500;
+    if (err instanceof ApiError) return err.statusCode;
 
     const candidate = err as { status?: unknown; statusCode?: unknown };
     if (typeof candidate?.status === 'number') return candidate.status;
