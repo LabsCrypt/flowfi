@@ -8319,4 +8319,3 @@ fn test_coverage_set_stream_arbiter_is_locked_once_a_dispute_is_open() {
         Err(Ok(StreamError::ArbiterLocked))
     );
 }
-
