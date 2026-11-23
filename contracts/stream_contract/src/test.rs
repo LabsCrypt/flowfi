@@ -16,8 +16,8 @@ use events::{
     FeeCollectedEvent, FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
     ProtocolPauseStatusEvent, ProtocolPausedEvent, StateMigratedEvent,
     StepVestingStreamCreatedEvent, StreamCancelledEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamRefueledEvent, StreamResumedEvent, StreamToppedUpEvent,
-    TokensWithdrawnEvent,
+    StreamPausedEvent,     StreamRefueledEvent, StreamResumedEvent, StreamToppedUpEvent, TokensWithdrawnEvent,
+    YieldPreferenceUpdatedEvent,
 };
 use types::{
     DataKey, DisputeStatus, FeeRecipient, LegacyProtocolConfig, LegacyStream, PositionRole,
@@ -7053,17 +7053,11 @@ fn test_coverage_allowance_stream_cancel_refunds_nothing_it_never_held() {
 
 // ─── Coverage: dispute & escrow (#1319) ────────────────────────────────────
 
-/// Seeds an arbiter directly on the stream's storage. The arbiter slot is
-/// intentionally immutable through the public API, so tests reach in the same
-/// way the escrow deployment flow would.
-fn seed_arbiter(env: &Env, client: &StreamContractClient, stream_id: u64, arbiter: &Address) {
-    let mut stream = client.get_stream(&stream_id).unwrap();
-    stream.arbiter = Some(arbiter.clone());
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .set(&types::DataKey::Stream(stream_id), &stream);
-    });
+/// Configures the arbiter through the public entrypoint, the same way the
+/// escrow deployment flow does (#1897).
+fn seed_arbiter(_env: &Env, client: &StreamContractClient, stream_id: u64, arbiter: &Address) {
+    let sender = client.get_stream(&stream_id).unwrap().sender;
+    client.set_stream_arbiter(&sender, &stream_id, &Some(arbiter.clone()));
 }
 
 #[test]
@@ -8240,4 +8234,132 @@ fn test_withdraw_and_swap_rolls_back_when_the_router_fails() {
         1_000
     );
     assert_eq!(token::Client::new(&env, &target).balance(&recipient), 0);
+}
+
+// ─── Arbiter activation path (#1897) ────────────────────────────────────────
+
+#[test]
+fn test_arbiter_activation_reaches_the_dispute_flow_through_the_public_api() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+
+    // Only the sender configures the arbiter, and neither party to the stream
+    // may arbitrate it.
+    assert_stream_error!(
+        client.try_set_stream_arbiter(&Address::generate(&env), &id, &Some(arbiter.clone())),
+        StreamError::Unauthorized
+    );
+    assert_stream_error!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(sender.clone())),
+        StreamError::InvalidAmount
+    );
+    assert_stream_error!(
+        client.try_set_stream_arbiter(&sender, &id, &Some(recipient.clone())),
+        StreamError::InvalidAmount
+    );
+
+    client.set_stream_arbiter(&sender, &id, &Some(arbiter.clone()));
+    assert_eq!(client.get_stream(&id).unwrap().arbiter, Some(arbiter.clone()));
+
+    // With an arbiter in place the sender cannot cancel unilaterally.
+    advance(&env, 400);
+    assert_stream_error!(
+        client.try_cancel_stream(&sender, &id),
+        StreamError::ArbiterConfigured
+    );
+
+    // An open dispute freezes the arbiter slot so it cannot be re-pointed.
+    client.request_dispute(&sender, &id);
+    assert_stream_error!(
+        client.try_set_stream_arbiter(&sender, &id, &None),
+        StreamError::Unauthorized
+    );
+
+    assert_stream_error!(
+        client.try_resolve_dispute(&Address::generate(&env), &id, &true),
+        StreamError::NotArbiter
+    );
+
+    client.resolve_dispute(&arbiter, &id, &true);
+    let stream = client.get_stream(&id).unwrap();
+    assert_eq!(stream.status, StreamStatus::Cancelled);
+    assert!(!stream.is_active);
+    // 400 accrued to the recipient, the remaining 600 refunded to the sender.
+    assert_eq!(token::Client::new(&env, &token).balance(&recipient), 400);
+    assert_eq!(token::Client::new(&env, &token).balance(&sender), 600);
+}
+
+#[test]
+fn test_clearing_the_arbiter_restores_unilateral_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    client.set_stream_arbiter(&sender, &id, &Some(arbiter));
+    client.set_stream_arbiter(&sender, &id, &None);
+    assert_eq!(client.get_stream(&id).unwrap().arbiter, None);
+
+    client.cancel_stream(&sender, &id);
+    assert!(!client.get_stream(&id).unwrap().is_active);
+}
+
+#[test]
+fn test_set_stream_yield_toggles_the_sender_opt_in() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (token, _) = create_token(&env);
+    let client = create_contract(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    mint(&env, &token, &sender, 1_000);
+
+    let id = client.create_stream(&sender, &recipient, &token, &1_000, &1_000);
+    assert!(!client.get_stream(&id).unwrap().yield_enabled);
+
+    assert_stream_error!(
+        client.try_set_stream_yield(&Address::generate(&env), &id, &true),
+        StreamError::Unauthorized
+    );
+
+    client.set_stream_yield(&sender, &id, &true);
+
+    // The toggle is observable through its event, which indexers key off.
+    // `events().all()` reports the most recent invocation, so read it before
+    // any further contract call.
+    let events = env.events().all();
+    let ev = events
+        .iter()
+        .find(|e| {
+            Symbol::try_from_val(&env, &e.1.get(0).unwrap()).unwrap()
+                == Symbol::new(&env, "yield_preference_updated")
+        })
+        .expect("yield_preference_updated event not found");
+    let payload: YieldPreferenceUpdatedEvent =
+        YieldPreferenceUpdatedEvent::try_from_val(&env, &ev.2).unwrap();
+    assert_eq!(payload.stream_id, id);
+    assert!(payload.yield_enabled);
+    assert!(client.get_stream(&id).unwrap().yield_enabled);
+
+    // Off again, and a cancelled stream rejects further changes.
+    client.set_stream_yield(&sender, &id, &false);
+    assert!(!client.get_stream(&id).unwrap().yield_enabled);
+    client.cancel_stream(&sender, &id);
+    assert_stream_error!(
+        client.try_set_stream_yield(&sender, &id, &true),
+        StreamError::StreamInactive
+    );
 }

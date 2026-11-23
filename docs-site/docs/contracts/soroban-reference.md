@@ -93,6 +93,8 @@ When a stream contract call fails, it returns an error code in the format `Error
 | 46 | `InvalidFeeSplit` | Fee split shares don't sum to 10,000 bps | Adjust shares to total exactly 10,000 |
 | 47 | `DeadlineExpired` | Cross-asset withdrawal deadline passed | Retry with later deadline |
 | 48 | `InsufficientOutput` | DEX swap returned less than minimum | Increase slippage tolerance or retry |
+| 49 | `PositionNotFound` | No position metadata for this stream and role | Mint the position with `mint_stream_position()` first |
+| 50 | `ArbiterConfigured` | `cancel_stream()` on a stream with an arbiter set | Open a dispute with `request_dispute()` and let the arbiter resolve it |
 
 :::tip Quick Debugging
 Most authorization errors (#3, #6, #24, #32, #43) mean you're calling from the wrong account. Verify the caller matches the expected role (admin, sender, recipient, arbiter).

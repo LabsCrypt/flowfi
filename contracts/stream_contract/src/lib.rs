@@ -47,7 +47,8 @@ use soroban_sdk::{
 
 use errors::StreamError;
 use events::{
-    emit_admin_transferred, emit_contract_upgraded, emit_cross_asset_withdrawal_executed,
+    emit_admin_transferred, emit_arbiter_updated, emit_contract_upgraded,
+    emit_cross_asset_withdrawal_executed, emit_yield_preference_updated,
     emit_emergency_guardian_updated, emit_fee_collected, emit_fee_config_updated,
     emit_hybrid_cliff_stream_created, emit_initialized, emit_protocol_fee_collected,
     emit_protocol_pause_status, emit_protocol_paused, emit_state_migrated,
@@ -55,8 +56,9 @@ use events::{
     emit_stream_completed, emit_stream_created, emit_stream_paused, emit_stream_position_created,
     emit_stream_position_settled, emit_stream_position_updated, emit_stream_resumed,
     emit_stream_topped_up, emit_tokens_withdrawn, AdminTransferredEvent,
-    AllowanceStreamCreatedEvent, ContractUpgradedEvent, CrossAssetWithdrawalExecutedEvent,
-    DisputeRequestedEvent, DisputeResolvedEvent, EmergencyGuardianUpdatedEvent, FeeCollectedEvent,
+    AllowanceStreamCreatedEvent, ArbiterUpdatedEvent, ContractUpgradedEvent,
+    CrossAssetWithdrawalExecutedEvent, DisputeRequestedEvent, DisputeResolvedEvent,
+    EmergencyGuardianUpdatedEvent, FeeCollectedEvent, YieldPreferenceUpdatedEvent,
     FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
     MilestoneConditionUnlockedEvent, ProtocolFeeCollectedEvent, ProtocolPauseStatusEvent,
     RecipientTransferredEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
@@ -2185,6 +2187,13 @@ impl StreamContract {
         Self::validate_stream_ownership(&stream, &sender)?;
         Self::validate_stream_active(&stream)?;
 
+        // With an arbiter configured, cancellation is a two-party decision:
+        // the sender has to open a dispute and the arbiter has to approve it.
+        // Otherwise the arbiter slot would be decorative.
+        if stream.arbiter.is_some() {
+            return Err(StreamError::ArbiterConfigured);
+        }
+
         let now = env.ledger().timestamp();
         let accrued_amount = Self::calculate_claimable(&stream, now);
 
@@ -3151,6 +3160,104 @@ impl StreamContract {
         } else {
             save_stream(&env, stream_id, &stream);
         }
+
+        Ok(())
+    }
+
+    /// Configure, replace, or clear the arbiter of a stream (sender action).
+    ///
+    /// The arbiter is what makes the dispute path reachable: once set, the
+    /// sender can no longer cancel unilaterally (`cancel_stream` returns
+    /// [`StreamError::ArbiterConfigured`]) and must call `request_dispute`
+    /// instead, leaving `resolve_dispute` to the arbiter. Passing `None`
+    /// restores unilateral cancellation.
+    ///
+    /// The arbiter can only change while no dispute is open, so a pending
+    /// dispute cannot be re-pointed at a different arbiter. Neither party to
+    /// the stream can arbitrate it.
+    ///
+    /// A dispute already open on the stream freezes this slot until it is
+    /// resolved, so the sender cannot swap in a friendlier arbiter mid-dispute;
+    /// that attempt is rejected as unauthorised.
+    ///
+    /// # Errors
+    /// - `StreamNotFound` — no stream exists with `stream_id`.
+    /// - `Unauthorized`   — caller is not the stream's sender, or a dispute is
+    ///   already open on this stream.
+    /// - `StreamInactive` — stream is inactive or cancelled.
+    /// - `InvalidAmount`  — `arbiter` is the stream's sender or recipient.
+    pub fn set_stream_arbiter(
+        env: Env,
+        sender: Address,
+        stream_id: u64,
+        arbiter: Option<Address>,
+    ) -> Result<(), StreamError> {
+        sender.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+        Self::validate_stream_ownership(&stream, &sender)?;
+        Self::validate_stream_active(&stream)?;
+
+        if !matches!(stream.dispute_status, DisputeStatus::None) {
+            return Err(StreamError::Unauthorized);
+        }
+        if let Some(ref configured) = arbiter {
+            if *configured == stream.sender || *configured == stream.recipient {
+                return Err(StreamError::InvalidAmount);
+            }
+        }
+
+        stream.arbiter = arbiter.clone();
+        save_stream(&env, stream_id, &stream);
+
+        emit_arbiter_updated(
+            &env,
+            ArbiterUpdatedEvent {
+                stream_id,
+                sender,
+                arbiter,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Opt a stream in or out of yield generation (sender action).
+    ///
+    /// `yield_enabled` is per-stream state that the sender controls; without
+    /// this entrypoint the flag could only ever be `false`. It records the
+    /// opt-in for a yield adapter to act on and deliberately stays independent
+    /// of the escrow accounting: nothing here moves tokens.
+    ///
+    /// # Errors
+    /// - `StreamNotFound` — no stream exists with `stream_id`.
+    /// - `Unauthorized`   — caller is not the stream's sender.
+    /// - `StreamInactive` — stream is inactive or cancelled.
+    pub fn set_stream_yield(
+        env: Env,
+        sender: Address,
+        stream_id: u64,
+        enabled: bool,
+    ) -> Result<(), StreamError> {
+        sender.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+        Self::validate_stream_ownership(&stream, &sender)?;
+        Self::validate_stream_active(&stream)?;
+
+        stream.yield_enabled = enabled;
+        save_stream(&env, stream_id, &stream);
+
+        emit_yield_preference_updated(
+            &env,
+            YieldPreferenceUpdatedEvent {
+                stream_id,
+                sender,
+                yield_enabled: enabled,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
 
         Ok(())
     }

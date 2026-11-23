@@ -944,3 +944,66 @@ pub fn emit_stream_position_settled(env: &Env, event: StreamPositionSettledEvent
         event,
     );
 }
+
+/// Emitted when a stream's arbiter is configured, replaced, or cleared.
+///
+/// Topic: `("arbiter_updated", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterUpdatedEvent {
+    pub stream_id: u64,
+    pub sender: Address,
+    /// The newly configured arbiter, or `None` when the slot was cleared.
+    pub arbiter: Option<Address>,
+    pub timestamp: u64,
+}
+
+/// Emitted when a stream's yield opt-in flag is toggled.
+///
+/// Topic: `("yield_preference_updated", stream_id)`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct YieldPreferenceUpdatedEvent {
+    pub stream_id: u64,
+    pub sender: Address,
+    pub yield_enabled: bool,
+    pub timestamp: u64,
+}
+
+/// Emits an `arbiter_updated` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("arbiter_updated", stream_id: u64)`.
+///
+/// # Emission trigger
+/// `set_stream_arbiter`, after the new arbiter (or `None`) has been persisted.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`ArbiterUpdatedEvent`] payload: stream_id, sender, arbiter,
+///   and timestamp.
+pub fn emit_arbiter_updated(env: &Env, event: ArbiterUpdatedEvent) {
+    env.events().publish(
+        (Symbol::new(env, "arbiter_updated"), event.stream_id),
+        event,
+    );
+}
+
+/// Emits a `yield_preference_updated` event indexed by `stream_id`.
+///
+/// # Event topic
+/// `("yield_preference_updated", stream_id: u64)`.
+///
+/// # Emission trigger
+/// `set_stream_yield`, after the flag has been persisted.
+///
+/// # Parameters
+/// - `env` — the Soroban environment to publish into.
+/// - `event` — the [`YieldPreferenceUpdatedEvent`] payload: stream_id, sender,
+///   the new flag value, and timestamp.
+pub fn emit_yield_preference_updated(env: &Env, event: YieldPreferenceUpdatedEvent) {
+    env.events().publish(
+        (Symbol::new(env, "yield_preference_updated"), event.stream_id),
+        event,
+    );
+}
