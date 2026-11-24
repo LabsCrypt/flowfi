@@ -67,3 +67,18 @@ export const healthRateLimiter = createRateLimiter({
   message: 'Too many health check requests, please try again later.',
   handler: rateLimitHandler,
 });
+
+/**
+ * Limiter for the notification-channel routes (#1855, #1931).
+ *
+ * Every one of those handlers authenticates a wallet and then writes to a
+ * per-wallet record, so an unthrottled caller could use them to enumerate
+ * verification codes or spray channel registrations. The window is generous
+ * for a human configuring alerts and tight enough to stop a script.
+ */
+export const notificationRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: 'Too many notification requests, please try again later.',
+  handler: rateLimitHandler,
+});
