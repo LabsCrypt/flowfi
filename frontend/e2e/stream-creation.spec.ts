@@ -23,7 +23,8 @@ test("single-screen /streams/create form validates input and submits a stream", 
   // the messages inline.
   await amount.fill("0");
   await page.getByRole("button", { name: "Start Streaming" }).click();
-  await expect(page.getByText("Amount must be a positive number")).toBeVisible();
+  // The same message shows twice: inline under the field and as a toast.
+  await expect(page.getByText("Amount must be a positive number").first()).toBeVisible();
 
   await amount.fill("10");
   await page.locator("#create-stream-duration").fill("7");
