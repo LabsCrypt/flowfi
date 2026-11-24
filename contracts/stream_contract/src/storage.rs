@@ -246,14 +246,14 @@ pub fn remove_stream(env: &Env, stream_id: u64) {
 
 /// Removes the position metadata for a pruned stream.
 ///
-/// **Key:** [`DataKey::StreamPosition(stream_id)`] in persistent storage.
-///
-/// Without this, the position record keeps paying rent long after the stream it
-/// describes has been closed and removed.
+/// **Keys:** [`DataKey::StreamPosition(stream_id, role)`] in persistent storage,
+/// one per [`PositionRole`]. Positions are keyed by role, so both entries have
+/// to go: leaving one behind keeps paying rent for a stream that no longer
+/// exists.
 pub fn remove_position_metadata(env: &Env, stream_id: u64) {
-    env.storage()
-        .persistent()
-        .remove(&DataKey::StreamPosition(stream_id));
+    let storage = env.storage().persistent();
+    storage.remove(&DataKey::StreamPosition(stream_id, PositionRole::Sender));
+    storage.remove(&DataKey::StreamPosition(stream_id, PositionRole::Recipient));
 }
 
 /// Removes the conditional-stream bookkeeping for a pruned stream.
