@@ -1,0 +1,24 @@
+# Gitleaks configuration — https://github.com/gitleaks/gitleaks#configuration
+#
+# The default ruleset is kept as-is. The allowlists below only silence fixture
+# data that the `generic-api-key` rule mistakes for a credential: Stellar
+# contract addresses (56-character `C…` base32 strings) that appear in tests,
+# seed data and documentation. Production sources are still scanned.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures and documented demo contract addresses"
+paths = [
+  '''backend/tests/.*''',
+  '''frontend/.*__tests__/.*''',
+  '''frontend/.*\.test\.tsx?''',
+]
+
+[[allowlists]]
+description = "Public Stellar contract addresses used as demo data"
+regexTarget = "match"
+regexes = [
+  '''CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA''',
+  '''CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC''',
+]
