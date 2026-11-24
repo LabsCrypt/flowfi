@@ -5,7 +5,7 @@ Thank you for your interest in contributing to **FlowFi**
 FlowFi is a DeFi payment streaming protocol built on Stellar using Soroban smart contracts. This guide explains how to set up your local development environment and contribute effectively.
 
 Please read this document carefully before opening a Pull Request.
-
+//
 ## Getting Help & Asking Questions
 
 Have questions before contributing? We've got you covered!
