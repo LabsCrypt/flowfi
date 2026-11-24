@@ -67,10 +67,10 @@ use events::{
 };
 use storage::{
     bump_position_ttl, config_exists, get_contract_version, get_recorded_wasm_hash, load_config,
-    load_stream, load_stream_counter, next_stream_id, remove_stream, save_config,
-    save_contract_version, save_fee_config, save_position_metadata, save_recorded_wasm_hash,
-    save_stream, try_load_config, try_load_fee_config, try_load_position_metadata,
-    try_load_positions_by_owner, try_load_stream,
+    load_stream, load_stream_counter, next_stream_id, remove_conditional_metadata,
+    remove_position_metadata, remove_stream, save_config, save_contract_version, save_fee_config,
+    save_position_metadata, save_recorded_wasm_hash, save_stream, try_load_config,
+    try_load_fee_config, try_load_position_metadata, try_load_positions_by_owner, try_load_stream,
 };
 use types::{
     BatchStreamInput, ConditionalMilestone, DataKey, DexRouter, DisputeStatus, FeeRecipient,
@@ -2376,7 +2376,9 @@ impl StreamContract {
     /// close a stream. The stream must already be terminal (`Completed` or
     /// `Cancelled`), inactive, and hold zero remaining balance.
     ///
-    /// On success the `DataKey::Stream(stream_id)` entry is removed and a
+    /// On success the `DataKey::Stream(stream_id)` entry is removed together
+    /// with the stream's conditional bookkeeping (`ConditionalMilestones`,
+    /// `AttestedIds`) and the position metadata of both roles, and a
     /// `stream_closed` event is emitted for the backend indexer to mark the
     /// stream as archived.
     ///
@@ -2421,7 +2423,12 @@ impl StreamContract {
             }
         }
 
+        // Prune every record keyed by this stream, not just the stream itself:
+        // conditional bookkeeping lives in instance storage and position
+        // metadata in persistent storage, and neither expires on its own.
         remove_stream(&env, stream_id);
+        remove_conditional_metadata(&env, stream_id);
+        remove_position_metadata(&env, stream_id);
 
         let timestamp = env.ledger().timestamp();
         emit_stream_closed(

@@ -125,11 +125,24 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify Optimized WASM Exists
+        run: |
+          set -euo pipefail
+          WASM=contracts/target/wasm32-unknown-unknown/release/stream_contract.optimized.wasm
+          if [ ! -f "$WASM" ]; then
+            echo "ERROR: expected optimized WASM at $WASM"
+            ls -la contracts/target/wasm32-unknown-unknown/release/*.wasm || true
+            exit 1
+          fi
+          echo "Found optimized WASM at $WASM"
+
       - name: Upload Optimized WASM Artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: stream-contract-${{ env.NETWORK }}
-          path: contracts/target/wasm32-unknown-unknown/optimized/*.wasm
+          # Same directory the Build & Optimize step writes to, and the same one
+          # ci.yml uploads from.
+          path: contracts/target/wasm32-unknown-unknown/release/*.optimized.wasm
           if-no-files-found: error
 
       - name: Upload Deployment Info

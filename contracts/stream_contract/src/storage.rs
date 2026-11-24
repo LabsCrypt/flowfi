@@ -244,6 +244,33 @@ pub fn remove_stream(env: &Env, stream_id: u64) {
         .remove(&DataKey::Stream(stream_id));
 }
 
+/// Removes the position metadata for a pruned stream.
+///
+/// **Keys:** [`DataKey::StreamPosition(stream_id, role)`] in persistent storage,
+/// one per [`PositionRole`]. Positions are keyed by role, so both entries have
+/// to go: leaving one behind keeps paying rent for a stream that no longer
+/// exists.
+pub fn remove_position_metadata(env: &Env, stream_id: u64) {
+    let storage = env.storage().persistent();
+    storage.remove(&DataKey::StreamPosition(stream_id, PositionRole::Sender));
+    storage.remove(&DataKey::StreamPosition(stream_id, PositionRole::Recipient));
+}
+
+/// Removes the conditional-stream bookkeeping for a pruned stream.
+///
+/// **Keys:** [`DataKey::ConditionalMilestones(stream_id)`] and
+/// [`DataKey::AttestedIds(stream_id)`] in instance storage. Both are written
+/// for every conditional stream and never expire on their own, so a closed
+/// stream would otherwise leave them in the shared instance entry forever.
+pub fn remove_conditional_metadata(env: &Env, stream_id: u64) {
+    env.storage()
+        .instance()
+        .remove(&DataKey::ConditionalMilestones(stream_id));
+    env.storage()
+        .instance()
+        .remove(&DataKey::AttestedIds(stream_id));
+}
+
 /// Returns the stream if it exists, `None` otherwise (used by read-only queries).
 ///
 /// **Key:** `DataKey::Stream(stream_id)` in persistent storage.
