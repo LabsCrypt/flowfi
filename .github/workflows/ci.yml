@@ -140,7 +140,9 @@ jobs:
         working-directory: frontend
 
       - name: Post frontend coverage summary on PR
-        if: github.event_name == 'pull_request' && !cancelled()
+        if: >-
+          github.event_name == 'pull_request' && !cancelled() &&
+          hashFiles('frontend/coverage/coverage-summary.json') != ''
         # Fork PRs get a read-only token; never fail the build over the comment.
         continue-on-error: true
         uses: davelosert/vitest-coverage-report-action@v2
@@ -241,7 +243,9 @@ jobs:
           NODE_ENV: test
 
       - name: Post backend coverage summary on PR
-        if: github.event_name == 'pull_request' && !cancelled()
+        if: >-
+          github.event_name == 'pull_request' && !cancelled() &&
+          hashFiles('backend/coverage/coverage-summary.json') != ''
         continue-on-error: true
         uses: davelosert/vitest-coverage-report-action@v2
         with:
