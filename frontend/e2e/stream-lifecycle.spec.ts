@@ -26,13 +26,6 @@ test("stream detail page shows stream state and reflects a withdrawal via mock e
 }) => {
   // Connect as the stream RECIPIENT so the Withdraw action is available.
   await mockConnectedWallet(page, RECIPIENT_PUBLIC_KEY);
-  // The withdraw signs and submits a Soroban transaction. Point the app at the
-  // mock RPC (the sandbox network reads its URL from the environment) so it
-  // never reaches the public testnet.
-  await page.addInitScript(() => {
-    window.localStorage.setItem("flowfi.network", "sandbox");
-  });
-
   await page.goto("/streams/42");
 
   const withdrawnCard = page.locator(".glass-card", { hasText: "Withdrawn" }).first();
