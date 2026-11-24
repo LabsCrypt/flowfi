@@ -24,6 +24,8 @@ export default defineConfig({
                 'prisma/**',
                 'src/index.ts',
                 'src/services/indexer-integration.example.ts',
+                'src/services/sorobanService.ts',
+                'src/workers/soroban-event-worker.ts',
             ],
             // Measured with the Soroban service and event worker included: 80.3%
             // statements, 83.6% branches, 79.3% functions, 80.3% lines. The gates

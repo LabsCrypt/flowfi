@@ -5,6 +5,7 @@ import express from "express";
 import { graphql as executeGraphQL } from "graphql/index.js";
 import { prisma } from "../lib/prisma.js";
 import { createContext } from "./context.js";
+import logger from "../logger.js";
 import { schema } from "./schema.js";
 
 export const graphqlRoutes = express.Router();
@@ -54,8 +55,12 @@ async function execute(request: express.Request, response: express.Response): Pr
     });
     response.status(200).json(result);
   } catch (error) {
+    // The stack stays in the log; the client gets a stable message. GraphQL
+    // errors arrive here untyped, and echoing them leaked whatever the
+    // resolver threw - including Prisma text (#1901).
+    logger.error("[GraphQL] execution failed:", error);
     response.status(200).json({
-      errors: [{ message: error instanceof Error ? error.message : "GraphQL execution failed" }],
+      errors: [{ message: "GraphQL execution failed" }],
     });
   }
 }

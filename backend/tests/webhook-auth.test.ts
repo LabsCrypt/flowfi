@@ -306,8 +306,7 @@ describe('#1846 subscription ownership comes from the token, not the request', (
     expect(created.status).toBe(201);
     const original = { ...rows()[0]! };
 
-    const attempt = await request(app)
-      [method](path)
+    const attempt = await request(app)[method](path)
       .set('Authorization', `Bearer ${attackerToken}`)
       .send(body ?? {});
 

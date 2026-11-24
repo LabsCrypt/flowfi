@@ -176,7 +176,7 @@ describe('token-registry.service', () => {
     it('fetches metadata via RPC, upserts in DB, caches in Redis, and returns metadata', async () => {
       mockPrisma.tokenRegistry.findUnique.mockResolvedValue(null);
       // Simulate RPC calls for symbol, decimals, name
-      mockRpcPool.execute.mockImplementation(async (label: string, callback: any) => {
+      mockRpcPool.execute.mockImplementation(async (label: string, _callback: any) => {
         if (label.includes('symbol')) return 'FLOW';
         if (label.includes('decimals')) return 7;
         if (label.includes('name')) return 'FlowFi Token';
