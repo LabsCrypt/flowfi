@@ -19,6 +19,7 @@ export const STELLAR_NETWORK_ID =
     ? "Public Global Stellar Network ; September 2015"
     : "Test SDF Network ; September 2015";
 
+import { shortenAddress } from "@/utils/format";
 import {
   isConnected,
   setAllowed,
@@ -192,12 +193,13 @@ export function toWalletErrorMessage(error: unknown): string {
 
 // ── Display helpers ───────────────────────────────────────────────────────────
 
+/**
+ * @deprecated Use shortenAddress from utils/format. Kept as a named export so
+ * existing call sites keep working; it now produces the same string, because
+ * two truncations of one key are two different-looking accounts (#1889).
+ */
 export function shortenPublicKey(publicKey: string): string {
-  if (publicKey.length <= 14) {
-    return publicKey;
-  }
-
-  return `${publicKey.slice(0, 7)}...${publicKey.slice(-7)}`;
+  return shortenAddress(publicKey);
 }
 
 /**

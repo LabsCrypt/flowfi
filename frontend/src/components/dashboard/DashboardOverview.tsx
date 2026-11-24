@@ -8,6 +8,7 @@ import { ActivityIcon } from "./dashboard-view";
 import { Button } from "@/components/ui/Button";
 import type { QueryClient } from "@tanstack/react-query";
 import type { WalletSession } from "@/lib/wallet";
+import { formatDateTime } from "@/utils/format";
 
 function renderStats(snapshot: DashboardSnapshot | null) {
   if (!snapshot) return null;
@@ -71,7 +72,7 @@ function renderRecentActivity(
               <div>
                 <strong>{activity.title}</strong>
                 <p>{activity.description}</p>
-                <small>{new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(activity.timestamp))}</small>
+                <small>{formatDateTime(activity.timestamp)}</small>
               </div>
               <span className={amountClass}>
                 {amountPrefix}

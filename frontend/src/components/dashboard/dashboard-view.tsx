@@ -57,7 +57,20 @@ import { CancelConfirmModal } from "../stream-creation/CancelConfirmModal";
 import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
 import { CashflowProjectionChart } from "./CashflowProjectionChart";
+import { parseStreamId } from "@/utils/stream-id";
 
+/**
+ * A contract call needs the on-chain id, and only a string of digits is one.
+ * Guessing from a UUID used to produce 0n or a truncated number, which is a
+ * withdrawal against the wrong stream (#1883), so this fails loudly instead.
+ */
+function requireStreamId(value: string | number | bigint): bigint {
+  const id = parseStreamId(value);
+  if (id === null) {
+    throw new Error("This stream has no on-chain id. Reload the page and try again.");
+  }
+  return id;
+}
 
 const DashboardIncomingDynamic = dynamic(
   () => import("./DashboardIncoming").then((m) => m.DashboardIncoming),
@@ -808,7 +821,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     const toastId = toast.loading("Topping up stream…");
     try {
       await sorobanTopUp(session, {
-        streamId: BigInt(streamId.replace(/\D/g, "") || "0"),
+        streamId: requireStreamId(streamId),
         amount: toBaseUnits(amountStr),
       });
       topUpStreamLocally(streamId, parseFloat(amountStr));
@@ -824,7 +837,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     const toastId = toast.loading("Cancelling stream…");
     try {
       await sorobanCancel(session, {
-        streamId: BigInt(streamId.replace(/\D/g, "") || "0"),
+        streamId: requireStreamId(streamId),
       });
       removeStreamLocally(streamId);
       setModal(null);
@@ -840,7 +853,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     setWithdrawingIncomingStreamId(stream.id);
     try {
       await sorobanWithdraw(session, {
-        streamId: BigInt(stream.id.replace(/\D/g, "") || "0"),
+        streamId: requireStreamId(stream.id),
       });
       await refetchSnapshot();
       transactionSuccessToast("Withdrawal successful!", { id: toastId });

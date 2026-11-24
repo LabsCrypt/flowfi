@@ -10,6 +10,7 @@ import TransactionTracker from "@/components/TransactionTracker";
 import { eventTypeToAction } from "@/utils/eventTypeToAction";
 import { Download, ExternalLink, Clock } from "lucide-react";
 import { Button } from "../ui/Button";
+import { formatDateTime } from "@/utils/format";
 
 const VIRTUALIZATION_THRESHOLD = 50;
 
@@ -218,7 +219,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                           {renderEventMessage(event)}
                         </p>
                         <time className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                          {new Date(event.timestamp * 1000).toLocaleString()}
+                          {formatDateTime(event.timestamp * 1000)}
                         </time>
                       </div>
                       <span className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-accent/10 text-accent font-bold border border-accent/20">
@@ -273,7 +274,7 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
                       {renderEventMessage(event)}
                     </p>
                     <time className="text-xs text-slate-400 flex items-center gap-1 mt-1">
-                      {new Date(event.timestamp * 1000).toLocaleString()}
+                      {formatDateTime(event.timestamp * 1000)}
                     </time>
                   </div>
                   <span className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-accent/10 text-accent font-bold border border-accent/20">

@@ -47,7 +47,8 @@ describe("mapBackendStreamToFrontend", () => {
     const result = mapBackendStreamToFrontend(bs, "GCOUNTERPARTY");
 
     expect(result.id).toBe("42");
-    expect(result.recipient).toContain("...");
+    // One truncation shape everywhere (#1889): an ellipsis, not three dots.
+    expect(result.recipient).toContain("…");
     expect(result.deposited).toBeCloseTo(100);
     expect(result.withdrawn).toBeCloseTo(50);
     expect(result.ratePerSecond).toBeCloseTo(1);
