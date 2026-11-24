@@ -40,6 +40,12 @@ export default defineConfig({
         NEXT_PUBLIC_SOROBAN_RPC_URL: `https://localhost:${RPC_PORT}/soroban`,
         NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
         NEXT_PUBLIC_STREAM_CONTRACT_ID: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        // The withdraw flow builds a real Soroban transaction; the sandbox
+        // network is the one whose RPC URL comes from the environment, so the
+        // specs can point it at the in-process mock instead of the testnet.
+        NEXT_PUBLIC_SANDBOX_RPC_URL: `https://localhost:${RPC_PORT}/soroban`,
+        NEXT_PUBLIC_SANDBOX_STREAM_CONTRACT_ID:
+          "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
       },
     },
   ],
