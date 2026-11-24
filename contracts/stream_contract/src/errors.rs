@@ -292,6 +292,10 @@ pub enum StreamError {
     ///
     /// Returned by: `get_position_metadata`.
     PositionNotFound = 49,
+    /// The arbiter cannot be changed while a dispute is open. A sender who could
+    /// swap the arbiter mid-dispute could replace the decider with someone who
+    /// rules in their favour.
+    ArbiterLocked = 50,
 }
 
 /// Type alias mapping `ContractError` to `StreamError` for off-chain testing and SDK callers.
@@ -364,6 +368,7 @@ impl TryFrom<u32> for StreamError {
             47 => Ok(StreamError::DeadlineExpired),
             48 => Ok(StreamError::InsufficientOutput),
             49 => Ok(StreamError::PositionNotFound),
+            50 => Ok(StreamError::ArbiterLocked),
             _ => Err(()),
         }
     }
@@ -439,6 +444,7 @@ pub(crate) mod test_diagnostics {
                 StreamError::DeadlineExpired => "DeadlineExpired",
                 StreamError::InsufficientOutput => "InsufficientOutput",
                 StreamError::PositionNotFound => "PositionNotFound",
+                StreamError::ArbiterLocked => "ArbiterLocked",
             }
         }
     }
@@ -510,7 +516,7 @@ pub(crate) mod test_diagnostics {
         use std::string::ToString;
 
         /// (variant, identifier, documented numeric code) for every variant.
-        const ALL_VARIANTS: [(StreamError, &str, u32); 49] = [
+        const ALL_VARIANTS: [(StreamError, &str, u32); 50] = [
             (StreamError::InvalidAmount, "InvalidAmount", 1),
             (StreamError::StreamNotFound, "StreamNotFound", 2),
             (StreamError::Unauthorized, "Unauthorized", 3),
@@ -604,6 +610,7 @@ pub(crate) mod test_diagnostics {
             (StreamError::DeadlineExpired, "DeadlineExpired", 47),
             (StreamError::InsufficientOutput, "InsufficientOutput", 48),
             (StreamError::PositionNotFound, "PositionNotFound", 49),
+            (StreamError::ArbiterLocked, "ArbiterLocked", 50),
         ];
 
         #[test]
@@ -636,7 +643,8 @@ pub(crate) mod test_diagnostics {
 
             // Unknown error codes must return Err(())
             assert_eq!(ContractError::try_from(0), Err(()));
-            assert_eq!(ContractError::try_from(50), Err(()));
+            // 50 is now taken by ArbiterLocked, so probe the next free code.
+            assert_eq!(ContractError::try_from(51), Err(()));
             assert_eq!(ContractError::try_from(100), Err(()));
             assert_eq!(ContractError::try_from(u32::MAX), Err(()));
         }

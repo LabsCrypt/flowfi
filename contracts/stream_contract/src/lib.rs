@@ -60,8 +60,8 @@ use events::{
     FeeConfigUpdatedEvent, HybridCliffStreamCreatedEvent, InitializedEvent,
     MilestoneConditionUnlockedEvent, ProtocolFeeCollectedEvent, ProtocolPauseStatusEvent,
     RecipientTransferredEvent, StateMigratedEvent, StepVestingStreamCreatedEvent,
-    StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent, StreamCreatedEvent,
-    StreamPausedEvent, StreamPositionCreatedEvent, StreamPositionSettledEvent,
+    StreamArbiterSetEvent, StreamCancelledEvent, StreamClosedEvent, StreamCompletedEvent,
+    StreamCreatedEvent, StreamPausedEvent, StreamPositionCreatedEvent, StreamPositionSettledEvent,
     StreamPositionUpdatedEvent, StreamRateModifiedEvent, StreamRefueledEvent, StreamResumedEvent,
     StreamToppedUpEvent, TokensWithdrawnEvent,
 };
@@ -2922,6 +2922,67 @@ impl StreamContract {
         );
 
         Ok(new_end_time)
+    }
+
+    /// Set or replace the arbiter that resolves a cancellation dispute.
+    ///
+    /// Until this existed the dispute subsystem was unreachable: every
+    /// constructor wrote `arbiter: None`, nothing ever changed it, and
+    /// `request_dispute` therefore always failed with `DisputeNotSupported`.
+    /// The tests reached into storage to inject an arbiter because no supported
+    /// path existed (#1897).
+    ///
+    /// Only the stream's sender may name the arbiter, and only before a dispute
+    /// is open: swapping the decider mid-dispute would let a sender pick
+    /// someone who rules in their favour, so it is refused outright
+    /// (`ArbiterLocked`) rather than silently ignored.
+    ///
+    /// Passing `None` detaches the arbiter, which makes the stream
+    /// non-disputable again.
+    ///
+    /// # Errors
+    /// - `StreamNotFound` — no stream exists with `stream_id`.
+    /// - `Unauthorized` — the caller is not the stream's sender.
+    /// - `StreamInactive` — the stream has already ended.
+    /// - `ArbiterLocked` — a dispute is already open on this stream.
+    pub fn set_stream_arbiter(
+        env: Env,
+        sender: Address,
+        stream_id: u64,
+        arbiter: Option<Address>,
+    ) -> Result<(), StreamError> {
+        sender.require_auth();
+
+        let mut stream = load_stream(&env, stream_id)?;
+        Self::validate_stream_ownership(&stream, &sender)?;
+        Self::validate_stream_active(&stream)?;
+
+        if stream.dispute_status != DisputeStatus::None {
+            return Err(StreamError::ArbiterLocked);
+        }
+
+        // An arbiter that is the contract itself (or the stream's parties)
+        // would make "arbiter resolves" a no-op or a self-dealing shortcut.
+        if let Some(ref who) = arbiter {
+            if *who == env.current_contract_address() || *who == stream.sender {
+                return Err(StreamError::Unauthorized);
+            }
+        }
+
+        stream.arbiter = arbiter.clone();
+        save_stream(&env, stream_id, &stream);
+
+        env.events().publish(
+            (Symbol::new(&env, "stream_arbiter_set"), stream_id),
+            StreamArbiterSetEvent {
+                stream_id,
+                sender,
+                arbiter,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+
+        Ok(())
     }
 
     // ─── Allowance-Based Streams (Feature #1318) ──────────────────────────────
