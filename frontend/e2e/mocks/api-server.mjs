@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -380,10 +381,32 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`[mock-api] rest+sse listening on http://localhost:${PORT}`);
 });
 
-if (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH)) {
-  console.error("[mock-api] missing TLS certs — run the pw global-setup first (playwright install)");
-  process.exit(1);
+// Playwright starts webServer before it runs globalSetup, so a clean checkout
+// (CI) reaches this point before e2e/global-setup.ts has made the certs. Create
+// them here too instead of refusing to start; the global setup still reuses them.
+function ensureTlsCerts() {
+  if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) return;
+  fs.mkdirSync(CERT_DIR, { recursive: true });
+  try {
+    execFileSync(
+      "openssl",
+      [
+        "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+        "-keyout", KEY_PATH,
+        "-out", CERT_PATH,
+        "-days", "3650",
+        "-subj", "/CN=localhost",
+        "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+      ],
+      { stdio: "pipe" },
+    );
+  } catch (err) {
+    console.error(`[mock-api] could not create the self-signed TLS certs: ${err.message}`);
+    process.exit(1);
+  }
 }
+
+ensureTlsCerts();
 
 const rpcServer = https.createServer(
   { cert: fs.readFileSync(CERT_PATH), key: fs.readFileSync(KEY_PATH) },
