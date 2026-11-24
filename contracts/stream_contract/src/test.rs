@@ -6919,7 +6919,10 @@ fn test_coverage_modify_rate_takes_nothing_when_nothing_has_vested() {
     let stream = client.get_stream(&id).unwrap();
     assert_eq!(stream.withdrawn_amount, 0);
     assert_eq!(token::Client::new(&env, &token).balance(&recipient), 0);
-    assert_eq!(token::Client::new(&env, &token).balance(&client.address), 1_000);
+    assert_eq!(
+        token::Client::new(&env, &token).balance(&client.address),
+        1_000
+    );
 }
 
 #[test]
