@@ -2,7 +2,8 @@ import type { Request, Response, NextFunction } from 'express';
 import * as crypto from 'crypto';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
-import logger from '../logger.js';
+import logger, { auditLog } from '../logger.js';
+import { sendApiError } from '../lib/api-error.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const rawJwtSecret = process.env.JWT_SECRET;
@@ -149,7 +150,7 @@ export function verifyJwt(token: string): { publicKey: string } | null {
 export function issueChallenge(req: Request, res: Response): void {
   const { publicKey } = req.body as { publicKey?: string };
   if (!publicKey || !StellarSdk.StrKey.isValidEd25519PublicKey(publicKey)) {
-    res.status(400).json({ error: 'Invalid publicKey' });
+    sendApiError(res, 400, 'BAD_REQUEST', 'Invalid publicKey');
     return;
   }
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -171,13 +172,13 @@ export function verifyChallenge(req: Request, res: Response): void {
   };
 
   if (!publicKey || !signedTransaction) {
-    res.status(400).json({ error: 'publicKey and signedTransaction required' });
+    sendApiError(res, 400, 'BAD_REQUEST', 'publicKey and signedTransaction required');
     return;
   }
 
   const challenge = challenges.get(publicKey);
   if (!challenge || challenge.expiresAt < Date.now()) {
-    res.status(401).json({ error: 'Challenge expired or not found' });
+    sendApiError(res, 401, 'UNAUTHORIZED', 'Challenge expired or not found');
     return;
   }
 
@@ -188,14 +189,14 @@ export function verifyChallenge(req: Request, res: Response): void {
     ) as StellarSdk.Transaction;
 
     if (tx.source !== publicKey) {
-      res.status(401).json({ error: 'Transaction source does not match publicKey' });
+      sendApiError(res, 401, 'UNAUTHORIZED', 'Transaction source does not match publicKey');
       return;
     }
 
     // Verify the manage_data op contains our nonce
     const op = tx.operations[0] as StellarSdk.Operation.ManageData | undefined;
     if (!op || op.type !== 'manageData' || Buffer.from(op.value ?? new Uint8Array()).toString('hex') !== challenge.nonce) {
-      res.status(401).json({ error: 'Invalid challenge nonce in transaction' });
+      sendApiError(res, 401, 'UNAUTHORIZED', 'Invalid challenge nonce in transaction');
       return;
     }
 
@@ -206,18 +207,19 @@ export function verifyChallenge(req: Request, res: Response): void {
     });
 
     if (!valid) {
-      res.status(401).json({ error: 'Invalid signature' });
+      sendApiError(res, 401, 'UNAUTHORIZED', 'Invalid signature');
       return;
     }
 
     challenges.delete(publicKey);
+    auditLog('auth.verify', publicKey);
 
     const now = Math.floor(Date.now() / 1000);
     const token = signJwt({ sub: publicKey, iat: now, exp: now + JWT_EXPIRY_SECONDS, iss: JWT_ISSUER, aud: JWT_AUDIENCE });
     res.json({ token, expiresIn: JWT_EXPIRY_SECONDS });
   } catch (err) {
     logger.error('[Auth] verifyChallenge error:', err);
-    res.status(401).json({ error: 'Invalid signed transaction' });
+    sendApiError(res, 401, 'UNAUTHORIZED', 'Invalid signed transaction');
   }
 }
 
@@ -226,12 +228,12 @@ export function verifyChallenge(req: Request, res: Response): void {
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Unauthorized', message: 'Missing Bearer token' });
+    sendApiError(res, 401, 'UNAUTHORIZED', 'Missing Bearer token');
     return;
   }
   const payload = verifyJwt(header.slice(7));
   if (!payload) {
-    res.status(401).json({ error: 'Unauthorized', message: 'Invalid or expired token' });
+    sendApiError(res, 401, 'UNAUTHORIZED', 'Invalid or expired token');
     return;
   }
   (req as AuthenticatedRequest).user = { publicKey: payload.publicKey };
@@ -242,10 +244,17 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
   requireAuth(req, res, () => {
     const user = (req as AuthenticatedRequest).user;
     const adminKey = process.env.ADMIN_PUBLIC_KEY;
-    if (!adminKey || user.publicKey !== adminKey) {
-      res.status(403).json({ error: 'Forbidden', message: 'Admin access required' });
+    if (!adminKey) {
+      auditLog('admin.access_denied', user.publicKey, { reason: 'admin_key_unset' });
+      sendApiError(res, 403, 'FORBIDDEN', 'Admin access required');
       return;
     }
+    if (user.publicKey !== adminKey) {
+      auditLog('admin.access_denied', user.publicKey, { reason: 'not_admin' });
+      sendApiError(res, 403, 'FORBIDDEN', 'Admin access required');
+      return;
+    }
+    auditLog('admin.access_granted', user.publicKey);
     next();
   });
 }

@@ -15,9 +15,28 @@ permissions:
   deployments: write
 
 jobs:
+  check:
+    name: Check preview changes
+    runs-on: ubuntu-latest
+    outputs:
+      preview: ${{ steps.filter.outputs.preview }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check changed files
+        id: filter
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
+        with:
+          filters: |
+            preview:
+              - 'backend/**'
+              - 'frontend/**'
+
   preview:
     name: Ephemeral full-stack preview
     runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.preview == 'true'
     timeout-minutes: 15
     services:
       postgres:
@@ -39,12 +58,12 @@ jobs:
       PREVIEW_NAMESPACE: flowfi-pr-${{ github.event.pull_request.number }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "20"
+          node-version-file: '.nvmrc'
           cache: "npm"
           cache-dependency-path: package-lock.json
 
@@ -65,12 +84,8 @@ jobs:
       - name: Run migrations + seed demo data
         run: |
           npx prisma generate --schema=prisma/schema.prisma
-          # `migrate deploy` is tried first (spec #1456); the committed
-          # `20260221132622_init` migration fails on a fresh database
-          # (missing unique constraint for referenced "User"), so fall back to
-          # `db push` — the same path Backend CI uses — to keep ephemeral
-          # previews green.
-          npx prisma migrate deploy --schema=prisma/schema.prisma || npx prisma db push --accept-data-loss --schema=prisma/schema.prisma
+          # Same documented bootstrap path as CONTRIBUTING.md and Backend CI.
+          npx prisma migrate deploy --schema=prisma/schema.prisma
           npm run prisma:seed --workspace=backend || npx tsx prisma/seed.ts
         working-directory: backend
         env:
@@ -92,15 +107,15 @@ jobs:
       - name: Deploy backend preview (Fly.io, if configured)
         id: backend-deploy
         continue-on-error: true
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be # v1.5
         with:
-          version: latest
+          version: 0.5.14
 
       - name: Publish backend preview app
         id: publish
         continue-on-error: true
         run: |
-          if [ -n "${{ secrets.FLY_API_TOKEN }}" ]; then
+          if [ -n "$FLY_API_TOKEN" ]; then
             bash scripts/deploy-preview.sh --deploy-backend --pr "$PR_NUMBER" --sha "$PR_SHA"
           else
             echo "FLY_API_TOKEN not set — skipping live Fly deploy; using CI-validated image as preview artifact."
@@ -116,8 +131,8 @@ jobs:
         run: |
           # When a live Fly app exists the deploy script already health-checked it.
           # Otherwise validate the preview image locally so reviewers still get a signal.
-          if [ -n "${{ steps.publish.outputs.preview_url }}" ]; then
-            echo "url=${{ steps.publish.outputs.preview_url }}" >> "$GITHUB_OUTPUT"
+          if [ -n "$PUBLISH_PREVIEW_URL" ]; then
+            echo "url=$PUBLISH_PREVIEW_URL" >> "$GITHUB_OUTPUT"
           else
             docker run -d --name "flowfi-preview-${PR_NUMBER}" \
               -e DATABASE_URL="postgresql://postgres:password@127.0.0.1:5432/flowfi_preview" \
@@ -127,10 +142,12 @@ jobs:
             docker rm -f "flowfi-preview-${PR_NUMBER}" || true
             echo "url=https://pr-${PR_NUMBER}.flowfi-preview.local" >> "$GITHUB_OUTPUT"
           fi
+        env:
+          PUBLISH_PREVIEW_URL: ${{ steps.publish.outputs.preview_url }}
 
       - name: Comment preview URL on PR
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const pr = context.payload.pull_request.number;

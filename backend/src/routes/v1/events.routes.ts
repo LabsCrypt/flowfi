@@ -5,12 +5,15 @@ import { sseService } from '../../services/sse.service.js';
 import { requireAdmin, requireAuth } from '../../middleware/auth.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import logger from '../../logger.js';
+import { sendApiError } from '../../lib/api-error.js';
 import {
+  DEFAULT_EVENTS_PAGE_SIZE,
+  MAX_EVENTS_PAGE_SIZE,
   listEventsForWallet,
   parseEventTypeFilter,
-  resolveEventsOffset,
-  resolveEventsPageSize,
 } from '../../repositories/streamEvent.repository.js';
+import { parsePagination } from '../../validators/stream.validator.js';
+import { isSandboxRequest } from '../../middleware/sandbox.middleware.js';
 
 const router = Router();
 
@@ -93,29 +96,34 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
     const { publicKey } = (req as AuthenticatedRequest).user;
     const address = typeof req.query.address === 'string' ? req.query.address.trim() : '';
     if (!address) {
-      res.status(400).json({ error: 'address query parameter is required' });
+      sendApiError(res, 400, 'BAD_REQUEST', 'address query parameter is required');
       return;
     }
 
     // Aligned with SSE security: history queries require authentication and are scoped to the caller.
     if (address !== publicKey) {
-      res.status(403).json({ error: 'Forbidden', message: 'You can only view your own event history' });
+      sendApiError(res, 403, 'FORBIDDEN', 'You can only view your own event history');
       return;
     }
 
     const { requested, types } = parseEventTypeFilter(req.query.type);
     if (requested.length > 0 && types.length === 0) {
-      res.status(400).json({ error: 'No valid event types in `type` filter' });
+      sendApiError(res, 400, 'BAD_REQUEST', 'No valid event types in `type` filter');
       return;
     }
 
-    const limit = resolveEventsPageSize(req.query.limit);
-    const offset = resolveEventsOffset({
-      rawOffset: req.query.offset,
-      rawPage: req.query.page,
-      limit,
+    const pagination = parsePagination(req.query as Record<string, unknown>, {
+      defaultLimit: DEFAULT_EVENTS_PAGE_SIZE,
+      maxLimit: MAX_EVENTS_PAGE_SIZE,
     });
+    if (!pagination.ok) {
+      sendApiError(res, 400, 'BAD_REQUEST', pagination.message);
+      return;
+    }
+    const { limit, offset } = pagination;
     const includeStream = req.query.includeStream === 'true';
+
+    const isSandbox = isSandboxRequest(req);
 
     const result = await listEventsForWallet({
       address,
@@ -125,8 +133,28 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
       includeStream,
     });
 
+    // In sandbox mode, clearly mark every returned event so callers can tell
+    // test data apart from production records (issue #1535). Malformed
+    // metadata must never throw — fall back to an empty object.
+    const events = isSandbox
+      ? (result.events as Array<Record<string, unknown>>).map((event) => {
+          let metadata: Record<string, unknown> = {};
+          if (typeof event.metadata === 'string' && event.metadata) {
+            try {
+              const parsed = JSON.parse(event.metadata);
+              if (parsed && typeof parsed === 'object') {
+                metadata = parsed as Record<string, unknown>;
+              }
+            } catch {
+              metadata = {};
+            }
+          }
+          return { ...event, metadata: JSON.stringify({ ...metadata, _sandbox: true }) };
+        })
+      : result.events;
+
     res.json({
-      events: result.events,
+      events,
       total: result.total,
       limit: result.limit,
       offset: result.offset,
@@ -162,8 +190,10 @@ router.get('/', requireAuth, async (req: Request, res: Response, next: NextFunct
  *       
  *       **Sandbox Mode:**
  *       - Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`
- *       - Sandbox events are clearly marked with `_sandbox` metadata
- *       - Sandbox events are isolated from production events
+ *       - The `connected` frame and every event delivered to a sandbox
+ *         connection are tagged with `_sandbox: true`
+ *       - Sandbox mode labels/tags events; it does not route to a separate
+ *         datastore or otherwise isolate stored data
  *     parameters:
  *       - in: header
  *         name: X-Sandbox-Mode

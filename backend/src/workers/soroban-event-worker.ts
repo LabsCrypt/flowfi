@@ -3,7 +3,9 @@ import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
+import { sentinelService } from "../services/sentinel.service.js";
 import { publishIndexerLag, quarantineEvent } from "../services/indexerService.js";
+import { applyToppedUpEvent } from "../services/top-up-writer.js";
 import {
   indexerEventsProcessedTotal,
   indexerPollsTotal,
@@ -24,9 +26,15 @@ import {
 
 /** Ledger rollbacks above this ceiling are escalated to dead-letter triage. */
 const REORG_ALERT_THRESHOLD_DEFAULT = 5;
-
 // ─── XDR Decoding Helpers ────────────────────────────────────────────────────
 
+/** Use the ledger close time, not worker processing time, for historical state changes. */
+export function getEventLedgerTimestamp(event: Pick<rpc.Api.EventResponse, 'ledgerClosedAt'>): number {
+  const ledgerTimestamp = Number(event.ledgerClosedAt);
+  return Number.isSafeInteger(ledgerTimestamp) && ledgerTimestamp >= 0
+    ? ledgerTimestamp
+    : Math.floor(Date.now() / 1000);
+}
 /** Decode an ScVal symbol to a string. */
 export function decodeSymbol(val: xdr.ScVal): string {
   return (val as xdr.ScValSymbol).sym.toString();
@@ -802,6 +810,13 @@ export class SorobanEventWorker {
         ? null
         : startTime + BigInt(depositedAmount) / ratePerSecondBigInt;
 
+    // Runway is how long the deposit lasts at the current rate; a zero rate
+    // never depletes. Feeds the sentinel's zero-runway flood heuristic.
+    const runwaySeconds =
+      ratePerSecondBigInt > 0n
+        ? Number(BigInt(depositedAmount) / ratePerSecondBigInt)
+        : Number.POSITIVE_INFINITY;
+
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.user.upsert({
         where: { publicKey: sender },
@@ -889,6 +904,23 @@ export class SorobanEventWorker {
       transactionHash: event.txHash,
       ledger: event.ledger,
     });
+
+    // Sentinel anomaly detection (#1469) is best-effort: an analysis failure
+    // must never quarantine a well-formed on-chain event.
+    try {
+      await sentinelService.recordStreamCreation({
+        sender,
+        token: tokenAddress,
+        streamId: String(streamId),
+        runwaySeconds,
+        ledger: event.ledger,
+      });
+    } catch (error) {
+      logger.warn(
+        `[SorobanWorker] Sentinel stream-creation analysis failed for #${streamId}:`,
+        error,
+      );
+    }
   }
 
   private async handleStreamToppedUp(
@@ -906,73 +938,16 @@ export class SorobanEventWorker {
     const newDepositedAmount = decodeI128(body["new_deposited_amount"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // Check for a duplicate BEFORE mutating any Stream fields so that a
-      // replayed event never re-applies the top-up.
-      const existingEvent = await tx.streamEvent.findUnique({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: event.txHash,
-            eventType: "TOPPED_UP",
-          },
-        },
-        select: { id: true },
-      });
-      if (existingEvent) {
-        logger.warn(
-          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=TOPPED_UP`,
-        );
-        return;
-      }
-
-      const stream = await tx.stream.findUniqueOrThrow({
-        where: { streamId },
-        select: {
-          ratePerSecond: true,
-          startTime: true,
-          totalPausedDuration: true,
-        },
-      });
-
-      const ratePerSecondBigInt = BigInt(stream.ratePerSecond);
-      const newEndTime =
-        ratePerSecondBigInt === 0n
-          ? null
-          : BigInt(stream.startTime) +
-            BigInt(newDepositedAmount) / ratePerSecondBigInt +
-            BigInt(stream.totalPausedDuration);
-
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          depositedAmount: newDepositedAmount,
-          endTime: newEndTime,
-          lastUpdateTime: timestamp,
-        },
-      });
-
-      await tx.streamEvent.upsert({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: event.txHash,
-            eventType: "TOPPED_UP",
-          },
-        },
-        create: {
-          streamId,
-          eventType: "TOPPED_UP",
-          amount,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ newDepositedAmount }),
-        },
-        update: {
-          ledgerSequence: event.ledger,
-          timestamp,
-        },
-      });
-    });
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) =>
+      applyToppedUpEvent(tx, {
+        streamId,
+        txHash: event.txHash,
+        amount,
+        newDepositedAmount,
+        ledgerSequence: event.ledger,
+        timestamp,
+      }),
+    );
 
     sseService.broadcastToStream(String(streamId), "stream.topped_up", {
       streamId,
@@ -999,6 +974,11 @@ export class SorobanEventWorker {
     const amount = decodeI128(body["amount"]);
     const timestamp = Number(decodeU64(body["timestamp"]));
 
+    // Captured inside the transaction so the sentinel can weigh this
+    // withdrawal against the stream's total deposit once it commits.
+    let streamDeposited: string | undefined;
+    let streamToken: string | undefined;
+
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Check for a duplicate BEFORE mutating any Stream fields so that a
       // replayed event never double-increments withdrawnAmount.
@@ -1020,8 +1000,14 @@ export class SorobanEventWorker {
 
       const stream = await tx.stream.findUniqueOrThrow({
         where: { streamId },
-        select: { withdrawnAmount: true },
+        select: {
+          withdrawnAmount: true,
+          depositedAmount: true,
+          tokenAddress: true,
+        },
       });
+      streamDeposited = stream.depositedAmount;
+      streamToken = stream.tokenAddress;
 
       const newWithdrawnAmount = (
         BigInt(stream.withdrawnAmount) + BigInt(amount)
@@ -1066,6 +1052,25 @@ export class SorobanEventWorker {
       ledger: event.ledger,
       timestamp,
     });
+
+    // Feed the drain sentinel (#1469). Best-effort: analysis must not
+    // quarantine a valid withdrawal event.
+    try {
+      await sentinelService.recordWithdrawal({
+        address: recipient,
+        token: streamToken ?? "unknown",
+        amount,
+        streamId: String(streamId),
+        ledger: event.ledger,
+        txHash: event.txHash,
+        ...(streamDeposited !== undefined ? { streamDeposited } : {}),
+      });
+    } catch (error) {
+      logger.warn(
+        `[SorobanWorker] Sentinel withdrawal analysis failed for #${streamId}:`,
+        error,
+      );
+    }
   }
 
   private async handleStreamCancelled(
@@ -1081,7 +1086,7 @@ export class SorobanEventWorker {
 
     const amountWithdrawn = decodeI128(body["amount_withdrawn"]);
     const refundedAmount = decodeI128(body["refunded_amount"]);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -1104,31 +1109,35 @@ export class SorobanEventWorker {
       });
       if (existingEvent) {
         logger.warn(
-          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=CANCELLED`,
+          `[SorobanWorker] Reconciling existing StreamEvent: txHash=${event.txHash} type=CANCELLED`,
         );
-      } else {
-        await tx.streamEvent.upsert({
-          where: {
-            transactionHash_eventType: {
-              transactionHash: event.txHash,
-              eventType: "CANCELLED",
-            },
-          },
-          create: {
-            streamId,
-            eventType: "CANCELLED",
-            amount: refundedAmount,
-            transactionHash: event.txHash,
-            ledgerSequence: event.ledger,
-            timestamp,
-            metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
-          },
-          update: {
-            ledgerSequence: event.ledger,
-            timestamp,
-          },
-        });
       }
+      await tx.streamEvent.upsert({
+        where: {
+          transactionHash_eventType: {
+            transactionHash: event.txHash,
+            eventType: "CANCELLED",
+          },
+        },
+        create: {
+          streamId,
+          eventType: "CANCELLED",
+          amount: refundedAmount,
+          transactionHash: event.txHash,
+          ledgerSequence: event.ledger,
+          timestamp,
+          metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
+        },
+        // When an API-cancelled stream already wrote a provisional CANCELLED
+        // event (issue #1219), replace the provisional fields with the
+        // authoritative ledger details from the indexed on-chain event.
+        update: {
+          ledgerSequence: event.ledger,
+          timestamp,
+          amount: refundedAmount,
+          metadata: JSON.stringify({ amountWithdrawn, refundedAmount }),
+        },
+      });
     });
 
     sseService.broadcastToStream(String(streamId), "stream.cancelled", {
@@ -1154,7 +1163,7 @@ export class SorobanEventWorker {
 
     const recipient = decodeAddress(body["recipient"]);
     const totalWithdrawn = decodeI128(body["total_withdrawn"]);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -1230,39 +1239,47 @@ export class SorobanEventWorker {
     const token = decodeAddress(body["token"]);
     const timestamp = Math.floor(Date.now() / 1000);
 
-    const existingEvent = await prisma.streamEvent.findUnique({
-      where: {
-        transactionHash_eventType: {
-          transactionHash: event.txHash,
-          eventType: "FEE_COLLECTED",
-        },
-      },
-      select: { id: true },
-    });
-    if (existingEvent) {
-      logger.warn(
-        `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
-      );
-    } else {
-      await prisma.streamEvent.upsert({
+    // The dedup check and the write must be atomic: as two separate top-level
+    // `prisma` calls they interleave when the same txHash is delivered twice
+    // (RPC retry, replay, concurrent poll cycles), both checks see no row, and
+    // the unique index on (transactionHash, eventType) rejects the second
+    // insert — surfacing as a 500 on the fee-event path. Matches the pattern
+    // every other handler in this file already uses (issue #1239).
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existingEvent = await tx.streamEvent.findUnique({
         where: {
           transactionHash_eventType: {
             transactionHash: event.txHash,
             eventType: "FEE_COLLECTED",
           },
         },
-        create: {
-          streamId,
-          eventType: "FEE_COLLECTED",
-          amount: feeAmount,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ treasury, token }),
-        },
-        update: {},
+        select: { id: true },
       });
-    }
+      if (existingEvent) {
+        logger.warn(
+          `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=FEE_COLLECTED`,
+        );
+      } else {
+        await tx.streamEvent.upsert({
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "FEE_COLLECTED",
+            },
+          },
+          create: {
+            streamId,
+            eventType: "FEE_COLLECTED",
+            amount: feeAmount,
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({ treasury, token }),
+          },
+          update: {},
+        });
+      }
+    });
 
     // Broadcast to admin channel for treasury reporting
     sseService.broadcastToAdmin("stream.fee_collected", {
@@ -1288,7 +1305,7 @@ export class SorobanEventWorker {
 
     const sender = decodeAddress(body["sender"]);
     const pausedAt = Number(decodeU64(body["paused_at"]));
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.stream.update({
@@ -1360,7 +1377,7 @@ export class SorobanEventWorker {
 
     const sender = decodeAddress(body["sender"]);
     const newEndTime = decodeU64(body["new_end_time"]);
-    const timestamp = Math.floor(Date.now() / 1000);
+    const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Get current stream to calculate paused duration

@@ -31,6 +31,7 @@ import {
   buildTopUpXdr,
   buildWithdrawXdr,
   simulateAndAssemble,
+  validateStreamParams,
   DEFAULT_FEE_BUFFER_MULTIPLIER,
 } from './builder.js';
 import { validateNetworkPassphrase } from './networks.js';
@@ -163,6 +164,21 @@ export class FlowFiClient {
     return BigInt(value ?? 0);
   }
 
+  /**
+   * Number of streams ever created, i.e. the highest stream ID issued.
+   *
+   * This is the contract's monotonic ID counter, not a count of active
+   * streams, so it is stable as a pagination cursor width and `0n` on a fresh
+   * deployment.
+   */
+  async getStreamCount(): Promise<bigint> {
+    if (this.rpcClient && typeof (this.rpcClient as { getStreamCount?: unknown }).getStreamCount === 'function') {
+      return (this.rpcClient as { getStreamCount: () => Promise<bigint> }).getStreamCount();
+    }
+    const value = await this.simulateRead<bigint | string | number>('stream_count', []);
+    return BigInt(value ?? 0);
+  }
+
   // ─── Internals ─────────────────────────────────────────────────────────────
 
   private baseBuildArgs(sourceAccount: string): {
@@ -245,11 +261,5 @@ export class FlowFiClient {
 }
 
 function validateCreateParams(params: CreateStreamParams): void {
-  if (params.amount <= 0n) throw new Error('createStream: amount must be > 0');
-  if (params.duration <= 0) throw new Error('createStream: duration must be > 0');
-  if (params.cliffDuration !== undefined) {
-    if (params.cliffDuration <= 0 || params.cliffDuration > params.duration) {
-      throw new Error('createStream: cliffDuration must satisfy 0 < cliff <= duration');
-    }
-  }
+  validateStreamParams(params);
 }

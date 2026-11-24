@@ -214,12 +214,27 @@ function createStreamCancelledEvent(
   };
 }
 
+/** Every on-chain stream id this file seeds, whether by hand or via the worker. */
+const OWNED_STREAM_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 100].map(
+  (id) => BigInt(id),
+);
+
 async function cleanupDatabase() {
-  // Clean up in order to respect foreign key constraints
+  // Delete in order to respect foreign key constraints, and only what this file
+  // owns: vitest runs each test file in its own process against one shared
+  // database, so a whole-table `deleteMany` here removed another file's fixtures
+  // while it was mid-assertion. `sender` catches rows a previous aborted run left
+  // behind; the keypair is regenerated per process, so it never matches another
+  // file's wallet.
   const db = getDb();
-  await db.streamEvent.deleteMany();
-  await db.stream.deleteMany();
-  await db.user.deleteMany();
+  const streams = {
+    OR: [{ streamId: { in: OWNED_STREAM_IDS } }, { sender: SENDER }],
+  };
+  await db.streamEvent.deleteMany({
+    where: { OR: [{ streamId: { in: OWNED_STREAM_IDS } }, { stream: streams }] },
+  });
+  await db.stream.deleteMany({ where: streams });
+  await db.user.deleteMany({ where: { publicKey: { in: [SENDER, RECIPIENT] } } });
   await db.indexerState.deleteMany();
 }
 
@@ -254,7 +269,7 @@ describe("Stream Lifecycle Integration Tests", () => {
     const { createPgPool } = await import("../../src/lib/pg-pool.js");
     const connectionString = resolveTestDatabaseUrl();
     testPool = createPgPool({ connectionString });
-    const testAdapter = new PrismaPg(testPool);
+    const testAdapter = new PrismaPg(testPool as unknown as ConstructorParameters<typeof PrismaPg>[0]);
     testPrisma = new PrismaClient({
       adapter: testAdapter,
       log: ["error"], // Minimal logging for tests

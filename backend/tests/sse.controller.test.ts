@@ -56,7 +56,11 @@ describe('SSE Controller', () => {
     await subscribe(req as Request, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: 'Too many connections' }));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'Too many connections' }),
+      }),
+    );
   });
 
   it('should subscribe and add client to sseService', async () => {
@@ -69,6 +73,25 @@ describe('SSE Controller', () => {
 
     expect(res.writeHead).toHaveBeenCalledWith(200, expect.any(Object));
     expect(sseService.addClient).toHaveBeenCalled();
+  });
+
+  it('generates clientId with a CSPRNG instead of Math.random (#1534)', async () => {
+    (sseService.isShuttingDown as any).mockReturnValue(false);
+    (sseService.checkCapacity as any).mockReturnValue({ allowed: true });
+    (req as any).user = { publicKey: 'GUSER1' };
+    (prisma.stream.findMany as any).mockResolvedValue([]);
+
+    await subscribe(req as Request, res as Response);
+
+    const clientId = (sseService.addClient as any).mock.calls[0][0] as string;
+    expect(clientId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const connectedPayload = JSON.parse(
+      ((res.write as any).mock.calls[0][0] as string).replace(/^data: /, '').trim(),
+    );
+    expect(connectedPayload.clientId).toBe(clientId);
   });
 
   it('should include user subscriptions when users query params are provided', async () => {
@@ -100,8 +123,10 @@ describe('SSE Controller', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'Invalid subscription parameters',
-        errors: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+        error: expect.objectContaining({
+          message: 'Invalid subscription parameters',
+          details: expect.arrayContaining([expect.objectContaining({ code: expect.any(String) })]),
+        }),
       }),
     );
   });

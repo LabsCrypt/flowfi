@@ -1,0 +1,30 @@
+---
+title: Soroban RPC playground
+---
+
+# Interactive Soroban RPC playground
+
+Run real `get_stream`, `get_claimable_amount` and `withdraw` simulations
+against **Stellar Testnet** without deploying anything. Responses include the
+decoded Soroban XDR alongside the JSON value.
+
+import Playground from '@site/src/components/SorobanPlayground';
+
+<Playground defaultContractId="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" />
+
+## How it works
+
+- The playground issues **read calls** (`get_stream`,
+  `get_claimable_amount`, `get_vesting_schedule`) and **simulation-only
+  invocations** (`DryRun`) through a browser-side Soroban RPC client pointed
+  at `https://soroban-testnet.stellar.org`.
+- Mutating calls (create/withdraw) require a real signer; the console
+  prepares the transaction and shows the XDR for signing in **Freighter**, so
+  no keys ever touch the page.
+- Pre-filled mock parameters are editable; the decoded result pane shows
+  scalps, `ScVal` JSON, and raw base64 XDR side by side.
+
+:::caution Testnet only
+The default endpoint is Testnet. Pointing the playground at Mainnet is
+possible but every call still goes through your own wallet for signing.
+:::

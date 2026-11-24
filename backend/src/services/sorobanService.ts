@@ -1,4 +1,4 @@
-import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Networks, Account, Address } from '@stellar/stellar-sdk';
+import { rpc, xdr, StrKey, Contract, nativeToScVal, Keypair, TransactionBuilder, Transaction, Networks, Account, Address } from '@stellar/stellar-sdk';
 import logger from '../logger.js';
 import { ApiError } from '../lib/api-error.js';
 import { rpcPool } from '../lib/rpc-pool.js';
@@ -17,6 +17,11 @@ function getContractId(): string {
 
 function getKeeperSecret(): string {
   return process.env.KEEPER_SECRET_KEY ?? '';
+}
+
+/** Passphrase of the network this service signs for. */
+function networkPassphrase(): string {
+  return process.env.STELLAR_NETWORK === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
 }
 /**
  * DB data older than this is considered stale and triggers an RPC fallback.
@@ -311,11 +316,29 @@ async function simulateContractCall(method: string, args: xdr.ScVal[]): Promise<
   return simSuccess.result!.retval;
 }
 
-export async function submitContractCall(method: string, args: xdr.ScVal[], senderSecret: string): Promise<string> {
+/**
+ * Build, sign and submit a contract invocation with the **server keeper key**.
+ *
+ * The only key the backend is allowed to hold is `KEEPER_SECRET_KEY`, and the
+ * only actions it may perform with it are the ones the contract authorizes for
+ * the keeper (see `topUpStream`). Anything a user authorizes for themselves —
+ * `cancel_stream` calls `sender.require_auth()` — cannot be signed here and
+ * must come back as a wallet-signed transaction instead
+ * (`submitSignedCancel`).
+ *
+ * A caller-supplied secret key is never accepted (issue #1845): shipping a
+ * wallet's `S…` key over the API exposes it to logs, proxies, memory dumps and
+ * any compromised host, and it contradicts the client-side-signing direction
+ * recorded in issue #1274.
+ */
+export async function submitContractCall(method: string, args: xdr.ScVal[]): Promise<string> {
   const contractId = getContractId();
   if (!contractId) throw new Error('CONTRACT_ID not set');
 
-  const keypair = Keypair.fromSecret(senderSecret);
+  const keeperSecret = getKeeperSecret();
+  if (!keeperSecret) throw new Error('KEEPER_SECRET_KEY not configured');
+
+  const keypair = Keypair.fromSecret(keeperSecret);
   const contract = new Contract(contractId);
   const account = await withRpcTimeout('getAccount', () => executeRpc('getAccount', (server) => server.getAccount(keypair.publicKey())));
 
@@ -356,6 +379,13 @@ export async function submitContractCall(method: string, args: xdr.ScVal[], send
 }
 
 /**
+ * Poll a submitted transaction until it reaches a final on-chain state.
+ *
+ * `sendTransaction` only queues the transaction; without this wait a caller
+ * could immediately read chain state and see a pre-transaction view. Returns
+ * the final successful transaction response, or throws when the transaction
+ * fails on-chain or the confirmation window lapses.
+ *
  * Poll Soroban RPC getTransaction until the transaction reaches a terminal
  * status (SUCCESS or FAILED) or until the bounded timeout expires.
  */
@@ -463,27 +493,191 @@ export async function getClaimableFromChain(streamId: bigint): Promise<string | 
 }
 
 /**
- * Cancels a stream on-chain.
- * @param streamId - The on-chain stream ID
- * @param senderSecret - The sender's private key used for cryptographic authorization.
- *   This should be the secret key of the stream's sender wallet, NOT the keeper key.
- *   Using the keeper key here defeats the purpose of per-action authorization.
- * @returns Transaction hash of the cancellation transaction
+ * Cancel a stream using a transaction the sender's wallet already signed.
+ *
+ * The contract authorizes `cancel_stream` with `sender.require_auth()`, so only
+ * the sender's key can sign it and the backend must never be shown that key.
+ * The flow is therefore: `simulateStreamAction('cancel', …)` hands the client an
+ * unsigned, footprint-annotated XDR, the wallet signs it, and this function
+ * validates the signature envelope and relays it.
+ *
+ * Validation is not cosmetic: the returned hash is written into the DB as proof
+ * the stream was cancelled, so the envelope has to be *this* stream's cancel and
+ * nobody else's transaction.
+ *
+ * @returns The real transaction hash, once the submission is confirmed.
  */
-export async function cancelStream(streamId: bigint, senderSecret: string): Promise<string> {
-  return submitContractCall('cancel_stream', [
-    nativeToScVal(streamId, { type: 'u64' }),
-  ], senderSecret);
+export async function submitSignedCancel(
+  signedXdr: string,
+  expected: { streamId: bigint; senderAddress: string },
+): Promise<string> {
+  const tx = inspectSignedCancelEnvelope(signedXdr, expected);
+  return submitRelayedTransaction(tx);
+}
+
+/**
+ * Decode a wallet-signed cancel and prove it is the cancel the caller claims.
+ *
+ * Pure and offline: no RPC, no signing. Throws `ApiError(400)` with code
+ * `SIGNED_TX_INVALID` (malformed/not signed/not a cancel) or `SIGNED_TX_MISMATCH`
+ * (right shape, wrong stream or wrong sender).
+ */
+export function inspectSignedCancelEnvelope(
+  signedXdr: string,
+  expected: { streamId: bigint; senderAddress: string },
+): Transaction {
+  if (typeof signedXdr !== 'string' || signedXdr.trim() === '') {
+    throw signedTxInvalid('signedXdr is required: sign the transaction from POST /v1/streams/simulate.');
+  }
+
+  const contractId = getContractId();
+  if (!contractId) throw new Error('CONTRACT_ID not set');
+
+  let tx: Transaction;
+  try {
+    tx = new Transaction(signedXdr, networkPassphrase());
+  } catch (err) {
+    throw signedTxInvalid(
+      `signedXdr is not a valid signed transaction for this network: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const signatures = readEnvelopeSignatures(signedXdr);
+  if (signatures.length === 0) {
+    throw signedTxInvalid('signedXdr carries no signatures; the wallet must sign it first.');
+  }
+
+  const operations = tx.operations;
+  if (operations.length !== 1) {
+    throw signedTxInvalid(
+      `A relayed cancel must contain exactly one operation, found ${operations.length}.`,
+    );
+  }
+
+  const invocation = readInvokeContract(operations[0]);
+  if (!invocation) {
+    throw signedTxInvalid('The operation is not a contract invocation.');
+  }
+
+  if (invocation.contractId !== contractId) {
+    throw signedTxMismatch(
+      'The transaction calls a contract other than the configured stream contract.',
+      { expected: contractId, actual: invocation.contractId },
+    );
+  }
+
+  if (invocation.functionName !== 'cancel_stream') {
+    throw signedTxMismatch('The transaction is not a `cancel_stream` call.', {
+      expected: 'cancel_stream',
+      actual: invocation.functionName,
+    });
+  }
+
+  const [signerArg, streamIdArg] = invocation.args;
+  if (!signerArg || !streamIdArg) {
+    throw signedTxMismatch(
+      'cancel_stream expects two arguments: the sender address and the stream id.',
+      { args: invocation.args.length },
+    );
+  }
+
+  if (decodeAddress(signerArg) !== expected.senderAddress) {
+    throw signedTxMismatch(
+      'The transaction authorizes a sender other than the authenticated caller.',
+      { expected: expected.senderAddress, actual: decodeAddress(signerArg) },
+    );
+  }
+
+  if (streamIdArg.type !== 'scvU64' || streamIdArg.u64 !== expected.streamId) {
+    throw signedTxMismatch('The transaction cancels a different stream than requested.', {
+      expected: expected.streamId.toString(),
+      actual: streamIdArg.type === 'scvU64' ? streamIdArg.u64.toString() : streamIdArg.type,
+    });
+  }
+
+  if (tx.source !== expected.senderAddress) {
+    throw signedTxMismatch(
+      'The transaction source account must be the stream sender (the wallet that signed it).',
+      { expected: expected.senderAddress, actual: tx.source },
+    );
+  }
+
+  return tx;
+}
+
+/**
+ * Relay an already-signed transaction: submit it, await finality, return the
+ * hash. Deliberately does no simulation — the wallet signed the exact bytes that
+ * go on the wire, and re-simulating could reprice them.
+ */
+async function submitRelayedTransaction(tx: Transaction): Promise<string> {
+  const response = await withRpcTimeout('sendTransaction', () =>
+    executeRpc('sendTransaction', (server) => server.sendTransaction(tx)),
+  );
+
+  if (response.status === 'ERROR') {
+    throw new Error(
+      `Relayed transaction rejected on-chain: ${JSON.stringify(response.errorResult)}`,
+    );
+  }
+
+  await pollTransactionStatus(response.hash);
+  return response.hash;
+}
+
+function signedTxInvalid(message: string): ApiError {
+  return new ApiError(400, 'SIGNED_TX_INVALID', message);
+}
+
+function signedTxMismatch(message: string, details: unknown): ApiError {
+  return new ApiError(400, 'SIGNED_TX_MISMATCH', message, details);
+}
+
+/** Signatures on the envelope, read straight from the base64 XDR. */
+function readEnvelopeSignatures(xdrBase64: string): xdr.DecoratedSignature[] {
+  // SDK 17 models unions as subclasses with property arms (`type` / `v1`),
+  // not `switch()` / `v1()` methods. A fee-bump envelope is rejected rather
+  // than unwrapped: its inner transaction would need the same checks, and the
+  // cancel flow never produces one.
+  const envelope = xdr.TransactionEnvelope.fromXDR(xdrBase64, 'base64');
+  if (envelope.type !== 'envelopeTypeTx') {
+    throw signedTxInvalid('Expected a `envelopeTypeTx` transaction envelope.');
+  }
+  return envelope.v1.signatures;
+}
+
+/**
+ * Read the contract invocation out of a marshalled operation, or `null` when the
+ * operation is not a Soroban contract call.
+ */
+function readInvokeContract(
+  operation: unknown,
+): { contractId: string; functionName: string; args: xdr.ScVal[] } | null {
+  const invoke = (
+    operation as {
+      func?: {
+        invokeContract?: {
+          contractAddress: { contractId: { value: Uint8Array } };
+          functionName: string;
+          args?: xdr.ScVal[];
+        };
+      };
+    }
+  )?.func?.invokeContract;
+  if (!invoke) return null;
+  return {
+    contractId: StrKey.encodeContract(Buffer.from(invoke.contractAddress.contractId.value)),
+    functionName: invoke.functionName.toString(),
+    args: invoke.args ?? [],
+  };
 }
 
 export async function topUpStream(streamId: bigint, amount: bigint, callerAddress: string): Promise<string> {
-  const keeperSecret = getKeeperSecret();
-  if (!keeperSecret) throw new Error('KEEPER_SECRET_KEY not configured');
   return submitContractCall('top_up_stream', [
     nativeToScVal(streamId, { type: 'u64' }),
     nativeToScVal(amount, { type: 'i128' }),
     nativeToScVal(callerAddress, { type: 'address' }),
-  ], keeperSecret);
+  ]);
 }
 
 /** Returns true when the DB record is older than STALE_THRESHOLD_MS. */
@@ -491,19 +685,32 @@ export function isStale(updatedAt: Date): boolean {
   return Date.now() - updatedAt.getTime() > STALE_THRESHOLD_MS;
 }
 
-export interface PauseResumeResult {
-  txHash: string;
+/**
+ * Result of a simulation-only stream action (pause, resume, withdraw).
+ *
+ * These actions are authorized by the wallet that owns them — the contract
+ * calls `require_auth` on the sender/recipient — so the backend can only dry-run
+ * them. Nothing is submitted, so nothing is returned that looks like a
+ * transaction: `txHash` deliberately does not exist on this type. A caller that
+ * wants the real thing signs the XDR from `simulateStreamAction` (issue #1847).
+ */
+export interface SimulatedActionResult {
+  simulated: true;
+  /** The contract function that was dry-run, echoed for client messaging. */
+  fn: 'pause_stream' | 'resume_stream' | 'withdraw';
 }
 
 /**
- * Pause a stream. Calls the Soroban contract's pause_stream function.
- * Note: This is a read-only simulation to verify the operation would succeed.
- * The actual pause transaction must be signed by the sender and submitted by the frontend.
+ * Dry-run the contract's `pause_stream` for a sender.
+ *
+ * Read-only: it proves the call would succeed and nothing else. The pause
+ * itself must be signed by the sender's wallet and submitted by the client, so
+ * no database state may be derived from this function's result.
  */
 export async function pauseStream(
   senderAddress: string,
   streamId: bigint
-): Promise<PauseResumeResult> {
+): Promise<SimulatedActionResult> {
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
   }
@@ -518,11 +725,7 @@ export async function pauseStream(
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
 
-    // Return a mock txHash for now - in production this would be the actual transaction hash
-    // The real transaction would be signed by the frontend and submitted separately
-    return {
-      txHash: 'simulated-pause-' + streamId,
-    };
+    return { simulated: true, fn: 'pause_stream' };
   } catch (err) {
     logger.error(`[SorobanService] pauseStream(${streamId}) failed:`, err);
     throw new Error(`Failed to pause stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -530,14 +733,13 @@ export async function pauseStream(
 }
 
 /**
- * Resume a paused stream. Calls the Soroban contract's resume_stream function.
- * Note: This is a read-only simulation to verify the operation would succeed.
- * The actual resume transaction must be signed by the sender and submitted by the frontend.
+ * Dry-run the contract's `resume_stream` for a sender. See `pauseStream` for
+ * why the result carries no transaction hash.
  */
 export async function resumeStream(
   senderAddress: string,
   streamId: bigint
-): Promise<PauseResumeResult> {
+): Promise<SimulatedActionResult> {
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
   }
@@ -552,10 +754,7 @@ export async function resumeStream(
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
 
-    // Return a mock txHash for now - in production this would be the actual transaction hash
-    return {
-      txHash: 'simulated-resume-' + streamId,
-    };
+    return { simulated: true, fn: 'resume_stream' };
   } catch (err) {
     logger.error(`[SorobanService] resumeStream(${streamId}) failed:`, err);
     throw new Error(`Failed to resume stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -563,14 +762,16 @@ export async function resumeStream(
 }
 
 /**
- * Withdraw from a stream. Calls the Soroban contract's withdraw function.
- * Note: This simulates the contract call and returns a placeholder tx hash,
- * matching the current pause/resume backend pattern.
+ * Dry-run the contract's `withdraw` for a recipient.
+ *
+ * The indexer is the authoritative writer of `withdrawnAmount` and WITHDRAWN
+ * events, because only the on-chain event proves the funds actually moved. This
+ * function therefore proves nothing more than "the call would succeed".
  */
 export async function withdraw(
   streamId: bigint,
   recipientAddress: string,
-): Promise<PauseResumeResult> {
+): Promise<SimulatedActionResult> {
   if (!getContractId()) {
     throw new Error('Stream contract ID not configured');
   }
@@ -585,9 +786,7 @@ export async function withdraw(
       nativeToScVal(streamId, { type: 'u64' }),
     ]);
 
-    return {
-      txHash: 'simulated-withdraw-' + streamId,
-    };
+    return { simulated: true, fn: 'withdraw' };
   } catch (err) {
     logger.error(`[SorobanService] withdraw(${streamId}) failed:`, err);
     throw new Error(`Failed to withdraw from stream: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -706,7 +905,7 @@ export function toSimulationApiError(
     ? known.message
     : `Simulation of "${action}" failed: ${rawError}`;
 
-  return new ApiError(400, message, 'simulation_failed', {
+  return new ApiError(400, 'simulation_failed', message, {
     action,
     reason: rawError,
     ...(code !== null ? { contractErrorCode: code } : {}),
@@ -716,36 +915,36 @@ export function toSimulationApiError(
 
 function toStreamId(raw: string | undefined, field: string): bigint {
   if (raw === undefined || raw === null || raw === '') {
-    throw new ApiError(400, `${field} is required`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is required`);
   }
   if (!/^\d+$/.test(raw)) {
-    throw new ApiError(400, `${field} must be a non-negative integer string`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} must be a non-negative integer string`);
   }
   return BigInt(raw);
 }
 
 function toPositiveI128(raw: string | undefined, field: string): bigint {
   if (raw === undefined || raw === null || raw === '') {
-    throw new ApiError(400, `${field} is required`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is required`);
   }
   if (!/^\d+$/.test(raw)) {
-    throw new ApiError(400, `${field} must be a positive integer string`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} must be a positive integer string`);
   }
   const value = BigInt(raw);
   if (value <= 0n) {
-    throw new ApiError(400, `${field} must be greater than zero`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} must be greater than zero`);
   }
   return value;
 }
 
 function toAddress(raw: string | undefined, field: string): Address {
   if (!raw) {
-    throw new ApiError(400, `${field} is required`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is required`);
   }
   try {
     return new Address(raw);
   } catch {
-    throw new ApiError(400, `${field} is not a valid Stellar address`, 'invalid_params');
+    throw new ApiError(400, 'invalid_params', `${field} is not a valid Stellar address`);
   }
 }
 
@@ -771,8 +970,8 @@ function buildInvocations(
       if (params.duration === undefined || !Number.isInteger(params.duration) || params.duration <= 0) {
         throw new ApiError(
           400,
-          'params.duration must be a positive integer (seconds)',
           'invalid_params',
+          'params.duration must be a positive integer (seconds)',
         );
       }
 
@@ -832,15 +1031,15 @@ function buildInvocations(
       if (!ids || ids.length === 0) {
         throw new ApiError(
           400,
-          'params.streamIds is required for batch_withdraw',
           'invalid_params',
+          'params.streamIds is required for batch_withdraw',
         );
       }
       if (ids.length > MAX_BATCH_WITHDRAW) {
         throw new ApiError(
           400,
-          `batch_withdraw accepts at most ${MAX_BATCH_WITHDRAW} streams per transaction`,
           'invalid_params',
+          `batch_withdraw accepts at most ${MAX_BATCH_WITHDRAW} streams per transaction`,
         );
       }
       // The contract has no batch entrypoint, so each stream becomes its own
@@ -854,7 +1053,7 @@ function buildInvocations(
 
     default: {
       const exhaustive: never = action;
-      throw new ApiError(400, `Unsupported action: ${String(exhaustive)}`, 'invalid_params');
+      throw new ApiError(400, 'invalid_params', `Unsupported action: ${String(exhaustive)}`);
     }
   }
 }
@@ -898,25 +1097,27 @@ function decodeSimulatedReturn(result: rpc.Api.SimulateTransactionSuccessRespons
   if (!retval) return '';
 
   try {
+    // SDK 17 models ScVal as a discriminated union keyed on `type`; each
+    // variant exposes its arm payload via the `value` getter.
     switch (retval.type) {
       case 'scvI128':
         return decodeI128(retval);
       case 'scvU64':
-        return retval.u64.toString();
+        return retval.value.toString();
       case 'scvU32':
-        return retval.u32.toString();
+        return retval.value.toString();
       case 'scvI64':
-        return retval.i64.toString();
+        return retval.value.toString();
       case 'scvU128': {
-        const parts = retval.u128;
-        const hi = BigInt.asUintN(64, parts.hi);
-        const lo = BigInt.asUintN(64, parts.lo);
+        const parts = retval.value;
+        const hi = BigInt.asUintN(64, BigInt(parts.hi.toString()));
+        const lo = BigInt.asUintN(64, BigInt(parts.lo.toString()));
         return ((hi << 64n) | lo).toString();
       }
       default:
         // Non-numeric returns (addresses, maps, void markers) are surfaced as
         // base64 XDR so the client can decode them with the SDK if it needs to.
-        return Buffer.from(retval.toXDR()).toString('base64');
+        return Buffer.from(retval.toXdr()).toString('base64');
     }
   } catch {
     return '';
@@ -941,7 +1142,7 @@ export async function simulateStreamAction(
 ): Promise<StreamSimulationResult> {
   const contractId = getContractId();
   if (!contractId) {
-    throw new ApiError(503, 'Stream contract is not configured', 'contract_not_configured');
+    throw new ApiError(503, 'contract_not_configured', 'Stream contract is not configured');
   }
 
   const sender = toAddress(senderPublicKey, 'senderPublicKey');

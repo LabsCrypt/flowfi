@@ -58,11 +58,7 @@ import { StreamDetailsModal } from "./StreamDetailsModal";
 import { Button } from "../ui/Button";
 import { CashflowProjectionChart } from "./CashflowProjectionChart";
 
-// @ts-expect-error unused var
-const DashboardOverviewDynamic = dynamic(
-  () => import("./DashboardOverview").then((m) => m.DashboardOverview),
-  { ssr: false },
-);
+
 const DashboardIncomingDynamic = dynamic(
   () => import("./DashboardIncoming").then((m) => m.DashboardIncoming),
   { ssr: false },
@@ -425,7 +421,7 @@ const StreamsTable = React.memo(function StreamsTable({
                     <div className="flex items-center justify-end gap-2">
                       {/^\d+$/.test(stream.id) ? (
                         <Link
-                          href={`/app/streams/${stream.id}`}
+                          href={`/streams/${stream.id}`}
                           className="secondary-button py-1 px-3 text-sm h-auto inline-flex items-center"
                         >
                           Details
@@ -569,6 +565,16 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     () => (snapshot?.outgoingStreams ?? []).filter(matchesSearch),
     [snapshot, matchesSearch],
   );
+  const projectionStreams = React.useMemo(
+    () =>
+      snapshot
+        ? [
+            ...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })),
+            ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token })),
+          ]
+        : [],
+    [snapshot],
+  );
   const filteredSnapshot = React.useMemo<DashboardSnapshot | null>(
     () => (snapshot ? { ...snapshot, outgoingStreams: filteredOutgoing } : null),
     [snapshot, filteredOutgoing],
@@ -670,6 +676,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
     connected,
     reconnecting,
     error,
+    retryNow,
   } = useStreamEvents({
     userPublicKeys: [session.publicKey],
     autoReconnect: true,
@@ -891,7 +898,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
         <div className="dashboard-content-stack mt-8">
           {renderStats(snapshot)}
           {renderAnalytics(snapshot)}
-          <CashflowProjectionChart streams={[...snapshot.incomingStreams.map((stream) => ({ ...stream, direction: "incoming" as const, token: stream.token })), ...snapshot.outgoingStreams.map((stream) => ({ ...stream, direction: "outgoing" as const, token: stream.token }))]} />
+          <CashflowProjectionChart streams={projectionStreams} />
           <StreamsTable
             snapshot={filteredSnapshot}
             onTopUp={handleTopUp}
@@ -911,10 +918,8 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
           incomingStreams={filteredIncoming}
           onWithdraw={handleIncomingWithdraw}
           withdrawingStreamId={withdrawingIncomingStreamId}
+          onBatchClaimSuccess={() => void refetchSnapshot()}
           onOpenBatchClaim={() => setShowBatchClaim(true)}
-          onBatchClaimSuccess={() => {
-            void refetchSnapshot();
-          }}
           selectedStreamId={selectedStreamId}
         />
       );
@@ -1026,6 +1031,7 @@ export function DashboardView({ session, onDisconnect }: DashboardViewProps) {
               connected={connected}
               reconnecting={reconnecting}
               error={error}
+              onRetry={retryNow}
             />
             <Button onClick={() => setShowWizard(true)} glow>
               Create Stream

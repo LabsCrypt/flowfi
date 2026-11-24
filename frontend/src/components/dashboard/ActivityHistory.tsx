@@ -13,6 +13,23 @@ import { Button } from "../ui/Button";
 
 const VIRTUALIZATION_THRESHOLD = 50;
 
+/**
+ * Safely parse a StreamEvent metadata JSON string. Malformed metadata
+ * (truncated/partial writes, migration artifacts) must never throw during
+ * render — fall back to `null` so the caller can show a generic message.
+ */
+function safeParseMetadata(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 interface ActivityHistoryProps {
   events: BackendStreamEvent[];
   isLoading?: boolean;
@@ -93,17 +110,28 @@ export const ActivityHistory: React.FC<ActivityHistoryProps> = ({
         );
       }
       case "FEE_CONFIG_UPDATED": {
-        const metadata = event.metadata ? JSON.parse(event.metadata) : {};
-        const oldRate = (metadata.old_fee_rate_bps ?? 0) / 100;
-        const newRate = (metadata.new_fee_rate_bps ?? 0) / 100;
+        const metadata = safeParseMetadata(event.metadata);
+        const hasFeeRate = metadata &&
+          ["old_fee_rate_bps", "new_fee_rate_bps"].some((key) => {
+            const rate = metadata[key];
+            return rate !== undefined && rate !== null && Number.isFinite(Number(rate));
+          });
+        if (!hasFeeRate) {
+          return <>Fee configuration updated</>;
+        }
+        const oldRate = Number(metadata.old_fee_rate_bps ?? 0) / 100;
+        const newRate = Number(metadata.new_fee_rate_bps ?? 0) / 100;
         return <>Fee configuration updated: {oldRate}% → {newRate}%</>;
       }
       case "ADMIN_TRANSFERRED": {
-        const metadata = event.metadata ? JSON.parse(event.metadata) : {};
+        const metadata = safeParseMetadata(event.metadata);
+        if (!metadata) {
+          return <>Admin transferred</>;
+        }
         const newAdmin = metadata.new_admin ?? null;
         return (
           <>
-            {newAdmin ? `Admin transferred to ${newAdmin}` : 'Admin transferred'}
+            {newAdmin ? `Admin transferred to ${String(newAdmin)}` : 'Admin transferred'}
           </>
         );
       }

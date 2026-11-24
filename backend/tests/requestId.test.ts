@@ -34,11 +34,25 @@ describe('RequestId Middleware', () => {
     expect(next).toHaveBeenCalled();
   });
 
-  it('should generate new id if header is too long', () => {
-    req.headers = { 'x-request-id': 'a'.repeat(129) };
+  it('should accept a valid id containing dots and underscores', () => {
+    req.headers = { 'x-request-id': 'req_1.0-abc' };
+    requestIdMiddleware(req as Request, res as Response, next);
+    expect(res.setHeader).toHaveBeenCalledWith('X-Request-ID', 'req_1.0-abc');
+  });
+
+  it('should accept a valid id that is exactly 64 characters long', () => {
+    const id = 'a'.repeat(64);
+    req.headers = { 'x-request-id': id };
+    requestIdMiddleware(req as Request, res as Response, next);
+    expect(res.setHeader).toHaveBeenCalledWith('X-Request-ID', id);
+  });
+
+  it('should generate new id if header is too long (over 64 chars)', () => {
+    req.headers = { 'x-request-id': 'a'.repeat(65) };
     requestIdMiddleware(req as Request, res as Response, next);
     const call = (res.setHeader as any).mock.calls[0];
-    expect(call[1]).not.toBe('a'.repeat(129));
+    expect(call[1]).not.toBe('a'.repeat(65));
+    expect(call[1]).toMatch(/^[a-f0-9-]+$/i);
   });
 
   it('should reject a header containing a newline and generate a safe id instead', () => {

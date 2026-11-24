@@ -1,9 +1,9 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { Prisma } from "../generated/prisma/index.js";
-import { prisma } from "../lib/prisma.js";
+import { prisma, withReplicaFallback } from "../lib/prisma.js";
 import logger from "../logger.js";
-import { claimableAmountService } from "../services/claimable.service.js";
+import { claimableAmountService, calculateHistoricalStreamSnapshot, StreamSnapshotHistoryError } from "../services/claimable.service.js";
 import {
   getStreamFromChain,
   getClaimableFromChain,
@@ -14,16 +14,25 @@ import {
 } from "../services/sorobanService.js";
 import type { AuthenticatedRequest } from "../types/auth.types.js";
 import { parseStreamId } from "../lib/stream-id.js";
-import { createStreamSchema } from "../validators/stream.validator.js";
+import { applyTopUpOnce } from "../services/top-up-writer.js";
+import { createStreamSchema, parsePagination } from "../validators/stream.validator.js";
 import {
   DEFAULT_EVENTS_PAGE_SIZE,
   MAX_EVENTS_PAGE_SIZE,
 } from "../repositories/streamEvent.repository.js";
 import { findStreams } from "../repositories/stream.repository.js";
-import { sendApiError } from "../types/api-error.js";
+import { ApiError, fromPrismaError, sendApiError } from "../lib/api-error.js";
 
 const DEFAULT_STREAM_PAGE_SIZE = 20;
 const MAX_STREAM_PAGE_SIZE = 100;
+
+/**
+ * Hard cap on embedded events returned with a stream in GET /v1/streams/:streamId.
+ * Prevents memory amplification and unbounded payload sizes when a stream accumulates
+ * many events. Callers requiring full event history should query the paginated
+ * GET /v1/streams/:streamId/events endpoint.
+ */
+export const EMBEDDED_EVENTS_LIMIT = 20;
 
 /**
  * Hard cap on the number of streams fetched per user in the summary endpoint.
@@ -132,10 +141,13 @@ export const createStream = async (req: Request, res: Response) => {
 
     const chainStream = await getStreamFromChain(parsedStreamId);
     if (!chainStream) {
-      return res.status(409).json({
-        error: "Stream has not been confirmed on-chain",
-        message: "Submit the stream creation transaction and retry after confirmation.",
-      });
+      return sendApiError(
+        res,
+        409,
+        "STREAM_NOT_CONFIRMED",
+        "Stream has not been confirmed on-chain",
+        { hint: "Submit the stream creation transaction and retry after confirmation." },
+      );
     }
 
     if (
@@ -146,9 +158,12 @@ export const createStream = async (req: Request, res: Response) => {
       chainStream.depositedAmount !== parsedDepositedAmount.toString() ||
       chainStream.startTime !== parsedStartTime
     ) {
-      return res.status(409).json({
-        error: "Stream request does not match on-chain state",
-      });
+      return sendApiError(
+        res,
+        409,
+        "STREAM_STATE_MISMATCH",
+        "Stream request does not match on-chain state",
+      );
     }
 
     const endTime =
@@ -205,8 +220,6 @@ export const listStreams = async (req: Request, res: Response) => {
       token,
       sort = "createdAt",
       order = "desc",
-      limit = "20",
-      offset = "0",
     } = req.query;
 
     // Validate status parameter
@@ -236,14 +249,16 @@ export const listStreams = async (req: Request, res: Response) => {
           | "endTime")
       : "createdAt";
 
-    // Validate and parse pagination parameters
-    const parsedLimit = Math.min(
-      typeof limit === "string"
-        ? Number.parseInt(limit, 10) || DEFAULT_STREAM_PAGE_SIZE
-        : DEFAULT_STREAM_PAGE_SIZE,
-      MAX_STREAM_PAGE_SIZE,
-    );
-    const parsedOffset = typeof offset === 'string' ? Math.max(0, Number.parseInt(offset, 10) || 0) : 0;
+    // Validate and parse pagination parameters (issue #1644): non-numeric,
+    // negative or zero values are a 400 rather than a silent default.
+    const pagination = parsePagination(req.query as Record<string, unknown>, {
+      defaultLimit: DEFAULT_STREAM_PAGE_SIZE,
+      maxLimit: MAX_STREAM_PAGE_SIZE,
+    });
+    if (!pagination.ok) {
+      return sendApiError(res, 400, "INVALID_PAGINATION", pagination.message);
+    }
+    const { limit: parsedLimit, offset: parsedOffset } = pagination;
 
     const params: import("../repositories/stream.repository.js").FindStreamsParams = {
       limit: parsedLimit,
@@ -274,7 +289,10 @@ export const listStreams = async (req: Request, res: Response) => {
 };
 
 /**
- * Get a single stream by ID
+ * Get a single stream by ID.
+ * Embedded events are limited to the most recent 20 (EMBEDDED_EVENTS_LIMIT)
+ * to prevent memory amplification. For full event history, use
+ * GET /v1/streams/:streamId/events.
  */
 export const getStream = async (req: Request, res: Response) => {
   try {
@@ -286,16 +304,17 @@ export const getStream = async (req: Request, res: Response) => {
       return sendApiError(res, 400, "INVALID_STREAM_ID", "Invalid streamId parameter");
     }
 
-    const stream = await prisma.stream.findUnique({
+    const stream = await withReplicaFallback((client) => client.stream.findUnique({
       where: { streamId: parsedStreamId },
       include: {
         senderUser: true,
         recipientUser: true,
         events: {
           orderBy: { timestamp: "desc" },
+          take: EMBEDDED_EVENTS_LIMIT,
         },
       },
-    });
+    }));
 
     if (!stream) {
       // Fallback: try live RPC
@@ -336,9 +355,6 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       return sendApiError(res, 400, "INVALID_STREAM_ID", "Invalid streamId parameter");
     }
 
-    const rawLimit = req.query["limit"];
-    const rawOffset = req.query["offset"];
-    const rawPage = req.query["page"];
     const cursor =
       typeof req.query["cursor"] === "string" ? req.query["cursor"] : undefined;
     const order =
@@ -348,20 +364,15 @@ export const getStreamEvents = async (req: Request, res: Response) => {
         ? req.query["eventType"]
         : undefined;
 
-    const limit = Math.min(
-      rawLimit && typeof rawLimit === "string"
-        ? Number.parseInt(rawLimit, 10) || DEFAULT_EVENTS_PAGE_SIZE
-        : DEFAULT_EVENTS_PAGE_SIZE,
-      MAX_EVENTS_PAGE_SIZE,
-    );
-
-    let offset = 0;
-    if (rawOffset && typeof rawOffset === 'string') {
-      offset = Math.max(0, Number.parseInt(rawOffset, 10) || 0);
-    } else if (rawPage && typeof rawPage === 'string' && !cursor) {
-      const page = Number.parseInt(rawPage, 10) || 1;
-      offset = Math.max(0, (page - 1) * limit);
+    const pagination = parsePagination(req.query as Record<string, unknown>, {
+      defaultLimit: DEFAULT_EVENTS_PAGE_SIZE,
+      maxLimit: MAX_EVENTS_PAGE_SIZE,
+    });
+    if (!pagination.ok) {
+      return sendApiError(res, 400, "INVALID_PAGINATION", pagination.message);
     }
+    const limit = pagination.limit;
+    const offset = pagination.offset;
 
     const whereClause: Prisma.StreamEventWhereInput = {
       streamId: parsedStreamId,
@@ -385,8 +396,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
       whereClause.eventType = eventType;
     }
 
-    const [events, total] = await Promise.all([
-      prisma.streamEvent.findMany({
+    const [events, total] = await withReplicaFallback((client) => Promise.all([
+      client.streamEvent.findMany({
         where: whereClause,
         // `timestamp` is not unique (events in the same block/ledger can
         // share a timestamp), so it can't be the sole sort key for cursor
@@ -396,8 +407,8 @@ export const getStreamEvents = async (req: Request, res: Response) => {
         take: limit,
         ...(cursor ? { cursor: { id: cursor }, skip: 1 } : { skip: offset }),
       }),
-      prisma.streamEvent.count({ where: whereClause }),
-    ]);
+      client.streamEvent.count({ where: whereClause }),
+    ]));
 
     const hasMore = cursor
       ? events.length === limit
@@ -433,7 +444,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
       }
     }
 
-    const stream = await prisma.stream.findUnique({
+    const stream = await withReplicaFallback((client) => client.stream.findUnique({
       where: { streamId: parsedStreamId },
       select: {
         streamId: true,
@@ -449,7 +460,7 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
         totalPausedDuration: true,
         updatedAt: true,
       },
-    });
+    }));
 
     if (!stream) {
       // Fallback: try live RPC for claimable amount
@@ -494,6 +505,47 @@ export const getStreamClaimableAmount = async (req: Request, res: Response) => {
   }
 };
 
+/** Return reconstructed balances and lifecycle status at a Unix timestamp. */
+export const getStreamSnapshot = async (req: Request, res: Response) => {
+  try {
+    const streamIdParam = Array.isArray(req.params.streamId) ? req.params.streamId[0] : req.params.streamId;
+    const streamId = parseStreamId(streamIdParam);
+    if (streamId === null) return sendApiError(res, 400, 'INVALID_STREAM_ID', 'Invalid streamId parameter');
+
+    const rawTimestamp = req.query.timestamp;
+    if (typeof rawTimestamp !== 'string' || !/^\d+$/.test(rawTimestamp)) {
+      return sendApiError(res, 400, 'INVALID_TIMESTAMP', 'timestamp must be a non-negative Unix timestamp in seconds');
+    }
+    const timestamp = Number(rawTimestamp);
+    if (!Number.isSafeInteger(timestamp)) {
+      return sendApiError(res, 400, 'INVALID_TIMESTAMP', 'timestamp must be a safe Unix timestamp in seconds');
+    }
+
+    const target = BigInt(timestamp);
+    const stream = await prisma.stream.findUnique({
+      where: { streamId },
+      select: {
+        streamId: true,
+        ratePerSecond: true,
+        startTime: true,
+        events: {
+          where: { timestamp: { lte: target } },
+          orderBy: [{ timestamp: 'asc' }, { ledgerSequence: 'asc' }],
+          select: { eventType: true, amount: true, timestamp: true, metadata: true, ledgerSequence: true },
+        },
+      },
+    });
+    if (!stream) return sendApiError(res, 404, 'NOT_FOUND', 'Stream not found');
+
+    return res.status(200).json(calculateHistoricalStreamSnapshot(stream, stream.events, timestamp));
+  } catch (error) {
+    if (error instanceof StreamSnapshotHistoryError) {
+      return sendApiError(res, 409, 'HISTORY_UNAVAILABLE', error.message);
+    }
+    logger.error('Error reconstructing historical stream snapshot:', error);
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'A technical error occurred. Please try again later.');
+  }
+};
 /**
  * Get user-level stream summary used by dashboard/profile cards.
  */
@@ -522,8 +574,8 @@ export const getUserStreamSummary = async (
     // unbounded DB queries.  Power users with more than MAX_USER_STREAMS
     // streams receive a truncated summary (the `truncated` flag lets the
     // frontend offer a pagination/export fallback).
-    const [outgoingStreams, incomingStreams] = await Promise.all([
-      prisma.stream.findMany({
+    const [outgoingStreams, incomingStreams] = await withReplicaFallback((client) => Promise.all([
+      client.stream.findMany({
         where: { sender: address },
         orderBy: { startTime: "desc" },
         take: MAX_USER_STREAMS,
@@ -542,7 +594,7 @@ export const getUserStreamSummary = async (
           updatedAt: true,
         },
       }),
-      prisma.stream.findMany({
+      client.stream.findMany({
         where: { recipient: address },
         orderBy: { startTime: "desc" },
         take: MAX_USER_STREAMS,
@@ -561,7 +613,7 @@ export const getUserStreamSummary = async (
           updatedAt: true,
         },
       }),
-    ]);
+    ]));
 
     const calculatedAt = Math.floor(nowMs / 1000);
 
@@ -673,35 +725,52 @@ export const topUpStreamHandler = async (req: Request, res: Response) => {
       return sendApiError(res, 409, "CONFLICT", "Cannot top up a paused stream");
     }
 
-    const txHash = await topUpStream(streamId, amount, callerAddress);
+    let txHash: string;
+    try {
+      txHash = await topUpStream(streamId, amount, callerAddress);
+    } catch (chainError) {
+      // A failure here is the caller's transaction not landing: a reverted
+      // contract call, a missing trustline, insufficient balance. Nothing was
+      // written, so a 4xx is the honest answer.
+      logger.error(`[topUp] stream=${streamId} on-chain call failed:`, chainError);
+      return sendApiError(res, 400, "TOP_UP_FAILED", "Failed to top up stream on chain");
+    }
 
-    // Use raw SQL atomic increment to prevent concurrent top-ups from
-    // overwriting each other's updates (Issue #1217 — read-compute-write race).
-    // Prisma's built-in { increment } is unavailable on String-typed columns,
-    // so we perform SET deposited_amount = deposited_amount + $1::bigint
-    // directly in a single SQL statement.
-    const now = BigInt(Math.floor(Date.now() / 1000));
-    await prisma.$executeRawUnsafe(
-      `UPDATE "Stream" SET "depositedAmount" = ("depositedAmount"::bigint + $1::bigint)::text, "lastUpdateTime" = $2 WHERE "streamId" = $3`,
-      amount.toString(),
-      now,
-      streamId,
+    // #1848: the indexer's `handleStreamToppedUp` writes the same top-up from
+    // the on-chain event, so this write is conditional on that event row not
+    // existing yet and holds the stream's row lock while it decides. Exactly
+    // one of the two writers moves `depositedAmount`, in either arrival order.
+    const depositedAmount = await prisma.$transaction((tx) =>
+      applyTopUpOnce(tx, { streamId, txHash, amount }),
     );
-    const updatedStream = await prisma.stream.findUnique({ where: { streamId } });
 
     logger.info(`[topUp] stream=${streamId} amount=${amount} txHash=${txHash}`);
     return res
       .status(200)
-      .json({ streamId, txHash, depositedAmount: updatedStream!.depositedAmount });
-  } catch (error: any) {
-    logger.error(`[topUp] stream=${streamId} error:`, error);
-    return sendApiError(res, 400, "TOP_UP_FAILED", "Failed to top up stream on chain");
+      .json({ streamId, txHash, depositedAmount: depositedAmount.toString() });
+  } catch (error) {
+    // Reaching this catch means the top-up question is already settled — the
+    // chain call either failed (handled above) or succeeded and this is the
+    // bookkeeping. A database outage is not the client's error, so it must not
+    // be reported as TOP_UP_FAILED: they would retry and pay twice. The
+    // indexer reconciles the row from the confirmed event.
+    logger.error(`[topUp] stream=${streamId} database update failed:`, error);
+    if (error instanceof ApiError) {
+      return sendApiError(res, error.statusCode, error.code, error.message, error.details);
+    }
+    const mapped = fromPrismaError(error);
+    if (mapped) {
+      return sendApiError(res, mapped.statusCode, mapped.code, mapped.message);
+    }
+    return sendApiError(res, 500, "INTERNAL_SERVER_ERROR", "A technical error occurred. Please try again later.");
   }
 };
 
 /**
- * Pause a stream. Only the sender can pause their own stream.
- * Validates the request, checks ownership, and updates the database.
+ * Dry-run a pause for the stream sender. Only the sender may pause their own
+ * stream. Nothing is written to the database: `pause_stream` is authorized by
+ * the sender's wallet, so the client has to sign and submit it, and the indexer
+ * sets `isPaused` from the confirmed PAUSED event (issue #1847).
  */
 export const pauseStream = async (req: Request, res: Response) => {
   try {
@@ -745,20 +814,21 @@ export const pauseStream = async (req: Request, res: Response) => {
 
     try {
       // Call Soroban service to verify the pause operation would succeed
-      const result = await sorobanPauseStream(
-        authReq.user.publicKey,
-        parsedStreamId,
-      );
+      await sorobanPauseStream(authReq.user.publicKey, parsedStreamId);
 
       logger.info(
         `Stream ${parsedStreamId} pause simulated by ${authReq.user.publicKey}`,
       );
 
+      // `stream` is returned as read: the simulation cannot have changed it.
       return res.status(200).json({
         success: true,
+        simulated: true,
         streamId: parsedStreamId,
-        txHash: result.txHash,
+        isPaused: stream.isPaused,
         stream,
+        message:
+          'Pause is available but was not submitted. Sign the simulated pause_stream transaction with the sender wallet.',
       });
     } catch (sorobanError) {
       logger.error(
@@ -774,8 +844,8 @@ export const pauseStream = async (req: Request, res: Response) => {
 };
 
 /**
- * Resume a paused stream. Only the sender can resume their own stream.
- * Validates the request, checks ownership, and updates the database.
+ * Dry-run a resume for the stream sender. Only the sender may resume their own
+ * stream. Nothing is written to the database — see `pauseStream`.
  */
 export const resumeStream = async (req: Request, res: Response) => {
   try {
@@ -814,20 +884,21 @@ export const resumeStream = async (req: Request, res: Response) => {
 
     try {
       // Call Soroban service to verify the resume operation would succeed
-      const result = await sorobanResumeStream(
-        authReq.user.publicKey,
-        parsedStreamId,
-      );
+      await sorobanResumeStream(authReq.user.publicKey, parsedStreamId);
 
       logger.info(
         `Stream ${parsedStreamId} resume simulated by ${authReq.user.publicKey}`,
       );
 
+      // `stream` is returned as read: the simulation cannot have changed it.
       return res.status(200).json({
         success: true,
+        simulated: true,
         streamId: parsedStreamId,
-        txHash: result.txHash,
+        isPaused: stream.isPaused,
         stream,
+        message:
+          'Resume is available but was not submitted. Sign the simulated resume_stream transaction with the sender wallet.',
       });
     } catch (sorobanError) {
       logger.error(

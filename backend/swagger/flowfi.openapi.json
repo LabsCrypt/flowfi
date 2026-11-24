@@ -3,7 +3,7 @@
   "info": {
     "title": "FlowFi API",
     "version": "1.0.0",
-    "description": "API documentation for FlowFi - Real-time payment streaming on Stellar\n\n## Performance & Caching\nThe API implements caching for frequently accessed endpoints, such as claimable amount calculations. \n- **Claimable Cache TTL**: 5 seconds\n- **Invalidation**: Automatically cleared when a withdrawal event occurs.\n\n## Sandbox Mode\n\nFlowFi API supports sandbox mode for testing without affecting production data.\n\n**Enable Sandbox Mode:**\n- Header: `X-Sandbox-Mode: true`\n- Query Parameter: `?sandbox=true`\n\n**Sandbox Features:**\n- Isolated database (separate from production)\n- All responses include `_sandbox` metadata\n- Response headers include `X-Sandbox-Mode: true`\n- Safe for testing and development\n\nSee [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.",
+    "description": "API documentation for FlowFi - Real-time payment streaming on Stellar\n\n## Performance & Caching\nThe API implements caching for frequently accessed endpoints, such as claimable amount calculations. \n- **Claimable Cache TTL**: 5 seconds\n- **Invalidation**: Automatically cleared when a withdrawal event occurs.\n\n## Sandbox Mode\n\nFlowFi API supports sandbox mode for labelling test traffic.\n\n**Enable Sandbox Mode:**\n- Header: `X-Sandbox-Mode: true`\n- Query Parameter: `?sandbox=true`\n\nSandbox mode is only available when the server is started with\n`SANDBOX_MODE_ENABLED=true`.\n\n**Sandbox Features:**\n- Event payloads returned to sandbox clients are tagged with `_sandbox: true`\n  so test data is distinguishable from production records.\n- Response headers include `X-Sandbox-Mode: true` and `X-Environment: sandbox`.\n\n**Note:** Sandbox mode currently labels requests/responses and tags events; it\ndoes not route traffic to a separate datastore.\n\nSee [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.",
     "contact": {
       "name": "FlowFi Team",
       "url": "https://github.com/LabsCrypt/flowfi"
@@ -47,6 +47,26 @@
     {
       "name": "Observability",
       "description": "Prometheus metrics scrape endpoint"
+    },
+    {
+      "name": "Compliance",
+      "description": "Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints"
+    },
+    {
+      "name": "Analytics",
+      "description": "Public protocol statistics (TVL, history, DefiLlama)"
+    },
+    {
+      "name": "Auth",
+      "description": "SEP-0010 challenge and verification endpoints that issue API tokens"
+    },
+    {
+      "name": "Tokens",
+      "description": "Verified Stellar token metadata"
+    },
+    {
+      "name": "Webhooks",
+      "description": "Webhook subscriptions and delivery testing"
     }
   ],
   "components": {
@@ -196,6 +216,13 @@
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "events": {
+            "type": "array",
+            "description": "Up to 20 most recent stream events ordered descending by timestamp. For complete event history use GET /v1/streams/{streamId}/events.",
+            "items": {
+              "$ref": "#/components/schemas/StreamEvent"
+            }
           }
         }
       },
@@ -502,23 +529,32 @@
         "type": "object",
         "required": [
           "success",
+          "simulated",
           "streamId",
-          "txHash"
+          "isPaused"
         ],
         "properties": {
           "success": {
             "type": "boolean",
             "example": true
           },
+          "simulated": {
+            "type": "boolean",
+            "description": "True: the call was dry-run only. Nothing was submitted and nothing was written."
+          },
           "streamId": {
             "type": "integer"
           },
-          "txHash": {
-            "type": "string",
-            "description": "Stellar transaction hash of the pause/resume simulation"
+          "isPaused": {
+            "type": "boolean",
+            "description": "Current pause flag, unchanged by a simulation"
           },
           "stream": {
             "$ref": "#/components/schemas/Stream"
+          },
+          "message": {
+            "type": "string",
+            "description": "How to complete the action by signing in the wallet"
           }
         }
       },
@@ -547,8 +583,8 @@
         "type": "object",
         "required": [
           "success",
+          "simulated",
           "streamId",
-          "txHash",
           "amount"
         ],
         "properties": {
@@ -556,19 +592,20 @@
             "type": "boolean",
             "example": true
           },
+          "simulated": {
+            "type": "boolean",
+            "description": "True: the withdrawal was dry-run only. `withdrawnAmount` and StreamEvent rows are written by the indexer from the confirmed on-chain event."
+          },
           "streamId": {
             "type": "integer"
           },
-          "txHash": {
-            "type": "string",
-            "description": "Stellar transaction hash of the withdrawal"
-          },
           "amount": {
             "type": "string",
-            "description": "Amount withdrawn (i128 as string)"
+            "description": "Amount that would be withdrawn right now (i128 as string)"
           },
-          "stream": {
-            "$ref": "#/components/schemas/Stream"
+          "message": {
+            "type": "string",
+            "description": "How to complete the withdrawal by signing in the wallet"
           }
         }
       },
@@ -706,6 +743,88 @@
           }
         }
       },
+      "SentinelIncident": {
+        "type": "object",
+        "required": [
+          "id",
+          "ruleId",
+          "severity",
+          "title",
+          "description",
+          "detectedAt",
+          "threatScore"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "ruleId": {
+            "type": "string",
+            "enum": [
+              "VELOCITY_SPIKE",
+              "MULTI_STREAM_DRAIN",
+              "HIGH_VALUE_DRAIN",
+              "TOKEN_VELOCITY_SPIKE",
+              "ZERO_RUNWAY_FLOOD",
+              "STREAM_CREATION_SPIKE"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "CRITICAL"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string",
+            "nullable": true,
+            "description": "Stellar public key involved"
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "streamId": {
+            "type": "string",
+            "nullable": true
+          },
+          "ledger": {
+            "type": "integer",
+            "nullable": true
+          },
+          "detectedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "threatScore": {
+            "type": "integer",
+            "description": "Per-incident severity weight (10-90)"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "circuitBreaker": {
+            "type": "object",
+            "nullable": true,
+            "description": "HMAC-signed emergency pause proposal (CRITICAL incidents only)",
+            "additionalProperties": true
+          },
+          "acknowledged": {
+            "type": "boolean"
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "required": [
@@ -722,7 +841,8 @@
               "ok",
               "degraded"
             ],
-            "example": "ok"
+            "example": "ok",
+            "description": "`degraded` with HTTP 503 when a liveness check fails; `degraded` with HTTP 200 when only Redis is unavailable or timed out"
           },
           "db": {
             "type": "string",
@@ -731,6 +851,17 @@
               "disconnected"
             ],
             "example": "connected"
+          },
+          "redis": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable",
+              "timeout",
+              "not_configured"
+            ],
+            "example": "ok",
+            "description": "Same as checks.redis.status"
           },
           "indexerEnabled": {
             "type": "boolean",
@@ -774,7 +905,8 @@
                     "type": "string",
                     "enum": [
                       "ok",
-                      "down"
+                      "down",
+                      "timeout"
                     ]
                   }
                 }
@@ -807,6 +939,7 @@
                     "enum": [
                       "ok",
                       "unavailable",
+                      "timeout",
                       "not_configured"
                     ]
                   }
@@ -852,6 +985,10 @@
                 "items": {
                   "type": "object"
                 }
+              },
+              "requestId": {
+                "type": "string",
+                "description": "Correlation ID echoed from the response X-Request-ID header; omitted when no ID was assigned"
               }
             }
           }
@@ -910,10 +1047,10 @@
           "Health"
         ],
         "summary": "Detailed health check",
-        "description": "Returns liveness and readiness information.\n**Liveness** (200 vs 503) is determined by DB reachability alone.\n**Indexer lag** is reported in the body for observability but only\nforces a 503 when the indexer is actually enabled\n(`STREAM_CONTRACT_ID` env var set) and its state row is stale\n(lag > 60 s). A cold-started instance with no state row yet, or a\ndeployment with the indexer intentionally disabled, always returns 200\nas long as the DB is reachable.\n**Event-processing failures** are also reported. When the indexer is\nenabled and recent per-event failures spike (≥50% of attempts in the\nlast 5 minutes, with ≥3 samples), the endpoint returns 503 even if\nlag looks healthy (the IndexerState upsert bumps updatedAt every poll).\n",
+        "description": "Returns liveness and readiness information.\n**Liveness** (200 vs 503) is determined by DB reachability alone.\n**Indexer lag** is reported in the body for observability but only\nforces a 503 when the indexer is actually enabled\n(`STREAM_CONTRACT_ID` env var set) and its state row is stale\n(lag > 60 s). A cold-started instance with no state row yet, or a\ndeployment with the indexer intentionally disabled, always returns 200\nas long as the DB is reachable.\n**Event-processing failures** are also reported. When the indexer is\nenabled and recent per-event failures spike (≥50% of attempts in the\nlast 5 minutes, with ≥3 samples), the endpoint returns 503 even if\nlag looks healthy (the IndexerState upsert bumps updatedAt every poll).\n**Redis** is optional. When it is configured but unavailable or does not\nanswer a ping in time, `status` is `degraded` but the response stays\n200, so a Redis outage does not fail liveness probes.\nEvery dependency probe runs in parallel and is bounded by\n`HEALTHCHECK_TIMEOUT_MS` (default 800 ms), so the endpoint answers in\nunder a second even when a dependency hangs.\nThe response is cached in-memory for 2 s so consecutive rapid requests\ndo not re-run the probes (issue #1511).\n",
         "responses": {
           "200": {
-            "description": "Service is healthy",
+            "description": "Service is healthy (Redis may still be degraded)",
             "content": {
               "application/json": {
                 "schema": {
@@ -921,6 +1058,9 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Rate limited"
           },
           "503": {
             "description": "Service is degraded or unhealthy",
@@ -942,6 +1082,11 @@
         "tags": [
           "Webhooks"
         ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -949,15 +1094,10 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "userAddress",
                   "targetUrl",
                   "eventTypes"
                 ],
                 "properties": {
-                  "userAddress": {
-                    "type": "string",
-                    "description": "Stellar public key"
-                  },
                   "targetUrl": {
                     "type": "string",
                     "format": "uri"
@@ -1016,6 +1156,16 @@
               }
             }
           },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -1029,18 +1179,14 @@
         }
       },
       "get": {
-        "summary": "List all webhooks for authenticated user",
+        "summary": "List all webhooks for the authenticated wallet",
+        "description": "Subscriptions are scoped to the authenticated wallet; the caller supplies no address.",
         "tags": [
           "Webhooks"
         ],
-        "parameters": [
+        "security": [
           {
-            "in": "query",
-            "name": "userAddress",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
+            "bearerAuth": []
           }
         ],
         "responses": {
@@ -1062,8 +1208,8 @@
               }
             }
           },
-          "400": {
-            "description": "Missing userAddress",
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
             "content": {
               "application/json": {
                 "schema": {
@@ -1088,21 +1234,19 @@
     "/v1/webhooks/{id}": {
       "delete": {
         "summary": "Delete a webhook subscription",
+        "description": "Only the subscription owner can delete it; a foreign id is reported as not found.",
         "tags": [
           "Webhooks"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
         ],
         "parameters": [
           {
             "in": "path",
             "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "userAddress",
             "required": true,
             "schema": {
               "type": "string"
@@ -1113,8 +1257,18 @@
           "204": {
             "description": "Webhook deleted successfully"
           },
-          "400": {
-            "description": "Invalid id or missing userAddress",
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook subscription not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1142,6 +1296,11 @@
         "tags": [
           "Webhooks"
         ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "in": "path",
@@ -1152,24 +1311,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "userAddress"
-                ],
-                "properties": {
-                  "userAddress": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Test webhook sent",
@@ -1191,8 +1332,18 @@
               }
             }
           },
-          "400": {
-            "description": "Missing id or userAddress",
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Webhook subscription not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -1441,7 +1592,12 @@
           "Users"
         ],
         "summary": "Fetch user activity history",
-        "description": "Returns a paginated chronological history of all stream events associated with the user.",
+        "description": "Returns a paginated chronological history of all stream events associated with the authenticated wallet. The `publicKey` path parameter must match the authenticated caller.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "in": "path",
@@ -1485,6 +1641,26 @@
           },
           "400": {
             "description": "Invalid pagination parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden - `publicKey` does not match the authenticated wallet",
             "content": {
               "application/json": {
                 "schema": {
@@ -2142,7 +2318,7 @@
           "Streams"
         ],
         "summary": "Get stream details",
-        "description": "Returns a single stream. Falls back to live on-chain data when the DB record is missing or stale.",
+        "description": "Returns a single stream with up to 20 most recent embedded events. Falls back to live on-chain data when the DB record is missing or stale. For complete paginated event history, see /v1/streams/{streamId}/events.",
         "parameters": [
           {
             "in": "path",
@@ -2408,8 +2584,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Pause a payment stream",
-        "description": "Pause an active stream. Only the sender can pause their own stream.",
+        "summary": "Dry-run a stream pause",
+        "description": "Verifies that the sender could pause the stream right now. Nothing is\nsubmitted and `isPaused` is not changed: `pause_stream` is authorized by\nthe sender's wallet, so the client signs the transaction returned by\n`POST /v1/streams/simulate` and the indexer applies the state from the\nconfirmed event (issue #1847).\n",
         "parameters": [
           {
             "in": "path",
@@ -2428,7 +2604,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Stream paused successfully",
+            "description": "Pause verified as possible (simulated - state unchanged)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2505,8 +2681,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Resume a paused payment stream",
-        "description": "Resume a paused stream. Only the sender can resume their own stream.",
+        "summary": "Dry-run resuming a paused stream",
+        "description": "Verifies that the sender could resume the stream right now. Nothing is\nsubmitted and `isPaused` is not changed — see the pause endpoint.\n",
         "parameters": [
           {
             "in": "path",
@@ -2525,7 +2701,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Stream resumed successfully",
+            "description": "Resume verified as possible (simulated - state unchanged)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2602,8 +2778,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Withdraw claimable balance from a payment stream",
-        "description": "Withdraws the currently claimable amount. Only the recipient can withdraw.",
+        "summary": "Dry-run a withdrawal of the claimable balance",
+        "description": "Verifies that a withdrawal of the currently claimable amount would\nsucceed on-chain. Only the stream recipient may call it.\n\nNothing is submitted and nothing is written: `withdraw` is authorized by\nthe recipient's wallet, so the backend cannot perform it on their\nbehalf. Sign the XDR from `POST /v1/streams/simulate`\n(`action: \"withdraw\"`) to actually move funds; the indexer then records\nthe WITHDRAWN event and updates `withdrawnAmount` from the confirmed\non-chain event (issue #1847).\n",
         "parameters": [
           {
             "in": "path",
@@ -2622,7 +2798,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Withdrawal submitted successfully",
+            "description": "Withdrawal verified as possible (simulated - no funds moved)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2688,6 +2864,16 @@
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
               }
             }
           }
@@ -2816,8 +3002,8 @@
         "tags": [
           "Streams"
         ],
-        "summary": "Cancel an active payment stream",
-        "description": "Cancels an active payment stream on the Stellar network.\nOnly the original sender can cancel the stream.\nAccrued tokens are sent to the recipient, and the remainder is refunded to the sender.\n",
+        "summary": "Cancel an active payment stream with a wallet-signed transaction",
+        "description": "Broadcasts the cancel transaction the caller's wallet already signed and\nrecords the cancellation. Only the original sender can cancel their\nstream; accrued tokens go to the recipient and the remainder is refunded\nto the sender.\n\nSigning happens in the wallet. `POST /v1/streams/simulate` with\n`action: \"cancel\"` returns an unsigned, footprint-annotated XDR; the\nwallet signs those exact bytes and the signature is posted here as\n`signedXdr`. The API no longer accepts `senderSecret` (issue #1845) —\na request that still carries one is rejected.\n",
         "security": [
           {
             "bearerAuth": []
@@ -2836,27 +3022,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Stream cancelled successfully",
+            "description": "Stream cancelled on-chain",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelResponse",
-                  "type": "object",
-                  "properties": {
-                    "txHash": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "type": "string",
-                      "example": "CANCELLED"
-                    }
-                  }
+                  "$ref": "#/components/schemas/CancelResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid streamId or transaction simulation failed",
+            "description": "Missing/invalid signedXdr, a legacy senderSecret, or an envelope that is not this stream's cancel",
             "content": {
               "application/json": {
                 "schema": {
@@ -2911,6 +3087,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "signedXdr"
+                ],
+                "properties": {
+                  "signedXdr": {
+                    "type": "string",
+                    "description": "base64 `TransactionEnvelope` returned by the wallet, signing the simulated cancel transaction"
+                  }
                 }
               }
             }
@@ -3044,7 +3239,7 @@
           "Events"
         ],
         "summary": "Subscribe to real-time stream events",
-        "description": "Establishes a Server-Sent Events (SSE) connection for real-time updates.\n\n**Reconnection Strategy:**\n- Browser automatically reconnects with exponential backoff\n- Initial retry: 1s, max: 30s\n- Client should implement custom reconnection logic for production\n\n**Event Types:**\n- `stream.created` - New stream created\n- `stream.topped_up` - Stream received additional funds\n- `stream.withdrawn` - Funds withdrawn from stream\n- `stream.cancelled` - Stream cancelled\n- `stream.completed` - Stream completed\n\n**Sandbox Mode:**\n- Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`\n- Sandbox events are clearly marked with `_sandbox` metadata\n- Sandbox events are isolated from production events\n",
+        "description": "Establishes a Server-Sent Events (SSE) connection for real-time updates.\n\n**Reconnection Strategy:**\n- Browser automatically reconnects with exponential backoff\n- Initial retry: 1s, max: 30s\n- Client should implement custom reconnection logic for production\n\n**Event Types:**\n- `stream.created` - New stream created\n- `stream.topped_up` - Stream received additional funds\n- `stream.withdrawn` - Funds withdrawn from stream\n- `stream.cancelled` - Stream cancelled\n- `stream.completed` - Stream completed\n\n**Sandbox Mode:**\n- Add header `X-Sandbox-Mode: true` or query parameter `?sandbox=true`\n- The `connected` frame and every event delivered to a sandbox\n  connection are tagged with `_sandbox: true`\n- Sandbox mode labels/tags events; it does not route to a separate\n  datastore or otherwise isolate stored data\n",
         "parameters": [
           {
             "in": "header",
@@ -3189,6 +3384,161 @@
         }
       }
     },
+    "/v1/compliance/kyc-attestation": {
+      "post": {
+        "tags": [
+          "Compliance"
+        ],
+        "summary": "Submit a SEP-0009 KYC/AML attestation",
+        "description": "Allows an organization to submit a cryptographic proof of identity\nverification for a wallet, following the SEP-0009 (Standard KYC / AML\nFields) schema. Attestations are stored as PENDING for out-of-band\nreview and are recorded in the compliance audit trail.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "subjectAddress",
+                  "proof",
+                  "fields"
+                ],
+                "properties": {
+                  "subjectAddress": {
+                    "type": "string",
+                    "description": "Stellar public key the identity belongs to"
+                  },
+                  "organization": {
+                    "type": "string",
+                    "description": "Organization identifier; defaults to the authenticated wallet"
+                  },
+                  "proof": {
+                    "type": "string",
+                    "description": "Cryptographic proof / signature over the identity payload"
+                  },
+                  "proofType": {
+                    "type": "string",
+                    "enum": [
+                      "ed25519",
+                      "secp256k1",
+                      "stellar-signature"
+                    ]
+                  },
+                  "fields": {
+                    "type": "object",
+                    "description": "SEP-0009 KYC/AML fields (snake_case, vendor fields passthrough)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Attestation accepted for review"
+          },
+          "400": {
+            "description": "Invalid attestation payload"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/v1/compliance/screen": {
+      "post": {
+        "tags": [
+          "Compliance"
+        ],
+        "summary": "Screen an address against sanctions data",
+        "description": "Runs the configured sanctions / risk screening provider for a wallet\naddress and returns the result. Results are cached for the configured\nTTL. Requires authentication to prevent open enumeration.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address"
+                ],
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "Stellar public key to screen"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Screening result"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication"
+          },
+          "503": {
+            "description": "Screening provider unavailable"
+          }
+        }
+      }
+    },
+    "/v1/compliance/screen/{address}": {
+      "get": {
+        "tags": [
+          "Compliance"
+        ],
+        "summary": "Screen a wallet address (read-only)",
+        "description": "Convenience GET variant of /v1/compliance/screen for audit tooling.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stellar public key to screen"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screening result"
+          },
+          "400": {
+            "description": "Address is required"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication"
+          },
+          "503": {
+            "description": "Screening provider unavailable"
+          }
+        }
+      }
+    },
     "/v1/auth/challenge": {
       "post": {
         "tags": [
@@ -3317,6 +3667,164 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/analytics/tvl": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Current protocol TVL partitioned by token asset",
+        "description": "Read-only protocol statistics. No authentication is required because\nevery payload here is public (the same numbers a block explorer\nwould show). Subject to the API's global rate limiter.\n",
+        "responses": {
+          "200": {
+            "description": "TVL snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "Current TVL snapshot partitioned by token asset"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests"
+          },
+          "500": {
+            "description": "TVL snapshot unavailable"
+          }
+        }
+      }
+    },
+    "/v1/analytics/historical": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Pre-aggregated time-series points for frontend charts",
+        "description": "Historical TVL and volume series at a fixed interval. No\nauthentication is required; subject to the API's global rate limiter.\n",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "period",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "7d",
+                "30d",
+                "90d",
+                "1y"
+              ],
+              "default": "30d"
+            },
+            "description": "Lookback window"
+          },
+          {
+            "in": "query",
+            "name": "interval",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1h",
+                "1d"
+              ],
+              "default": "1d"
+            },
+            "description": "Granularity of each point"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Time-series points",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "array",
+                      "description": "Aggregated time-series points for the requested period and interval"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid period or interval"
+          },
+          "429": {
+            "description": "Too many requests"
+          },
+          "500": {
+            "description": "Historical analytics unavailable"
+          }
+        }
+      }
+    },
+    "/v1/analytics/defillama": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "DefiLlama adapter payload",
+        "description": "TVL and activity numbers in the shape DefiLlama's adapter format\nexpects, so the protocol can be listed without a separate adapter.\nNo authentication is required; subject to the global rate limiter.\n",
+        "responses": {
+          "200": {
+            "description": "DefiLlama adapter payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "success",
+                    "data"
+                  ],
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "DefiLlama-shaped adapter payload"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests"
+          },
+          "500": {
+            "description": "DefiLlama adapter unavailable"
           }
         }
       }
@@ -3932,6 +4440,175 @@
           },
           "404": {
             "description": "Dead-letter event not found"
+          }
+        }
+      }
+    },
+    "/v1/admin/sentinel/alerts": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List sentinel anomalies, threat score, and flagged addresses",
+        "description": "Returns the real-time anomaly dashboard backing the drain sentinel:\nthe aggregate 0-100 threat score, the addresses implicated in recent\nanomalies, and the incident history (newest first). Filter by\n`severity`, `address`, or page with `limit`.\n",
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "severity",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH",
+                "CRITICAL"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "address",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Stellar public key to filter incidents by"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sentinel dashboard snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "threatScore": {
+                      "type": "object",
+                      "properties": {
+                        "score": {
+                          "type": "integer",
+                          "example": 75
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "NONE",
+                            "LOW",
+                            "MEDIUM",
+                            "HIGH",
+                            "CRITICAL"
+                          ]
+                        },
+                        "incidentCount": {
+                          "type": "integer"
+                        },
+                        "bySeverity": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "windowMinutes": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "flaggedAddresses": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "threatScore": {
+                            "type": "integer"
+                          },
+                          "incidentCount": {
+                            "type": "integer"
+                          },
+                          "highestSeverity": {
+                            "type": "string"
+                          },
+                          "lastIncidentAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "incidents": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SentinelIncident"
+                      }
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "generatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid severity filter"
+          },
+          "401": {
+            "description": "Unauthorized - missing or invalid authentication token"
+          },
+          "403": {
+            "description": "Forbidden - admin access required"
+          }
+        }
+      }
+    },
+    "/v1/admin/sentinel/alerts/{id}/acknowledge": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Acknowledge a sentinel incident",
+        "security": [
+          {
+            "adminAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Incident acknowledged"
+          },
+          "404": {
+            "description": "Incident not found"
           }
         }
       }

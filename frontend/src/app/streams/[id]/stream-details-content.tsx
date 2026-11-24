@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { getApiBaseUrl } from "@/lib/api/_shared";
 import { logger } from "@/lib/logger";
@@ -30,6 +30,8 @@ import type { BackendStreamEvent } from "@/lib/api-types";
 import { formatAmount, streamProgressPercent, validateAmountInput } from "@/utils/amount";
 import { shortenPublicKey } from "@/lib/wallet";
 import { LiquidStreamVisualizer } from "@/components/LiquidStreamVisualizer";
+import { TokenAvatar } from "@/components/TokenAvatar";
+import { resolveTokenSymbol } from "@/lib/tokens";
 
 interface StreamDetail {
   id: string;
@@ -54,12 +56,6 @@ interface StreamDetail {
 
 const API_BASE_URL = `${getApiBaseUrl()}/v1`;
 const EVENTS_PER_PAGE = 10;
-
-const TOKEN_SYMBOLS: Record<string, string> = {
-  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN": "XLM",
-  "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA": "USDC",
-  "CCWAMYJME4YOIUNAKVYEBYOG5I65QMKEX2NMN4OJAPXRPIF24ONPSHY": "EURC",
-};
 
 const EVENT_STYLES: Record<string, { color: string; icon: string; label: string }> = {
   CREATED: { color: "#22c55e", icon: "✓", label: "Created" },
@@ -109,6 +105,21 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
     Number.isFinite(liveClaimableNumber)
       ? BigInt(Math.round(liveClaimableNumber))
       : 0n;
+
+  const streamIsLive = (stream?.isActive ?? false) && !(stream?.isPaused ?? false);
+  const isTicking = streamIsLive && Number(stream?.ratePerSecond ?? 0) > 0;
+
+  // #419 — a brief highlight pulse on the Claimable card once per second while
+  // the amount is actively ticking (the rAF ticker updates many times a second,
+  // so keying the flash off the raw value would remount every frame).
+  const [pulseTick, setPulseTick] = useState(0);
+  useEffect(() => {
+    if (!isTicking) return;
+    const intervalId = window.setInterval(() => {
+      setPulseTick((tick) => tick + 1);
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isTicking]);
 
   const { events: streamEvents } = useStreamEvents({
     streamIds: [streamId],
@@ -184,6 +195,18 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
     refreshStreamData();    return () => controller.abort();
   }, [streamEvents, fetchStream, fetchEvents, eventsPage]);
 
+  // #419 — re-anchor the client-side ticking claimable amount against the API
+  // every 30s while the stream is ACTIVE, so any drift between the local
+  // `rate_per_second * elapsed` counter and the indexer is corrected. The
+  // interval is cleared on unmount and whenever the stream leaves ACTIVE.
+  useEffect(() => {
+    if (!streamIsLive) return;
+    const intervalId = window.setInterval(() => {
+      void fetchStream();
+    }, 30_000);
+    return () => window.clearInterval(intervalId);
+  }, [streamIsLive, fetchStream]);
+
   const isSender = useMemo(() => {
     if (!session || !stream) return false;
     return session.publicKey === stream.sender;
@@ -196,7 +219,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
 
   const tokenSymbol = useMemo(() => {
     if (!stream) return "??";
-    return TOKEN_SYMBOLS[stream.tokenAddress] || stream.tokenAddress.slice(0, 4);
+    return resolveTokenSymbol(stream.tokenAddress) || stream.tokenAddress?.slice(0, 4) || "??";
   }, [stream]);
 
   const { data: tokenPrice } = useTokenPrice({ tokenSymbol, enabled: Boolean(stream) });
@@ -471,7 +494,18 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             <div className="space-y-4">
               <InfoRow label="Sender" value={shortenPublicKey(stream.sender)} />
               <InfoRow label="Recipient" value={shortenPublicKey(stream.recipient)} />
-              <InfoRow label="Token" value={tokenSymbol} />
+              <InfoRow
+                label="Token"
+                value={tokenSymbol}
+                icon={
+                  <TokenAvatar
+                    symbol={tokenSymbol}
+                    address={stream.tokenAddress}
+                    size={20}
+                    decorative
+                  />
+                }
+              />
             </div>
             <div className="space-y-4">
               <InfoRow
@@ -536,6 +570,7 @@ export default function StreamDetailsContent({ streamId }: { streamId: string })
             value={`${formatAmount(liveClaimable, 7)} ${tokenSymbol}`}
             highlight
             live
+            pulseKey={isTicking ? pulseTick : undefined}
           />
         </div>
 
@@ -762,11 +797,22 @@ function StatusBadge({ status, isPaused }: { status: string; isPaused?: boolean 
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon?: ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
       <span className="text-slate-400 text-sm">{label}</span>
-      <span className="font-mono text-sm">{value}</span>
+      <span className={icon ? "inline-flex items-center gap-2 font-mono text-sm" : "font-mono text-sm"}>
+        {icon}
+        {value}
+      </span>
     </div>
   );
 }
@@ -785,16 +831,29 @@ function StatCard({
   value,
   highlight,
   live,
+  pulseKey,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
   live?: boolean;
+  pulseKey?: number;
 }) {
   return (
     <div
-      className={`glass-card p-4 ${highlight ? "border-accent/30 bg-accent/5" : ""}`}
+      className={`relative glass-card p-4 ${highlight ? "border-accent/30 bg-accent/5" : ""}`}
     >
+      {pulseKey !== undefined && (
+        // Re-keying the overlay restarts the one-shot flash on every pulse
+        // tick. Tailwind's reduced-motion variant (and the global media query)
+        // disable the animation for users who prefer less motion.
+        <span
+          key={pulseKey}
+          aria-hidden="true"
+          data-testid="claimable-tick-pulse"
+          className="claimable-tick-flash pointer-events-none absolute inset-0 motion-reduce:animate-none"
+        />
+      )}
       <p className="text-slate-400 text-sm mb-1">{label}</p>
       <p className={`text-lg font-bold ${live ? "text-accent" : ""}`}>
         {value}

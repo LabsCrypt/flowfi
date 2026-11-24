@@ -183,6 +183,15 @@ export function getPublisher(): Redis | null {
   return _publisher;
 }
 
+/**
+ * The shared Redis client backing general-purpose data structures (sorted
+ * sets, counters) as opposed to pub/sub. Returns null when Redis is not
+ * configured or failed to connect, so callers can fall back gracefully.
+ */
+export function getRedisClient(): Redis | null {
+  return _publisher;
+}
+
 export function getSubscriber(): Redis | null {
   return _subscriber;
 }
@@ -237,4 +246,212 @@ export async function disconnectRedis(): Promise<void> {
   _publisher = null;
   _subscriber = null;
   _available = false;
+}
+
+// --- Sliding-Window Event Tracker (Issue #1469) ---
+//
+// The stream-drain sentinel needs rolling-window aggregates over
+// high-frequency events (withdrawals, stream creations). Redis sorted sets
+// give O(log N) inserts plus a range query whose lower bound ages entries out
+// via ZREMRANGEBYSCORE. When Redis is not configured (single-instance
+// deployments and the unit-test suite) the identical interface is backed by a
+// process-local Map so anomaly detection degrades instead of disappearing.
+//
+// Each sample's numeric weight (the withdrawal volume, or a constant 1 for
+// pure counts) is encoded into the sorted-set member as `${id}:${weight}`.
+// That lets one key answer both "how many events?" (member count) and
+// "how much volume?" (sum of the weights) without a second round-trip.
+
+export interface SlidingWindowSnapshot {
+  /** Number of samples currently inside the window. */
+  count: number;
+  /** Sum of the sample weights currently inside the window. */
+  sum: number;
+  /** Epoch milliseconds of the oldest sample, or null when the window is empty. */
+  firstAt: number | null;
+  /** Epoch milliseconds of the newest sample, or null when the window is empty. */
+  lastAt: number | null;
+}
+
+export interface SlidingWindowTracker {
+  /**
+   * Insert a sample. `id` deduplicates: re-adding the same id refreshes its
+   * timestamp instead of creating a second entry (used for "distinct streams").
+   */
+  add(key: string, id: string, weight?: number, at?: number): Promise<void>;
+  /** Aggregate every sample newer than `now - windowMs`. */
+  snapshot(key: string, windowMs: number, now?: number): Promise<SlidingWindowSnapshot>;
+  /** Count of distinct ids inside the window. */
+  distinct(key: string, windowMs: number, now?: number): Promise<number>;
+  /** Drop a key entirely (used by tests and admin resets). */
+  clear(key: string): Promise<void>;
+}
+
+const EMPTY_SNAPSHOT: SlidingWindowSnapshot = {
+  count: 0,
+  sum: 0,
+  firstAt: null,
+  lastAt: null,
+};
+
+function encodeMember(id: string, weight: number): string {
+  return `${id}:${weight}`;
+}
+
+function decodeWeight(member: string): number {
+  const separator = member.lastIndexOf(':');
+  if (separator === -1) return 1;
+  const parsed = Number.parseFloat(member.slice(separator + 1));
+  return Number.isFinite(parsed) ? parsed : 1;
+}
+
+/**
+ * In-memory fallback used when Redis is unavailable. Bounded per key so a
+ * sustained attack cannot grow memory without limit; oldest samples are
+ * evicted first.
+ */
+export class InMemorySlidingWindowTracker implements SlidingWindowTracker {
+  private windows = new Map<string, Map<string, { score: number; weight: number }>>();
+  private readonly maxSamplesPerKey: number;
+
+  constructor(maxSamplesPerKey = 5_000) {
+    this.maxSamplesPerKey = maxSamplesPerKey;
+  }
+
+  async add(key: string, id: string, weight = 1, at = Date.now()): Promise<void> {
+    let window = this.windows.get(key);
+    if (!window) {
+      window = new Map();
+      this.windows.set(key, window);
+    }
+    const member = encodeMember(id, weight);
+    window.delete(member); // refresh recency on re-insert
+    window.set(member, { score: at, weight });
+
+    // Age out before bounding by size: a sample outside every supported
+    // window can never be read again, so dropping it is safe. Window
+    // *reads* must not prune (a narrow read would destroy the data a wider
+    // baseline read needs).
+    const retentionCutoff = at - DEFAULT_TRACKER_RETENTION_MS;
+    for (const [existing, sample] of window) {
+      if (sample.score < retentionCutoff) window.delete(existing);
+    }
+
+    while (window.size > this.maxSamplesPerKey) {
+      const oldest = window.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      window.delete(oldest);
+    }
+  }
+
+  async snapshot(
+    key: string,
+    windowMs: number,
+    now = Date.now(),
+  ): Promise<SlidingWindowSnapshot> {
+    const window = this.windows.get(key);
+    if (!window || window.size === 0) return { ...EMPTY_SNAPSHOT };
+
+    const cutoff = now - windowMs;
+    let count = 0;
+    let sum = 0;
+    let firstAt: number | null = null;
+    let lastAt: number | null = null;
+
+    for (const sample of window.values()) {
+      if (sample.score < cutoff) continue;
+      count += 1;
+      sum += sample.weight;
+      if (firstAt === null || sample.score < firstAt) firstAt = sample.score;
+      if (lastAt === null || sample.score > lastAt) lastAt = sample.score;
+    }
+
+    return { count, sum, firstAt, lastAt };
+  }
+
+  async distinct(key: string, windowMs: number, now = Date.now()): Promise<number> {
+    return (await this.snapshot(key, windowMs, now)).count;
+  }
+
+  async clear(key: string): Promise<void> {
+    this.windows.delete(key);
+  }
+}
+
+/** Redis sorted-set backed tracker. */
+export class RedisSlidingWindowTracker implements SlidingWindowTracker {
+  constructor(private readonly redis: Redis) {}
+
+  async add(key: string, id: string, weight = 1, at = Date.now()): Promise<void> {
+    const member = encodeMember(id, weight);
+    await this.redis.zremrangebyscore(key, '-inf', at - DEFAULT_TRACKER_RETENTION_MS);
+    await this.redis.zadd(key, at, member);
+    await this.redis.pexpire(key, DEFAULT_TRACKER_RETENTION_MS);
+  }
+
+  async snapshot(
+    key: string,
+    windowMs: number,
+    now = Date.now(),
+  ): Promise<SlidingWindowSnapshot> {
+    // Read-only: `add` owns retention pruning. Pruning here would let a
+    // narrow-window read delete the long-range history a baseline read needs.
+    const cutoff = now - windowMs;
+    const raw = (await this.redis.zrangebyscore(
+      key,
+      cutoff,
+      '+inf',
+      'WITHSCORES',
+    )) as string[];
+
+    let count = 0;
+    let sum = 0;
+    let firstAt: number | null = null;
+    let lastAt: number | null = null;
+
+    // zrangebyscore(...WITHSCORES) returns [member, score, member, score, ...]
+    for (let i = 0; i < raw.length; i += 2) {
+      const member = raw[i] ?? '';
+      const score = Number.parseFloat(raw[i + 1] ?? '');
+      count += 1;
+      sum += decodeWeight(member);
+      if (Number.isFinite(score)) {
+        if (firstAt === null || score < firstAt) firstAt = score;
+        if (lastAt === null || score > lastAt) lastAt = score;
+      }
+    }
+
+    if (count === 0) return { ...EMPTY_SNAPSHOT };
+    return { count, sum, firstAt, lastAt };
+  }
+
+  async distinct(key: string, windowMs: number, now = Date.now()): Promise<number> {
+    const cutoff = now - windowMs;
+    return this.redis.zcount(key, cutoff, '+inf');
+  }
+
+  async clear(key: string): Promise<void> {
+    await this.redis.del(key);
+  }
+}
+
+/** Samples older than this are pruned on every insert so keys never grow unbounded. */
+const DEFAULT_TRACKER_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+let _tracker: SlidingWindowTracker | null = null;
+
+/**
+ * Resolve the process-wide sliding-window tracker, preferring Redis when a
+ * client is connected and transparently using the in-memory fallback
+ * otherwise.
+ */
+export function getSlidingWindowTracker(): SlidingWindowTracker {
+  const redis = getRedisClient();
+  if (redis) {
+    return new RedisSlidingWindowTracker(redis);
+  }
+  if (!_tracker) {
+    _tracker = new InMemorySlidingWindowTracker();
+  }
+  return _tracker;
 }

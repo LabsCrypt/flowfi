@@ -1,5 +1,11 @@
+import type { xdr } from "@stellar/stellar-sdk";
 import type { WalletSession } from "@/lib/wallet";
 import { getNetworkConfig, type NetworkId } from "@/lib/stellar-config";
+import { loadStellarSdk, type RpcErrorShape } from "@/lib/stellar-sdk";
+import {
+  assessMultisigRouting,
+  type MultisigRoutingResult,
+} from "@/lib/stellar-multisig";
 
 function activeNetworkConfig() {
   const stored = typeof window === "undefined" ? null : window.localStorage.getItem("flowfi.network");
@@ -59,10 +65,27 @@ export class SorobanCallError extends Error {
       | "WalletRejected"
       | "NetworkError"
       | "ContractNotFound"
+      | "MultisigRequired"
       | "Unknown",
   ) {
     super(message);
     this.name = "SorobanCallError";
+  }
+}
+
+/**
+ * Thrown when a signed envelope is below the account's required signing weight
+ * (issue #1471). Broadcasting it would surface a raw `tx_bad_auth` error, so the
+ * caller should hand the `signedXdr` to the multisig proposal flow instead.
+ */
+export class MultisigRequiredError extends SorobanCallError {
+  constructor(
+    message: string,
+    public readonly signedXdr: string,
+    public readonly routing: MultisigRoutingResult,
+  ) {
+    super(message, "MultisigRequired");
+    this.name = "MultisigRequiredError";
   }
 }
 
@@ -74,12 +97,11 @@ const CONTRACT_NOT_FOUND_PATTERN =
  * contract deployed at the configured address, as opposed to a generic
  * simulation/network failure.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function isContractNotFoundError(simResult: any): boolean {
-  const message: string =
-    typeof simResult?.error === "string"
+function isContractNotFoundError(simResult: RpcErrorShape): boolean {
+  const message =
+    typeof simResult.error === "string"
       ? simResult.error
-      : (simResult?.error?.message ?? "");
+      : (simResult.error?.message ?? "");
   return CONTRACT_NOT_FOUND_PATTERN.test(message);
 }
 
@@ -144,11 +166,8 @@ export async function fetchTokenBalance(
   publicKey: string,
   tokenSymbol: string,
 ): Promise<bigint> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sdk: any = await import("@stellar/stellar-sdk");
-  const { Address, Contract, TransactionBuilder, BASE_FEE, scValToNative } = sdk;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
+  const { Address, Contract, TransactionBuilder, BASE_FEE, scValToNative, rpc } =
+    await loadStellarSdk();
 
   const tokenAddress = getTokenAddress(tokenSymbol);
   const config = activeNetworkConfig();
@@ -165,14 +184,14 @@ export async function fetchTokenBalance(
     .build();
 
   const simResult = await server.simulateTransaction(tx);
-  if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+  if (rpc.Api.isSimulationError(simResult)) {
     if (isContractNotFoundError(simResult)) {
       throw contractNotFoundError(tokenAddress);
     }
     throw new SorobanCallError(`Failed to fetch token balance: ${simResult.error}`, "NetworkError");
   }
 
-  const rawResult = simResult?.result?.retval;
+  const rawResult = simResult.result?.retval;
   if (!rawResult) {
     throw new SorobanCallError("Token balance query returned no value.", "NetworkError");
   }
@@ -209,14 +228,10 @@ function wait(ms: number): Promise<void> {
 async function freighterCall(
   publicKey: string,
   method: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  args: any[],
+  args: xdr.ScVal[],
 ): Promise<SorobanResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sdk: any = await import("@stellar/stellar-sdk");
-  const { Contract, TransactionBuilder, BASE_FEE } = sdk;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
+  const sdk = await loadStellarSdk();
+  const { Contract, TransactionBuilder, BASE_FEE, rpc } = sdk;
 
   const { signTransaction } = await import("@stellar/freighter-api");
 
@@ -234,14 +249,14 @@ async function freighterCall(
     .build();
 
   const simResult = await server.simulateTransaction(tx);
-  if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+  if (rpc.Api.isSimulationError(simResult)) {
     if (isContractNotFoundError(simResult)) {
       throw contractNotFoundError(config.contractId);
     }
     throw new SorobanCallError(`Simulation failed: ${simResult.error}`, "NetworkError");
   }
 
-  const preparedTx = (rpc.assembleTransaction ?? sdk.assembleTransaction)(tx, simResult).build();
+  const preparedTx = rpc.assembleTransaction(tx, simResult).build();
 
   const { signedTxXdr, error: signError } = await signTransaction(
     preparedTx.toXDR(),
@@ -256,6 +271,23 @@ async function freighterCall(
     throw new SorobanCallError(msg, "Unknown");
   }
 
+  // Issue #1471: if the wallet's single signature is below the account's high
+  // threshold, broadcasting here fails with a cryptic `tx_bad_auth`. Detect
+  // that up-front and route the partial envelope into the co-signing flow.
+  const routing = await assessMultisigRouting({
+    publicKey,
+    signedXdr: signedTxXdr,
+    networkPassphrase: config.passphrase,
+    networkId: config.id,
+  });
+  if (routing?.needsProposal) {
+    throw new MultisigRequiredError(
+      "This multisig account needs more signatures before the transaction can be broadcast.",
+      signedTxXdr,
+      routing,
+    );
+  }
+
   const signedTx = TransactionBuilder.fromXDR(signedTxXdr, config.passphrase);
   const sendResult = await server.sendTransaction(signedTx);
 
@@ -267,8 +299,7 @@ async function freighterCall(
   }
 
   const txHash = sendResult.hash;
-  const SUCCESS = rpc.Api?.GetTransactionStatus?.SUCCESS ?? "SUCCESS";
-  const FAILED  = rpc.Api?.GetTransactionStatus?.FAILED  ?? "FAILED";
+  const { SUCCESS, FAILED } = rpc.Api.GetTransactionStatus;
 
   for (let i = 0; i < 20; i++) {
     await wait(1000);
@@ -299,7 +330,7 @@ export async function createStream(
   session: WalletSession,
   params: CreateStreamParams,
 ): Promise<SorobanResult> {
-  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { Address, nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "create_stream", [
     new Address(session.publicKey).toScVal(),
     new Address(params.recipient).toScVal(),
@@ -313,7 +344,7 @@ export async function topUpStream(
   session: WalletSession,
   params: TopUpParams,
 ): Promise<SorobanResult> {
-  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { Address, nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "top_up_stream", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),
@@ -325,7 +356,7 @@ export async function cancelStream(
   session: WalletSession,
   params: CancelParams,
 ): Promise<SorobanResult> {
-  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { Address, nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "cancel_stream", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),
@@ -336,7 +367,7 @@ export async function withdrawFromStream(
   session: WalletSession,
   params: WithdrawParams,
 ): Promise<SorobanResult> {
-  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { Address, nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "withdraw", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),
@@ -347,7 +378,7 @@ export async function batchWithdrawFromStreams(
   session: WalletSession,
   params: BatchWithdrawParams,
 ): Promise<SorobanResult> {
-  const { nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "batch_withdraw", [
     // A Vec needs its element type, not the bare "vec" tag: `nativeToScVal`
     // encodes each entry as the given type. Produces the same ScVal as
@@ -360,7 +391,7 @@ export async function pauseStream(
   session: WalletSession,
   params: PauseParams,
 ): Promise<SorobanResult> {
-  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { Address, nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "pause_stream", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),
@@ -371,7 +402,7 @@ export async function resumeStream(
   session: WalletSession,
   params: ResumeParams,
 ): Promise<SorobanResult> {
-  const { Address, nativeToScVal } = await import("@stellar/stellar-sdk");
+  const { Address, nativeToScVal } = await loadStellarSdk();
   return freighterCall(session.publicKey, "resume_stream", [
     new Address(session.publicKey).toScVal(),
     nativeToScVal(params.streamId, { type: "u64" }),

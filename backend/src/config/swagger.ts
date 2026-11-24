@@ -15,17 +15,22 @@ The API implements caching for frequently accessed endpoints, such as claimable 
 
 ## Sandbox Mode
 
-FlowFi API supports sandbox mode for testing without affecting production data.
+FlowFi API supports sandbox mode for labelling test traffic.
 
 **Enable Sandbox Mode:**
 - Header: \`X-Sandbox-Mode: true\`
 - Query Parameter: \`?sandbox=true\`
 
+Sandbox mode is only available when the server is started with
+\`SANDBOX_MODE_ENABLED=true\`.
+
 **Sandbox Features:**
-- Isolated database (separate from production)
-- All responses include \`_sandbox\` metadata
-- Response headers include \`X-Sandbox-Mode: true\`
-- Safe for testing and development
+- Event payloads returned to sandbox clients are tagged with \`_sandbox: true\`
+  so test data is distinguishable from production records.
+- Response headers include \`X-Sandbox-Mode: true\` and \`X-Environment: sandbox\`.
+
+**Note:** Sandbox mode currently labels requests/responses and tags events; it
+does not route traffic to a separate datastore.
 
 See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       contact: {
@@ -71,6 +76,27 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
       {
         name: 'Observability',
         description: 'Prometheus metrics scrape endpoint',
+      },
+      {
+        name: 'Compliance',
+        description:
+          'Sanctions / OFAC screening and SEP-0009 KYC attestation endpoints',
+      },
+      {
+        name: 'Analytics',
+        description: 'Public protocol statistics (TVL, history, DefiLlama)',
+      },
+      {
+        name: 'Auth',
+        description: 'SEP-0010 challenge and verification endpoints that issue API tokens',
+      },
+      {
+        name: 'Tokens',
+        description: 'Verified Stellar token metadata',
+      },
+      {
+        name: 'Webhooks',
+        description: 'Webhook subscriptions and delivery testing',
       },
     ],
     components: {
@@ -210,6 +236,14 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             updatedAt: {
               type: 'string',
               format: 'date-time',
+            },
+            events: {
+              type: 'array',
+              description:
+                'Up to 20 most recent stream events ordered descending by timestamp. For complete event history use GET /v1/streams/{streamId}/events.',
+              items: {
+                $ref: '#/components/schemas/StreamEvent',
+              },
             },
           },
         },
@@ -362,12 +396,14 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         },
         PauseResumeResponse: {
           type: 'object',
-          required: ['success', 'streamId', 'txHash'],
+          required: ['success', 'simulated', 'streamId', 'isPaused'],
           properties: {
             success: { type: 'boolean', example: true },
+            simulated: { type: 'boolean', description: 'True: the call was dry-run only. Nothing was submitted and nothing was written.' },
             streamId: { type: 'integer' },
-            txHash: { type: 'string', description: 'Stellar transaction hash of the pause/resume simulation' },
+            isPaused: { type: 'boolean', description: 'Current pause flag, unchanged by a simulation' },
             stream: { $ref: '#/components/schemas/Stream' },
+            message: { type: 'string', description: 'How to complete the action by signing in the wallet' },
           },
         },
         TopUpResponse: {
@@ -381,13 +417,13 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
         },
         WithdrawResponse: {
           type: 'object',
-          required: ['success', 'streamId', 'txHash', 'amount'],
+          required: ['success', 'simulated', 'streamId', 'amount'],
           properties: {
             success: { type: 'boolean', example: true },
+            simulated: { type: 'boolean', description: 'True: the withdrawal was dry-run only. `withdrawnAmount` and StreamEvent rows are written by the indexer from the confirmed on-chain event.' },
             streamId: { type: 'integer' },
-            txHash: { type: 'string', description: 'Stellar transaction hash of the withdrawal' },
-            amount: { type: 'string', description: 'Amount withdrawn (i128 as string)' },
-            stream: { $ref: '#/components/schemas/Stream' },
+            amount: { type: 'string', description: 'Amount that would be withdrawn right now (i128 as string)' },
+            message: { type: 'string', description: 'How to complete the withdrawal by signing in the wallet' },
           },
         },
         CancelResponse: {
@@ -440,12 +476,58 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
             createdAt: { type: 'string', format: 'date-time' },
           },
         },
+        SentinelIncident: {
+          type: 'object',
+          required: ['id', 'ruleId', 'severity', 'title', 'description', 'detectedAt', 'threatScore'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            ruleId: {
+              type: 'string',
+              enum: [
+                'VELOCITY_SPIKE',
+                'MULTI_STREAM_DRAIN',
+                'HIGH_VALUE_DRAIN',
+                'TOKEN_VELOCITY_SPIKE',
+                'ZERO_RUNWAY_FLOOD',
+                'STREAM_CREATION_SPIKE',
+              ],
+            },
+            severity: { type: 'string', enum: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            address: { type: 'string', nullable: true, description: 'Stellar public key involved' },
+            token: { type: 'string', nullable: true },
+            streamId: { type: 'string', nullable: true },
+            ledger: { type: 'integer', nullable: true },
+            detectedAt: { type: 'string', format: 'date-time' },
+            threatScore: { type: 'integer', description: 'Per-incident severity weight (10-90)' },
+            evidence: { type: 'object', additionalProperties: true },
+            circuitBreaker: {
+              type: 'object',
+              nullable: true,
+              description: 'HMAC-signed emergency pause proposal (CRITICAL incidents only)',
+              additionalProperties: true,
+            },
+            acknowledged: { type: 'boolean' },
+          },
+        },
         HealthResponse: {
           type: 'object',
           required: ['status', 'db', 'indexerEnabled', 'uptime', 'checks'],
           properties: {
-            status: { type: 'string', enum: ['ok', 'degraded'], example: 'ok' },
+            status: {
+              type: 'string',
+              enum: ['ok', 'degraded'],
+              example: 'ok',
+              description: '`degraded` with HTTP 503 when a liveness check fails; `degraded` with HTTP 200 when only Redis is unavailable or timed out',
+            },
             db: { type: 'string', enum: ['connected', 'disconnected'], example: 'connected' },
+            redis: {
+              type: 'string',
+              enum: ['ok', 'unavailable', 'timeout', 'not_configured'],
+              example: 'ok',
+              description: 'Same as checks.redis.status',
+            },
             indexerEnabled: { type: 'boolean', description: 'Whether the event indexer is configured' },
             indexerLag: { type: 'integer', nullable: true, description: 'Seconds since last indexer update, or null when no state row exists yet' },
             eventsProcessed: { type: 'integer', description: 'Lifetime count of successfully processed indexer events' },
@@ -459,7 +541,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
               properties: {
                 database: {
                   type: 'object',
-                  properties: { status: { type: 'string', enum: ['ok', 'down'] } },
+                  properties: { status: { type: 'string', enum: ['ok', 'down', 'timeout'] } },
                 },
                 indexer: {
                   type: 'object',
@@ -471,7 +553,7 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                 },
                 redis: {
                   type: 'object',
-                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'not_configured'] } },
+                  properties: { status: { type: 'string', enum: ['ok', 'unavailable', 'timeout', 'not_configured'] } },
                 },
                 sorobanRpc: {
                   type: 'object',
@@ -494,6 +576,11 @@ See [Sandbox Mode Documentation](../docs/SANDBOX_MODE.md) for details.`,
                   type: 'array',
                   description: 'Structured validation issues when applicable',
                   items: { type: 'object' },
+                },
+                requestId: {
+                  type: 'string',
+                  description:
+                    'Correlation ID echoed from the response X-Request-ID header; omitted when no ID was assigned',
                 },
               },
             },

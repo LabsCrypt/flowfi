@@ -5,10 +5,12 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import app from '../src/app.js';
+import { prisma } from '../src/lib/prisma.js';
 import { __authChallengeTestUtils, requireAdmin, signJwt } from '../src/middleware/auth.js';
 
 // Mocking prisma for any downstream dependency
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   default: {
     stream: { findMany: vi.fn(() => Promise.resolve([])) },
     streamEvent: {
@@ -176,7 +178,7 @@ describe('Authentication & Middleware Tests', () => {
         .send({ publicKey: keypair.publicKey(), signedTransaction });
 
       expect(res.status).toBe(401);
-      expect(res.body.error).toMatch(/Challenge expired or not found/i);
+      expect(res.body.error.message).toMatch(/Challenge expired or not found/i);
     });
 
     it('test_verify_invalid_signature_returns_401', async () => {
@@ -197,7 +199,7 @@ describe('Authentication & Middleware Tests', () => {
         .send({ publicKey: keypair.publicKey(), signedTransaction });
 
       expect(res.status).toBe(401);
-      expect(res.body.error).toMatch(/Invalid signature/i);
+      expect(res.body.error.message).toMatch(/Invalid signature/i);
     });
 
     it('test_verify_wrong_address_returns_401', async () => {
@@ -218,7 +220,7 @@ describe('Authentication & Middleware Tests', () => {
         .send({ publicKey: keypair.publicKey(), signedTransaction });
 
       expect(res.status).toBe(401);
-      expect(res.body.error).toMatch(/Transaction source does not match publicKey/i);
+      expect(res.body.error.message).toMatch(/Transaction source does not match publicKey/i);
     });
   });
 
@@ -263,13 +265,13 @@ describe('Authentication & Middleware Tests', () => {
         .set('Authorization', `Bearer ${fakeJwt}`);
 
       expect(res.status).toBe(401);
-      expect(res.body.message).toMatch(/Invalid or expired token/i);
+      expect(res.body.error.message).toMatch(/Invalid or expired token/i);
     });
 
     it('test_auth_middleware_rejects_missing_header', async () => {
       const res = await request(app).get('/v1/events/subscribe');
       expect(res.status).toBe(401);
-      expect(res.body.message).toMatch(/Missing Bearer token/i);
+      expect(res.body.error.message).toMatch(/Missing Bearer token/i);
     });
 
     it('test_sse_subscribe_without_token_returns_401', async () => {
@@ -324,8 +326,8 @@ describe('Authentication & Middleware Tests', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.error).toBe('Forbidden');
-      expect(res.body.message).toMatch(/Admin access required/i);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(res.body.error.message).toMatch(/Admin access required/i);
     });
 
     it('test_admin_middleware_accepts_admin_token', async () => {
@@ -368,8 +370,8 @@ describe('Authentication & Middleware Tests', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.error).toBe('Forbidden');
-      expect(res.body.message).toMatch(/Admin access required/i);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(res.body.error.message).toMatch(/Admin access required/i);
     });
   });
 
@@ -419,7 +421,7 @@ describe('Authentication & Middleware Tests', () => {
         .set('Authorization', `Bearer ${token}`);
 
       expect(res.status).toBe(403);
-      expect(res.body.error).toBe('Forbidden');
+      expect(res.body.error.code).toBe('FORBIDDEN');
     });
   });
 });

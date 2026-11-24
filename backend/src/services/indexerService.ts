@@ -123,10 +123,11 @@ export async function previewReplay(fromLedger: number): Promise<ReplayPreview> 
  * The @@unique([transactionHash, eventType]) constraint on StreamEvent
  * guarantees no duplicate StreamEvent rows are created on replay.
  *
- * CAVEAT: This dedup does NOT apply to stream state mutations.
- * Stream.withdrawnAmount (handleTokensWithdrawn, soroban-event-worker.ts:635)
- * is incremented unconditionally on every replay, so replay is NOT fully
- * idempotent. See issue #808 for the withdrawnAmount idempotency fix.
+ * The same holds for stream state: `handleTokensWithdrawn` (and the other
+ * handlers) check for the existing `StreamEvent` row *before* mutating any
+ * Stream field, inside the same transaction, so a replay cannot
+ * double-increment `withdrawnAmount` (#802). Replay is idempotent for both the
+ * event log and the stream state it derives.
  */
 export async function replayFromLedger(
   fromLedger: number,
@@ -240,7 +241,7 @@ export function serializeDeadLetterPayload(event: rpc.Api.EventResponse): string
     ledgerClosedAt: event.ledgerClosedAt,
     transactionIndex: event.transactionIndex,
     operationIndex: event.operationIndex,
-    inSuccessfulContractCall: event.inSuccessfulContractCall,
+    inSuccessfulContractCall: event.inSuccessfulContractCall ?? false,
     topic: event.topic.map((scval) => Buffer.from(scval.toXDR()).toString('base64')),
     value: Buffer.from(event.value.toXDR()).toString('base64'),
   };

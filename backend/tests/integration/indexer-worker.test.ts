@@ -49,6 +49,7 @@ const { mockPrisma, mockSseService } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(mockPrisma)),
   prisma: mockPrisma,
   default: mockPrisma,
 }));

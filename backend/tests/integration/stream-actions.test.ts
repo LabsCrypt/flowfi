@@ -6,11 +6,13 @@ const {
   mockPauseStream,
   mockResumeStream,
   mockWithdraw,
+  mockGetClaimableAmount,
   mockPrisma,
 } = vi.hoisted(() => ({
   mockPauseStream: vi.fn(),
   mockResumeStream: vi.fn(),
   mockWithdraw: vi.fn(),
+  mockGetClaimableAmount: vi.fn(),
   mockPrisma: {
     stream: {
       findUnique: vi.fn(),
@@ -43,6 +45,11 @@ vi.mock('../../src/services/sorobanService.js', () => ({
   pauseStream: mockPauseStream,
   resumeStream: mockResumeStream,
   withdraw: mockWithdraw,
+}));
+
+vi.mock('../../src/services/claimable.service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/services/claimable.service.js')>()),
+  claimableAmountService: { getClaimableAmount: mockGetClaimableAmount },
 }));
 
 import app from '../../src/app.js';
@@ -121,12 +128,18 @@ describe('stream action routes', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(response.status).toBe(200);
+    // Issue #1847: a dry-run reports the state it read, never one it wrote.
     expect(response.body).toMatchObject({
       success: true,
+      simulated: true,
       streamId: 7,
-      txHash: 'pause-tx-hash',
+      isPaused: false,
     });
+    expect(response.body).not.toHaveProperty("txHash");
     expect(mockPauseStream).toHaveBeenCalledWith(sender.publicKey(), 7n);
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
   });
 
   it('rejects a raw signed transaction bearer token without a JWT', async () => {
@@ -139,8 +152,7 @@ describe('stream action routes', () => {
 
     expect(response.status).toBe(401);
     expect(response.body).toMatchObject({
-      error: 'Unauthorized',
-      message: 'Invalid or expired token',
+      error: { code: 'UNAUTHORIZED', message: 'Invalid or expired token' },
     });
   });
 
@@ -173,10 +185,14 @@ describe('stream action routes', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       success: true,
+      simulated: true,
       streamId: 9,
-      txHash: 'resume-tx-hash',
+      isPaused: true,
     });
+    expect(response.body).not.toHaveProperty("txHash");
     expect(mockResumeStream).toHaveBeenCalledWith(sender.publicKey(), 9n);
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
   });
 
   it('POST /v1/streams/:streamId/withdraw withdraws the claimable amount for the recipient', async () => {
@@ -199,6 +215,10 @@ describe('stream action routes', () => {
       updatedAt: new Date(),
     });
     mockWithdraw.mockResolvedValue({ txHash: 'withdraw-tx-hash' });
+    mockGetClaimableAmount.mockReturnValue({
+      claimableAmount: '100',
+      actionable: true,
+    });
     mockPrisma.stream.update.mockResolvedValue({
       streamId: 11,
       withdrawnAmount: '600',
@@ -212,19 +232,17 @@ describe('stream action routes', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       success: true,
+      simulated: true,
       streamId: 11,
-      txHash: 'withdraw-tx-hash',
       amount: '100',
     });
+    expect(response.body).not.toHaveProperty("txHash");
     expect(mockWithdraw).toHaveBeenCalledWith(11n, recipient.publicKey());
-    expect(mockPrisma.streamEvent.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({
-          eventType: 'WITHDRAWN',
-          amount: '100',
-          transactionHash: 'withdraw-tx-hash',
-        }),
-      }),
-    );
+    // Issue #1847: the dry-run moves no funds, so it may not record that it did.
+    // `withdrawnAmount` and the WITHDRAWN row come from the confirmed on-chain
+    // event, written only by the indexer.
+    expect(mockPrisma.stream.update).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.streamEvent.create).not.toHaveBeenCalled();
   });
 });

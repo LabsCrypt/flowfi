@@ -271,6 +271,7 @@ export function getDefaultTokenDecimals(symbol: string): number {
 }
 
 import { logger } from "@/lib/logger";
+import { loadStellarSdk } from "@/lib/stellar-sdk";
 
 // RPC configuration for fetching token decimals
 const SOROBAN_RPC_URL =
@@ -292,11 +293,8 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sdk: any = await import("@stellar/stellar-sdk");
-    const { Contract, TransactionBuilder, BASE_FEE } = sdk;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rpc: any = sdk.rpc ?? sdk.SorobanRpc;
+    const sdk = await loadStellarSdk();
+    const { Contract, TransactionBuilder, BASE_FEE, rpc } = sdk;
 
     // Use a dummy account for simulation (just need to read contract data)
     const dummyKeypair = sdk.Keypair.random();
@@ -316,7 +314,7 @@ export async function fetchTokenDecimals(tokenAddress: string): Promise<number> 
 
     const simResult = await server.simulateTransaction(tx);
 
-    if (rpc.Api?.isSimulationError?.(simResult) ?? simResult?.error) {
+    if (rpc.Api.isSimulationError(simResult)) {
       logger.warn(`Failed to fetch decimals for ${tokenAddress}:`, simResult.error);
       // Cache default to avoid repeated failed calls
       setCachedTokenDecimals(tokenAddress, 7);
@@ -376,4 +374,56 @@ export function getTokenDecimalsSync(
   }
 
   return 7; // Return default while fetching
+}
+
+/**
+ * Compact display formatting for large token balances (issue #1509).
+ *
+ * Returns BOTH a compact form ("1.45M", "12.5K") for the visible cell and the
+ * exact decimal string for a hover tooltip. Callers should always render the
+ * compact form and attach the exact form to `title=` (or an accessible label)
+ * so the full precision is never lost — only hidden.
+ *
+ *   formatTokenCompact(14_502_934_910_293n, 7)
+ *   // => { compact: "1.45M", exact: "1450293.4910293" }
+ *
+ * `decimals` is the token's fixed-point scale (7 for Stellar assets). The
+ * compact form uses the en locale's `compact` notation — the same
+ * "12.5K / 1.45M" shape the issue specifies. The exact form is trimmed of
+ * trailing zeros so it reads like the raw on-chain amount rather than a
+ * padded fixed-width number.
+ */
+export function formatTokenCompact(
+  amount: bigint,
+  decimals: number,
+  opts: { locale?: string; maximumFractionDigits?: number } = {},
+): { compact: string; exact: string } {
+  const locale = opts.locale ?? "en";
+  const maxFractionDigits = opts.maximumFractionDigits ?? 2;
+
+  const negative = amount < 0n;
+  const abs = negative ? -amount : amount;
+  const divisor = 10n ** BigInt(decimals);
+  const whole = abs / divisor;
+  const frac = abs % divisor;
+
+  // Build the exact decimal string without float imprecision.
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  const exactAbs = fracStr.length > 0 ? `${whole}.${fracStr}` : whole.toString();
+  const exact = negative ? `-${exactAbs}` : exactAbs;
+
+  // Convert to a Number only for the Intl compact formatting. Values beyond
+  // Number.MAX_SAFE_INTEGER lose sub-unit precision here, but that precision
+  // is already shown in `exact`, and the compact form is a display hint.
+  const asNumber = Number(exact);
+  // Below 10,000 the full grouped value already fits, so skip the K suffix
+  // (otherwise 9,999 would round up to "10K").
+  const compactAbs = new Intl.NumberFormat(locale, {
+    notation: Math.abs(asNumber) < 10_000 ? "standard" : "compact",
+    maximumFractionDigits: maxFractionDigits,
+  }).format(Math.abs(asNumber));
+
+  const compact = negative ? `-${compactAbs}` : compactAbs;
+
+  return { compact, exact };
 }

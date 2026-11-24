@@ -38,9 +38,11 @@ vi.mock('../src/services/sorobanService.js', async (importOriginal) => ({
 }));
 
 import app from '../src/app.js';
+import { prisma } from '../src/lib/prisma.js';
 
 // Mock Prisma so tests don't require a real DB connection
 vi.mock('../src/lib/prisma.js', () => ({
+  withReplicaFallback: (query: (client: any) => unknown) => Promise.resolve(query(prisma)),
   default: {
     stream: {
       upsert: vi.fn(),
@@ -63,7 +65,6 @@ vi.mock('../src/lib/prisma.js', () => ({
   },
 }));
 
-import { prisma } from '../src/lib/prisma.js';
 
 describe('POST /v1/streams', () => {
   beforeEach(() => {
@@ -134,6 +135,27 @@ describe('POST /v1/streams', () => {
 
     expect(response.status).toBe(400);
     expect(response.body).toHaveProperty('error');
+    expect(prisma.stream.upsert).not.toHaveBeenCalled();
+  });
+
+  it('should return 400 when depositedAmount exceeds i128 max (#1532)', async () => {
+    const invalidData = {
+      streamId: '2',
+      sender: 'GTEST_USER_PUBLIC_KEY',
+      recipient: 'GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD',
+      tokenAddress: 'CBCD789EFG012HIJ345KLM678NOP901QRS234TUV567WXY890ZAB123CDE',
+      ratePerSecond: '100',
+      depositedAmount: '170141183460469231731687303715884105728',
+      startTime: '1700000000',
+    };
+
+    const response = await request(app)
+      .post('/v1/streams')
+      .send(invalidData)
+      .set('Accept', 'application/json');
+
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).toContain('depositedAmount');
     expect(prisma.stream.upsert).not.toHaveBeenCalled();
   });
 

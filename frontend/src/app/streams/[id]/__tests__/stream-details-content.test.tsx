@@ -1,21 +1,41 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, act } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+const renderWithQueryClient = (ui: React.ReactElement) => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      {ui}
+    </QueryClientProvider>
+  );
+};
 import userEvent from "@testing-library/user-event";
 import React from "react";
 
 // ─── Mocks ──────────────────────────────────────────────────────────────
 
-const mockSession = {
-  publicKey: "GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD",
-  network: "TESTNET",
-  walletName: "Freighter",
-};
+const { origUseWallet, mockSession } = vi.hoisted(() => {
+  const mockSession = {
+    publicKey: "GDEF456ABC789GHI012JKL345MNO678PQR901STU234VWX567YZA123BCD",
+    network: "TESTNET",
+    walletName: "Freighter",
+  };
+  return {
+    origUseWallet: vi.fn(() => ({
+      session: mockSession,
+      isHydrated: true,
+    })),
+    mockSession,
+  };
+});
 
 vi.mock("@/context/wallet-context", () => ({
-  useWallet: () => ({
-    session: mockSession,
-    isHydrated: true,
-  }),
+  useWallet: origUseWallet,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -32,6 +52,12 @@ const { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount, mockTransac
     resumeStream: vi.fn(),
     toBaseUnits: vi.fn((v: string) => BigInt(Math.round(parseFloat(v)) * 10_000_000)),
     toSorobanErrorMessage: vi.fn((e: unknown) => (e instanceof Error ? e.message : String(e))),
+    // Consumed by the shared token resolver in `@/lib/tokens`.
+    TOKEN_ADDRESSES: {
+      USDC: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+      XLM: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCN",
+      EURC: "CCWAMYJME4YOIUNAKVYEBYOG5I65QMKEX2NMN4OJAPXRPIF24ONPSHY",
+    },
   };
   const mockTracker = {
     status: "idle" as string,
@@ -49,7 +75,10 @@ const { mockToast, mockSoroban, mockTracker, mockUseStreamingAmount, mockTransac
 });
 
 vi.mock("react-hot-toast", () => ({
-  default: mockToast,
+  default: {
+    success: (message: string) => mockToast.success(message),
+    error: (message: string) => mockToast.error(message),
+  },
 }));
 
 vi.mock("@/lib/transaction-feedback", () => ({
@@ -58,6 +87,15 @@ vi.mock("@/lib/transaction-feedback", () => ({
 
 vi.mock("@/lib/api/_shared", () => ({
   getApiBaseUrl: () => "http://localhost:4000",
+}));
+
+// The component reads the token price through react-query. This suite covers UI
+// behaviour, not the price feed, so stub the hook instead of wiring up a
+// QueryClientProvider (and a network layer) just to render.
+vi.mock("@/hooks/useTokenPrice", () => ({
+  useTokenPrice: () => ({ data: undefined }),
+  convertToFiat: () => 0,
+  formatFiatAmount: () => "$0.00",
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -87,6 +125,10 @@ vi.mock("@/components/stream-creation/CancelConfirmModal", () => ({
   CancelConfirmModal: () => <div data-testid="cancel-modal">Cancel Modal</div>,
 }));
 
+vi.mock("@/components/ui/LiveValue", () => ({
+  LiveValue: () => null,
+}));
+
 vi.mock("@/components/ui/Button", () => ({
   Button: ({
     children,
@@ -112,6 +154,19 @@ import StreamDetailsContent from "../stream-details-content";
 
 const STREAM_ID = "42";
 
+// Every fetch in the component must resolve to something; the receipt effect
+// (and the 30s re-sync interval) hit endpoints that individual tests do not
+// always queue. Tests override the first calls with `mockResolvedValueOnce`.
+function createFetchMock() {
+  return vi.fn(() =>
+    Promise.resolve({
+      ok: true,
+      // A valid stream shape so post-action / re-sync refetches stay renderable.
+      json: async () => createMockStream(),
+    } as Response),
+  );
+}
+
 function createMockStream() {
   return {
     id: "stream-42",
@@ -135,7 +190,9 @@ function createMockStream() {
 describe("StreamDetailsContent loading skeleton", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -148,7 +205,7 @@ describe("StreamDetailsContent loading skeleton", () => {
       () => new Promise(() => {}) // never resolves
     );
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Should show skeleton elements, not a simple spinner
     const skeletonRegion = screen.getByRole("status");
@@ -163,21 +220,21 @@ describe("StreamDetailsContent loading skeleton", () => {
   it("transitions from skeleton to stream content when data loads successfully", async () => {
     const mockStream = createMockStream();
 
-    vi.mocked(global.fetch)
-      .mockResolvedValueOnce({
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = input.toString();
+      if (url.includes("/events")) {
+        return {
+          ok: true,
+          json: async () => ({ events: [], total: 0 }),
+        } as Response;
+      }
+      return {
         ok: true,
         json: async () => mockStream,
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ events: [], total: 0 }),
-      } as Response);
+      } as Response;
+    });
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Initially shows skeleton
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -190,6 +247,9 @@ describe("StreamDetailsContent loading skeleton", () => {
     // Skeleton should be gone
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
+    // Stream-specific content should be visible (the header and receipt rows
+    // both reference the stream id, so assert on all matches).
+    expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThan(0);
     // Stream-specific content should be visible
     expect(screen.getAllByText(/stream #42/i).length).toBeGreaterThanOrEqual(1);
   });
@@ -201,7 +261,7 @@ describe("StreamDetailsContent loading skeleton", () => {
       json: async () => ({ error: "Stream not found" }),
     } as Response);
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Initially shows skeleton
     expect(screen.getByRole("status")).toBeInTheDocument();
@@ -225,7 +285,7 @@ describe("StreamDetailsContent loading skeleton", () => {
       json: async () => ({ error: "Stream not found" }),
     } as Response);
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     await waitFor(() => {
       expect(screen.getByText(/stream not found/i)).toBeInTheDocument();
@@ -252,7 +312,7 @@ describe("StreamDetailsContent loading skeleton", () => {
         json: async () => ({ events: [], total: 0 }),
       } as Response);
 
-    render(<StreamDetailsContent streamId={STREAM_ID} />);
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
     // Once the stream loads, the Claimable stat card should show the value
     // returned by the shared hook, formatted in token units (stroops → XLM).
@@ -269,22 +329,22 @@ describe("StreamDetailsContent loading skeleton", () => {
 async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
   const mockStream = { ...createMockStream(), ...streamOverrides };
 
-  vi.mocked(global.fetch)
-    .mockResolvedValueOnce({
+  vi.mocked(global.fetch).mockImplementation(async (input) => {
+    const url = input.toString();
+    if (url.includes("/events")) {
+      return {
+        ok: true,
+        json: async () => ({ events: [], total: 0 }),
+      } as Response;
+    }
+    return {
       ok: true,
       json: async () => mockStream,
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], total: 0 }),
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ events: [], total: 0 }),
-    } as Response);
+    } as Response;
+  });
 
   const user = userEvent.setup();
-  render(<StreamDetailsContent streamId={STREAM_ID} />);
+  renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
 
   await waitFor(() => {
     expect(screen.getByText(/stream details/i)).toBeInTheDocument();
@@ -297,12 +357,6 @@ async function renderLoaded(streamOverrides: Record<string, unknown> = {}) {
 
 // Note: handleWithdraw is only visible when the user is the recipient.
 // The mock session matches the sender, so we re-mock useWallet for these tests.
-const { useWallet: origUseWallet } = vi.hoisted(() => {
-  return { useWallet: vi.fn() };
-});
-vi.mock("@/context/wallet-context", () => ({
-  useWallet: origUseWallet,
-}));
 
 const mockWalletForRecipient = (session = {
   publicKey: "GAV4A377RAEV6YVAWZVHXF4VZD5ZBXGIKEMNHV5YIMV5LIKSNQVYUBR7",
@@ -312,11 +366,52 @@ const mockWalletForRecipient = (session = {
   origUseWallet.mockReturnValue({ session, isHydrated: true } as ReturnType<typeof origUseWallet>);
 };
 
+describe("StreamDetailsContent action authorization", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTracker.status = "idle";
+    global.fetch = createFetchMock();
+  });
+
+  it("shows only recipient actions to the stream recipient", async () => {
+    mockWalletForRecipient();
+    await renderLoaded();
+
+    expect(screen.getByRole("button", { name: /withdraw/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^top up$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^pause$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows only sender actions to the stream sender", async () => {
+    origUseWallet.mockReturnValue({ session: mockSession, isHydrated: true } as ReturnType<typeof origUseWallet>);
+    await renderLoaded();
+
+    expect(screen.queryByRole("button", { name: /withdraw/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^top up$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^pause$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+  });
+
+  it("hides all stream actions from an unrelated wallet", async () => {
+    origUseWallet.mockReturnValue({
+      session: { ...mockSession, publicKey: "GUNRELATED" },
+      isHydrated: true,
+    } as ReturnType<typeof origUseWallet>);
+    await renderLoaded();
+
+    expect(screen.queryByRole("heading", { name: "Actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /withdraw|top up|pause|resume|cancel/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("StreamDetailsContent handleWithdraw", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
     mockWalletForRecipient();
   });
 
@@ -357,6 +452,20 @@ describe("StreamDetailsContent handleWithdraw", () => {
     const withdrawBtn = screen.getByRole("button", { name: /withdraw/i });
     expect(withdrawBtn).toBeDisabled();
   });
+
+  it("renders zero rate and zero balance without a non-finite claimable value", async () => {
+    mockUseStreamingAmount.mockReturnValue(0);
+    await renderLoaded({
+      depositedAmount: "0",
+      withdrawnAmount: "0",
+      ratePerSecond: "0",
+      endTime: Math.floor(Date.now() / 1000),
+    });
+
+    expect(screen.getByText("Claimable")).toBeInTheDocument();
+    expect(screen.getAllByText(/0(?:\.0+)? XLM/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/NaN|Infinity/)).not.toBeInTheDocument();
+  });
 });
 
 // ─── handleTopUp ──────────────────────────────────────────────────────────
@@ -365,7 +474,9 @@ describe("StreamDetailsContent handleTopUp", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
     // TopUp is only visible for the sender
     origUseWallet.mockReturnValue({
       session: mockSession,
@@ -436,7 +547,9 @@ describe("StreamDetailsContent handlePause", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -478,7 +591,9 @@ describe("StreamDetailsContent handleResume", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -520,7 +635,9 @@ describe("StreamDetailsContent handleCancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
     origUseWallet.mockReturnValue({
       session: mockSession,
       isHydrated: true,
@@ -567,7 +684,9 @@ describe("StreamDetailsContent live-claimable interval", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTracker.status = "idle";
-    global.fetch = vi.fn();
+    // Default to a benign empty response so the component's background fetches
+    // (events, receipt tx hash) resolve; individual tests layer `mockResolvedValueOnce`.
+    global.fetch = createFetchMock();
   });
 
   it("shows live claimable indicator with a pulsing dot", async () => {
@@ -605,4 +724,100 @@ describe("StreamDetailsContent live-claimable interval", () => {
     expect(screen.getAllByText(/paused/i).length).toBeGreaterThan(0);
   });
 
+});
+
+// ─── 30s API re-sync + per-tick pulse (issue #419) ────────────────────────
+
+const STREAM_URL = `http://localhost:4000/v1/streams/${STREAM_ID}`;
+
+function countStreamFetches() {
+  return vi.mocked(global.fetch).mock.calls.filter(([url]) => url === STREAM_URL).length;
+}
+
+describe("StreamDetailsContent claimable re-sync + pulse", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTracker.status = "idle";
+    global.fetch = createFetchMock();
+    origUseWallet.mockReturnValue({
+      session: mockSession,
+      isHydrated: true,
+    } as ReturnType<typeof origUseWallet>);
+    vi.spyOn(window, "setInterval");
+  });
+
+  afterEach(() => {
+    vi.mocked(window.setInterval).mockRestore();
+  });
+
+  async function renderStream(overrides: Record<string, unknown> = {}) {
+    const mockStream = { ...createMockStream(), ...overrides };
+    vi.mocked(global.fetch).mockImplementation(async (input) => {
+      const url = input.toString();
+      if (url.includes("/events")) {
+        return {
+          ok: true,
+          json: async () => ({ events: [], total: 0 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => mockStream,
+      } as Response;
+    });
+
+    renderWithQueryClient(<StreamDetailsContent streamId={STREAM_ID} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/stream details/i)).toBeInTheDocument();
+    });
+  }
+
+  it("re-fetches the stream when the 30s re-sync interval fires while active", async () => {
+    await renderStream();
+
+    // The component registered a 30s interval while the stream is active.
+    const resync = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 30_000);
+    expect(resync).toBeTruthy();
+
+    const before = countStreamFetches();
+    expect(before).toBe(1);
+
+    // Invoking the registered callback is equivalent to the timer elapsing.
+    act(() => {
+      (resync![0] as () => void)();
+    });
+
+    await waitFor(() => {
+      expect(countStreamFetches()).toBe(before + 1);
+    });
+  });
+
+  it("does not register a re-sync interval while paused", async () => {
+    await renderStream({ isPaused: true });
+
+    const resync = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 30_000);
+    expect(resync).toBeUndefined();
+    expect(screen.queryByTestId("claimable-tick-pulse")).not.toBeInTheDocument();
+  });
+
+  it("re-keys the Claimable flash once per second while active", async () => {
+    await renderStream();
+
+    const firstPulse = screen.getByTestId("claimable-tick-pulse");
+    const pulse = await waitFor(() => {
+      const registeredInterval = vi.mocked(window.setInterval).mock.calls.find(([, delay]) => delay === 1000);
+      expect(registeredInterval).toBeTruthy();
+      return registeredInterval;
+    });
+    expect(pulse).toBeTruthy();
+
+    act(() => {
+      (pulse![0] as () => void)();
+    });
+
+    const secondPulse = screen.getByTestId("claimable-tick-pulse");
+    // A changed key remounts the overlay, restarting the one-shot flash.
+    expect(secondPulse).not.toBe(firstPulse);
+  });
 });

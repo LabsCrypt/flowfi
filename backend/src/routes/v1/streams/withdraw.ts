@@ -5,7 +5,7 @@ import { claimableAmountService } from '../../../services/claimable.service.js';
 import { withdraw as sorobanWithdraw } from '../../../services/sorobanService.js';
 import type { AuthenticatedRequest } from '../../../types/auth.types.js';
 import { parseStreamId } from '../../../lib/stream-id.js';
-import { sendApiError } from '../../../types/api-error.js';
+import { sendApiError } from '../../../lib/api-error.js';
 
 /**
  * @openapi
@@ -13,8 +13,23 @@ import { sendApiError } from '../../../types/api-error.js';
  *   post:
  *     tags:
  *       - Streams
- *     summary: Withdraw claimable balance from a payment stream
- *     description: Withdraws the currently claimable amount. Only the recipient can withdraw.
+ *     summary: Dry-run a withdrawal of the claimable balance
+ *     description: |
+ *       Verifies that a withdrawal of the currently claimable amount would
+ *       succeed on-chain. Only the stream recipient may call it.
+ *
+ *       Nothing is submitted and nothing is written: `withdraw` is authorized by
+ *       the recipient's wallet, so the backend cannot perform it on their
+ *       behalf. Sign the XDR from `POST /v1/streams/simulate`
+ *       (`action: "withdraw"`) to actually move funds; the indexer then records
+ *       the WITHDRAWN event and updates `withdrawnAmount` from the confirmed
+ *       on-chain event (issue #1847).
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
  *     parameters:
  *       - in: path
  *         name: streamId
@@ -26,7 +41,7 @@ import { sendApiError } from '../../../types/api-error.js';
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Withdrawal submitted successfully
+ *         description: Withdrawal verified as possible (simulated - no funds moved)
  *         content:
  *           application/json:
  *             schema:
@@ -91,95 +106,26 @@ export const withdrawHandler = async (req: AuthenticatedRequest, res: Response) 
     }
 
     try {
-      // Call Soroban service
-      const result = await sorobanWithdraw(parsedStreamId, req.user.publicKey);
-      
-      const now = BigInt(Math.floor(Date.now() / 1000));
-      const withdrawAmount = BigInt(claimable.claimableAmount);
+      // Read-only simulation: proves the recipient could withdraw right now.
+      // No accounting is touched — the indexer is the only writer of
+      // `withdrawnAmount` and WITHDRAWN events, because only a confirmed
+      // on-chain event proves funds moved (issue #1847).
+      await sorobanWithdraw(parsedStreamId, req.user.publicKey);
 
-      // Gate the balance increment on whether the event was newly inserted.
-      // The unique constraint on (transactionHash, eventType) makes the INSERT
-      // a no-op for retries: RETURNING returns null and we skip the balance
-      // update. This guarantees idempotency for both sequential retries and
-      // concurrent duplicates — the withdrawal is counted exactly once per
-      // claimable window (Issue #1216).
-      const updatedStream = await prisma.$transaction(async (tx) => {
-        // 1. Attempt to insert the event. On conflict (duplicate retry) the
-        //    INSERT is skipped and RETURNING yields null.
-        const inserted = await tx.$executeRawUnsafe(
-          `INSERT INTO "StreamEvent"
-             ("id", "streamId", "eventType", "amount", "transactionHash",
-              "ledgerSequence", "timestamp", "metadata", "createdAt")
-           SELECT
-             gen_random_uuid()::text, $1::bigint, 'WITHDRAWN', $2::text,
-             $3::text, 0, $4::bigint, $5::text, NOW()
-           WHERE NOT EXISTS (
-             SELECT 1 FROM "StreamEvent"
-             WHERE "transactionHash" = $3::text AND "eventType" = 'WITHDRAWN'
-           )
-           RETURNING "id"`,
-          parsedStreamId,
-          claimable.claimableAmount,
-          result.txHash,
-          now,
-          JSON.stringify({ withdrawnBy: req.user.publicKey }),
-        );
-
-        // inserted = 1 → new event, proceed with balance increment
-        // inserted = 0 → duplicate, skip balance update
-        if (inserted > 0) {
-          // 2. Atomically increment withdrawnAmount in a single SQL statement
-          //    so concurrent requests compound rather than overwrite each other.
-          await tx.$executeRawUnsafe(
-            `UPDATE "Stream"
-             SET "withdrawnAmount" = ("withdrawnAmount"::bigint + $1::bigint)::text,
-                 "lastUpdateTime" = $2
-             WHERE "streamId" = $3`,
-            withdrawAmount.toString(),
-            now,
-            parsedStreamId,
-          );
-        }
-
-        // Re-read the stream to get post-increment values.
-        const refreshed = await tx.stream.findUnique({
-          where: { streamId: parsedStreamId },
-        });
-
-        // Conditionally deactivate if fully withdrawn.
-        if (
-          inserted > 0 &&
-          stream.isActive &&
-          refreshed &&
-          BigInt(refreshed.withdrawnAmount) >= BigInt(refreshed.depositedAmount)
-        ) {
-          await tx.stream.update({
-            where: { streamId: parsedStreamId },
-            data: { isActive: false },
-          });
-          refreshed.isActive = false;
-        }
-
-        return refreshed;
-      });
-
-      // If the event already existed this was a duplicate request — the
-      // handler still succeeds (idempotent) but skips the balance update.
-      // A 409 is not appropriate here because the client may have retried
-      // after a network timeout; returning 200 with the current stream
-      // state lets the client confirm the withdrawal was already applied.
-
-      logger.info(`Stream ${parsedStreamId} withdrawn by ${req.user.publicKey}`);
+      logger.info(
+        `Stream ${parsedStreamId} withdraw simulated for ${req.user.publicKey}`,
+      );
 
       return res.status(200).json({
         success: true,
+        simulated: true,
         streamId: parsedStreamId,
-        txHash: result.txHash,
         amount: claimable.claimableAmount,
-        stream: updatedStream,
+        message:
+          'Withdrawal is available but was not submitted. Sign the simulated withdraw transaction with the recipient wallet; the indexer records it once it lands on chain.',
       });
     } catch (sorobanError) {
-      logger.error(`Soroban withdraw failed for stream ${parsedStreamId}:`, sorobanError);
+      logger.error(`Soroban withdraw simulation failed for stream ${parsedStreamId}:`, sorobanError);
       return sendApiError(res, 400, 'WITHDRAWAL_FAILED', 'Failed to withdraw from stream on chain');
     }
   } catch (error) {

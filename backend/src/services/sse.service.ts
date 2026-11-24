@@ -9,7 +9,10 @@ import {
   setSseConnectionCounts,
 } from '../lib/metrics.js';
 
-const HEARTBEAT_INTERVAL_MS = 30_000;
+// Kept well under the 60s idle timeout of common proxies/load balancers
+// (Nginx, Cloudflare, AWS ALB) so silent streams are not dropped.
+export const HEARTBEAT_INTERVAL_MS = 25_000;
+export const HEARTBEAT_MESSAGE = ': keepalive\n\n';
 const MAX_WRITABLE_BUFFER = 64 * 1024;
 const MAX_CONNECTIONS_PER_IP = 5;
 const MAX_CONNECTIONS_PER_USER = 10;
@@ -22,6 +25,12 @@ interface SSEClient {
   paused: boolean;
   ip: string;
   userId?: string;
+  /**
+   * Issue #1535: clients connected with sandbox mode receive every event
+   * tagged with `_sandbox: true` so test subscriptions are clearly
+   * distinguishable from production traffic.
+   */
+  sandbox: boolean;
 }
 
 interface SSECapacityCheckResult {
@@ -124,6 +133,7 @@ export class SSEService {
     subscriptions: string[] = [],
     ip = 'unknown',
     userId?: string,
+    sandbox = false,
   ): void {
     const nextIpCount = (this.ipConnectionCounts.get(ip) ?? 0) + 1;
     this.ipConnectionCounts.set(ip, nextIpCount);
@@ -141,6 +151,7 @@ export class SSEService {
       subscriptions: new Set(subscriptions),
       paused: false,
       ip,
+      sandbox,
       ...(userId !== undefined && { userId }),
     };
 
@@ -148,7 +159,7 @@ export class SSEService {
     sseConnectionsTotal.inc();
     this.publishConnectionMetrics();
     logger.info(
-      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, userId: ${userId ?? 'n/a'}, subscriptions: ${subscriptions.join(', ')}`
+      `[SSEService] Connection opened: ${clientId}, ip: ${ip}, userId: ${userId ?? 'n/a'}, sandbox: ${sandbox}, subscriptions: ${subscriptions.join(', ')}`
     );
 
     res.on('close', () => {
@@ -178,15 +189,16 @@ export class SSEService {
   }
 
   sendHeartbeat(): void {
-    const message = ': heartbeat\n\n';
-
+    // writeToClient prunes clients whose write throws or who are too slow,
+    // which may in turn stop the timer once the last client is gone.
     for (const client of this.clients.values()) {
-      this.writeToClient(client, message);
+      this.writeToClient(client, HEARTBEAT_MESSAGE);
     }
   }
 
   sendReconnectToAll(): void {
     this.shuttingDown = true;
+    this.stopHeartbeat();
     const message = 'event: reconnect\ndata: {}\n\n';
     for (const client of this.clients.values()) {
       try {
@@ -199,12 +211,22 @@ export class SSEService {
   }
 
   broadcast(event: string, data: unknown, filter?: (client: SSEClient) => boolean): void {
-    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    const isObjectPayload = data !== null && typeof data === 'object';
 
     for (const client of this.clients.values()) {
-      if (!filter || filter(client)) {
-        this.writeToClient(client, message);
+      if (filter && !filter(client)) {
+        continue;
       }
+
+      // Sandbox clients get every event tagged with `_sandbox: true` so the
+      // isolation is observable end-to-end (issue #1535). Production clients
+      // receive the payload untouched.
+      const payload =
+        client.sandbox && isObjectPayload
+          ? { ...(data as Record<string, unknown>), _sandbox: true }
+          : data;
+
+      this.writeToClient(client, `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
     }
   }
 
@@ -282,8 +304,12 @@ export class SSEService {
     }
   }
 
+  isHeartbeatRunning(): boolean {
+    return this.heartbeatTimer !== null;
+  }
+
   private ensureHeartbeat(): void {
-    if (this.heartbeatTimer) {
+    if (this.heartbeatTimer || this.shuttingDown) {
       return;
     }
 
@@ -311,6 +337,11 @@ export class SSEService {
 
     this.clients.delete(clientId);
     this.publishConnectionMetrics();
+
+    // No one left to keep alive; addClient restarts the timer on demand.
+    if (this.clients.size === 0) {
+      this.stopHeartbeat();
+    }
 
     const currentIpCount = this.ipConnectionCounts.get(client.ip) ?? 0;
     if (currentIpCount <= 1) {

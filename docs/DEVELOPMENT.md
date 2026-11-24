@@ -4,16 +4,101 @@ This guide is intended to let a new contributor run the full FlowFi stack from a
 
 ---
 
+## ⚡ One-Click Mock Development Sandbox
+
+> **Recommended for new contributors.** No wallet, no testnet funding, no live RPC needed.
+
+Spin up the complete FlowFi stack — Postgres, Redis, mock Soroban RPC, backend (sandbox mode), and frontend — with rich pre-seeded demo data in a single command:
+
+```bash
+# From the repo root
+npm install          # only needed once
+npm run dev:mock
+```
+
+That one command:
+
+1. **Starts infrastructure** — Postgres, Redis, and a mock Soroban RPC stub via Docker Compose.
+2. **Syncs the database schema** — pushes the schema directly with `prisma db push` for the throwaway mock stack (a fast shortcut for disposable demo data). The supported bootstrap path for every other database is `npm run prisma:generate && npm run prisma:deploy`, which CI exercises on a fresh database.
+3. **Seeds 20 demo streams** across 5 mock users, with event histories spanning the last 30 days:
+   - 7 Active streams (USDC, EURC, XLM)
+   - 3 Paused streams (pending milestone review)
+   - 3 Completed streams (fully drained)
+   - 3 Cancelled streams
+   - 4 Vesting-cliff streams
+4. **Starts the backend** in sandbox mode at `http://localhost:3001`.
+5. **Starts the frontend** at `http://localhost:3000`.
+
+### What you get
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:3001/v1 |
+| Interactive API Docs | http://localhost:3001/api-docs |
+| Health check | http://localhost:3001/health |
+| Postgres | localhost:5433 |
+| Redis | localhost:6379 |
+| Mock Soroban RPC | http://localhost:8000 |
+
+### Seeded mock users
+
+All streams are distributed across 5 demo wallets you can use for UI testing:
+
+| Label | Public Key (truncated) |
+|---|---|
+| Alice (DAO Treasury) | `GAAZI4TCR3TY5…` |
+| Bob (Protocol Dev) | `GCEZWKCA5VLDN…` |
+| Carol (Frontend Dev) | `GBDEVU63Y6NTH…` |
+| Dave (Security Auditor) | `GDQERENWDDSQZ…` |
+| Eve (Investor) | `GCVW5GBIANS67…` |
+
+### No wallet required
+
+Because the backend runs in **sandbox mode** and the Soroban RPC is mocked, you can:
+
+- Browse all stream states and event histories without connecting a real Stellar wallet.
+- Test UI features (create, pause, cancel, withdraw flows) using the seeded data.
+- Trigger sandbox API calls via the Swagger UI at `/api-docs`.
+
+### Stopping the sandbox
+
+```bash
+# Stop Node processes with Ctrl+C, then tear down Docker services:
+docker compose down
+
+# To also wipe the database volume (full reset):
+docker compose down -v
+```
+
+### Re-seeding
+
+If you want to reset and re-seed from scratch:
+
+```bash
+docker compose down -v
+npm run dev:mock
+```
+
+### Prerequisites for the sandbox
+
+- Docker & Docker Compose (for Postgres, Redis, mock RPC)
+- Node.js 22 (see `.nvmrc`) and npm (for backend, frontend, seed script)
+
+No Rust, no Stellar CLI, no testnet account needed.
+
+---
+
 ## Prerequisites
 
 Required:
 
 - Rust toolchain (stable via rustup)
-- Node.js 20+
+- Node.js 22 (`^22.22.1`) — the version is pinned in `.nvmrc` and enforced via `engines` + `engine-strict`; run `nvm use` in the repo root
 - npm
 - PostgreSQL 16 (matches the version pinned in `docker-compose.yml` and CI)
 - Docker & Docker Compose (recommended for local infra)
-- Stellar CLI / Soroban CLI (https://github.com/stellar/stellar-cli)
+- Stellar CLI — `cargo install --locked stellar-cli`, provides the `stellar` binary (https://github.com/stellar/stellar-cli). The legacy `soroban-cli` crate / `soroban` binary is superseded and not used by this repo.
 
 Optional:
 
@@ -38,11 +123,16 @@ cd flowfi
 docker compose up -d postgres
 ```
 
-(Optional for SSE fanout testing)
+Optional — start Redis for multi-instance SSE fanout testing:
 
 ```bash
 docker compose up -d redis
 ```
+
+The Redis service in `docker-compose.yml` is published on
+`localhost:6379`, which is the value set for `REDIS_URL` in
+`backend/.env.example` (`redis://localhost:6379`), so no extra configuration
+is needed to reach it.
 
 ---
 
@@ -65,7 +155,7 @@ Run database setup:
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate
+npm run prisma:deploy   # apply committed migrations to a fresh database
 ```
 
 These commands read their paths and connection string from `backend/prisma.config.ts`, which configures the Prisma CLI separately from the data model in `backend/prisma/schema.prisma`. See [Prisma Database](../backend/README.md#prismaconfigts-vs-prismaschemaprisma) in the backend README for what each file owns and what to check when a `generate`/`migrate` command misbehaves.

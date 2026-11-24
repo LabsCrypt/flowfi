@@ -77,8 +77,9 @@ function simulationError(error: string): rpc.Api.SimulateTransactionErrorRespons
  */
 function invokedOps(tx: Transaction): Array<{ contractHex: string; fn: string; args: xdr.ScVal[] }> {
   return tx.operations.map((op) => {
-    const ico = (op as unknown as { func: { invokeContract: InvokeContractArgsLike } }).func
-      .invokeContract;
+    // SDK 17: `OperationRecord.func` is a `HostFunction` whose `invokeContract`
+    // arm is a property; `InvokeContractArgs` fields are properties too.
+    const ico = (op as unknown as { func: { invokeContract: InvokeContractArgsLike } }).func.invokeContract;
     return {
       contractHex: Buffer.from(ico.contractAddress.contractId.value).toString('hex'),
       fn: ico.functionName.toString(),
@@ -87,11 +88,17 @@ function invokedOps(tx: Transaction): Array<{ contractHex: string; fn: string; a
   });
 }
 
-/** The marshalled `InvokeContractArgs` shape carried by `func.invokeContract`. */
+/** The marshalled `InvokeContractArgs` shape returned by `func.invokeContract`. */
 interface InvokeContractArgsLike {
   contractAddress: { contractId: { value: Uint8Array } };
-  functionName: { toString(): string };
+  functionName: string;
   args: xdr.ScVal[];
+}
+
+/** Narrow an ScVal union to its u64 arm (test fixtures only ever encode u64). */
+function u64Arg(val: xdr.ScVal): bigint {
+  if (val.type !== 'scvU64') throw new TypeError(`expected scvU64, got ${val.type}`);
+  return val.u64;
 }
 
 /** Hex form of a contract address, for comparison against a StrKey contract. */
@@ -101,11 +108,11 @@ function contractHex(address: string): string {
 
 /** Decode a returned envelope and assert it carries no signatures. */
 function expectUnsignedEnvelope(unsignedXdr: string): xdr.Transaction {
-  const envelope = xdr.TransactionEnvelope.fromXDR(
-    unsignedXdr,
-    'base64',
-  ) as xdr.TransactionEnvelopeTx;
+  const envelope = xdr.TransactionEnvelope.fromXDR(unsignedXdr, 'base64');
+  // SDK 17 models XDR unions as discriminated subclasses with property arms
+  // (`envelope.type` / `envelope.v1`) instead of `switch()` / `v1()` methods.
   expect(envelope.type).toBe('envelopeTypeTx');
+  if (envelope.type !== 'envelopeTypeTx') throw new TypeError('expected v1 envelope');
   expect(envelope.v1.signatures).toHaveLength(0);
   return envelope.v1.tx;
 }
@@ -157,7 +164,7 @@ describe('simulateStreamAction', () => {
     try {
       await expect(
         service.simulateStreamAction('cancel', senderKp.publicKey(), { streamId: '1' }),
-      ).rejects.toMatchObject({ status: 503, code: 'contract_not_configured' });
+      ).rejects.toMatchObject({ statusCode: 503, code: 'contract_not_configured' });
     } finally {
       process.env.STREAM_CONTRACT_ID = contractId;
     }
@@ -179,7 +186,7 @@ describe('simulateStreamAction', () => {
       expect(Address.fromScVal(op!.args[1]!).toString()).toBe(recipientKp.publicKey());
       expect(Address.fromScVal(op!.args[2]!).toString()).toBe(tokenAddress);
       expect(service.decodeI128(op!.args[3]!)).toBe('1000000');
-      expect((op!.args[4] as xdr.ScValU64).u64.toString()).toBe('3600');
+      expect(u64Arg(op!.args[4]!).toString()).toBe('3600');
     });
 
     it('prefers params.tokenAddress over the configured default', async () => {
@@ -202,7 +209,7 @@ describe('simulateStreamAction', () => {
           amount: '100',
           duration: 60,
         }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects a zero amount', async () => {
@@ -212,7 +219,7 @@ describe('simulateStreamAction', () => {
           amount: '0',
           duration: 60,
         }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects a non-positive or fractional duration', async () => {
@@ -223,7 +230,7 @@ describe('simulateStreamAction', () => {
             amount: '100',
             duration,
           }),
-        ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+        ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
       }
     });
   });
@@ -237,7 +244,7 @@ describe('simulateStreamAction', () => {
       const [op] = invokedOps(lastSimulatedTx());
       expect(op!.fn).toBe('withdraw');
       expect(Address.fromScVal(op!.args[0]!).toString()).toBe(recipientKp.publicKey());
-      expect((op!.args[1] as xdr.ScValU64).u64.toString()).toBe('42');
+      expect(u64Arg(op!.args[1]!).toString()).toBe('42');
     });
 
     it('simulates cancel_stream(sender, streamId)', async () => {
@@ -245,7 +252,7 @@ describe('simulateStreamAction', () => {
 
       const [op] = invokedOps(lastSimulatedTx());
       expect(op!.fn).toBe('cancel_stream');
-      expect((op!.args[1] as xdr.ScValU64).u64.toString()).toBe('7');
+      expect(u64Arg(op!.args[1]!).toString()).toBe('7');
     });
 
     it('simulates top_up_stream(sender, streamId, amount)', async () => {
@@ -256,20 +263,20 @@ describe('simulateStreamAction', () => {
 
       const [op] = invokedOps(lastSimulatedTx());
       expect(op!.fn).toBe('top_up_stream');
-      expect((op!.args[1] as xdr.ScValU64).u64.toString()).toBe('7');
+      expect(u64Arg(op!.args[1]!).toString()).toBe('7');
       expect(service.decodeI128(op!.args[2]!)).toBe('2500');
     });
 
     it('rejects a non-numeric streamId', async () => {
       await expect(
         service.simulateStreamAction('cancel', senderKp.publicKey(), { streamId: '12abc' }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects a missing streamId', async () => {
       await expect(
         service.simulateStreamAction('cancel', senderKp.publicKey(), {}),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
   });
 
@@ -282,20 +289,20 @@ describe('simulateStreamAction', () => {
       const ops = invokedOps(lastSimulatedTx());
       expect(ops).toHaveLength(3);
       expect(ops.map((o) => o.fn)).toEqual(['withdraw', 'withdraw', 'withdraw']);
-      expect(ops.map((o) => (o.args[1] as xdr.ScValU64).u64.toString())).toEqual(['1', '2', '3']);
+      expect(ops.map((o) => u64Arg(o.args[1]!).toString())).toEqual(['1', '2', '3']);
     });
 
     it('rejects a batch above the per-transaction cap', async () => {
       const streamIds = Array.from({ length: 11 }, (_, i) => String(i + 1));
       await expect(
         service.simulateStreamAction('batch_withdraw', recipientKp.publicKey(), { streamIds }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
 
     it('rejects an empty batch', async () => {
       await expect(
         service.simulateStreamAction('batch_withdraw', recipientKp.publicKey(), { streamIds: [] }),
-      ).rejects.toMatchObject({ status: 400, code: 'invalid_params' });
+      ).rejects.toMatchObject({ statusCode: 400, code: 'invalid_params' });
     });
   });
 
@@ -441,15 +448,15 @@ describe('simulateStreamAction', () => {
 
       expect(err).toBeInstanceOf(ApiError);
       expect(err).toMatchObject({
-        status: 400,
+        statusCode: 400,
         code: 'simulation_failed',
         message: 'Stream not found',
       });
       expect((err as InstanceType<typeof ApiError>).details).toMatchObject({
         action: 'cancel',
         contractErrorCode: 2,
+        hint: expect.any(String),
       });
-      expect((err as InstanceType<typeof ApiError>).details?.hint).toBeTruthy();
     });
 
     it('passes through an unrecognised reason when no code can be parsed', async () => {
@@ -460,7 +467,7 @@ describe('simulateStreamAction', () => {
       await expect(
         service.simulateStreamAction('withdraw', recipientKp.publicKey(), { streamId: '1' }),
       ).rejects.toMatchObject({
-        status: 400,
+        statusCode: 400,
         code: 'simulation_failed',
         message: 'Simulation of "withdraw" failed: Host function failed: panic',
       });

@@ -51,8 +51,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `Webhook request failed (${response.status})`);
+    const body = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
+    throw new Error(body?.error?.message ?? `Webhook request failed (${response.status})`);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

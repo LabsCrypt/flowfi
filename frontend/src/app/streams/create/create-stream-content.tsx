@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { logger } from "@/lib/logger";
 import {
   createStream,
@@ -29,6 +29,15 @@ export default function CreateStreamContent() {
   const [loading, setLoading] = useState(false);
   const [txState, setTxState] = useState<"idle" | "signing" | "submitted" | "confirming">("idle");
   const [dismissedDraftBanner, setDismissedDraftBanner] = useState(false);
+  const redirectTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, []);
 
   // ── Shared form hook ────────────────────────────────────────────────────
   const {
@@ -71,9 +80,12 @@ export default function CreateStreamContent() {
     }
 
     // Use the shared validation (checks recipient format, amount, precision, balance)
-    if (!validateAll()) {
-      // Show the first error as a toast for flat-form UX
-      const firstError = Object.values(errors)[0];
+    const validationErrors = validateAll();
+    if (Object.keys(validationErrors).length > 0) {
+      // Show the first error as a toast for flat-form UX. The errors are read
+      // from the validation result, not from the hook state, because the
+      // state update has not been applied yet at this point.
+      const firstError = Object.values(validationErrors)[0];
       if (firstError) toast.error(firstError);
       return;
     }
@@ -97,7 +109,7 @@ export default function CreateStreamContent() {
         setTxState("confirming");
         discardDraft();
         transactionSuccessToast("Stream created successfully!");
-        setTimeout(() => {
+        redirectTimerRef.current = setTimeout(() => {
           setLoading(false);
           setTxState("idle");
           router.push("/dashboard");

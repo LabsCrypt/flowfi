@@ -4,6 +4,8 @@
  */
 import crypto from "crypto";
 import { prisma } from "../lib/prisma.js";
+import { ApiError } from "../lib/api-error.js";
+import { assertSafeWebhookTarget } from "../lib/url-security.js";
 import logger from "../logger.js";
 
 export interface WebhookSubscription {
@@ -72,10 +74,9 @@ export async function createWebhookSubscription(
   targetUrl: string,
   eventTypes: string[],
 ): Promise<WebhookSubscription> {
-  // Validate HTTPS
-  if (!targetUrl.startsWith("https://")) {
-    throw new Error("Webhook URL must use HTTPS");
-  }
+  // Reject non-HTTPS, private/loopback/link-local/metadata targets and encoded
+  // IP literals before the subscription is ever stored (issue #1849).
+  await assertSafeWebhookTarget(targetUrl);
 
   // Generate secure secret
   const secretKey = crypto.randomBytes(32).toString("hex");
@@ -118,7 +119,7 @@ export async function deleteWebhookSubscription(
   id: string,
   userAddress: string,
 ): Promise<void> {
-  await prisma.webhookSubscription.updateMany({
+  const { count } = await prisma.webhookSubscription.updateMany({
     where: {
       id,
       userAddress, // Ensure user owns this webhook
@@ -127,6 +128,9 @@ export async function deleteWebhookSubscription(
       isActive: false,
     },
   });
+  // An unscoped caller must learn the subscription is not theirs, not that
+  // it "worked" (issue #1846).
+  if (count === 0) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
 }
 
 export async function updateWebhookSubscription(
@@ -134,14 +138,14 @@ export async function updateWebhookSubscription(
   userAddress: string,
   input: { targetUrl?: string; eventTypes?: string[]; isActive?: boolean },
 ): Promise<Omit<WebhookSubscription, "secretKey">> {
-  if (input.targetUrl !== undefined && !input.targetUrl.startsWith("https://")) {
-    throw new Error("Webhook URL must use HTTPS");
+  if (input.targetUrl !== undefined) {
+    await assertSafeWebhookTarget(input.targetUrl);
   }
   const subscription = await prisma.webhookSubscription.updateMany({
     where: { id, userAddress },
     data: input,
   });
-  if (subscription.count === 0) throw new Error("Webhook subscription not found");
+  if (subscription.count === 0) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   const updated = await prisma.webhookSubscription.findUniqueOrThrow({ where: { id } });
   const { secretKey: _secretKey, ...safe } = updated;
   return safe;
@@ -156,7 +160,7 @@ export async function listWebhookDeliveries(
   const safePage = Math.max(1, Math.floor(page) || 1);
   const safeLimit = Math.min(100, Math.max(1, Math.floor(limit) || 20));
   const subscription = await prisma.webhookSubscription.findFirst({ where: { id, userAddress } });
-  if (!subscription) throw new Error("Webhook subscription not found");
+  if (!subscription) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   const [deliveries, total] = await Promise.all([
     prisma.webhookDelivery.findMany({
       where: { subscriptionId: id },
@@ -171,19 +175,36 @@ export async function listWebhookDeliveries(
 
 export async function regenerateWebhookSecret(id: string, userAddress: string): Promise<string> {
   const owned = await prisma.webhookSubscription.findFirst({ where: { id, userAddress } });
-  if (!owned) throw new Error("Webhook subscription not found");
+  if (!owned) throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   const secretKey = crypto.randomBytes(32).toString("hex");
   await prisma.webhookSubscription.update({ where: { id }, data: { secretKey } });
   return secretKey;
 }
 
+export interface DeliveryResult {
+  success: boolean;
+  status?: number;
+  error?: string;
+}
+
+export interface TestWebhookResult extends DeliveryResult {
+  /** Round-trip time of the single test dispatch, in milliseconds. */
+  latencyMs: number;
+}
+
 /**
- * Send test webhook ping
+ * Send test webhook ping (issue #1645)
+ *
+ * Dispatches a signed synthetic payload with `eventType: "webhook.test"` and
+ * reports the upstream HTTP status plus round-trip latency. A test ping makes
+ * a single attempt — the multi-hour retry ladder of production delivery is
+ * not useful when a human is waiting on the result — and never touches the
+ * consecutive-failure counter.
  */
 export async function sendTestWebhook(
   id: string,
   userAddress: string,
-): Promise<{ success: boolean; status?: number; error?: string }> {
+): Promise<TestWebhookResult> {
   const subscription = await prisma.webhookSubscription.findFirst({
     where: {
       id,
@@ -193,18 +214,23 @@ export async function sendTestWebhook(
   });
 
   if (!subscription) {
-    throw new Error("Webhook subscription not found");
+    throw new ApiError(404, "WEBHOOK_NOT_FOUND", "Webhook subscription not found");
   }
 
   const testPayload: WebhookPayload = {
-    eventType: "TEST_PING",
+    eventType: "webhook.test",
     data: {
+      webhookId: subscription.id,
       message: "This is a test webhook delivery from FlowFi",
     },
     timestamp: new Date().toISOString(),
   };
 
-  return deliverWebhook(subscription as WebhookSubscription, testPayload);
+  const startedAt = Date.now();
+  const result = await deliverWebhook(subscription as WebhookSubscription, testPayload, {
+    retries: false,
+  });
+  return { ...result, latencyMs: Date.now() - startedAt };
 }
 
 /**
@@ -213,14 +239,11 @@ export async function sendTestWebhook(
 export async function deliverWebhook(
   subscription: WebhookSubscription,
   payload: WebhookPayload,
-): Promise<{ success: boolean; status?: number; error?: string }> {
+  options: { retries?: boolean } = {},
+): Promise<DeliveryResult> {
+  const retryEnabled = options.retries !== false;
+  const maxAttempts = retryEnabled ? MAX_RETRY_ATTEMPTS : 1;
   const payloadJson = JSON.stringify(payload);
-  const timestamp = Math.floor(Date.now() / 1000);
-  const signature = generateWebhookSignature(
-    payloadJson,
-    subscription.secretKey,
-    timestamp,
-  );
 
   const deliveryId = crypto.randomUUID();
 
@@ -236,8 +259,9 @@ export async function deliverWebhook(
 
   let lastError: string | undefined;
   let lastStatus: number | undefined;
+  let blockedTarget = false;
 
-  for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       // Wait for retry delay
       if (attempt > 0) {
@@ -245,6 +269,20 @@ export async function deliverWebhook(
           setTimeout(resolve, RETRY_DELAYS_MS[attempt]),
         );
       }
+
+      // Re-validate at dispatch time (issue #1849): a hostname that was public
+      // when the subscription was created can answer with a private address by
+      // the time we connect (DNS rebinding). A blocked target is never retried —
+      // the ladder would only re-open the same hole five times.
+      await assertSafeWebhookTarget(subscription.targetUrl);
+
+      // Sign at dispatch time so retries stay within the receiver's replay window.
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = generateWebhookSignature(
+        payloadJson,
+        subscription.secretKey,
+        timestamp,
+      );
 
       const response = await fetch(subscription.targetUrl, {
         method: "POST",
@@ -257,6 +295,10 @@ export async function deliverWebhook(
         },
         body: payloadJson,
         signal: AbortSignal.timeout(10000), // 10s timeout
+        // Never follow a redirect: a public receiver must not be able to bounce
+        // the signed request into a range the validator blocked (issue #1849).
+        // A 3xx is therefore recorded as a failed delivery, not fetched again.
+        redirect: "manual",
       });
 
       lastStatus = response.status;
@@ -283,12 +325,15 @@ export async function deliverWebhook(
 
       lastError = `HTTP ${lastStatus}`;
       logger.warn(
-        `[Webhook] Delivery failed with status ${lastStatus} (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`,
+        `[Webhook] Delivery failed with status ${lastStatus} (attempt ${attempt + 1}/${maxAttempts})`,
       );
     } catch (error: any) {
+      if (error instanceof ApiError && error.code === "WEBHOOK_URL_INVALID") {
+        blockedTarget = true;
+      }
       lastError = error.message || "Network error";
       logger.warn(
-        `[Webhook] Delivery error: ${lastError} (attempt ${attempt + 1}/${MAX_RETRY_ATTEMPTS})`,
+        `[Webhook] Delivery error: ${lastError} (attempt ${attempt + 1}/${maxAttempts})`,
       );
 
       await prisma.webhookDelivery.update({
@@ -298,11 +343,18 @@ export async function deliverWebhook(
           error: lastError || null,
         },
       });
+
+      // A blocked target will be blocked on every attempt, so spending the retry
+      // ladder on it only delays the auto-disable check below.
+      if (blockedTarget) break;
     }
   }
 
-  // All retries exhausted - check if we should disable webhook
-  await checkConsecutiveFailures(subscription.id);
+  // All retries exhausted - check if we should disable webhook. A single
+  // test dispatch never counts toward auto-disable (issue #1645).
+  if (retryEnabled) {
+    await checkConsecutiveFailures(subscription.id);
+  }
 
   return {
     success: false,
@@ -318,6 +370,13 @@ async function checkConsecutiveFailures(subscriptionId: string): Promise<void> {
   const recentDeliveries = await prisma.webhookDelivery.findMany({
     where: {
       subscriptionId,
+      eventType: { not: "webhook.test" },
+      // Keep successes to reset the streak, but ignore rows still awaiting
+      // their final retry. Apply these filters before taking the latest 50.
+      OR: [
+        { deliveredAt: { not: null } },
+        { attempts: { gte: MAX_RETRY_ATTEMPTS }, error: { not: null } },
+      ],
     },
     orderBy: {
       createdAt: "desc",

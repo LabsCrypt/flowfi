@@ -58,7 +58,7 @@ vi.mock('../src/logger.js', async (importOriginal) => {
   };
 });
 
-import { SorobanEventWorker } from '../src/workers/soroban-event-worker.js';
+import { SorobanEventWorker, getEventLedgerTimestamp } from '../src/workers/soroban-event-worker.js';
 import { prisma } from '../src/lib/prisma.js';
 import logger from '../src/logger.js';
 
@@ -262,29 +262,32 @@ describe('SorobanEventWorker', () => {
       };
 
       // First call: event doesn't exist
-      (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
-      (prisma.streamEvent.upsert as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        id: 'fee-event-1',
-        transactionHash: txHash,
-        eventType: 'FEE_COLLECTED',
-      });
+      const mockTx = {
+        streamEvent: {
+          findUnique: vi.fn().mockResolvedValue(null),
+          upsert: vi.fn().mockResolvedValue({
+            id: 'fee-event-1',
+            transactionHash: txHash,
+            eventType: 'FEE_COLLECTED',
+          }),
+        },
+      };
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
 
       await (worker as any).handleFeeCollected(mockEvent, mockEvent.topic![1]);
-      expect(prisma.streamEvent.findUnique).toHaveBeenCalledTimes(1);
-      expect(prisma.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
       expect(logger.warn).not.toHaveBeenCalled();
 
       // Reset mocks
       vi.clearAllMocks();
 
       // Second call: event exists (duplicate)
-      (prisma.streamEvent.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
-        id: 'fee-event-1',
-      });
+      mockTx.streamEvent.findUnique.mockResolvedValue({ id: 'fee-event-1' });
 
       await (worker as any).handleFeeCollected(mockEvent, mockEvent.topic![1]);
-      expect(prisma.streamEvent.findUnique).toHaveBeenCalledTimes(1);
-      expect(prisma.streamEvent.upsert).not.toHaveBeenCalled();
+      expect(mockTx.streamEvent.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('Duplicate StreamEvent skipped')
       );
@@ -546,10 +549,12 @@ describe('SorobanEventWorker', () => {
       };
 
       const mockTx = {
+        $executeRaw: vi.fn().mockResolvedValue(1),
         stream: {
           findUniqueOrThrow: vi.fn().mockResolvedValue({
             ratePerSecond: '10',
-            startTime: 1700000000,
+            // `Stream.startTime` is a BigInt column, so Prisma hands back a bigint.
+            startTime: 1700000000n,
             totalPausedDuration: 0,
           }),
           update: vi.fn().mockResolvedValue({}),
@@ -577,7 +582,9 @@ describe('SorobanEventWorker', () => {
 
       // Second processing (replay of same txHash): the event now exists, so
       // depositedAmount/endTime must NOT be re-applied.
-      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'topup-event-row' });
+      // Second processing (replay of same txHash): the event now exists with the
+      // ledger this worker wrote, so it is a real replay, not an API marker.
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'topup-event-row', ledgerSequence: 4001 });
       await expect((worker as any).handleStreamToppedUp(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
       expect(mockTx.stream.update).not.toHaveBeenCalled();
       expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
@@ -963,5 +970,11 @@ describe('SorobanEventWorker', () => {
         else process.env.STREAM_CONTRACT_ID = previousContractId;
       }
     });
+  });
+});
+
+describe('getEventLedgerTimestamp', () => {
+  it('uses the event ledger close time instead of the indexer processing time', () => {
+    expect(getEventLedgerTimestamp({ ledgerClosedAt: '1735689599' })).toBe(1735689599);
   });
 });

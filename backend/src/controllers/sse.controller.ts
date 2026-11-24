@@ -1,8 +1,11 @@
 import type { Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { sseService } from '../services/sse.service.js';
 import { prisma } from '../lib/prisma.js';
 import { requestContext } from '../logger.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import { isSandboxRequest } from '../middleware/sandbox.middleware.js';
+import { sendApiError } from '../lib/api-error.js';
 import { z } from 'zod';
 
 const subscribeSchema = z.object({
@@ -34,7 +37,7 @@ function getClientIp(req: Request): string {
 }
 export const subscribe = async (req: Request, res: Response) => {
   if (sseService.isShuttingDown()) {
-    return res.status(503).json({ message: 'Server is shutting down, please reconnect shortly.' });
+    return sendApiError(res, 503, 'SERVICE_UNAVAILABLE', 'Server is shutting down, please reconnect shortly.');
   }
 
   try {
@@ -45,9 +48,12 @@ export const subscribe = async (req: Request, res: Response) => {
       if (capacity.retryAfterSeconds) {
         res.setHeader('Retry-After', String(capacity.retryAfterSeconds));
       }
-      return res.status(capacity.status ?? 503).json({
-        message: capacity.message ?? 'SSE connection rejected',
-      });
+      return sendApiError(
+        res,
+        capacity.status ?? 503,
+        'SSE_CONNECTION_REJECTED',
+        capacity.message ?? 'SSE connection rejected',
+      );
     }
 
     const { publicKey } = (req as AuthenticatedRequest).user;
@@ -89,7 +95,9 @@ export const subscribe = async (req: Request, res: Response) => {
     }
     subscriptions.push(...userSubscriptions);
 
-    const clientId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    // Issue #1534: client ids must come from a CSPRNG so concurrently
+    // connecting clients cannot collide and clobber each other's registration.
+    const clientId = randomUUID();
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -99,17 +107,27 @@ export const subscribe = async (req: Request, res: Response) => {
     });
 
     const requestId = requestContext.getStore()?.requestId;
-    res.write(`data: ${JSON.stringify({ type: 'connected', clientId, requestId })}\n\n`);
+    const sandbox = isSandboxRequest(req);
+    const connectedData = {
+      type: 'connected',
+      clientId,
+      requestId,
+      ...(sandbox && { _sandbox: true }),
+    };
+    res.write(`data: ${JSON.stringify(connectedData)}\n\n`);
 
-    sseService.addClient(clientId, res, subscriptions, sourceIp, publicKey);
+    sseService.addClient(clientId, res, subscriptions, sourceIp, publicKey, sandbox);
     return;
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({
-        message: 'Invalid subscription parameters',
-        errors: error.issues,
-      });
+      return sendApiError(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        'Invalid subscription parameters',
+        error.issues,
+      );
     }
-    return res.status(500).json({ message: 'Internal server error' });
+    return sendApiError(res, 500, 'INTERNAL_SERVER_ERROR', 'Internal server error');
   }
 };

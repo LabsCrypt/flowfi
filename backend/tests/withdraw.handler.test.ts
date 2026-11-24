@@ -76,7 +76,7 @@ describe('Withdraw Handler', () => {
     expect(res.status).toHaveBeenCalledWith(403);
   });
 
-  it('should successfully withdraw', async () => {
+  it('simulates the withdrawal without touching any accounting', async () => {
     const mockStream = {
       streamId: 123,
       recipient: 'GRECIPIENT1',
@@ -86,105 +86,22 @@ describe('Withdraw Handler', () => {
     };
     (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
     (claimableAmountService.getClaimableAmount as any).mockReturnValue({ actionable: true, claimableAmount: '100' });
+    // The service resolves with a hash from the dry-run; issue #1847 is that it
+    // must never reach the client or the ledger book as if it were submitted.
     (sorobanWithdraw as any).mockResolvedValue({ txHash: 'tx123' });
-    // Mock $executeRawUnsafe: first call = INSERT event (returns 1 = inserted),
-    // second call = UPDATE balance (returns undefined, doesn't matter).
-    let callIndex = 0;
-    mockTx.$executeRawUnsafe.mockImplementation(async () => {
-      callIndex += 1;
-      return callIndex === 1 ? 1 : undefined;
-    });
-    // Mock the $transaction callback to return the refreshed stream
-    vi.mocked(prisma.$transaction as any).mockImplementation(async (fn: any) => {
-      mockTx.stream.findUnique.mockResolvedValue({ ...mockStream, withdrawnAmount: '100' });
-      return fn(mockTx);
-    });
 
     await withdrawHandler(req as AuthenticatedRequest, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, txHash: 'tx123' }));
-    // The event is now inserted inside the transaction; verify the INSERT
-    // was attempted via $executeRawUnsafe (no separate upsert at top level).
-    expect(mockTx.$executeRawUnsafe).toHaveBeenCalled();
-  });
-
-  it('should not increment withdrawnAmount when the event already exists (idempotent)', async () => {
-    const mockStream = {
-      streamId: 123,
-      recipient: 'GRECIPIENT1',
-      withdrawnAmount: '100',
-      depositedAmount: '1000',
-      isActive: true,
-    };
-    (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
-    (claimableAmountService.getClaimableAmount as any).mockReturnValue({ actionable: true, claimableAmount: '50' });
-    (sorobanWithdraw as any).mockResolvedValue({ txHash: 'simulated-withdraw-123' });
-
-    // First call: INSERT returns 1 (new event) → balance incremented
-    // Second call: INSERT returns 0 (duplicate) → balance NOT incremented
-    let eventInsertCount = 0;
-    mockTx.$executeRawUnsafe.mockImplementation(async (_sql: string) => {
-      eventInsertCount += 1;
-      // First $executeRawUnsafe call is the event INSERT
-      if (eventInsertCount === 1) return 1;
-      // Second would be the balance UPDATE — return undefined (won't be reached on duplicate)
-      return undefined;
-    });
-
-    // Simulate first withdraw: balance incremented from 100 to 150
-    vi.mocked(prisma.$transaction as any).mockImplementation(async (fn: any) => {
-      // After INSERT succeeds (rowcount=1), balance UPDATE runs, then findUnique returns updated state
-      mockTx.stream.findUnique.mockResolvedValue({ ...mockStream, withdrawnAmount: '150' });
-      return fn(mockTx);
-    });
-
-    await withdrawHandler(req as AuthenticatedRequest, res as Response);
-    expect(res.status).toHaveBeenCalledWith(200);
-
-    // Now simulate retry: INSERT returns 0 (duplicate), balance NOT updated
-    eventInsertCount = 0;
-    mockTx.$executeRawUnsafe.mockImplementation(async (_sql: string) => {
-      eventInsertCount += 1;
-      // INSERT returns 0 (duplicate)
-      if (eventInsertCount === 1) return 0;
-      return undefined;
-    });
-
-    vi.mocked(prisma.$transaction as any).mockImplementation(async (fn: any) => {
-      // findUnique returns the SAME withdrawnAmount (not incremented)
-      mockTx.stream.findUnique.mockResolvedValue({ ...mockStream, withdrawnAmount: '150' });
-      return fn(mockTx);
-    });
-
-    await withdrawHandler(req as AuthenticatedRequest, res as Response);
-    expect(res.status).toHaveBeenCalledWith(200);
-
-    // Critical: the balance must be 150, not 200 — the duplicate did NOT increment
-    const responseJson = (res.json as any).mock.calls[1][0];
-    expect(responseJson.stream.withdrawnAmount).toBe('150');
-  });
-
-  it('should return 409 when no claimable balance available (duplicate event with zero claim)', async () => {
-    const mockStream = {
-      streamId: 123,
-      recipient: 'GRECIPIENT1',
-      withdrawnAmount: '500',
-      depositedAmount: '1000',
-      isActive: true,
-    };
-    (prisma.stream.findUnique as any).mockResolvedValue(mockStream);
-    (claimableAmountService.getClaimableAmount as any).mockReturnValue({ actionable: false, claimableAmount: '0' });
-
-    await withdrawHandler(req as AuthenticatedRequest, res as Response);
-    expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: {
-          code: 'CONFLICT',
-          message: 'No claimable balance is currently available',
-        },
-      })
+      expect.objectContaining({ success: true, simulated: true, amount: '100' }),
     );
+    const body = (res.json as any).mock.calls[0][0];
+    expect(body).not.toHaveProperty('txHash');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.stream.update).not.toHaveBeenCalled();
+    expect(prisma.streamEvent.upsert).not.toHaveBeenCalled();
+    expect(prisma.streamEvent.create).not.toHaveBeenCalled();
   });
 });

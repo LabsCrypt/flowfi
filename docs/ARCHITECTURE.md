@@ -9,7 +9,7 @@ flowchart LR
     C["Soroban Stream Contract\nEvent Emission"] --> W["Event Worker / Indexer\nbackend/src/workers"]
     W --> P["Prisma ORM"]
     P --> D[("PostgreSQL")]
-    D --> API["Express API\nREST + SSE"]
+    D --> API["Express API\nREST + SSE + GraphQL (read-only)"]
     API --> SSE["SSE Service\nConnection Registry"]
     SSE --> FE["Next.js Frontend\nDashboard + Profile"]
 
@@ -22,7 +22,7 @@ flowchart LR
 1. Soroban contract: source of truth for stream state and events.
 1. Event worker/indexer: reads events from Stellar/Soroban, normalizes payloads, and persists stream state + stream events.
 1. PostgreSQL + Prisma: query layer for fast read APIs.
-1. Express API: serves versioned REST endpoints and long-lived SSE subscriptions.
+1. Express API: serves versioned REST endpoints, long-lived SSE subscriptions, and an unversioned read-only GraphQL endpoint at `/graphql` (see [docs/api/README.md](api/README.md#graphql-api)).
 1. Frontend: consumes REST for initial state and SSE for real-time deltas.
 
 ## Event Type Data Flows
@@ -81,7 +81,7 @@ When the indexer worker processes a ledger batch:
 
 1. Reads the cursor from `IndexerState.lastLedger` to determine where to resume
 2. Upserts `Stream` records to mirror on-chain state changes
-3. Persists each `StreamEvent` via per-event `findUnique` + `upsert` keyed on `(transactionHash, eventType)` (not batch `createMany` with `skipDuplicates`)
+3. Persists each `StreamEvent` via per-event `findUnique` + `upsert` keyed on `(transactionHash, eventType)`, both statements inside one `prisma.$transaction` (not batch `createMany` with `skipDuplicates`)
 4. Advances `IndexerState.lastLedger` after the batch completes
 
 **Database Model Reference:**
@@ -174,7 +174,7 @@ Benefits:
 
 All backend log lines use standard JSON formatting via Winston and include a `requestId` correlation ID field when running inside a request or worker context (managed by Node's `AsyncLocalStorage` via `requestContext` in `backend/src/logger.ts`).
 
-- **HTTP Requests:** Requests receive or generate a `requestId` via `requestIdMiddleware` (`X-Request-ID` header).
+- **HTTP Requests:** Requests receive or generate a `requestId` via `requestIdMiddleware` (`X-Request-ID` header), which runs before the global rate limiter so even a throttled response has one. Standard error bodies (`sendApiError`) echo it as `error.requestId`, matching the `X-Request-ID` response header.
 - **Background Indexer/Worker Poll Cycles:** Each `SorobanEventWorker` poll batch runs inside `requestContext.run({ requestId: randomUUID() }, ...)` so all RPC fetches, event processing, and per-event error logs within that poll cycle share a single correlation ID.
 - **Admin Replays:** Triggering an indexer event replay (via `replayFromLedger` or `POST /v1/admin/indexer/replay`) wraps the reset and worker poll cycle in `requestContext`. The correlation ID is included on all log statements emitted during replay and returned in the HTTP API response (`{ ok: true, replayingFrom: <ledger>, requestId: "<id>" }`).
 
@@ -194,7 +194,7 @@ SorobanEventWorker  (backend/src/workers/soroban-event-worker.ts)
 PostgreSQL  (via Prisma)
     │  StreamEvent table / Stream table updated
     ▼
-SSE broadcast  (backend/src/services/sseService.ts)
+SSE broadcast  (backend/src/services/sse.service.ts)
     │  pushes typed event to sse:stream:<id> and sse:user:<address> channels
     ▼
 Frontend useStreamEvents hook  (frontend/src/hooks/useStreamEvents.ts)
@@ -227,7 +227,7 @@ Key points:
 @@unique([transactionHash, eventType])
 ```
 
-This means replaying the same on-chain transaction (e.g. during a re-index or worker restart) will produce an `upsert` conflict rather than a duplicate row. The worker uses Prisma's `createOrUpdate` (upsert) path on `Stream` and a `createMany … skipDuplicates` path on `StreamEvent`.
+This means replaying the same on-chain transaction (e.g. during a re-index or worker restart) will produce an `upsert` conflict rather than a duplicate row. The worker uses Prisma's `createOrUpdate` (upsert) path on `Stream`, and on `StreamEvent` a per-event `findUnique` + `upsert` — never `createMany … skipDuplicates` — with the check and the write taken inside one `prisma.$transaction` so two concurrent deliveries of the same event cannot both see the row as absent.
 
 ### Indexer Cursor — `IndexerState`
 
@@ -252,12 +252,18 @@ FlowFi actions split into two categories based on who holds the signing key:
 
 | Action | Signer | How |
 |---|---|---|
-| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. |
+| **Top-up** | Server (custodial) | Backend submits the transaction using `KEEPER_SECRET_KEY`. The frontend sends only the stream ID and amount. This is the only action signed with a key the backend holds. |
+| **Cancel** | Sender wallet (non-custodial) | `backend/src/controllers/stream/cancel.ts` submits the on-chain cancel server-side, but signs it with the sender's secret supplied in the request body (`senderSecret`) — never `KEEPER_SECRET_KEY`. Returns `400` if `senderSecret` is missing. |
 | **Withdraw** | Wallet (non-custodial) | Frontend builds and signs the transaction via the connected wallet (Freighter). The backend currently only simulates server-side; the real transaction is signed and submitted by the frontend. |
 | **Pause / Resume** | Wallet (non-custodial) | Same as withdraw — frontend-signed. The backend simulate endpoints exist for fee estimation but do not submit. |
 | **Create stream** | Wallet (non-custodial) | Frontend signs via wallet and submits directly to the RPC. |
 
-> **Important for contributors:** Do not wire pause/resume/withdraw to a server-side submit path. Only `top-up` is intentionally custodial. All other mutating actions must be wallet-signed by the user.
+> **Important for contributors:** `top-up` is the only action the backend can sign with a key it holds (`KEEPER_SECRET_KEY`). Every other mutating action must be authorized by the user's own key: pause/resume/withdraw/create are signed in the mounted wallet, and cancel is signed server-side with the caller-supplied `senderSecret`. Do not add new server-side submit paths that sign with the keeper key, and do not wire pause/resume/withdraw to a server-side submit path.
+
+Signing custody across `backend/src/controllers/stream/*.ts` and `backend/src/services/sorobanService.ts` (verified by grepping for `KEEPER_SECRET_KEY`):
+
+- `topUpStream()` in `backend/src/services/sorobanService.ts` is the **only** caller of the keeper secret. If `KEEPER_SECRET_KEY` is unset it throws and the request returns `500`.
+- `cancelStream()` takes a `senderSecret` argument; `backend/src/controllers/stream/cancel.ts` reads it from `req.body.senderSecret`, so cancel is not custodial.
 
 ---
 
@@ -288,7 +294,6 @@ To run the full stack end-to-end, set the following secrets. See [`backend/.env.
 | `NEXT_PUBLIC_SOROBAN_RPC_URL` | Soroban RPC endpoint (e.g. `https://soroban-testnet.stellar.org`) |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Stellar network passphrase (e.g. `Test SDF Network ; September 2015`) |
 | `NEXT_PUBLIC_STREAM_CONTRACT_ID` | Soroban stream contract ID used by the Soroban client |
-| `NEXT_PUBLIC_STREAMING_CONTRACT` | Contract address displayed in the Settings page |
 | `NEXT_PUBLIC_USDC_ADDRESS` | USDC token contract address (testnet default provided) |
 | `NEXT_PUBLIC_EURC_ADDRESS` | EURC token contract address (testnet default provided) |
 | `NEXT_PUBLIC_XLM_ADDRESS` | XLM token contract address (testnet default provided) |

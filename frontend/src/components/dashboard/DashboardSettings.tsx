@@ -22,9 +22,12 @@ export function DashboardSettings({ session, onDisconnect }: DashboardSettingsPr
           </p>
 
           <div className="stream-template-editor">
+            <label className="sr-only" htmlFor="stream-template-name">
+              Template name
+            </label>
             <input
+              id="stream-template-name"
               placeholder="e.g. Monthly Contributor Payroll"
-              aria-label="Template name"
             />
             <div className="stream-template-editor__actions">
               <button className="secondary-button" disabled>

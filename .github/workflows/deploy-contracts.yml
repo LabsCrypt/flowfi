@@ -42,24 +42,30 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          workspace: "contracts -> target"
+          workspaces: "contracts -> target"
 
       - name: Install Stellar CLI
         run: |
-          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh -s -- --install-deps
-          echo "$HOME/.stellar-cli/bin" >> $GITHUB_PATH
+          set -euo pipefail
+          STELLAR_VERSION=22.0.0
+          STELLAR_SHA256=8df55a1aeff5ad2e7a036480f42956ab91d03c05f32a9025b46b86dc9b2c66bc
+          curl -fsSL -o /tmp/stellar-cli.tar.gz "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_VERSION}/stellar-cli-${STELLAR_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${STELLAR_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.stellar-cli/bin"
+          tar -xzf /tmp/stellar-cli.tar.gz -C "$HOME/.stellar-cli/bin" stellar
+          echo "$HOME/.stellar-cli/bin" >> "$GITHUB_PATH"
 
       - name: Run Contract Tests
         run: cargo test --package stream_contract
@@ -102,28 +108,32 @@ jobs:
 
       - name: Emit Deployment Summary
         if: always()
+        env:
+          CONTRACT_ID: ${{ steps.contract.outputs.contract_id }}
+          WASM_PATH: ${{ env.WASM_WASM_PATH }}
+          DEPLOYMENT_JSON: ${{ steps.contract.outputs.deployment-json }}
         run: |
           {
             echo "## Deployment Summary"
             echo ""
             echo "- **Network**: \`$NETWORK\`"
-            echo "- **Contract ID**: \`${{ steps.contract.outputs.contract_id }}\`"
-            echo "- **WASM**: \`${{ env.WASM_WASM_PATH }}\`"
+            echo "- **Contract ID**: \`$CONTRACT_ID\`"
+            echo "- **WASM**: \`$WASM_PATH\`"
             echo "- **Deployment info**: "
             echo '```json'
-            echo "${{ steps.contract.outputs.deployment-json }}"
+            echo "$DEPLOYMENT_JSON"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Optimized WASM Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: stream-contract-${{ env.NETWORK }}
           path: contracts/target/wasm32-unknown-unknown/optimized/*.wasm
           if-no-files-found: error
 
       - name: Upload Deployment Info
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: deployment-info-${{ env.NETWORK }}
           path: deployment-info.json

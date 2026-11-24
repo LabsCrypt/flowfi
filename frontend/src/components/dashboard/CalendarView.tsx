@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from "lucide-react";
 
-interface Stream {
+export interface Stream {
   id: string;
   streamId: number;
   sender: string;
@@ -28,21 +28,72 @@ interface CalendarViewProps {
 
 type ViewMode = "month" | "week";
 
-interface CalendarDay {
+export interface CalendarDay {
   date: Date;
   isCurrentMonth: boolean;
   isToday: boolean;
   streams: StreamEvent[];
 }
 
-interface StreamEvent {
+export interface StreamEvent {
   stream: Stream;
   type: "start" | "end" | "active" | "cliff";
   date: Date;
 }
 
+/**
+ * Builds the 6x7 month grid for `currentDate`, padded with the neighbouring
+ * months' days so every month renders the same 42 cells.
+ */
+export function buildCalendarDays(currentDate: Date, streams: Stream[]): CalendarDay[] {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startOffset = firstDay.getDay();
+    const totalDays = lastDay.getDate();
+
+    const days: CalendarDay[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const prevMonthLastDay = new Date(year, month, 0).getDate();
+    for (let i = startOffset - 1; i >= 0; i--) {
+      const date = new Date(year, month - 1, prevMonthLastDay - i);
+      days.push({
+        date,
+        isCurrentMonth: false,
+        isToday: date.getTime() === today.getTime(),
+        streams: getStreamsForDate(date, streams),
+      });
+    }
+
+    for (let day = 1; day <= totalDays; day++) {
+      const date = new Date(year, month, day);
+      days.push({
+        date,
+        isCurrentMonth: true,
+        isToday: date.getTime() === today.getTime(),
+        streams: getStreamsForDate(date, streams),
+      });
+    }
+
+    const remaining = 42 - days.length;
+    for (let day = 1; day <= remaining; day++) {
+      const date = new Date(year, month + 1, day);
+      days.push({
+        date,
+        isCurrentMonth: false,
+        isToday: date.getTime() === today.getTime(),
+        streams: getStreamsForDate(date, streams),
+      });
+    }
+
+    return days;
+}
+
 /** Get streams that are active on a specific date */
-function getStreamsForDate(date: Date, streams: Stream[]): StreamEvent[] {
+export function getStreamsForDate(date: Date, streams: Stream[]): StreamEvent[] {
   const events: StreamEvent[] = [];
   const dayStart = new Date(date);
   dayStart.setHours(0, 0, 0, 0);
@@ -97,53 +148,12 @@ export function CalendarView({
     });
   }, [streams, selectedToken, direction, userPublicKey]);
 
-  // Generate calendar days
-  const calendarDays = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const startOffset = firstDay.getDay();
-    const totalDays = lastDay.getDate();
-
-    const days: CalendarDay[] = [];
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const prevMonthLastDay = new Date(year, month, 0).getDate();
-    for (let i = startOffset - 1; i >= 0; i--) {
-      const date = new Date(year, month - 1, prevMonthLastDay - i);
-      days.push({
-        date,
-        isCurrentMonth: false,
-        isToday: date.getTime() === today.getTime(),
-        streams: getStreamsForDate(date, filteredStreams),
-      });
-    }
-
-    for (let day = 1; day <= totalDays; day++) {
-      const date = new Date(year, month, day);
-      days.push({
-        date,
-        isCurrentMonth: true,
-        isToday: date.getTime() === today.getTime(),
-        streams: getStreamsForDate(date, filteredStreams),
-      });
-    }
-
-    const remaining = 42 - days.length;
-    for (let day = 1; day <= remaining; day++) {
-      const date = new Date(year, month + 1, day);
-      days.push({
-        date,
-        isCurrentMonth: false,
-        isToday: date.getTime() === today.getTime(),
-        streams: getStreamsForDate(date, filteredStreams),
-      });
-    }
-
-    return days;
-  }, [currentDate, filteredStreams]);
+  // Grid building lives in `buildCalendarDays` so its date math is unit-testable
+  // without rendering the component.
+  const calendarDays = useMemo(
+    () => buildCalendarDays(currentDate, filteredStreams),
+    [currentDate, filteredStreams],
+  );
 
   const goToPrevMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
@@ -248,6 +258,11 @@ export function CalendarView({
               >
                 {day.date.getDate()}
               </span>
+              {day.isToday && (
+                <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+                  Today
+                </span>
+              )}
               {day.streams.length > 0 && (
                 <span className="text-xs text-slate-500">
                   {day.streams.length}

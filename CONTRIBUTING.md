@@ -86,7 +86,7 @@ cd flowfi
 
 Make sure you have the following installed:
 
-- Node.js (LTS recommended)
+- Node.js 22 (`^22.22.1`) — the version is pinned in `.nvmrc` and enforced via `engines` + `engine-strict`; run `nvm use` in the repo root
 - npm
 - Rust & Cargo
 - Docker & Docker Compose
@@ -102,10 +102,30 @@ The fastest way to run the full stack locally:
 docker compose up --build
 ```
 
-This starts:
+This starts six services:
 
-- PostgreSQL (port 5433)
-- Backend API (port 3001)
+| Service | Host port | Purpose |
+| --- | --- | --- |
+| `postgres` | `5433` | PostgreSQL 16 database |
+| `pgbouncer` | `6432` | Transaction-pooling proxy in front of Postgres; the backend connects through it |
+| `redis` | `6379` | SSE pub/sub fan-out and shared rate-limit state |
+| `mock-soroban-rpc` | `8000` | Local JSON-RPC stub returning well-formed Soroban responses, so the indexer and simulation endpoints work without a live testnet |
+| `backend` | `3001` | Backend API (runs with `SANDBOX_MODE_ENABLED=true` against the mock RPC) |
+| `frontend` | `3000` | Next.js frontend, built and run in production mode |
+
+Make sure these host ports are free before starting, or remap them in `docker-compose.yml`.
+
+**Minimal invocation** — if you only need the API (for example, you run the frontend with `npm run dev`), start just the backend. Compose also starts the services it depends on (`postgres`, `pgbouncer`, `redis`, `mock-soroban-rpc`), but skips the frontend:
+
+```bash
+docker compose up --build backend
+```
+
+For a database only (e.g. running the backend directly on your machine):
+
+```bash
+docker compose up -d postgres
+```
 
 To run in detached mode:
 
@@ -149,8 +169,10 @@ The backend uses PostgreSQL. You can either:
 
 ```bash
 npm run prisma:generate
-npm run prisma:migrate
+npm run prisma:deploy   # prisma migrate deploy: replays committed migrations on a fresh DB
 ```
+
+This is the same sequence CI uses (`prisma generate` then `prisma migrate deploy`). Use `npm run prisma:migrate` (`prisma migrate dev`) only when you are authoring a new migration after changing `schema.prisma`.
 
 4. **Start Development Server**
 
@@ -167,7 +189,8 @@ Backend runs on: `http://localhost:3001`
 - `npm run start` - Start production server
 - `npm run test` - Run test suite
 - `npm run prisma:generate` - Generate Prisma client
-- `npm run prisma:migrate` - Run database migrations
+- `npm run prisma:deploy` - Apply committed migrations (bootstrap a fresh database)
+- `npm run prisma:migrate` - Create a new migration during development (`prisma migrate dev`)
 - `npm run prisma:studio` - Open Prisma Studio (database GUI)
 
 **Backend API Documentation:**
@@ -202,7 +225,7 @@ Frontend runs on: `http://localhost:3000`
 - `npm run lint` - Run ESLint
 
 **Environment Variables:**
-Copy [`frontend/.env.example`](../frontend/.env.example) to `frontend/.env.local` and adjust as needed. The `.env.example` file documents every `NEXT_PUBLIC_*` variable the application reads, with sensible testnet defaults.
+Copy [`frontend/.env.example`](frontend/.env.example) to `frontend/.env.local` and adjust as needed. The `.env.example` file documents every `NEXT_PUBLIC_*` variable the application reads, with sensible testnet defaults.
 
 ---
 
@@ -216,11 +239,13 @@ Make sure you have Rust and Cargo installed. If not:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-2. **Install Soroban CLI** (if not already installed)
+2. **Install the Stellar CLI** (if not already installed)
 
 ```bash
-cargo install --locked soroban-cli
+cargo install --locked stellar-cli
 ```
+
+This installs the `stellar` binary used throughout the repo (`stellar contract optimize/deploy/invoke` in the README and `scripts/deploy.sh`). The older `soroban-cli` crate and its `soroban` command are superseded — if you have them installed, switch to `stellar`. See [stellar/stellar-cli](https://github.com/stellar/stellar-cli) for prebuilt binaries and other install options.
 
 3. **Build Contracts**
 
@@ -287,10 +312,30 @@ This repository uses GitHub Actions for continuous integration. Workflows are lo
 - **CI** (`.github/workflows/ci.yml`)
   - Runs on: push to `main`/`develop` and pull requests
   - Performs:
-    - Frontend: lint and build
-    - Backend: prisma generation, build, and tests
+    - Frontend: lint, tests, and build
+    - Backend: prisma generation, build, OpenAPI drift check, and tests
     - Soroban Contracts: build (wasm) and tests
   - View workflow: [CI](.github/workflows/ci.yml)
+
+### API Types Drift Check
+
+The frontend's hand-written contract types in
+`frontend/src/lib/api-types.ts` are mirrored by a machine-generated snapshot,
+`frontend/src/lib/api-types.generated.ts`. CI keeps the two in sync so a
+frontend build can never silently disagree with the backend's real response
+shape:
+
+1. The backend exports the committed spec: `cd backend && npm run codegen:openapi`
+   (writes `backend/swagger/flowfi.openapi.json`).
+2. The frontend regenerates the types from that spec:
+   `cd frontend && npm run codegen:api-types`.
+3. CI runs `git diff --exit-code` over both artifacts. Any uncommitted change
+   means the spec or the generated types drifted and the job fails.
+
+When you change a backend response shape or route annotation, run both commands
+above and commit the updated `flowfi.openapi.json` and `api-types.generated.ts`
+alongside your change. If a change would alter the shape consumed by the
+frontend, update `api-types.ts` and its call sites by hand too.
 
 ### Running CI Checks Locally
 
@@ -311,6 +356,14 @@ npm run build           # Verifies TypeScript compilation
 npm run test            # Runs backend vitest suite
 ```
 *Note: Backend tests require a running PostgreSQL instance and `DATABASE_URL` environment variable.*
+
+Response-shape changes must also pass the OpenAPI drift check:
+
+```bash
+cd backend && npm run codegen:openapi
+cd ../frontend && npm run codegen:api-types
+cd .. && git diff --exit-code -- backend/swagger/flowfi.openapi.json frontend/src/lib/api-types.generated.ts
+```
 
 #### 3. Smart Contract Checks
 ```bash
@@ -445,6 +498,14 @@ Your PR must:
 - Follow commit conventions
 - Be properly described
 - Stay focused (avoid large unrelated changes)
+
+**PR checklist**
+
+- [ ] Frontend lint, tests, and build pass (`cd frontend && npm run lint && npm run test && npm run build`)
+- [ ] Backend build and tests pass (`cd backend && npm run build && npm run test`)
+- [ ] Contract build, `cargo fmt`, `cargo clippy`, and tests pass (`cd contracts`)
+- [ ] If you touched a backend response shape or route annotations, the OpenAPI drift check is clean (`npm run codegen:openapi` in `backend/`, then `npm run codegen:api-types` in `frontend/`, then `git diff --exit-code`) and the regenerated `flowfi.openapi.json` / `api-types.generated.ts` are committed
+- [ ] Related issues are linked with `Closes #NNN`
 
 ---
 

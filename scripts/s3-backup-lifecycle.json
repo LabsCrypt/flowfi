@@ -1,0 +1,20 @@
+{
+  "Rules": [
+    {
+      "ID": "flowfi-encrypted-backups-expire-after-30-days",
+      "Status": "Enabled",
+      "Filter": {
+        "Tag": {
+          "Key": "flowfi-backup-retention",
+          "Value": "30d"
+        }
+      },
+      "Expiration": {
+        "Days": 30
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 30
+      }
+    }
+  ]
+}

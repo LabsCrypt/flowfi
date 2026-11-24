@@ -9,6 +9,7 @@ import { Loader2, Download } from "lucide-react";
 import { formatAmount } from "@/utils/amount";
 import { downloadCSV } from "@/utils/csvExport";
 import { getApiBaseUrl } from "@/lib/api/_shared";
+import { useAsyncPageData } from "@/hooks/useAsyncPageData";
 import { logger } from "@/lib/logger";
 
 const PAGE_SIZE = 10;
@@ -28,6 +29,7 @@ export default function ActivityContent() {
   const [events, setEvents] = useState<BackendStreamEvent[]>([]);
   const [activeTab, setActiveTab] = useState("ALL");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
@@ -35,6 +37,7 @@ export default function ActivityContent() {
     async (pageNum: number, tab: string, append: boolean = false, signal?: AbortSignal) => {
       if (!session?.publicKey) return;
       setLoading(true);
+      setError(null);
 
       try {
         const typeFilter = tab === "PAUSED" ? "PAUSED,RESUMED" : tab;
@@ -65,6 +68,7 @@ export default function ActivityContent() {
         logger.error("Failed to fetch activity:", error);
         if (!append) setEvents([]);
         setHasMore(false);
+        setError("Failed to fetch activity. Please try again.");
       } finally {
         setLoading(false);
       }
@@ -88,6 +92,14 @@ export default function ActivityContent() {
     fetchActivity(nextPage, activeTab, true);
   };
 
+  const view = useAsyncPageData({
+    enabled: status === "connected",
+    isLoading: loading,
+    isError: error !== null,
+    isEmpty: events.length === 0,
+    error,
+  });
+
   const handleExportCSV = () => {
     const csvData = events.map(event => ({
         'Stream ID': event.streamId,
@@ -100,7 +112,7 @@ export default function ActivityContent() {
     downloadCSV(csvData, `flowfi-activity-${Date.now()}.csv`);
   };
 
-  if (status !== "connected") {
+  if (!view.isEnabled) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
         <h1 className="text-2xl font-bold mb-2 text-white">Access Denied</h1>
@@ -153,6 +165,22 @@ export default function ActivityContent() {
       </div>
 
       <ActivityHistory events={events} isLoading={loading && events.length === 0} />
+
+      {view.isError && (
+        <div role="alert" className="mt-6 text-center">
+          <p className="text-slate-400">{view.error}</p>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setPage(1);
+              void fetchActivity(1, activeTab);
+            }}
+            disabled={loading}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
 
       {hasMore && (
         <div className="mt-12 flex justify-center">

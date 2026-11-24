@@ -13,7 +13,7 @@ import {
   resolveEventsPageSize,
 } from "../repositories/streamEvent.repository.js";
 import * as exportService from "../services/export.service.js";
-import { sendApiError } from "../types/api-error.js";
+import { sendApiError } from "../lib/api-error.js";
 
 /**
  * Public shape of a Stream, used when embedding streams inside a public
@@ -132,6 +132,10 @@ export const getUser = async (
  * Get user events (history) - paginated list of stream events where the
  * given wallet was either the sender or recipient.
  *
+ * Issue #1533: wallet history is private. The endpoint requires auth and the
+ * `publicKey` path param must match the authenticated caller, mirroring
+ * GET /v1/events.
+ *
  * Query params:
  *   - type: optional comma-separated list of event types to filter by
  *     (e.g. "PAUSED,RESUMED"); unknown values are ignored, and a filter
@@ -147,6 +151,11 @@ export const getUserEvents = async (
   next: NextFunction,
 ) => {
   try {
+    const callerPublicKey = (req as AuthenticatedRequest).user?.publicKey;
+    if (!callerPublicKey) {
+      return sendApiError(res, 401, "UNAUTHORIZED", "Authentication required");
+    }
+
     const { publicKey } = req.params;
     if (typeof publicKey !== "string") {
       return sendApiError(res, 400, "INVALID_PUBLIC_KEY", "Invalid publicKey parameter");
@@ -155,11 +164,20 @@ export const getUserEvents = async (
       return sendApiError(res, 400, "INVALID_PUBLIC_KEY", "Invalid Stellar public key format");
     }
 
+    // Issue #1533: prevent unauthenticated/cross-wallet enumeration of a
+    // wallet's stream history (same rule as GET /v1/events).
+    if (publicKey !== callerPublicKey) {
+      return sendApiError(
+        res,
+        403,
+        "FORBIDDEN",
+        "You can only view your own event history",
+      );
+    }
+
     const { requested, types } = parseEventTypeFilter(req.query["type"]);
     if (requested.length > 0 && types.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "No valid event types in `type` filter" });
+      return sendApiError(res, 400, "BAD_REQUEST", "No valid event types in `type` filter");
     }
 
     const limit = resolveEventsPageSize(req.query["limit"]);
@@ -207,7 +225,7 @@ export const getCurrentUser = async (
     const { publicKey } = authReq.user;
 
     // Try to get user from database
-    let user = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { publicKey },
       include: {
         sentStreams: {
@@ -275,6 +293,18 @@ export const exportTransactions = async (
 
     if (!["incoming", "outgoing", "all"].includes(direction)) {
       return sendApiError(res, 400, "INVALID_DIRECTION", "Invalid direction. Must be incoming, outgoing, or all");
+    }
+
+    // Validate the complete range before calling either streaming exporter:
+    // they write headers and a response prefix before querying the database.
+    if (startDate && Number.isNaN(startDate.getTime())) {
+      return sendApiError(res, 400, "INVALID_START_DATE", "startDate must be a valid date");
+    }
+    if (endDate && Number.isNaN(endDate.getTime())) {
+      return sendApiError(res, 400, "INVALID_END_DATE", "endDate must be a valid date");
+    }
+    if (startDate && endDate && startDate.getTime() > endDate.getTime()) {
+      return sendApiError(res, 400, "INVALID_DATE_RANGE", "startDate must be earlier than or equal to endDate");
     }
 
     const options: exportService.ExportOptions = {

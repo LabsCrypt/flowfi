@@ -10,7 +10,7 @@ on:
   pull_request:
     branches: [ main, develop ]
   schedule:
-    - cron: '0 2 * * 0'
+    - cron: '0 0 * * 0'
 
 jobs:
   dependency-check:
@@ -24,7 +24,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20.19.0'
+        node-version-file: '.nvmrc'
         cache: 'npm'
         
     - name: Install dependencies
@@ -56,25 +56,15 @@ jobs:
       run: cargo install cargo-audit --locked
 
     - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
-      working-directory: contracts
-
-    - name: Setup Rust toolchain for contract audit
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache cargo-audit
-      id: cargo-audit-cache
-      uses: actions/cache@v4
-      with:
-        path: ~/.cargo/bin/cargo-audit
-        key: cargo-audit-${{ runner.os }}-0.22.0
-
-    - name: Install cargo-audit
-      if: steps.cargo-audit-cache.outputs.cache-hit != 'true'
-      run: cargo install cargo-audit --version 0.22.0 --locked
-
-    - name: Check for known vulnerabilities in smart contracts (cargo audit)
-      run: cargo audit
+      # RUSTSEC-2026-0387 (crypto-bigint 0.5.5) is not fixable in-tree: it is
+      # a transitive dep of soroban-env-host via elliptic-curve 0.13 (crypto-bigint
+      # ^0.5 pin), and no released soroban-env-host — including 30.0.0 — uses
+      # anything newer, so the advisory's fix (>= 0.7.6) cannot be selected anywhere
+      # in the Soroban dependency graph. crypto-bigint is never compiled into the
+      # contract WASM (it lives in the native host/test runtime only).
+      # Revisit and remove this ignore once Stellar ships env-host on
+      # elliptic-curve >= 0.14 / crypto-bigint >= 0.7.6.
+      run: cargo audit --ignore RUSTSEC-2026-0387
       working-directory: contracts
 
     - name: Verify security setup
@@ -94,8 +84,60 @@ jobs:
       run: cargo install cargo-audit
 
     - name: Run cargo audit on contracts
-      run: cargo audit
+      # RUSTSEC-2026-0387: see the reasoning on the "Check for known
+      # vulnerabilities in smart contracts (cargo audit)" step above.
+      run: cargo audit --ignore RUSTSEC-2026-0387
       working-directory: contracts
+
+  secret-scanning:
+    name: Secret Leak Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The gitleaks CLI is MIT-licensed and free for organisations; only the
+      # `gitleaks/gitleaks-action` wrapper is licence-gated, so the release
+      # binary is installed directly instead of using the action.
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run Gitleaks
+        run: gitleaks dir . --config .gitleaks.toml --redact --verbose --exit-code 1
+
+  semgrep-sast:
+    name: Static Application Security Testing (Semgrep SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST Scan
+        run: semgrep scan --config auto --sarif --output=semgrep.sarif || true
+
+      - name: Upload Semgrep SARIF report
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
 
   codeql-analysis:
     name: CodeQL Analysis

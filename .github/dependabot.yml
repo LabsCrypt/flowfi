@@ -30,10 +30,9 @@ updates:
       day: "monday"
     open-pull-requests-limit: 5
     groups:
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      rust-dependencies:
+        patterns:
+          - "*"
 
   # ── GitHub Actions ─────────────────────────────────────────────────────────
   - package-ecosystem: "github-actions"
@@ -56,9 +55,27 @@ updates:
       day: "monday"
     open-pull-requests-limit: 5
 
+  # Base images for the two real Dockerfiles (there is no root Dockerfile).
   - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+
+  # ── Docker Compose ─────────────────────────────────────────────────────────
+  # Bumps the images referenced in /docker-compose.yml, including the
+  # digest-pinned postgres:16-alpine and redis:7-alpine images. Major-version
+  # bumps are ignored so Postgres/Redis upgrades stay a deliberate decision
+  # (see the upgrade policy comment in docker-compose.yml); minor/patch tag and
+  # digest updates arrive as reviewable PRs.
+  - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
