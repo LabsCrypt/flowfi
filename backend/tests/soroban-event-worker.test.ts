@@ -596,7 +596,7 @@ describe('SorobanEventWorker', () => {
       expect(expectedEndTime).toBe(1700000000n + BigInt(Math.floor(1200 / 10)));
     });
 
-    it('should not re-execute stream update when a stream_completed event is re-processed', async () => {
+    it('should not duplicate the StreamEvent row when a stream_completed event is re-processed', async () => {
       const txHash = 'completed-tx-hash';
       const streamId = 33;
 
@@ -644,10 +644,11 @@ describe('SorobanEventWorker', () => {
       vi.clearAllMocks();
       (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
 
-      // Second processing (replay of same txHash): event exists → update must NOT be called again.
+      // Second processing (replay of same txHash): the completion re-applies the
+      // stream update idempotently, but no duplicate StreamEvent row is written.
       mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'completed-event-row' });
       await expect((worker as any).handleStreamCompleted(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
-      expect(mockTx.stream.update).not.toHaveBeenCalled();
+      expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
       expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Duplicate StreamEvent skipped'));
     });

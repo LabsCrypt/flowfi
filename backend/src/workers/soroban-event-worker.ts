@@ -1166,8 +1166,15 @@ export class SorobanEventWorker {
     const timestamp = getEventLedgerTimestamp(event);
 
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // Check for a duplicate BEFORE mutating any Stream fields so that a
-      // replayed event never executes redundant stream updates.
+      await tx.stream.update({
+        where: { streamId },
+        data: {
+          isActive: false,
+          withdrawnAmount: totalWithdrawn,
+          lastUpdateTime: timestamp,
+        },
+      });
+
       const existingEvent = await tx.streamEvent.findUnique({
         where: {
           transactionHash_eventType: {
@@ -1181,39 +1188,29 @@ export class SorobanEventWorker {
         logger.warn(
           `[SorobanWorker] Duplicate StreamEvent skipped: txHash=${event.txHash} type=COMPLETED`,
         );
-        return;
-      }
-
-      await tx.stream.update({
-        where: { streamId },
-        data: {
-          isActive: false,
-          withdrawnAmount: totalWithdrawn,
-          lastUpdateTime: timestamp,
-        },
-      });
-
-      await tx.streamEvent.upsert({
-        where: {
-          transactionHash_eventType: {
-            transactionHash: event.txHash,
-            eventType: "COMPLETED",
+      } else {
+        await tx.streamEvent.upsert({
+          where: {
+            transactionHash_eventType: {
+              transactionHash: event.txHash,
+              eventType: "COMPLETED",
+            },
           },
-        },
-        create: {
-          streamId,
-          eventType: "COMPLETED",
-          amount: totalWithdrawn,
-          transactionHash: event.txHash,
-          ledgerSequence: event.ledger,
-          timestamp,
-          metadata: JSON.stringify({ recipient }),
-        },
-        update: {
-          ledgerSequence: event.ledger,
-          timestamp,
-        },
-      });
+          create: {
+            streamId,
+            eventType: "COMPLETED",
+            amount: totalWithdrawn,
+            transactionHash: event.txHash,
+            ledgerSequence: event.ledger,
+            timestamp,
+            metadata: JSON.stringify({ recipient }),
+          },
+          update: {
+            ledgerSequence: event.ledger,
+            timestamp,
+          },
+        });
+      }
     });
 
     sseService.broadcastToStream(String(streamId), "stream.completed", {
