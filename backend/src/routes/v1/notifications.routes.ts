@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import { notificationService } from '../../services/notification.service.js';
 import { sendApiError } from '../../lib/api-error.js';
 import { requireAuth } from '../../middleware/auth.js';
+import { notificationRateLimiter } from '../../middleware/rate-limiter.middleware.js';
 import type { AuthenticatedRequest } from '../../types/auth.types.js';
 
 /**
@@ -20,6 +21,10 @@ import type { AuthenticatedRequest } from '../../types/auth.types.js';
  * by mistake learns about it.
  */
 export const notificationsRouter = Router();
+
+// Throttle before the auth/authorization work below runs, so a flood is cheap
+// to reject (CodeQL js/missing-rate-limiting, #1931).
+notificationsRouter.use(notificationRateLimiter);
 
 function sessionAddress(req: AuthenticatedRequest): string | null {
   const address = req.user?.publicKey;
