@@ -596,6 +596,63 @@ describe('SorobanEventWorker', () => {
       expect(expectedEndTime).toBe(1700000000n + BigInt(Math.floor(1200 / 10)));
     });
 
+    it('should not duplicate the StreamEvent row when a stream_completed event is re-processed', async () => {
+      const txHash = 'completed-tx-hash';
+      const streamId = 33;
+
+      const mockEvent: rpc.Api.EventResponse = {
+        id: 'completed-event-1',
+        type: 'contract',
+        ledger: 5001,
+        ledgerClosedAt: '2024-01-01T00:00:00Z',
+        txHash,
+        transactionIndex: 0,
+        operationIndex: 0,
+        inSuccessfulContractCall: true,
+        topic: [
+          mockSym('stream_completed'),
+          mockU64(streamId),
+        ],
+        value: {
+          type: 'scvMap',
+          map: [
+            mockMapEntry('recipient', mockAccountAddr()),
+            mockMapEntry('total_withdrawn', mockI128('0', '5000')),
+          ] as any,
+        } as any,
+      };
+
+      const mockTx = {
+        stream: {
+          update: vi.fn().mockResolvedValue({}),
+        },
+        streamEvent: {
+          findUnique: vi.fn(),
+          upsert: vi.fn().mockResolvedValue({ id: 'completed-event-row' }),
+        },
+      };
+
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // First processing: no existing event → stream completed is updated once.
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce(null);
+      await expect((worker as any).handleStreamCompleted(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
+      expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      (prisma.$transaction as ReturnType<typeof vi.fn>).mockImplementation((cb) => cb(mockTx));
+
+      // Second processing (replay of same txHash): the completion re-applies the
+      // stream update idempotently, but no duplicate StreamEvent row is written.
+      mockTx.streamEvent.findUnique.mockResolvedValueOnce({ id: 'completed-event-row' });
+      await expect((worker as any).handleStreamCompleted(mockEvent, mockEvent.topic![1])).resolves.not.toThrow();
+      expect(mockTx.stream.update).toHaveBeenCalledTimes(1);
+      expect(mockTx.streamEvent.upsert).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Duplicate StreamEvent skipped'));
+    });
+
     it('should process admin_transferred events successfully', async () => {
       const txHash = 'admin-transferred-tx-hash';
 
