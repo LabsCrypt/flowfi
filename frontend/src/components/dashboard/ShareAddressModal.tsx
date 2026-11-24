@@ -1,7 +1,9 @@
 "use client";
 
+import { useId } from "react";
 import { X, QrCode } from "lucide-react";
 import { CopyButton } from "./CopyButton";
+import { useModalDialog } from "@/hooks/useModalDialog";
 
 interface ShareAddressModalProps {
   address: string;
@@ -9,22 +11,37 @@ interface ShareAddressModalProps {
 }
 
 export function ShareAddressModal({ address, onClose }: ShareAddressModalProps) {
+  // The shared hook (#1882): Escape closes, Tab cycles inside the dialog, focus
+  // moves in on open and returns to whatever opened it. Every other modal here
+  // uses it; this one was the exception.
+  const dialogRef = useModalDialog({ onClose });
+  const titleId = useId();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="glass-card max-w-md w-full p-6 relative">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="glass-card max-w-md w-full p-6 relative"
+      >
         <button
+          type="button"
           onClick={onClose}
+          aria-label="Close share address"
           className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors"
         >
-          <X className="h-5 w-5" />
+          <X className="h-5 w-5" aria-hidden="true" />
         </button>
 
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent/20 mb-4">
             <QrCode className="h-8 w-8 text-accent" />
           </div>
-          <h2 className="text-2xl font-bold mb-2">Share Payment Address</h2>
+          <h2 id={titleId} className="text-2xl font-bold mb-2">
+            Share Payment Address
+          </h2>
           <p className="text-slate-400 text-sm">
             Share this address with anyone who wants to send you streaming payments
           </p>
