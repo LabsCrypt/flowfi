@@ -111,6 +111,18 @@ export async function seedWalletSession(
   );
 }
 
+/**
+ * Selects the sandbox network, whose RPC URL comes from the environment
+ * (`NEXT_PUBLIC_SANDBOX_RPC_URL` in playwright.config.ts). The testnet config
+ * hardcodes the public testnet, so anything that signs a transaction has to run
+ * against this network to reach the in-process mock instead.
+ */
+export async function selectMockNetwork(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("flowfi.network", "sandbox");
+  });
+}
+
 /** Sets up a mocked Freighter extension AND a persisted connected session. */
 export async function mockConnectedWallet(
   page: Page,
@@ -118,4 +130,5 @@ export async function mockConnectedWallet(
 ): Promise<void> {
   await installFreighterMock(page, address);
   await seedWalletSession(page, address);
+  await selectMockNetwork(page);
 }

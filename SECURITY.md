@@ -98,6 +98,22 @@ When using FlowFi, please follow these security guidelines:
 4. **Software Updates**: Keep your wallet software and browser up to date
 5. **Phishing Protection**: Always verify you're on the official FlowFi domain
 
+## Automated Static Security Analysis & Vulnerability Scanning Pipeline
+
+To protect financial payment infrastructure and detect supply chain vulnerabilities, secret leaks, and static code issues early, FlowFi runs an automated continuous security pipeline on all pull requests and on a weekly recurring schedule:
+
+1. **Supply Chain & Dependency Audits**:
+   - **Rust Smart Contracts**: Automated `cargo audit` scanning Soroban contracts for known dependency vulnerabilities.
+   - **Node.js Workspaces**: Automated `npm audit --audit-level=high` auditing dependencies across root, frontend, and backend packages.
+2. **Secret Leak Detection**:
+   - Automated `Gitleaks` scanning the complete commit history on all pull requests to block accidental commits of API keys, private credentials, or secrets.
+3. **Static Application Security Testing (SAST)**:
+   - **Semgrep SAST**: Automated pattern scanning across TypeScript, React, and Rust code to detect insecure idioms, improper state mutations, and common web/smart contract anti-patterns.
+   - **SARIF Security Reporting**: Automated SARIF file generation uploaded directly to the repository's GitHub Security tab.
+   - **GitHub CodeQL Analysis**: In-depth semantic code analysis across JavaScript, TypeScript, and Rust.
+4. **Automated Weekly Recurring Scans**:
+   - Scheduled weekly audit runs (`cron: '0 0 * * 0'`) to detect newly disclosed CVEs against existing stable dependencies.
+
 ## Bug Bounty Program
 
 Currently, FlowFi does not have a formal bug bounty program. However, we greatly appreciate security researchers who help improve our security posture and will acknowledge their contributions appropriately.

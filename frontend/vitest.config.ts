@@ -10,6 +10,7 @@ export default defineConfig({
     include: ['src/__tests__/**/*.{test,spec}.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       provider: 'v8',
+      reportOnFailure: true,
       reportsDirectory: './coverage',
       // lcov feeds Codecov; json + json-summary feed the PR coverage table.
       reporter: ['text', 'json', 'json-summary', 'html', 'lcov'],

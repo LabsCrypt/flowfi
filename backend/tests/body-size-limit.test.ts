@@ -53,12 +53,17 @@ describe('JSON body size limits', () => {
     expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
   });
 
-  it('does not tighten the limit for batch-creation paths', async () => {
+  it('does not grant a bulk allowance to a route that does not exist', async () => {
+    // `/v1/streams/batch` was in the 1mb allowlist while no such route existed
+    // (#1900). Without a route to reach, the request must still be parsed by the
+    // standard 100kb limit: an allowlist that grants memory to a 404 is the same
+    // as no limit at all.
     const res = await request(app)
       .post('/v1/streams/batch')
       .set('Content-Type', 'application/json')
       .send(jsonBody(300 * 1024));
 
-    expect(res.status).not.toBe(413);
+    expect(res.status).toBe(413);
+    expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
   });
 });

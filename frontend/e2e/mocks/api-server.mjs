@@ -1,9 +1,10 @@
 import http from "node:http";
 import https from "node:https";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { xdr, Keypair, TransactionBuilder, Networks } from "@stellar/stellar-sdk";
+import { xdr, Keypair, StrKey, TransactionBuilder, Networks } from "@stellar/stellar-sdk";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CERT_DIR = path.join(__dirname, "..", ".e2e-certs");
@@ -98,13 +99,14 @@ function accountEntryXdr(publicKey, seq) {
   const accountEntry = new xdr.AccountEntry({
     accountId: kp.xdrAccountId(),
     balance: xdr.Int64.fromString("0"),
-    seqNum: new xdr.SequenceNumber(xdr.Int64.fromString(String(seq))),
+    seqNum: xdr.Int64.fromString(String(seq)),
     numSubEntries: 0,
+    inflationDest: null,
     flags: 0,
     homeDomain: "",
     thresholds: new Uint8Array(4),
     signers: [],
-    ext: new xdr.AccountEntryExt(0),
+    ext: xdr.AccountEntryExt.v0(),
   });
   return xdr.LedgerEntryData.account(accountEntry);
 }
@@ -112,6 +114,28 @@ function accountEntryXdr(publicKey, seq) {
 function ledgerKeyXdr(publicKey) {
   const kp = Keypair.fromPublicKey(publicKey);
   return xdr.LedgerKey.account(new xdr.LedgerKeyAccount({ accountId: kp.xdrPublicKey() }));
+}
+
+/**
+ * Public key a `getLedgerEntries` key belongs to.
+ *
+ * The SDK asks for the transaction's source account, which is not always the
+ * session wallet: the withdraw flow also loads the recipient. Answering every
+ * key with the session account made the SDK report "Account not found" for the
+ * other one, so resolve the key and serve that account's entry.
+ */
+function publicKeyOfLedgerKey(keyBase64) {
+  try {
+    const ledgerKey = xdr.LedgerKey.fromXDR(keyBase64, "base64");
+    if (ledgerKey.switch() !== xdr.LedgerEntryType.account()) return SESSION_PUBLIC_KEY;
+    const accountId = ledgerKey.account().accountId();
+    if (accountId.switch() !== xdr.PublicKeyType.publicKeyTypeEd25519()) {
+      return SESSION_PUBLIC_KEY;
+    }
+    return StrKey.encodeEd25519PublicKey(accountId.ed25519());
+  } catch {
+    return SESSION_PUBLIC_KEY;
+  }
 }
 
 function sorobanTransactionDataBase64() {
@@ -125,7 +149,7 @@ function sorobanTransactionDataBase64() {
   const data = new xdr.SorobanTransactionData({
     resources,
     resourceFee: 0n,
-    ext: new xdr.SorobanTransactionDataExt(0),
+    ext: xdr.SorobanTransactionDataExt.v0(),
   });
   return data.toXDR("base64");
 }
@@ -246,12 +270,12 @@ function successTxResultBase64() {
   return new xdr.TransactionResult({
     feeCharged: xdr.Int64.fromString("0"),
     result: xdr.TransactionResultResult.txSuccess([]),
-    ext: new xdr.TransactionResultExt(0),
+    ext: xdr.TransactionResultExt.v0(),
   }).toXDR("base64");
 }
 
 function zeroTxMetaBase64() {
-  return new xdr.TransactionMeta(0, []).toXDR("base64");
+  return xdr.TransactionMeta.operations([]).toXDR("base64");
 }
 
 function dummyEnvelopeBase64() {
@@ -318,7 +342,7 @@ async function handleRpc(req, res) {
         const entries = keys.length
           ? keys.map((keyBase64) => ({
               key: keyBase64,
-              xdr: accountEntryXdr(SESSION_PUBLIC_KEY, 1).toXDR("base64"),
+              xdr: accountEntryXdr(publicKeyOfLedgerKey(keyBase64), 1).toXDR("base64"),
               lastModifiedLedgerSeq: 0,
             }))
           : [];
@@ -380,10 +404,32 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log(`[mock-api] rest+sse listening on http://localhost:${PORT}`);
 });
 
-if (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH)) {
-  console.error("[mock-api] missing TLS certs — run the pw global-setup first (playwright install)");
-  process.exit(1);
+// Playwright starts webServer before it runs globalSetup, so a clean checkout
+// (CI) reaches this point before e2e/global-setup.ts has made the certs. Create
+// them here too instead of refusing to start; the global setup still reuses them.
+function ensureTlsCerts() {
+  if (fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)) return;
+  fs.mkdirSync(CERT_DIR, { recursive: true });
+  try {
+    execFileSync(
+      "openssl",
+      [
+        "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+        "-keyout", KEY_PATH,
+        "-out", CERT_PATH,
+        "-days", "3650",
+        "-subj", "/CN=localhost",
+        "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+      ],
+      { stdio: "pipe" },
+    );
+  } catch (err) {
+    console.error(`[mock-api] could not create the self-signed TLS certs: ${err.message}`);
+    process.exit(1);
+  }
 }
+
+ensureTlsCerts();
 
 const rpcServer = https.createServer(
   { cert: fs.readFileSync(CERT_PATH), key: fs.readFileSync(KEY_PATH) },

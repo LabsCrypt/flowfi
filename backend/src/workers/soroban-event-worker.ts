@@ -3,6 +3,7 @@ import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { prisma } from "../lib/prisma.js";
 import { INDEXER_STATE_ID, ensureIndexerState } from "../lib/indexer-state.js";
 import { sseService } from "../services/sse.service.js";
+import { dispatchWebhookEvent } from "../services/webhook.service.js";
 import { sentinelService } from "../services/sentinel.service.js";
 import { publishIndexerLag, quarantineEvent } from "../services/indexerService.js";
 import { applyToppedUpEvent } from "../services/top-up-writer.js";
@@ -669,6 +670,44 @@ export class SorobanEventWorker {
     }
   }
 
+
+  /**
+   * Publish a stream event to SSE and, in the same breath, to webhook
+   * subscribers (#1854).
+   *
+   * The webhook dispatcher existed and was never called: users could create
+   * subscriptions and the test ping worked, while no production event ever
+   * reached them. Routing both fan-outs through here means a new event type
+   * cannot be added to one and forgotten in the other.
+   *
+   * The webhook leg is awaited but never throws: a subscription pointing at a
+   * dead endpoint must not turn a processed chain event into a retry, and the
+   * delivery record it writes is what surfaces the failure.
+   */
+  private async publishStreamEvent(
+    streamId: bigint,
+    eventType: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    sseService.broadcastToStream(String(streamId), eventType, payload);
+
+    try {
+      const stream = await prisma.stream.findUnique({
+        where: { streamId },
+        select: { sender: true, recipient: true },
+      });
+      if (!stream) return;
+
+      const addresses = [stream.recipient, stream.sender].filter(Boolean);
+      await dispatchWebhookEvent(eventType, payload, addresses);
+    } catch (error) {
+      logger.error(
+        `[Webhook] dispatch failed for ${eventType} #${streamId}:`,
+        error,
+      );
+    }
+  }
+
   private async handleFeeConfigUpdated(
     event: rpc.Api.EventResponse,
   ): Promise<void> {
@@ -901,7 +940,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), "stream.created", {
+    await this.publishStreamEvent(streamId, "stream.created", {
       streamId,
       sender,
       recipient,
@@ -957,7 +996,7 @@ export class SorobanEventWorker {
       }),
     );
 
-    sseService.broadcastToStream(String(streamId), "stream.topped_up", {
+    await this.publishStreamEvent(streamId, "stream.topped_up", {
       streamId,
       amount,
       newDepositedAmount,
@@ -1052,7 +1091,7 @@ export class SorobanEventWorker {
       });
     });
 
-    sseService.broadcastToStream(String(streamId), "stream.withdrawn", {
+    await this.publishStreamEvent(streamId, "stream.withdrawn", {
       streamId,
       recipient,
       amount,
@@ -1148,7 +1187,7 @@ export class SorobanEventWorker {
       });
     });
 
-    sseService.broadcastToStream(String(streamId), "stream.cancelled", {
+    await this.publishStreamEvent(streamId, "stream.cancelled", {
       streamId,
       refundedAmount,
       amountWithdrawn,
@@ -1221,7 +1260,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), "stream.completed", {
+    await this.publishStreamEvent(streamId, "stream.completed", {
       streamId,
       recipient,
       totalWithdrawn,
@@ -1362,7 +1401,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), "stream.paused", {
+    await this.publishStreamEvent(streamId, "stream.paused", {
       streamId,
       sender,
       pausedAt,
@@ -1454,7 +1493,7 @@ export class SorobanEventWorker {
       }
     });
 
-    sseService.broadcastToStream(String(streamId), "stream.resumed", {
+    await this.publishStreamEvent(streamId, "stream.resumed", {
       streamId,
       sender,
       newEndTime: newEndTime.toString(),

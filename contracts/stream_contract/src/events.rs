@@ -307,6 +307,20 @@ pub struct StreamRateModifiedEvent {
     pub timestamp: u64,
 }
 
+/// Emitted when a stream's arbiter is set or replaced.
+///
+/// The arbiter is the only address that can resolve a cancellation dispute, so
+/// who it is matters as much as the dispute itself. Emitting the change makes
+/// "the arbiter was always that address" auditable.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamArbiterSetEvent {
+    pub stream_id: u64,
+    pub sender: Address,
+    pub arbiter: Option<Address>,
+    pub timestamp: u64,
+}
+
 /// Emitted when a cancellation dispute is initiated (for #1319).
 ///
 /// Topic: `("dispute_requested", stream_id)`
