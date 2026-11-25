@@ -169,6 +169,14 @@ describe('event cursor: what the route asks the database for', () => {
     expect(args.take).toBe(2);
   });
 
+  it('uses the default limit and first-page offset when pagination is omitted', async () => {
+    const { args } = await queryFor('');
+
+    expect(args.take).toBe(50);
+    expect(args.skip).toBe(0);
+    expect(args).not.toHaveProperty('cursor');
+  });
+
   it('treats an empty cursor as no cursor', async () => {
     // `?cursor=` arrives as the empty string, which is falsy, so the route
     // must fall back to offset rather than seek to a row called "".
@@ -264,6 +272,25 @@ describe('event cursor: hasMore is decided by the page, not by the total', () =>
     expect(body.hasMore).toBe(false);
   });
 
+  it('uses offset and returned row count to detect a short page with remaining results', async () => {
+    findMany.mockResolvedValue([event('evt-8', 1)]);
+    count.mockResolvedValue(4);
+
+    const { body, args } = await queryFor('offset=1&limit=2');
+
+    expect(args.skip).toBe(1);
+    expect(body.hasMore).toBe(true);
+  });
+
+  it('reports no more pages when a full offset page ends exactly at total', async () => {
+    findMany.mockResolvedValue([event('evt-8', 1), event('evt-9', 2)]);
+    count.mockResolvedValue(4);
+
+    const { body } = await queryFor('offset=2&limit=2');
+
+    expect(body.hasMore).toBe(false);
+  });
+
   it('reports no more pages for an empty cursor page', async () => {
     const { body } = await queryFor('cursor=evt-last&limit=5');
 
@@ -347,6 +374,23 @@ describe('event cursor: a cursor the database cannot resolve', () => {
 
     await request(app).get(`${PATH}?cursor=evt-gone`).expect(500);
 
+    expect(findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('event pagination: dependency failures', () => {
+  it('returns the standard error envelope when the count query fails', async () => {
+    count.mockRejectedValue(new Error('database connection details'));
+
+    const res = await request(app).get(`${PATH}?limit=2&offset=0`);
+
+    expect(res.status).toBe(500);
+    expectErrorEnvelope(
+      res,
+      'INTERNAL_SERVER_ERROR',
+      'A technical error occurred. Please try again later.',
+    );
+    expect(count).toHaveBeenCalledTimes(1);
     expect(findMany).toHaveBeenCalledTimes(1);
   });
 });

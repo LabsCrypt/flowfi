@@ -30,6 +30,23 @@ describe('Error Middleware', () => {
     }));
   });
 
+  it('should preserve nested paths in the validation error contract', () => {
+    const error = new ZodError([
+      { path: ['users', 0, 'profile', 'email'], message: 'invalid email', code: 'custom' },
+    ]);
+
+    errorHandler(error, req as Request, res as Response, next);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: [{ path: 'users.0.profile.email', message: 'invalid email', code: 'custom' }],
+      },
+    });
+  });
+
   it('should handle Prisma P2002 error with sanitized DUPLICATE_ENTRY code and without schema leak', () => {
     const loggerSpy = vi.spyOn(logger, 'warn');
     const errorSpy = vi.spyOn(logger, 'error');
@@ -124,6 +141,25 @@ describe('Error Middleware', () => {
     expect(JSON.stringify(jsonCall)).not.toContain('title');
   });
 
+  it('should map a Prisma missing-table error to a generic server error', () => {
+    const error = new Prisma.PrismaClientKnownRequestError(
+      'The table `private_schema.User` does not exist in the current database.',
+      { code: 'P2021', clientVersion: '1.0', meta: { table: 'private_schema.User' } },
+    );
+
+    errorHandler(error, req as Request, res as Response, next);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'A technical error occurred. Please try again later.',
+      },
+    });
+    expect(JSON.stringify((res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]))
+      .not.toContain('private_schema');
+  });
+
   it('should handle PrismaClientValidationError without exposing model schema', () => {
     const error = new Prisma.PrismaClientValidationError(
       'Invalid `prisma.user.create()` invocation: Unknown argument `unknownField`. Did you mean `publicKey`?',
@@ -193,6 +229,26 @@ describe('Error Middleware', () => {
         message: 'A technical error occurred. Please try again later.',
       },
     });
+  });
+
+  it.each([
+    ['a string', 'database internals: SELECT * FROM private_table'],
+    ['a plain object', { message: 'private table details', code: 'P2002' }],
+    ['null', null],
+    ['undefined', undefined],
+  ])('should safely handle a thrown non-Error value (%s)', (_label, thrown) => {
+    errorHandler(thrown, req as Request, res as Response, next);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({
+      error: {
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'A technical error occurred. Please try again later.',
+      },
+    });
+    expect(JSON.stringify((res.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]))
+      .not.toContain('private');
+    expect(next).not.toHaveBeenCalled();
   });
 
   it('should handle ApiError instances and preserve code/details', () => {
