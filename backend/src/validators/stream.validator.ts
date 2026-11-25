@@ -39,7 +39,14 @@ export const createStreamSchema = z.object({
     .string()
     .regex(/^\d+$/, 'Amount must be a positive integer as string')
     .refine(isAtMostI128, { message: 'Amount exceeds maximum allowed value' }),
-  startTime: z.union([z.number().int().nonnegative(), z.string().regex(/^\d+$/).transform(v => parseInt(v))]),
+  startTime: z.union([
+    z.number().int().nonnegative().refine(Number.isSafeInteger, 'Start time must be a safe integer'),
+    z
+      .string()
+      .regex(/^\d+$/)
+      .transform(Number)
+      .refine(Number.isSafeInteger, 'Start time must be a safe integer'),
+  ]),
 });
 
 export type CreateStreamInput = z.infer<typeof createStreamSchema>;

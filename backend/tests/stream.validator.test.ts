@@ -106,4 +106,98 @@ describe('Stream Validator', () => {
     const result = createStreamSchema.safeParse(data);
     expect(result.success).toBe(true);
   });
+
+  it('accepts zero numeric strings at the schema boundary', () => {
+    const result = createStreamSchema.safeParse({
+      streamId: '123',
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      tokenAddress: 'TABC',
+      ratePerSecond: '0',
+      depositedAmount: '0',
+      startTime: '0',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toMatchObject({
+        ratePerSecond: '0',
+        depositedAmount: '0',
+        startTime: 0,
+      });
+    }
+  });
+
+  it.each([
+    ['ratePerSecond', '1.5'],
+    ['depositedAmount', '1.5'],
+  ])('rejects decimal-string %s values', (field, value) => {
+    const result = createStreamSchema.safeParse({
+      streamId: '123',
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      tokenAddress: 'TABC',
+      ratePerSecond: '1',
+      depositedAmount: '10',
+      startTime: '0',
+      [field]: value,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === field)).toBe(true);
+    }
+  });
+
+  it.each([
+    ['ratePerSecond', '170141183460469231731687303715884105727'],
+    ['depositedAmount', '170141183460469231731687303715884105727'],
+  ])('accepts %s at the i128 upper bound', (field, value) => {
+    const result = createStreamSchema.safeParse({
+      streamId: '123',
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      tokenAddress: 'TABC',
+      ratePerSecond: '1',
+      depositedAmount: '1',
+      startTime: '0',
+      [field]: value,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unsafe numeric stream id instead of rounding it', () => {
+    const result = createStreamSchema.safeParse({
+      streamId: Number.MAX_SAFE_INTEGER + 1,
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      tokenAddress: 'TABC',
+      ratePerSecond: '1',
+      depositedAmount: '1',
+      startTime: '0',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    ['numeric', Number.MAX_SAFE_INTEGER + 1],
+    ['decimal-string', '9007199254740992'],
+  ])('rejects an unsafe %s start time instead of rounding it', (_label, startTime) => {
+    const result = createStreamSchema.safeParse({
+      streamId: '123',
+      sender: 'GSENDER',
+      recipient: 'GRECIPIENT',
+      tokenAddress: 'TABC',
+      ratePerSecond: '1',
+      depositedAmount: '1',
+      startTime,
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === 'startTime')).toBe(true);
+    }
+  });
 });

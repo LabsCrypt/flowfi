@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from '../../types/auth.types.js';
 import * as streamRepository from '../../repositories/stream.repository.js';
 import { parseStreamId } from '../../lib/stream-id.js';
 import { ApiError, sendApiError } from '../../lib/api-error.js';
+import { invalidateUserStreamSummaryCache } from '../../services/user-summary-cache.js';
 
 /**
  * @openapi
@@ -129,6 +130,7 @@ export const cancelStreamHandler = async (req: AuthenticatedRequest, res: Respon
     // atomically (issue #1219) so the stream shows up under the "cancelled"
     // filter before the indexer has processed the on-chain event.
     await streamRepository.markCancelledProvisionally(parsedStreamId, txHash);
+    invalidateUserStreamSummaryCache(stream.sender, stream.recipient);
 
     logger.info(`[CancelStream] Stream ${parsedStreamId} cancelled by ${callerAddress}. Tx: ${txHash}`);
 

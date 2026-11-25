@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createStream, listStreams, getStream, getStreamEvents, getStreamClaimableAmount, getStreamSnapshot, getUserStreamSummary, pauseStream, resumeStream, MAX_USER_STREAMS, EMBEDDED_EVENTS_LIMIT } from '../src/controllers/stream.controller.js';
 import { prisma } from '../src/lib/prisma.js';
-import { claimableAmountService, calculateHistoricalStreamSnapshot } from '../src/services/claimable.service.js';
+import { claimableAmountService, calculateHistoricalStreamSnapshot, StreamSnapshotHistoryError } from '../src/services/claimable.service.js';
 import * as sorobanService from '../src/services/sorobanService.js';
 import type { Request, Response } from 'express';
 
@@ -83,6 +83,10 @@ describe("Stream Controller", () => {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),
     };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe('createStream', () => {
@@ -370,6 +374,28 @@ describe("Stream Controller", () => {
       expect(prisma.stream.findUnique).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['negative', '-1'],
+      ['fractional', '12.5'],
+      ['unsafe integer', '9007199254740992'],
+    ])('returns the public 400 error for a %s timestamp', async (_label, timestamp) => {
+      req.params = { streamId: '123' };
+      req.query = timestamp === undefined ? {} : { timestamp };
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        error: {
+          code: 'INVALID_TIMESTAMP',
+          message: expect.stringContaining('timestamp must be'),
+        },
+      });
+      expect(prisma.stream.findUnique).not.toHaveBeenCalled();
+    });
+
     it('loads only events through the requested timestamp and returns the replayed snapshot', async () => {
       const events = [{ eventType: 'CREATED', amount: '1000', timestamp: 100n, metadata: null, ledgerSequence: 1 }];
       const snapshot = {
@@ -396,6 +422,102 @@ describe("Stream Controller", () => {
       }));
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(snapshot);
+    });
+
+    it('accepts the exact event timestamp and preserves the historical boundary filter', async () => {
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '150' };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123n,
+        ratePerSecond: '10',
+        startTime: 100n,
+        events: [
+          { eventType: 'CREATED', amount: '1000', timestamp: 100n, metadata: null, ledgerSequence: 1 },
+          { eventType: 'WITHDRAWN', amount: '100', timestamp: 150n, metadata: null, ledgerSequence: 2 },
+        ],
+      });
+      (calculateHistoricalStreamSnapshot as any).mockReturnValue({ statusAtTimestamp: 'ACTIVE' });
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+        select: expect.objectContaining({
+          events: expect.objectContaining({ where: { timestamp: { lte: 150n } } }),
+        }),
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ statusAtTimestamp: 'ACTIVE' });
+    });
+
+    it('accepts the largest safe timestamp without numeric truncation', async () => {
+      req.params = { streamId: '123' };
+      req.query = { timestamp: String(Number.MAX_SAFE_INTEGER) };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123n,
+        ratePerSecond: '10',
+        startTime: 100n,
+        events: [],
+      });
+      (calculateHistoricalStreamSnapshot as any).mockReturnValue({ timestamp: Number.MAX_SAFE_INTEGER });
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(prisma.stream.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+        select: expect.objectContaining({
+          events: expect.objectContaining({
+            where: { timestamp: { lte: BigInt(Number.MAX_SAFE_INTEGER) } },
+          }),
+        }),
+      }));
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith({ timestamp: Number.MAX_SAFE_INTEGER });
+    });
+
+    it('returns 409 HISTORY_UNAVAILABLE when required history is absent', async () => {
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '150' };
+      (prisma.stream.findUnique as any).mockResolvedValue({
+        streamId: 123n,
+        ratePerSecond: '10',
+        startTime: 100n,
+        events: [],
+      });
+      (calculateHistoricalStreamSnapshot as any).mockImplementation(() => {
+        throw new StreamSnapshotHistoryError('Stream creation event is missing');
+      });
+
+      await getStreamSnapshot(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith({
+        error: {
+          code: 'HISTORY_UNAVAILABLE',
+          message: 'Stream creation event is missing',
+        },
+      });
+    });
+
+    it('returns 404 for an unknown stream and 500 for a history dependency failure', async () => {
+      req.params = { streamId: '123' };
+      req.query = { timestamp: '150' };
+      (prisma.stream.findUnique as any).mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('database unavailable'));
+
+      await getStreamSnapshot(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        error: { code: 'NOT_FOUND', message: 'Stream not found' },
+      });
+
+      res.status = vi.fn().mockReturnThis();
+      res.json = vi.fn().mockReturnThis();
+      await getStreamSnapshot(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'A technical error occurred. Please try again later.',
+        },
+      });
     });
   });
   describe("getUserStreamSummary", () => {
@@ -510,6 +632,79 @@ describe("Stream Controller", () => {
 
       const body = (res.json as any).mock.calls[0][0];
       expect(body.truncated).toBe(true);
+    });
+
+    it('serves cache hits, expires summaries, and reloads after the TTL', async () => {
+      const address = 'GSUMMARY_CACHE_TTL';
+      req.params = { address };
+      const now = vi.spyOn(Date, 'now').mockReturnValue(10_000);
+      (prisma.stream.findMany as any).mockResolvedValue([]);
+
+      await getUserStreamSummary(req as any, res as Response);
+      expect(prisma.stream.findMany).toHaveBeenCalledTimes(2);
+
+      res.status = vi.fn().mockReturnThis();
+      res.json = vi.fn().mockReturnThis();
+      await getUserStreamSummary(req as any, res as Response);
+      expect(prisma.stream.findMany).toHaveBeenCalledTimes(2);
+
+      now.mockReturnValue(40_001);
+      res.status = vi.fn().mockReturnThis();
+      res.json = vi.fn().mockReturnThis();
+      await getUserStreamSummary(req as any, res as Response);
+      expect(prisma.stream.findMany).toHaveBeenCalledTimes(4);
+    });
+
+    it('returns 500 with the public error contract when a summary dependency fails', async () => {
+      req.params = { address: 'GSUMMARY_DEPENDENCY_FAILURE' };
+      (prisma.stream.findMany as any).mockRejectedValue(new Error('database unavailable'));
+
+      await getUserStreamSummary(req as any, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'A technical error occurred. Please try again later.',
+        },
+      });
+    });
+
+    it('invalidates cached sender and recipient summaries after stream creation', async () => {
+      const sender = 'GSENDER';
+      const recipient = 'GRECIPIENT';
+      req.params = { address: sender };
+      (prisma.stream.findMany as any).mockResolvedValue([]);
+      await getUserStreamSummary(req as any, res as Response);
+      expect(prisma.stream.findMany).toHaveBeenCalledTimes(2);
+
+      (prisma.stream.findUnique as any).mockResolvedValue(null);
+      (sorobanService.getStreamFromChain as any).mockResolvedValue({
+        streamId: 123n,
+        sender,
+        recipient,
+        tokenAddress: 'T1',
+        ratePerSecond: '10',
+        depositedAmount: '1000',
+        withdrawnAmount: '0',
+        startTime: 1622505600,
+        isActive: true,
+      });
+      (prisma.stream.upsert as any).mockResolvedValue({ streamId: 123n });
+
+      await createStream(req as Request, res as Response);
+      expect(res.status).toHaveBeenCalledWith(201);
+
+      res.status = vi.fn().mockReturnThis();
+      res.json = vi.fn().mockReturnThis();
+      await getUserStreamSummary(req as any, res as Response);
+      expect(prisma.stream.findMany).toHaveBeenCalledTimes(4);
+
+      req.params = { address: recipient };
+      res.status = vi.fn().mockReturnThis();
+      res.json = vi.fn().mockReturnThis();
+      await getUserStreamSummary(req as any, res as Response);
+      expect(prisma.stream.findMany).toHaveBeenCalledTimes(6);
     });
   });
 
