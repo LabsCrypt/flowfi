@@ -5,6 +5,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 const {
   mockWithdraw,
   mockPrisma,
+  mockClaimable,
   currentUser,
 } = vi.hoisted(() => ({
   mockWithdraw: vi.fn(),
@@ -21,11 +22,18 @@ const {
     $transaction: vi.fn(async (fn: any) => fn(mockPrisma)),
   },
   currentUser: { publicKey: '' },
+  mockClaimable: {
+    getClaimableAmount: vi.fn(),
+  },
 }));
 
 vi.mock('../../../src/lib/prisma.js', () => ({
   default: mockPrisma,
   prisma: mockPrisma,
+}));
+
+vi.mock('../../../src/services/claimable.service.js', () => ({
+  claimableAmountService: mockClaimable,
 }));
 
 vi.mock('../../../src/services/sorobanService.js', () => ({
@@ -88,6 +96,13 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
     };
 
     mockPrisma.stream.findUnique.mockResolvedValue(stream);
+    mockClaimable.getClaimableAmount.mockReturnValue({
+      streamId: BigInt(streamId),
+      claimableAmount: '100',
+      actionable: true,
+      calculatedAt: Math.floor(Date.now() / 1000),
+      cached: false,
+    });
     mockWithdraw.mockResolvedValue({ simulated: true, fn: 'withdraw' });
 
     const response = await request(app)
@@ -179,6 +194,13 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       isPaused: false,
       updatedAt: new Date(),
     });
+    mockClaimable.getClaimableAmount.mockReturnValue({
+      streamId: BigInt(streamId),
+      claimableAmount: '0',
+      actionable: false,
+      calculatedAt: now,
+      cached: false,
+    });
 
     const response = await request(app)
       .post(`/v1/streams/${streamId}/withdraw`)
@@ -205,7 +227,7 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       depositedAmount: '10000000',
       withdrawnAmount: '0',
       startTime: nowSec - 5000,
-      lastUpdateTime: nowSec - 5000, // 5000s of unclaimed accrual
+      lastUpdateTime: nowSec - 5000,
       isActive: true,
       isPaused: false,
       pausedAt: null,
@@ -213,21 +235,26 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       updatedAt: new Date(),
     };
 
+    // Mock the claimable service explicitly: vi.clearAllMocks() clears call
+    // history but not return values, so the 409 case's actionable:false would
+    // otherwise leak into this test.
+    mockClaimable.getClaimableAmount.mockReturnValue({
+      streamId: BigInt(streamId),
+      claimableAmount: '50000',
+      actionable: true,
+      calculatedAt: nowSec,
+      cached: false,
+    });
+
     mockPrisma.$transaction.mockImplementation(async (fn: any) => fn(mockPrisma));
     mockPrisma.stream.findUnique.mockImplementation(async () => ({ ...streamState }));
     mockPrisma.stream.update.mockImplementation(async ({ data }: any) => {
       Object.assign(streamState, data);
       return { ...streamState };
     });
-    mockPrisma.$executeRawUnsafe.mockImplementation(
-      async (_sql: string, withdrawAmountStr: string, lastUpdateTime: bigint) => {
-        streamState.withdrawnAmount = (
-          BigInt(streamState.withdrawnAmount) + BigInt(withdrawAmountStr)
-        ).toString();
-        streamState.lastUpdateTime = Number(lastUpdateTime);
-        return undefined;
-      },
-    );
+    // The route is a read-only simulation (issue #1847): it never executes raw
+    // SQL, so no INSERT/UPDATE rowcount needs emulating here. A call would be
+    // caught by the `not.toHaveBeenCalled()` assertions below.
     // The old stub returned one placeholder hash for every call, which is how
     // the second WITHDRAWN event was silently swallowed by the upsert key.
     mockWithdraw.mockResolvedValue({ simulated: true, fn: 'withdraw' });
@@ -279,6 +306,15 @@ describe('POST /api/v1/streams/:streamId/withdraw', () => {
       updatedAt: new Date(),
     };
     mockPrisma.stream.findUnique.mockResolvedValue(stream);
+    // Same 5000s * 100/s window the stream was seeded with; the route reports
+    // it without consuming it, so a retry sees the same amount.
+    mockClaimable.getClaimableAmount.mockReturnValue({
+      streamId: BigInt(streamId),
+      claimableAmount: '500000',
+      actionable: true,
+      calculatedAt: nowSec,
+      cached: false,
+    });
     mockWithdraw.mockResolvedValue({ simulated: true, fn: 'withdraw' });
 
     const first = await request(app)
